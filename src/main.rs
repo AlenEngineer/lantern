@@ -1,7 +1,12 @@
-use iced::{Element, Result, Task, run, widget::{button, column}, window::{self, Action, Id}};
+use iced::{
+    Element, Task, application,
+    widget::{button, column},
+    window::{self},
+};
 
 #[derive(Debug, Default)]
-struct State {  }
+struct State {
+}
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -10,16 +15,16 @@ enum Message {
 
 fn update(state: &mut State, message: Message) -> Task<Message> {
     match message {
-        Message::Exit => window::close(window::Id::unique()),
+        Message::Exit => {
+            window::oldest().and_then(window::close)
+        }
     }
 }
 
 fn view(state: &State) -> Element<'_, Message> {
-    column![
-        button("Exit").on_press(Message::Exit),
-    ].into()
+    column![button("Exit").on_press(Message::Exit),].into()
 }
 
-fn main() -> Result {
-    run(update, view)
+fn main() -> iced::Result {
+    application(State::default, update, view).run()
 }
