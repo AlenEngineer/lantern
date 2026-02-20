@@ -1,4 +1,3 @@
-use gstreamer::query;
 use iced::{
     Element, Task, application,
     widget::{button, column, row, text_input},
