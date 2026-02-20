@@ -7,3 +7,7 @@ edition = "2024"
 gstreamer = "0.25.0"
 gstreamer-app = "0.25.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
+
+[lib]
+name = "backend"
+path = "src/lib.rs"
