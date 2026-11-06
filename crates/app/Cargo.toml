@@ -1,0 +1,19 @@
+[package]
+name = "chorquest-app"
+description = "The chorquest desktop app: an operator dashboard and a fullscreen stage window."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "chorquest"
+path = "src/main.rs"
+
+[dependencies]
+chorquest-engine.workspace = true
+iced.workspace = true
+
+[lints]
+workspace = true

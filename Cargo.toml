@@ -21,6 +21,7 @@ chorquest-source-link = { path = "sources/link" }
 chorquest-source-bible = { path = "sources/bible" }
 
 # External crates. Keep this list short: every entry is something to audit.
+iced = { version = "0.14", features = ["image", "advanced", "wgpu", "tokio"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 thiserror = "2.0"
