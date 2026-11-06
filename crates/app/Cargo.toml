@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 chorquest-engine.workspace = true
+chorquest-source-link.workspace = true
 iced.workspace = true
 iced_video_player.workspace = true
 gstreamer.workspace = true

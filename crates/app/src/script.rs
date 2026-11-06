@@ -10,8 +10,48 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chorquest_engine::{Engine, Kind, Location, Resource, ResourceId, SourceId};
+use chorquest_source_link::LinkSource;
 
 use crate::log;
+use crate::youtube::{Downloads, YoutubeVideo};
+
+/// What `show`, `preview` and `add` put on stage.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Target {
+    /// A local file. A relative path is relative to the script's folder.
+    File(PathBuf),
+    /// A link, resolved by the link source as if pasted into the search box.
+    Link(String),
+}
+
+impl Target {
+    fn parse(text: &str, dir: &Path) -> Result<Target, String> {
+        if text.starts_with("http://") || text.starts_with("https://") {
+            links()
+                .resolve(text)
+                .ok_or_else(|| format!("not a link: {text:?}"))?;
+            return Ok(Target::Link(text.to_string()));
+        }
+        Ok(Target::File(dir.join(text)))
+    }
+
+    /// Starts downloading a YouTube link. The app does too, but only once
+    /// its event loop catches up, and a following `wait-ready` must see it.
+    fn resource(&self, downloads: &Arc<Downloads>) -> Resource {
+        let resource = match self {
+            Target::File(path) => file(path),
+            Target::Link(url) => links().resolve(url).expect("checked by Target::parse"),
+        };
+        if let Some(video) = YoutubeVideo::of(&resource) {
+            downloads.fetch(&video);
+        }
+        resource
+    }
+}
+
+fn links() -> LinkSource {
+    LinkSource::new(SourceId::new("link").expect("a valid source id"))
+}
 
 /// One line of a script.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,13 +70,14 @@ pub enum Command {
     Black,
     /// `clear`: empty the stage.
     Clear,
-    /// `show PATH`: show a local file now, off-plan. A relative path is
-    /// relative to the script's folder.
-    Show(PathBuf),
-    /// `preview PATH`: line a local file up in preview.
-    Preview(PathBuf),
-    /// `add PATH`: add a local file to the plan after the current step.
-    Add(PathBuf),
+    /// `show PATH|URL`: show a file or link now, off-plan.
+    Show(Target),
+    /// `preview PATH|URL`: line a file or link up in preview.
+    Preview(Target),
+    /// `add PATH|URL`: add a file or link to the plan after the current step.
+    Add(Target),
+    /// `wait-ready SECS`: wait until no YouTube download is queued or running.
+    WaitReady(Duration),
     /// `take`: put the preview on stage.
     Take,
     /// `play`: play the program.
@@ -86,11 +127,17 @@ impl Command {
                 Command::Text(body.replace("\\n", "\n"))
             }
             "show" | "preview" | "add" if rest.is_empty() => {
-                return Err(format!("{word} needs a path"));
+                return Err(format!("{word} needs a path or link"));
             }
-            "show" => Command::Show(dir.join(rest)),
-            "preview" => Command::Preview(dir.join(rest)),
-            "add" => Command::Add(dir.join(rest)),
+            "show" => Command::Show(Target::parse(rest, dir)?),
+            "preview" => Command::Preview(Target::parse(rest, dir)?),
+            "add" => Command::Add(Target::parse(rest, dir)?),
+            "wait-ready" => {
+                let secs = rest
+                    .parse()
+                    .map_err(|_| format!("wait-ready needs seconds, got {rest:?}"))?;
+                Command::WaitReady(Duration::from_secs(secs))
+            }
             "take" => Command::Take,
             "play" => Command::Play,
             "pause" => Command::Pause,
@@ -121,6 +168,7 @@ impl Command {
         let takes_argument = matches!(
             command,
             Command::Wait(_)
+                | Command::WaitReady(_)
                 | Command::Text(_)
                 | Command::Shot(_)
                 | Command::Show(_)
@@ -164,20 +212,25 @@ impl Script {
 
     /// Runs every command in order, blocking, until the end or `quit`.
     /// Calls `acted` after each one.
-    pub fn run(&self, engine: &Engine, mut acted: impl FnMut()) {
+    pub fn run(&self, engine: &Engine, downloads: &Arc<Downloads>, mut acted: impl FnMut()) {
         for command in &self.commands {
             log(format!("script: {command:?}"));
             if *command == Command::Quit {
                 return;
             }
-            self.perform(command, engine);
+            self.perform(command, engine, downloads);
             acted();
         }
     }
 
-    fn perform(&self, command: &Command, engine: &Engine) {
+    fn perform(&self, command: &Command, engine: &Engine, downloads: &Arc<Downloads>) {
         match command {
             Command::Wait(duration) => std::thread::sleep(*duration),
+            Command::WaitReady(timeout) => {
+                if !downloads.settle(*timeout) {
+                    log(format!("script: wait-ready timed out after {timeout:?}"));
+                }
+            }
             Command::Hymn => {
                 let step = engine.add_after_current(&hymn());
                 if let Err(err) = engine.go_to(step) {
@@ -185,10 +238,10 @@ impl Script {
                 }
             }
             Command::Text(body) => engine.show_now(Arc::new(inline("text", "Text", body))),
-            Command::Show(path) => engine.show_now(Arc::new(file(path))),
-            Command::Preview(path) => engine.preview(Arc::new(file(path))),
-            Command::Add(path) => {
-                engine.add_after_current(&file(path));
+            Command::Show(target) => engine.show_now(Arc::new(target.resource(downloads))),
+            Command::Preview(target) => engine.preview(Arc::new(target.resource(downloads))),
+            Command::Add(target) => {
+                engine.add_after_current(&target.resource(downloads));
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
             Command::Play => log(format!("script: play -> {}", engine.play())),
@@ -278,9 +331,10 @@ mod tests {
 
     fn run(source: &str) -> Engine {
         let engine = Engine::new();
+        let downloads = Downloads::new("/nonexistent".into());
         Script::parse(source, Path::new("/media"), None)
             .unwrap()
-            .run(&engine, || {});
+            .run(&engine, &downloads, || {});
         engine
     }
 
@@ -358,6 +412,18 @@ mod tests {
     }
 
     #[test]
+    fn links_resolve_like_a_pasted_link() {
+        let engine = run("add https://youtu.be/jNQXAC9IVRw\nnext");
+        let resource = engine.stage().program.unwrap().resource;
+        assert_eq!(resource.kind, Kind::Video);
+        assert_eq!(resource.meta["youtube_id"], "jNQXAC9IVRw");
+        assert_eq!(
+            resource.location,
+            Location::Url("https://www.youtube.com/watch?v=jNQXAC9IVRw".into())
+        );
+    }
+
+    #[test]
     fn frame_counts_from_one() {
         let engine = run("hymn\nframe 3");
         assert!(
@@ -380,7 +446,12 @@ mod tests {
             r#"line 1: wait needs milliseconds, got "soon""#
         );
         assert_eq!(err("next 3"), "line 1: next takes no argument");
-        assert_eq!(err("show"), "line 1: show needs a path");
+        assert_eq!(err("show"), "line 1: show needs a path or link");
+        assert_eq!(err("show https://"), r#"line 1: not a link: "https://""#);
+        assert_eq!(
+            err("wait-ready soon"),
+            r#"line 1: wait-ready needs seconds, got "soon""#
+        );
         assert_eq!(
             err("frame 0"),
             r#"line 1: frame needs a number from 1, got "0""#

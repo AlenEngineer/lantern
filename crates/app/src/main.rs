@@ -7,6 +7,7 @@
 
 mod script;
 mod stage;
+mod youtube;
 
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -15,7 +16,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chorquest_engine::{
-    Action, Engine, Media, MediaReport, Playback, SceneId, StageEvent, StageFeed, StageState,
+    Action, Engine, Media, MediaReport, Playback, Resource, SceneId, StageEvent, StageFeed,
+    StageState,
 };
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::widget::{Space, column, container, image, stack, text};
@@ -24,6 +26,7 @@ use iced_video_player::VideoPlayer;
 
 use crate::script::Script;
 use crate::stage::{Content, Loaded, Stage};
+use crate::youtube::{Downloads, YoutubeVideo};
 
 /// The Wayland app id of the audience window. A Hyprland rule matches it to
 /// send the window to the projector.
@@ -40,8 +43,9 @@ fn main() -> ExitCode {
         }
     };
     let engine = Shared(Arc::new(Engine::new()));
+    let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
     let result = iced::daemon(
-        move || App::boot(engine.clone(), script.clone()),
+        move || App::boot(engine.clone(), downloads.clone(), script.clone()),
         App::update,
         App::view,
     )
@@ -78,11 +82,16 @@ fn log(message: impl AsRef<str>) {
     eprintln!("[{elapsed:8.3}] {}", message.as_ref());
 }
 
-/// The engine, hashed by identity so it can key a [`Subscription`].
-#[derive(Clone)]
-struct Shared(Arc<Engine>);
+/// Shared state, hashed by identity so it can key a [`Subscription`].
+struct Shared<T>(Arc<T>);
 
-impl Hash for Shared {
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Shared(self.0.clone())
+    }
+}
+
+impl<T> Hash for Shared<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Arc::as_ptr(&self.0).hash(state);
     }
@@ -98,6 +107,8 @@ enum Message {
     Ended(SceneId),
     /// Time to report the playing video's position.
     Tick,
+    /// Time to redraw download progress.
+    Downloading,
     /// The script performed a command. The plan may have changed, which the
     /// stage feed doesn't announce.
     Acted,
@@ -106,7 +117,8 @@ enum Message {
 }
 
 struct App {
-    engine: Shared,
+    engine: Shared<Engine>,
+    downloads: Shared<Downloads>,
     script: Option<Script>,
     stage_window: window::Id,
     /// The stage window's mirror, built only from the engine's feed.
@@ -115,7 +127,11 @@ struct App {
 }
 
 impl App {
-    fn boot(engine: Shared, script: Option<Script>) -> (App, Task<Message>) {
+    fn boot(
+        engine: Shared<Engine>,
+        downloads: Shared<Downloads>,
+        script: Option<Script>,
+    ) -> (App, Task<Message>) {
         let (_, open_dashboard) = window::open(window::Settings {
             size: iced::Size::new(960.0, 640.0),
             platform_specific: platform(DASHBOARD_APP_ID),
@@ -128,11 +144,12 @@ impl App {
             ..window::Settings::default()
         });
         let app = App {
+            media: Stage::new(downloads.0.clone()),
             engine,
+            downloads,
             script,
             stage_window,
             stage: StageState::default(),
-            media: Stage::new(),
         };
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
         // window back to tiled when another window maps on its workspace.
@@ -164,6 +181,7 @@ impl App {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
             }
+            Message::Downloading => {}
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
@@ -205,8 +223,16 @@ impl App {
     }
 
     /// Preloads what the operator is most likely to take next: the preview
-    /// and the plan's next step.
+    /// and the plan's next step. Every YouTube video in the plan starts
+    /// downloading, since a download takes about as long as the video.
     fn preload(&mut self) -> Task<Message> {
+        for step in self.engine.0.plan().steps() {
+            if let Action::Show { resource } = &step.action
+                && let Some(video) = YoutubeVideo::of(resource)
+            {
+                self.downloads.0.fetch(&video);
+            }
+        }
         let preview = self.stage.preview.as_ref().map(|s| (*s.resource).clone());
         let next = self.engine.0.up_next().and_then(|step| match step.action {
             Action::Show { resource } => Some(resource),
@@ -267,11 +293,24 @@ impl App {
         let current = engine.current_step().map(|step| step.id);
         let program = match &self.stage.program {
             Some(scene) => format!(
-                "Program: {} ({})",
+                "Program: {} ({}){}",
                 scene.resource.title,
-                describe(&scene.media)
+                describe(&scene.media),
+                match scene.media {
+                    // The failure already says why.
+                    Media::Failed { .. } => String::new(),
+                    _ => self.download_note(&scene.resource),
+                }
             ),
             None => "Program: nothing".into(),
+        };
+        let preview = match &self.stage.preview {
+            Some(scene) => format!(
+                "Preview: {}{}",
+                scene.resource.title,
+                self.download_note(&scene.resource)
+            ),
+            None => "Preview: nothing".into(),
         };
         let blackout = if self.stage.blackout {
             "Blackout: on"
@@ -280,11 +319,18 @@ impl App {
         };
         let steps = plan.steps().iter().map(|step| {
             let marker = if Some(step.id) == current { ">" } else { " " };
-            text(format!("{marker} {}", step.label)).size(20).into()
+            let note = match &step.action {
+                Action::Show { resource } => self.download_note(resource),
+                _ => String::new(),
+            };
+            text(format!("{marker} {}{note}", step.label))
+                .size(20)
+                .into()
         });
         column![
             text("chorquest").size(32),
             text(program).size(20),
+            text(preview).size(20),
             text(blackout).size(20),
             text(format!("Plan: {}", plan.title)).size(24),
             column(steps).spacing(4),
@@ -292,6 +338,14 @@ impl App {
         .spacing(12)
         .padding(24)
         .into()
+    }
+
+    /// A YouTube video's download state, e.g. " [downloading 42%]", or
+    /// nothing for anything else.
+    fn download_note(&self, resource: &Resource) -> String {
+        YoutubeVideo::of(resource)
+            .and_then(|video| self.downloads.0.state(&video.id))
+            .map_or_else(String::new, |download| format!(" [{download}]"))
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -309,9 +363,13 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
         }
+        if self.downloads.0.busy() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Downloading));
+        }
         if let Some(script) = &self.script {
             subscriptions.push(Subscription::run_with(
-                (self.engine.clone(), script.clone()),
+                (self.engine.clone(), self.downloads.clone(), script.clone()),
                 run_script,
             ));
         }
@@ -364,7 +422,7 @@ fn platform(application_id: &str) -> window::settings::PlatformSpecific {
 
 /// The engine's stage feed as messages: its snapshot, then every event. A
 /// thread blocks on the std receiver and forwards into the async stream.
-fn stage_feed(engine: &Shared) -> impl Stream<Item = Message> + use<> {
+fn stage_feed(engine: &Shared<Engine>) -> impl Stream<Item = Message> + use<> {
     let engine = engine.0.clone();
     iced::stream::channel(64, async move |mut out| {
         let StageFeed { state, events } = engine.subscribe();
@@ -389,13 +447,16 @@ fn stage_feed(engine: &Shared) -> impl Stream<Item = Message> + use<> {
 
 /// Runs the script on its own thread, since its commands block (`wait`,
 /// `shot`). Reports each command and the end.
-fn run_script((engine, script): &(Shared, Script)) -> impl Stream<Item = Message> + use<> {
+fn run_script(
+    (engine, downloads, script): &(Shared<Engine>, Shared<Downloads>, Script),
+) -> impl Stream<Item = Message> + use<> {
     let engine = engine.0.clone();
+    let downloads = downloads.0.clone();
     let script = script.clone();
     iced::stream::channel(64, async move |mut out| {
         let (acted, mut received) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || {
-            script.run(&engine, || {
+            script.run(&engine, &downloads, || {
                 let _ = acted.unbounded_send(Message::Acted);
             });
             let _ = acted.unbounded_send(Message::ScriptDone);

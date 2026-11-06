@@ -561,6 +561,7 @@ name = "chorquest-app"
 version = "0.1.0"
 dependencies = [
  "chorquest-engine",
+ "chorquest-source-link",
  "gstreamer",
  "gstreamer-app",
  "iced",

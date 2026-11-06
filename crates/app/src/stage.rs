@@ -7,6 +7,10 @@
 //! serves the program and the preload of what comes next (the preview and
 //! the plan's next step), so a take of a preloaded video only swaps a player
 //! that is already built.
+//!
+//! A YouTube video loads like a local one, from the download cache. Its
+//! loader waits for the download, so a take before it is ready shows black
+//! until the file arrives.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -24,6 +28,8 @@ use gstreamer::prelude::*;
 use iced::widget::image::Handle;
 use iced_video_player::Video;
 
+use crate::youtube::{Downloads, YoutubeVideo};
+
 /// What the stage has loaded for one resource.
 pub enum Content {
     /// A decoded still image.
@@ -40,12 +46,16 @@ enum Loader {
     Image(PathBuf),
     Video(PathBuf),
     Pdf(PathBuf),
+    Youtube(YoutubeVideo),
 }
 
 impl Loader {
     /// `Ok(None)` for inline text, which the stage draws from the scene.
     /// `Err` says why the stage can't show the resource.
     fn for_resource(resource: &Resource) -> Result<Option<Loader>, String> {
+        if let Some(video) = YoutubeVideo::of(resource) {
+            return Ok(Some(Loader::Youtube(video)));
+        }
         let path = match &resource.location {
             Location::Inline(_) => return Ok(None),
             Location::File(path) => path.clone(),
@@ -62,18 +72,19 @@ impl Loader {
         }
     }
 
-    /// Blocks: decodes, builds a player or runs `pdftoppm`.
-    fn load(&self) -> Result<Content, String> {
+    /// Blocks: decodes, builds a player, runs `pdftoppm` or waits for a download.
+    fn load(&self, downloads: &Arc<Downloads>) -> Result<Content, String> {
         let path = match self {
-            Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path) => path,
+            Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path) => path.clone(),
+            Loader::Youtube(video) => downloads.ready(video)?,
         };
         if !path.is_file() {
             return Err(format!("file not found: {}", path.display()));
         }
         match self {
-            Loader::Image(path) => decode_image(path).map(Content::Image),
-            Loader::Video(path) => open_video(path).map(Content::Video),
-            Loader::Pdf(path) => render_pdf(path, &cache_dir().join("pdf")).map(Content::Pages),
+            Loader::Image(_) => decode_image(&path).map(Content::Image),
+            Loader::Video(_) | Loader::Youtube(_) => open_video(&path).map(Content::Video),
+            Loader::Pdf(_) => render_pdf(&path, &cache_dir().join("pdf")).map(Content::Pages),
         }
     }
 }
@@ -92,11 +103,15 @@ impl fmt::Debug for Loaded {
 }
 
 /// Starts loading on a worker thread.
-fn spawn(resource: ResourceId, loader: Loader) -> iced::Task<Arc<Loaded>> {
+fn spawn(
+    resource: ResourceId,
+    loader: Loader,
+    downloads: Arc<Downloads>,
+) -> iced::Task<Arc<Loaded>> {
     iced::Task::future(async move {
         let (done, result) = iced::futures::channel::oneshot::channel();
         std::thread::spawn(move || {
-            let _ = done.send(loader.load());
+            let _ = done.send(loader.load(&downloads));
         });
         let result = result
             .await
@@ -132,11 +147,13 @@ pub struct Stage {
     loading: HashSet<ResourceId>,
     /// What the last [`preload`](Stage::preload) asked for.
     upcoming: HashSet<ResourceId>,
+    downloads: Arc<Downloads>,
 }
 
 impl Stage {
-    pub fn new() -> Self {
+    pub fn new(downloads: Arc<Downloads>) -> Self {
         Stage {
+            downloads,
             program: Program::Bare,
             ready: HashMap::new(),
             loading: HashSet::new(),
@@ -194,6 +211,9 @@ impl Stage {
                 return iced::Task::none();
             }
         };
+        if let Loader::Youtube(video) = &loader {
+            self.downloads.retry(video);
+        }
         let resource = scene.resource.id.clone();
         if let Some(content) = self.ready.remove(&resource) {
             crate::log(format!("stage: {} was preloaded", scene.id));
@@ -205,7 +225,7 @@ impl Stage {
             resource: resource.clone(),
         };
         if self.loading.insert(resource.clone()) {
-            spawn(resource, loader)
+            spawn(resource, loader, self.downloads.clone())
         } else {
             iced::Task::none()
         }
@@ -319,7 +339,7 @@ impl Stage {
             .into_iter()
             .filter(|(id, _)| !self.ready.contains_key(id))
             .filter(|(id, _)| self.loading.insert(id.clone()))
-            .map(|(id, loader)| spawn(id, loader))
+            .map(|(id, loader)| spawn(id, loader, self.downloads.clone()))
             .collect();
         iced::Task::batch(tasks)
     }
@@ -399,7 +419,7 @@ fn render_pdf(path: &Path, cache: &Path) -> Result<Vec<Handle>, String> {
     Ok(pages.into_iter().map(Handle::from_path).collect())
 }
 
-fn cache_dir() -> PathBuf {
+pub fn cache_dir() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
@@ -448,8 +468,9 @@ mod tests {
 
     #[test]
     fn a_missing_file_fails_with_its_path() {
+        let downloads = Downloads::new("/nonexistent".into());
         let err = Loader::Image("/nonexistent/x.png".into())
-            .load()
+            .load(&downloads)
             .err()
             .unwrap();
         assert_eq!(err, "file not found: /nonexistent/x.png");
