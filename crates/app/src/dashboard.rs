@@ -575,12 +575,22 @@ impl App {
                 .size(18)
                 .font(BOLD)
                 .color(AMBER),
-            Space::new().width(Fill),
-            action("New", Message::Op(Op::New)),
-            action("Open", Message::Op(Op::Open)),
-            action("Save", Message::Op(Op::Save)),
-            action("◀ Back", Message::Op(Op::Prev)),
-            action("Next ▶", Message::Op(Op::Next)),
+            // The buttons wrap onto more lines, right-aligned, when the
+            // window is too narrow for one.
+            container(
+                row![
+                    action("New", Message::Op(Op::New)),
+                    action("Open", Message::Op(Op::Open)),
+                    action("Save", Message::Op(Op::Save)),
+                    action("◀ Back", Message::Op(Op::Prev)),
+                    action("Next ▶", Message::Op(Op::Next)),
+                ]
+                .spacing(8)
+                .wrap()
+                .align_x(iced::alignment::Horizontal::Right),
+            )
+            .width(Fill)
+            .align_right(Fill),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)
