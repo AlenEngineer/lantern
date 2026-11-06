@@ -6,19 +6,24 @@
 //! for each `shot NAME` in it.
 
 mod script;
+mod stage;
 
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use chorquest_engine::{Engine, StageEvent, StageFeed, StageState};
+use chorquest_engine::{
+    Action, Engine, Media, MediaReport, Playback, SceneId, StageEvent, StageFeed, StageState,
+};
 use iced::futures::{SinkExt, Stream, StreamExt};
-use iced::widget::{Space, column, container, text};
-use iced::{Color, Element, Fill, Subscription, Task, window};
+use iced::widget::{Space, column, container, image, stack, text};
+use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
+use iced_video_player::VideoPlayer;
 
 use crate::script::Script;
+use crate::stage::{Content, Loaded, Stage};
 
 /// The Wayland app id of the audience window. A Hyprland rule matches it to
 /// send the window to the projector.
@@ -60,7 +65,8 @@ fn load_script() -> Result<Option<Script>, String> {
     let source =
         std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
     let shooter = std::env::var_os("CHORQUEST_SHOT").map(PathBuf::from);
-    Script::parse(&source, shooter)
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    Script::parse(&source, dir, shooter)
         .map(Some)
         .map_err(|err| format!("{}: {err}", path.display()))
 }
@@ -87,6 +93,14 @@ enum Message {
     /// The stage as it was when the feed started. Always the feed's first message.
     Feed(StageState),
     Stage(StageEvent),
+    Loaded(Arc<Loaded>),
+    /// The program's video reached its end.
+    Ended(SceneId),
+    /// Time to report the playing video's position.
+    Tick,
+    /// The script performed a command. The plan may have changed, which the
+    /// stage feed doesn't announce.
+    Acted,
     ScriptDone,
     Closed(window::Id),
 }
@@ -97,6 +111,7 @@ struct App {
     stage_window: window::Id,
     /// The stage window's mirror, built only from the engine's feed.
     stage: StageState,
+    media: Stage,
 }
 
 impl App {
@@ -117,6 +132,7 @@ impl App {
             script,
             stage_window,
             stage: StageState::default(),
+            media: Stage::new(),
         };
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
         // window back to tiled when another window maps on its workspace.
@@ -133,10 +149,22 @@ impl App {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Feed(state) => self.stage = state,
-            Message::Stage(event) => {
-                self.stage.apply(&event);
+            Message::Feed(state) => {
+                self.stage = state;
+                return self.program_changed();
             }
+            Message::Stage(event) => return self.stage_event(&event),
+            Message::Loaded(loaded) => self.media.loaded(&loaded, &self.stage, &self.engine.0),
+            Message::Ended(scene) => {
+                self.engine.0.report(scene, MediaReport::Ended);
+            }
+            Message::Tick => {
+                if let Some((scene, video)) = self.media.video() {
+                    let position = video.position();
+                    self.engine.0.report(scene, MediaReport::Position(position));
+                }
+            }
+            Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
                 return iced::exit();
@@ -149,6 +177,46 @@ impl App {
         Task::none()
     }
 
+    fn stage_event(&mut self, event: &StageEvent) -> Task<Message> {
+        if !self.stage.apply(event) {
+            return Task::none();
+        }
+        let engine = &self.engine.0;
+        match event {
+            StageEvent::Program { .. } => return self.program_changed(),
+            StageEvent::Preview { .. } => return self.preload(),
+            StageEvent::Playback { .. } => {
+                if let Some(timed) = self.stage.program.as_ref().and_then(|s| s.timed()) {
+                    self.media.sync_playback(timed, engine);
+                }
+            }
+            StageEvent::Seek { position } => self.media.seek(*position, engine),
+            StageEvent::Frame { .. } | StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
+        }
+        Task::none()
+    }
+
+    fn program_changed(&mut self) -> Task<Message> {
+        let load = self
+            .media
+            .program_changed(&self.stage, &self.engine.0)
+            .map(Message::Loaded);
+        Task::batch([load, self.preload()])
+    }
+
+    /// Preloads what the operator is most likely to take next: the preview
+    /// and the plan's next step.
+    fn preload(&mut self) -> Task<Message> {
+        let preview = self.stage.preview.as_ref().map(|s| (*s.resource).clone());
+        let next = self.engine.0.up_next().and_then(|step| match step.action {
+            Action::Show { resource } => Some(resource),
+            _ => None,
+        });
+        self.media
+            .preload(preview.into_iter().chain(next))
+            .map(Message::Loaded)
+    }
+
     fn view(&self, window: window::Id) -> Element<'_, Message> {
         if window == self.stage_window {
             self.stage_view()
@@ -157,20 +225,40 @@ impl App {
         }
     }
 
+    /// Black, with the program on top unless it failed. Blackout covers
+    /// the program instead of removing it, so a video keeps playing and
+    /// still reports its end.
     fn stage_view(&self) -> Element<'_, Message> {
-        let scene = self.stage.program.as_ref().filter(|_| !self.stage.blackout);
-        let content: Element<'_, Message> = match scene {
-            None => Space::new().into(),
-            Some(scene) => text(scene.text().unwrap_or_else(|| scene.resource.title.clone()))
+        let Some(scene) = &self.stage.program else {
+            return black(Space::new());
+        };
+        let content: Element<'_, Message> = match (&scene.media, scene.text()) {
+            (Media::Failed { .. }, _) => Space::new().into(),
+            (_, Some(body)) => text(body)
                 .size(64)
                 .color(Color::WHITE)
                 .align_x(iced::alignment::Horizontal::Center)
                 .into(),
+            (_, None) => match self.media.content(scene.id) {
+                None => Space::new().into(),
+                Some(Content::Image(handle)) => fit(image(handle.clone())),
+                Some(Content::Pages(pages)) => {
+                    let page = &pages[scene.frame().min(pages.len() - 1)];
+                    fit(image(page.clone()))
+                }
+                Some(Content::Video(video)) => VideoPlayer::new(video)
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(ContentFit::Contain)
+                    .on_end_of_stream(Message::Ended(scene.id))
+                    .into(),
+            },
         };
-        container(content)
-            .center(Fill)
-            .style(|_| container::Style::default().background(Color::BLACK))
-            .into()
+        if self.stage.blackout {
+            stack![black(content), black(Space::new())].into()
+        } else {
+            black(content)
+        }
     }
 
     fn dashboard_view(&self) -> Element<'_, Message> {
@@ -179,9 +267,9 @@ impl App {
         let current = engine.current_step().map(|step| step.id);
         let program = match &self.stage.program {
             Some(scene) => format!(
-                "Program: {} (frame {})",
+                "Program: {} ({})",
                 scene.resource.title,
-                scene.frame() + 1
+                describe(&scene.media)
             ),
             None => "Program: nothing".into(),
         };
@@ -211,6 +299,16 @@ impl App {
             Subscription::run_with(self.engine.clone(), stage_feed),
             window::close_events().map(Message::Closed),
         ];
+        let playing = self
+            .stage
+            .program
+            .as_ref()
+            .and_then(|scene| scene.timed())
+            .is_some_and(|timed| timed.playback == Playback::Playing);
+        if playing {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
+        }
         if let Some(script) = &self.script {
             subscriptions.push(Subscription::run_with(
                 (self.engine.clone(), script.clone()),
@@ -218,6 +316,42 @@ impl App {
             ));
         }
         Subscription::batch(subscriptions)
+    }
+}
+
+fn black<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .center(Fill)
+        .style(|_| container::Style::default().background(Color::BLACK))
+        .into()
+}
+
+fn fit(image: image::Image<image::Handle>) -> Element<'static, Message> {
+    image
+        .width(Fill)
+        .height(Fill)
+        .content_fit(ContentFit::Contain)
+        .into()
+}
+
+/// The program's media for the operator, e.g. "frame 2 of 3" or "playing 0:03 / 0:06".
+fn describe(media: &Media) -> String {
+    let clock = |d: Duration| format!("{}:{:02}", d.as_secs() / 60, d.as_secs() % 60);
+    match media {
+        Media::Frames { frame, count } => match count {
+            Some(count) => format!("frame {} of {count}", frame + 1),
+            None => format!("frame {}", frame + 1),
+        },
+        Media::Timed(timed) => {
+            let state = match timed.playback {
+                Playback::Paused => "paused",
+                Playback::Playing => "playing",
+                Playback::Ended => "ended",
+            };
+            let duration = timed.duration.map_or("?".into(), clock);
+            format!("{state} {} / {duration}", clock(timed.position))
+        }
+        Media::Failed { reason } => format!("failed: {reason}"),
     }
 }
 
@@ -254,17 +388,22 @@ fn stage_feed(engine: &Shared) -> impl Stream<Item = Message> + use<> {
 }
 
 /// Runs the script on its own thread, since its commands block (`wait`,
-/// `shot`), and reports when it is done.
+/// `shot`). Reports each command and the end.
 fn run_script((engine, script): &(Shared, Script)) -> impl Stream<Item = Message> + use<> {
     let engine = engine.0.clone();
     let script = script.clone();
-    iced::stream::channel(1, async move |mut out| {
-        let (done, finished) = iced::futures::channel::oneshot::channel();
+    iced::stream::channel(64, async move |mut out| {
+        let (acted, mut received) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || {
-            script.run(&engine);
-            let _ = done.send(());
+            script.run(&engine, || {
+                let _ = acted.unbounded_send(Message::Acted);
+            });
+            let _ = acted.unbounded_send(Message::ScriptDone);
         });
-        let _ = finished.await;
-        let _ = out.send(Message::ScriptDone).await;
+        while let Some(message) = received.next().await {
+            if out.send(message).await.is_err() {
+                break;
+            }
+        }
     })
 }

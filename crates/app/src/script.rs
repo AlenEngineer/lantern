@@ -5,7 +5,7 @@
 //! [`Command::parse`] and an arm to [`Script::perform`].
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -30,6 +30,23 @@ pub enum Command {
     Black,
     /// `clear`: empty the stage.
     Clear,
+    /// `show PATH`: show a local file now, off-plan. A relative path is
+    /// relative to the script's folder.
+    Show(PathBuf),
+    /// `preview PATH`: line a local file up in preview.
+    Preview(PathBuf),
+    /// `add PATH`: add a local file to the plan after the current step.
+    Add(PathBuf),
+    /// `take`: put the preview on stage.
+    Take,
+    /// `play`: play the program.
+    Play,
+    /// `pause`: pause the program.
+    Pause,
+    /// `seek SECS`: jump the program's timeline.
+    Seek(Duration),
+    /// `frame N`: go to page or stanza N, counted from 1.
+    Frame(usize),
     /// `shot NAME`: ask the harness to capture both windows.
     Shot(String),
     /// `quit`: stop here.
@@ -50,7 +67,7 @@ impl fmt::Display for ParseError {
 }
 
 impl Command {
-    fn parse(line: &str) -> Result<Command, String> {
+    fn parse(line: &str, dir: &Path) -> Result<Command, String> {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
         let rest = rest.trim();
         let command = match word {
@@ -68,6 +85,28 @@ impl Command {
                     .ok_or_else(|| format!("text needs a quoted string, got {rest:?}"))?;
                 Command::Text(body.replace("\\n", "\n"))
             }
+            "show" | "preview" | "add" if rest.is_empty() => {
+                return Err(format!("{word} needs a path"));
+            }
+            "show" => Command::Show(dir.join(rest)),
+            "preview" => Command::Preview(dir.join(rest)),
+            "add" => Command::Add(dir.join(rest)),
+            "take" => Command::Take,
+            "play" => Command::Play,
+            "pause" => Command::Pause,
+            "seek" => {
+                let secs: f64 = rest
+                    .parse()
+                    .map_err(|_| format!("seek needs seconds, got {rest:?}"))?;
+                Command::Seek(
+                    Duration::try_from_secs_f64(secs)
+                        .map_err(|_| format!("seek needs seconds, got {rest:?}"))?,
+                )
+            }
+            "frame" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Frame(n - 1),
+                _ => return Err(format!("frame needs a number from 1, got {rest:?}")),
+            },
             "next" => Command::Next,
             "prev" => Command::Prev,
             "black" => Command::Black,
@@ -81,7 +120,14 @@ impl Command {
         };
         let takes_argument = matches!(
             command,
-            Command::Wait(_) | Command::Text(_) | Command::Shot(_)
+            Command::Wait(_)
+                | Command::Text(_)
+                | Command::Shot(_)
+                | Command::Show(_)
+                | Command::Preview(_)
+                | Command::Add(_)
+                | Command::Seek(_)
+                | Command::Frame(_)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
@@ -101,28 +147,31 @@ pub struct Script {
 
 impl Script {
     /// Parses the whole script up front, so a typo fails before any window opens.
-    /// Blank lines and lines starting with `#` are skipped.
-    pub fn parse(source: &str, shooter: Option<PathBuf>) -> Result<Script, ParseError> {
+    /// Blank lines and lines starting with `#` are skipped. Relative paths
+    /// are resolved against `dir`, the script's folder.
+    pub fn parse(source: &str, dir: &Path, shooter: Option<PathBuf>) -> Result<Script, ParseError> {
         let commands = source
             .lines()
             .enumerate()
             .map(|(i, line)| (i + 1, line.trim()))
             .filter(|(_, line)| !line.is_empty() && !line.starts_with('#'))
             .map(|(line, text)| {
-                Command::parse(text).map_err(|message| ParseError { line, message })
+                Command::parse(text, dir).map_err(|message| ParseError { line, message })
             })
             .collect::<Result<_, _>>()?;
         Ok(Script { commands, shooter })
     }
 
     /// Runs every command in order, blocking, until the end or `quit`.
-    pub fn run(&self, engine: &Engine) {
+    /// Calls `acted` after each one.
+    pub fn run(&self, engine: &Engine, mut acted: impl FnMut()) {
         for command in &self.commands {
             log(format!("script: {command:?}"));
             if *command == Command::Quit {
                 return;
             }
             self.perform(command, engine);
+            acted();
         }
     }
 
@@ -136,6 +185,18 @@ impl Script {
                 }
             }
             Command::Text(body) => engine.show_now(Arc::new(inline("text", "Text", body))),
+            Command::Show(path) => engine.show_now(Arc::new(file(path))),
+            Command::Preview(path) => engine.preview(Arc::new(file(path))),
+            Command::Add(path) => {
+                engine.add_after_current(&file(path));
+            }
+            Command::Take => log(format!("script: take -> {}", engine.take())),
+            Command::Play => log(format!("script: play -> {}", engine.play())),
+            Command::Pause => log(format!("script: pause -> {}", engine.pause())),
+            Command::Seek(position) => log(format!("script: seek -> {}", engine.seek(*position))),
+            Command::Frame(frame) => {
+                log(format!("script: frame -> {}", engine.goto_frame(*frame)));
+            }
             Command::Next => log(format!("script: next -> {:?}", engine.next())),
             Command::Prev => log(format!("script: prev -> {:?}", engine.prev())),
             Command::Black => {
@@ -182,6 +243,25 @@ fn hymn() -> Resource {
     inline("amazing-grace", "Amazing Grace", HYMN)
 }
 
+/// A local file as a resource, its kind guessed from the extension.
+fn file(path: &Path) -> Resource {
+    let source = SourceId::new("script").expect("a valid source id");
+    let kind = path
+        .extension()
+        .and_then(|ext| Kind::from_extension(&ext.to_string_lossy()))
+        .unwrap_or_else(|| Kind::Other("unknown".into()));
+    let title = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    Resource::new(
+        ResourceId::new(&source, &path.display().to_string()),
+        title,
+        kind,
+        Location::File(path.to_path_buf()),
+    )
+}
+
 fn inline(key: &str, title: &str, body: &str) -> Resource {
     let source = SourceId::new("script").expect("a valid source id");
     Resource::new(
@@ -198,7 +278,9 @@ mod tests {
 
     fn run(source: &str) -> Engine {
         let engine = Engine::new();
-        Script::parse(source, None).unwrap().run(&engine);
+        Script::parse(source, Path::new("/media"), None)
+            .unwrap()
+            .run(&engine, || {});
         engine
     }
 
@@ -245,7 +327,8 @@ mod tests {
 
     #[test]
     fn comments_and_blank_lines_are_skipped() {
-        let script = Script::parse("# setup\n\n  wait 5\nshot first\n", None).unwrap();
+        let script =
+            Script::parse("# setup\n\n  wait 5\nshot first\n", Path::new(""), None).unwrap();
         assert_eq!(
             script.commands,
             [
@@ -256,14 +339,53 @@ mod tests {
     }
 
     #[test]
+    fn media_commands_drive_the_stage() {
+        let engine = run("show pictures/a.png");
+        let program = engine.stage().program.unwrap();
+        assert_eq!(program.resource.kind, Kind::Image);
+        assert_eq!(
+            program.resource.location,
+            Location::File("/media/pictures/a.png".into())
+        );
+
+        let engine = run("preview clip.mp4\ntake\nplay\nseek 1.5");
+        let timed = *engine.stage().program.unwrap().timed().unwrap();
+        assert_eq!(timed.playback, chorquest_engine::Playback::Playing);
+        assert_eq!(timed.position, Duration::from_millis(1500));
+
+        let engine = run("add a.png\nnext");
+        assert_eq!(engine.stage().program.unwrap().resource.title, "a.png");
+    }
+
+    #[test]
+    fn frame_counts_from_one() {
+        let engine = run("hymn\nframe 3");
+        assert!(
+            on_stage(&engine)
+                .unwrap()
+                .starts_with("Through many dangers")
+        );
+    }
+
+    #[test]
     fn errors_name_the_line() {
-        let err = |source| Script::parse(source, None).unwrap_err().to_string();
+        let err = |source| {
+            Script::parse(source, Path::new("/media"), None)
+                .unwrap_err()
+                .to_string()
+        };
         assert_eq!(err("hymn\njump"), r#"line 2: unknown command "jump""#);
         assert_eq!(
             err("wait soon"),
             r#"line 1: wait needs milliseconds, got "soon""#
         );
         assert_eq!(err("next 3"), "line 1: next takes no argument");
+        assert_eq!(err("show"), "line 1: show needs a path");
+        assert_eq!(
+            err("frame 0"),
+            r#"line 1: frame needs a number from 1, got "0""#
+        );
+        assert_eq!(err("seek -1"), r#"line 1: seek needs seconds, got "-1""#);
         assert_eq!(
             err("text hello"),
             r#"line 1: text needs a quoted string, got "hello""#

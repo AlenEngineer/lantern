@@ -1,0 +1,36 @@
+# Every kind of media the stage renders, and black for what it can't.
+# Fixtures come from scripts/e2e/fixtures.sh.
+show fixtures/image.png
+wait 800
+shot 1-image
+# The preview preloads the player, so the take is instant.
+preview fixtures/video.mp4
+wait 1000
+take
+play
+wait 1000
+shot 2-video-early
+wait 2000
+shot 3-video-later
+seek 5
+wait 2500
+shot 4-video-ended
+# The plan's next step preloads too.
+add fixtures/pages.pdf
+wait 1500
+next
+wait 500
+frame 2
+wait 500
+shot 5-pdf-page2
+show fixtures/missing.mp4
+wait 800
+shot 6-missing
+show fixtures/page.html
+wait 300
+shot 7-web
+show fixtures/video.mp4
+play
+wait 1000
+black
+shot 8-blackout
