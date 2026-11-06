@@ -1,0 +1,12 @@
+name: Linux system libraries
+description: What lantern-app builds and runs with, GStreamer for video and poppler's pdftoppm for PDFs.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+          gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+          poppler-utils

@@ -23,6 +23,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - `lantern-app`: save, open and start plans from the dashboard (Ctrl+S, Ctrl+O, Ctrl+N),
   rename a plan by clicking its name, see unsaved changes, and reopen the last plan at
   startup. Plans live in `~/.local/share/lantern/plans`.
+- Releases: `scripts/release.sh X.Y.Z` versions and tags, and a pushed tag publishes a
+  GitHub release with a Linux build and its changelog notes.
 - `scripts/e2e.sh`: runs the real app on headless Hyprland outputs from a script and
   screenshots both windows. Plans go to a fresh data folder per run, or `E2E_DATA`.
 - `lantern-resource`: `Resource`, `Kind`, `Location`, `Query` and the `Source` extension trait.
@@ -52,6 +54,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Minimum supported Rust version is now 1.99.
+- CI runs on `main` and pull requests: the whole workspace on Linux with GStreamer, and
+  the engine crates on Windows and macOS.
 - `subscribe` returns a `StageFeed`, the snapshot and the receiver taken under one lock.
 - `Showman::take` returns `bool`.
 - Every stage action through the engine is logged when it puts a new scene on program.

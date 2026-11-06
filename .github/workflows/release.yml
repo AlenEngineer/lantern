@@ -1,0 +1,50 @@
+name: Release
+
+# Pushing a tag like v0.2.0 (made by scripts/release.sh) publishes a GitHub
+# release with a Linux build and that version's CHANGELOG section.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the workspace version
+        run: |
+          crate=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "lantern-app") | .version')
+          [[ "v$crate" == "$VERSION" ]] || { echo "tag $VERSION, Cargo.toml $crate" >&2; exit 1; }
+      - uses: ./.github/actions/linux-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p lantern-app
+      - name: Package
+        run: |
+          name=lantern-$VERSION-x86_64-linux
+          mkdir "$name"
+          cp target/release/lantern README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "$name"/
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Release notes from the CHANGELOG
+        run: |
+          awk -v v="${VERSION#v}" '
+            /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
+            on' CHANGELOG.md > notes.md
+          [[ -s notes.md ]] || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" --title "$VERSION" --notes-file notes.md lantern-*.tar.gz*
