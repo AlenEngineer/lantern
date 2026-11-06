@@ -61,7 +61,9 @@ cargo run --release -p chorquest-app
 Two windows open: the **dashboard** for the operator and the fullscreen
 **stage** for the audience. Type in the search box to find files and Bible
 verses, type a reference like `jn 3 16-17`, or paste a YouTube link. The
-dashboard's bottom line lists the keys:
+dashboard's bottom line lists the keys. The e2e scripts drive them through
+the same key table the keyboard uses, but they haven't been tried on a
+physical keyboard yet.
 
 | Key | Does |
 | --- | --- |
