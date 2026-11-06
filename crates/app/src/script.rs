@@ -9,9 +9,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chorquest_engine::{Engine, Kind, Location, Resource, ResourceId, SourceId};
+use chorquest_engine::{
+    Engine, Hit, Kind, Location, Query, Resource, ResourceId, SearchEvent, SourceId,
+};
 use chorquest_source_link::LinkSource;
 
+use crate::library::Library;
 use crate::log;
 use crate::youtube::{Downloads, YoutubeVideo};
 
@@ -88,6 +91,11 @@ pub enum Command {
     Seek(Duration),
     /// `frame N`: go to page or stanza N, counted from 1.
     Frame(usize),
+    /// `search TEXT`: wait for the index, then search it and the live
+    /// sources, logging the hits.
+    Search(String),
+    /// `show-hit N`: show hit N of the last search now, counted from 1.
+    ShowHit(usize),
     /// `shot NAME`: ask the harness to capture both windows.
     Shot(String),
     /// `quit`: stop here.
@@ -154,6 +162,12 @@ impl Command {
                 Ok(n) if n > 0 => Command::Frame(n - 1),
                 _ => return Err(format!("frame needs a number from 1, got {rest:?}")),
             },
+            "search" if !rest.is_empty() => Command::Search(rest.to_string()),
+            "search" => return Err("search needs text".into()),
+            "show-hit" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::ShowHit(n - 1),
+                _ => return Err(format!("show-hit needs a number from 1, got {rest:?}")),
+            },
             "next" => Command::Next,
             "prev" => Command::Prev,
             "black" => Command::Black,
@@ -176,6 +190,8 @@ impl Command {
                 | Command::Add(_)
                 | Command::Seek(_)
                 | Command::Frame(_)
+                | Command::Search(_)
+                | Command::ShowHit(_)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
@@ -212,13 +228,25 @@ impl Script {
 
     /// Runs every command in order, blocking, until the end or `quit`.
     /// Calls `acted` after each one.
-    pub fn run(&self, engine: &Engine, downloads: &Arc<Downloads>, mut acted: impl FnMut()) {
+    pub fn run(
+        &self,
+        engine: &Engine,
+        library: &Library,
+        downloads: &Arc<Downloads>,
+        mut acted: impl FnMut(),
+    ) {
+        let mut hits = Vec::new();
         for command in &self.commands {
             log(format!("script: {command:?}"));
-            if *command == Command::Quit {
-                return;
+            match command {
+                Command::Quit => return,
+                Command::Search(text) => hits = search(engine, library, text),
+                Command::ShowHit(n) => match hits.get(*n) {
+                    Some(hit) => engine.show_now(hit.resource.clone()),
+                    None => log(format!("script: show-hit: only {} hits", hits.len())),
+                },
+                _ => self.perform(command, engine, downloads),
             }
-            self.perform(command, engine, downloads);
             acted();
         }
     }
@@ -257,7 +285,7 @@ impl Script {
             }
             Command::Clear => engine.clear(),
             Command::Shot(name) => self.shoot(name),
-            Command::Quit => {}
+            Command::Quit | Command::Search(_) | Command::ShowHit(_) => {}
         }
     }
 
@@ -274,6 +302,28 @@ impl Script {
             Err(err) => log(format!("script: shot {name}: {}: {err}", shooter.display())),
         }
     }
+}
+
+fn search(engine: &Engine, library: &Library, text: &str) -> Vec<Hit> {
+    if !library.settle(Duration::from_secs(60)) {
+        log("script: search: indexing still running after 60s");
+    }
+    let mut hits = Vec::new();
+    for event in engine.search(Query::new(text)) {
+        match event {
+            SearchEvent::Hits { hits: batch, .. } => hits.extend(batch),
+            SearchEvent::Failed { source, error } => {
+                log(format!("script: search: {source} failed: {error}"));
+            }
+        }
+    }
+    let titles: Vec<&str> = hits.iter().map(|h| h.resource.title.as_str()).collect();
+    log(format!(
+        "script: search {text:?} -> {} hits: {}",
+        hits.len(),
+        titles.join(", ")
+    ));
+    hits
 }
 
 const HYMN: &str = "\
@@ -328,13 +378,19 @@ fn inline(key: &str, title: &str, body: &str) -> Resource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
 
-    fn run(source: &str) -> Engine {
-        let engine = Engine::new();
+    fn run(source: &str) -> Arc<Engine> {
+        run_with(Config::default(), source)
+    }
+
+    fn run_with(config: Config, source: &str) -> Arc<Engine> {
+        let engine = Arc::new(Engine::new());
+        let library = Library::start(engine.clone(), config);
         let downloads = Downloads::new("/nonexistent".into());
         Script::parse(source, Path::new("/media"), None)
             .unwrap()
-            .run(&engine, &downloads, || {});
+            .run(&engine, &library, &downloads, || {});
         engine
     }
 
@@ -424,6 +480,20 @@ mod tests {
     }
 
     #[test]
+    fn search_then_show_hit_puts_a_bible_passage_on_stage() {
+        let bible = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../sources/bible/fixtures/sample.tsv"
+        );
+        let config = format!("[[bibles]]\nlang = \"es\"\npath = \"{bible}\"");
+        let config = Config::parse(&config, Path::new("/"), None).unwrap();
+        let engine = run_with(config, "search juan 3:16-17\nshow-hit 1");
+        let program = engine.stage().program.unwrap();
+        assert_eq!(program.resource.title, "Juan 3:16-17");
+        assert!(program.text().unwrap().starts_with("Porque de tal manera"));
+    }
+
+    #[test]
     fn frame_counts_from_one() {
         let engine = run("hymn\nframe 3");
         assert!(
@@ -446,6 +516,11 @@ mod tests {
             r#"line 1: wait needs milliseconds, got "soon""#
         );
         assert_eq!(err("next 3"), "line 1: next takes no argument");
+        assert_eq!(err("search"), "line 1: search needs text");
+        assert_eq!(
+            err("show-hit x"),
+            r#"line 1: show-hit needs a number from 1, got "x""#
+        );
         assert_eq!(err("show"), "line 1: show needs a path or link");
         assert_eq!(err("show https://"), r#"line 1: not a link: "https://""#);
         assert_eq!(

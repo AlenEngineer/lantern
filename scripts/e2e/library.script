@@ -1,0 +1,13 @@
+# Sources from scripts/e2e/config.toml: the fixtures folder and the sample
+# Bible. `search` waits for the background index first.
+search juan 3:16-17
+show-hit 1
+wait 500
+shot 1-bible-verse16
+frame 2
+wait 300
+shot 2-bible-verse17
+search image
+show-hit 1
+wait 800
+shot 3-indexed-image

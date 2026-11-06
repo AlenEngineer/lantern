@@ -561,13 +561,17 @@ name = "chorquest-app"
 version = "0.1.0"
 dependencies = [
  "chorquest-engine",
+ "chorquest-source-bible",
  "chorquest-source-link",
+ "chorquest-source-local",
  "gstreamer",
  "gstreamer-app",
  "iced",
  "iced_video_player",
  "image",
+ "serde",
  "tempfile",
+ "toml",
  "url",
 ]
 

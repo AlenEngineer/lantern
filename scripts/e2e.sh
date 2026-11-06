@@ -6,7 +6,8 @@
 # Each window gets its own headless Hyprland output, so the fullscreen stage
 # can't hide the dashboard and a locked or sleeping laptop screen doesn't
 # matter. Writes <outdir>/NAME-stage.png, <outdir>/NAME-dashboard.png and
-# <outdir>/app.log.
+# <outdir>/app.log. The app reads scripts/e2e/config.toml unless
+# CHORQUEST_CONFIG names another config.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -38,7 +39,8 @@ cleanup
 hyprctl output create headless "$E2E_STAGE_OUTPUT" >/dev/null
 hyprctl output create headless "$E2E_DASHBOARD_OUTPUT" >/dev/null
 
-CHORQUEST_SCRIPT=$script CHORQUEST_SHOT="$repo/scripts/e2e/shot.sh" \
+CHORQUEST_CONFIG=${CHORQUEST_CONFIG:-$repo/scripts/e2e/config.toml} \
+    CHORQUEST_SCRIPT=$script CHORQUEST_SHOT="$repo/scripts/e2e/shot.sh" \
     timeout 600 "$repo/target/debug/chorquest" 2>"$out/app.log" &
 app=$!
 status=0

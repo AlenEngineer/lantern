@@ -1,10 +1,15 @@
 //! The chorquest desktop app: an operator dashboard and a fullscreen stage
 //! window for the projector, both following one [`Engine`].
 //!
+//! It reads its media folders and Bibles from a config file (see
+//! [`config::load`]) and indexes them in the background.
+//!
 //! Set `CHORQUEST_SCRIPT=<file>` to drive the engine from a script and exit
 //! after its last line (see [`script`]). `CHORQUEST_SHOT=<program>` is run
 //! for each `shot NAME` in it.
 
+mod config;
+mod library;
 mod script;
 mod stage;
 mod youtube;
@@ -24,6 +29,7 @@ use iced::widget::{Space, column, container, image, stack, text};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
 
+use crate::library::Library;
 use crate::script::Script;
 use crate::stage::{Content, Loaded, Stage};
 use crate::youtube::{Downloads, YoutubeVideo};
@@ -42,10 +48,22 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let (config, config_status) = config::load(|key| std::env::var(key).ok());
+    log(config_status.to_string());
+    let config_status = Arc::new(config_status.to_string());
     let engine = Shared(Arc::new(Engine::new()));
+    let library = Shared(Library::start(engine.0.clone(), config));
     let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
     let result = iced::daemon(
-        move || App::boot(engine.clone(), downloads.clone(), script.clone()),
+        move || {
+            App::boot(
+                engine.clone(),
+                library.clone(),
+                config_status.clone(),
+                downloads.clone(),
+                script.clone(),
+            )
+        },
         App::update,
         App::view,
     )
@@ -107,8 +125,8 @@ enum Message {
     Ended(SceneId),
     /// Time to report the playing video's position.
     Tick,
-    /// Time to redraw download progress.
-    Downloading,
+    /// Time to redraw download or indexing progress.
+    Progress,
     /// The script performed a command. The plan may have changed, which the
     /// stage feed doesn't announce.
     Acted,
@@ -118,6 +136,9 @@ enum Message {
 
 struct App {
     engine: Shared<Engine>,
+    library: Shared<Library>,
+    /// Which config file was read, or why none was.
+    config_status: Arc<String>,
     downloads: Shared<Downloads>,
     script: Option<Script>,
     stage_window: window::Id,
@@ -129,6 +150,8 @@ struct App {
 impl App {
     fn boot(
         engine: Shared<Engine>,
+        library: Shared<Library>,
+        config_status: Arc<String>,
         downloads: Shared<Downloads>,
         script: Option<Script>,
     ) -> (App, Task<Message>) {
@@ -146,6 +169,8 @@ impl App {
         let app = App {
             media: Stage::new(downloads.0.clone()),
             engine,
+            library,
+            config_status,
             downloads,
             script,
             stage_window,
@@ -181,7 +206,7 @@ impl App {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
             }
-            Message::Downloading => {}
+            Message::Progress => {}
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
@@ -327,8 +352,16 @@ impl App {
                 .size(20)
                 .into()
         });
+        let index = self
+            .library
+            .0
+            .lines()
+            .into_iter()
+            .map(|line| text(line).size(16).into());
         column![
             text("chorquest").size(32),
+            text(self.config_status.as_str()).size(16),
+            column(index),
             text(program).size(20),
             text(preview).size(20),
             text(blackout).size(20),
@@ -363,13 +396,18 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
         }
-        if self.downloads.0.busy() {
+        if self.downloads.0.busy() || self.library.0.indexing() {
             subscriptions
-                .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Downloading));
+                .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
         }
         if let Some(script) = &self.script {
             subscriptions.push(Subscription::run_with(
-                (self.engine.clone(), self.downloads.clone(), script.clone()),
+                (
+                    self.engine.clone(),
+                    self.library.clone(),
+                    self.downloads.clone(),
+                    script.clone(),
+                ),
                 run_script,
             ));
         }
@@ -448,15 +486,21 @@ fn stage_feed(engine: &Shared<Engine>) -> impl Stream<Item = Message> + use<> {
 /// Runs the script on its own thread, since its commands block (`wait`,
 /// `shot`). Reports each command and the end.
 fn run_script(
-    (engine, downloads, script): &(Shared<Engine>, Shared<Downloads>, Script),
+    (engine, library, downloads, script): &(
+        Shared<Engine>,
+        Shared<Library>,
+        Shared<Downloads>,
+        Script,
+    ),
 ) -> impl Stream<Item = Message> + use<> {
     let engine = engine.0.clone();
+    let library = library.0.clone();
     let downloads = downloads.0.clone();
     let script = script.clone();
     iced::stream::channel(64, async move |mut out| {
         let (acted, mut received) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || {
-            script.run(&engine, &downloads, || {
+            script.run(&engine, &library, &downloads, || {
                 let _ = acted.unbounded_send(Message::Acted);
             });
             let _ = acted.unbounded_send(Message::ScriptDone);
