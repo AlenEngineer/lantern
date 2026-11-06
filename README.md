@@ -50,9 +50,11 @@ The full design is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Run the app
 
-Requires Rust 1.99 or newer, GStreamer with its base and good plugins (and
-`gst-libav` for H.264), `pdftoppm` (poppler) for PDFs, and `yt-dlp` for
-YouTube links.
+Linux builds are attached to each
+[release](https://github.com/AlenEngineer/lantern/releases). Building from
+source needs Rust 1.99 or newer. Either way, the app needs GStreamer with
+its base and good plugins (and `gst-libav` for H.264), `pdftoppm` (poppler)
+for PDFs, and `yt-dlp` for YouTube links.
 
 ```sh
 cargo run --release -p lantern-app
