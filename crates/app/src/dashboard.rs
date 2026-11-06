@@ -714,7 +714,11 @@ fn download_tag(download: &Download) -> Element<'static, Message> {
 
 fn plan_entry(entry: &Entry, when: String) -> Element<'_, Message> {
     let (title, detail, color) = match &entry.summary {
-        Ok((title, steps)) => (title.clone(), format!("{steps} steps · {when}"), TEXT),
+        Ok((title, steps)) => (
+            title.clone(),
+            format!("{} · {when}", count(*steps, "step")),
+            TEXT,
+        ),
         Err(why) => (file_name(&entry.path), format!("can't read: {why}"), RED),
     };
     let line = row![
@@ -758,6 +762,14 @@ fn confirm<'a>(plan: &Plan, switch: &Switch) -> Element<'a, Message> {
     .spacing(10)
     .padding(8)
     .into()
+}
+
+/// "1 step", "3 steps".
+fn count(n: usize, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
 }
 
 /// How long ago, roughly: "just now", "5 min ago", "3 h ago", "2 days ago".

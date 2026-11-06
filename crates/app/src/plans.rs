@@ -138,6 +138,12 @@ pub enum Notice {
     Failed(String),
 }
 
+impl Notice {
+    fn couldnt(verb: &str, path: &Path, err: impl std::fmt::Display) -> Notice {
+        Notice::Failed(format!("Couldn't {verb} {}: {err}", path.display()))
+    }
+}
+
 /// The open plan's file. The engine holds the plan itself.
 pub struct Plans {
     store: Store,
@@ -184,10 +190,7 @@ impl Plans {
             .clone()
             .unwrap_or_else(|| self.store.free_path(&plan.title));
         if let Err(err) = self.store.write(&path, &plan) {
-            self.notice = Some(Notice::Failed(format!(
-                "Couldn't save {}: {err}",
-                path.display()
-            )));
+            self.notice = Some(Notice::couldnt("save", &path, err));
             return false;
         }
         self.notice = Some(self.remembered(&path, format!("Saved {}", file_name(&path))));
@@ -204,12 +207,7 @@ impl Plans {
         }
         match self.store.list() {
             Ok(entries) => self.mode = Mode::Browsing(entries),
-            Err(err) => {
-                self.notice = Some(Notice::Failed(format!(
-                    "Couldn't list {}: {err}",
-                    self.store.dir.display()
-                )));
-            }
+            Err(err) => self.notice = Some(Notice::couldnt("list", &self.store.dir, err)),
         }
     }
 
@@ -291,10 +289,7 @@ impl Plans {
                     (Some(path), plan, Some(notice))
                 }
                 Err(err) => {
-                    self.notice = Some(Notice::Failed(format!(
-                        "Couldn't open {}: {err}",
-                        path.display()
-                    )));
+                    self.notice = Some(Notice::couldnt("open", &path, err));
                     return false;
                 }
             },
