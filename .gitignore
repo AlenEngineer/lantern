@@ -1,1 +1,7 @@
 /target/
+
+# Copyrighted texts (hymnals, Bible translations) must never be committed.
+/hymnal/
+/bibles/
+RVR1960*.json
+*.zip
