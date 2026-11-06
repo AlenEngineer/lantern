@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use chorquest_resource::Resource;
+use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::{Action, Plan, Step, StepId};
@@ -153,7 +153,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use chorquest_resource::{Kind, Location, ResourceId, SourceId};
+    use lantern_resource::{Kind, Location, ResourceId, SourceId};
 
     use super::*;
 

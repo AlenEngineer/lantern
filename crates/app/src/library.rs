@@ -4,10 +4,10 @@
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use chorquest_engine::{Engine, SourceId};
-use chorquest_source_bible::{Bible, BibleSource, Translation};
-use chorquest_source_link::LinkSource;
-use chorquest_source_local::{Folder, LocalSource};
+use lantern_engine::{Engine, SourceId};
+use lantern_source_bible::{Bible, BibleSource, Translation};
+use lantern_source_link::LinkSource;
+use lantern_source_local::{Folder, LocalSource};
 
 use crate::config::{BibleEntry, Config};
 use crate::log;
@@ -162,7 +162,7 @@ fn summary(reports: Option<&[Indexed]>) -> Vec<String> {
 mod tests {
     use std::path::Path;
 
-    use chorquest_engine::{Query, SearchEvent};
+    use lantern_engine::{Query, SearchEvent};
 
     use super::*;
     use crate::config::Config;

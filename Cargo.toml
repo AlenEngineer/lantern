@@ -11,14 +11,14 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates
-chorquest-resource = { path = "crates/resource" }
-chorquest-searcher = { path = "crates/searcher" }
-chorquest-orchestrator = { path = "crates/orchestrator" }
-chorquest-showman = { path = "crates/showman" }
-chorquest-engine = { path = "crates/engine" }
-chorquest-source-local = { path = "sources/local" }
-chorquest-source-link = { path = "sources/link" }
-chorquest-source-bible = { path = "sources/bible" }
+lantern-resource = { path = "crates/resource" }
+lantern-searcher = { path = "crates/searcher" }
+lantern-orchestrator = { path = "crates/orchestrator" }
+lantern-showman = { path = "crates/showman" }
+lantern-engine = { path = "crates/engine" }
+lantern-source-local = { path = "sources/local" }
+lantern-source-link = { path = "sources/link" }
+lantern-source-bible = { path = "sources/bible" }
 
 # External crates. Keep this list short: every entry is something to audit.
 iced = { version = "0.14", features = ["image", "advanced", "wgpu", "tokio"] }

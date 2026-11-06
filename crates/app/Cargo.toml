@@ -1,6 +1,6 @@
 [package]
-name = "chorquest-app"
-description = "The chorquest desktop app: an operator dashboard and a fullscreen stage window."
+name = "lantern-app"
+description = "The lantern desktop app: an operator dashboard and a fullscreen stage window."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,14 +8,14 @@ license.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "chorquest"
+name = "lantern"
 path = "src/main.rs"
 
 [dependencies]
-chorquest-engine.workspace = true
-chorquest-source-link.workspace = true
-chorquest-source-local.workspace = true
-chorquest-source-bible.workspace = true
+lantern-engine.workspace = true
+lantern-source-link.workspace = true
+lantern-source-local.workspace = true
+lantern-source-bible.workspace = true
 iced.workspace = true
 iced_video_player.workspace = true
 gstreamer.workspace = true

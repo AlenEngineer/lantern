@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains how chorquest is put together and why. Read it before
+This document explains how lantern is put together and why. Read it before
 making structural changes. Update it when you make one.
 
 ## Goals and non-goals
@@ -287,8 +287,8 @@ These are short ADRs. Add new ones at the end.
 
 ## Writing a new source
 
-1. Create `sources/<name>/` with a crate named `chorquest-source-<name>`
-   that depends only on `chorquest-resource` (plus whatever it needs).
+1. Create `sources/<name>/` with a crate named `lantern-source-<name>`
+   that depends only on `lantern-resource` (plus whatever it needs).
 2. Implement `Source`. Pick `Capabilities::INDEXED`, `LIVE`, or both.
 3. Build ids with `ResourceId::new(self.id(), key)` and a stable key.
 4. Choose the `Kind` by *how it should be presented*. Put source-specific

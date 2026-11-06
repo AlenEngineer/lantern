@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chorquest_resource::{
+use lantern_resource::{
     Capabilities, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
 };
 

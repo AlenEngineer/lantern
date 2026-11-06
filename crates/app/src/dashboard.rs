@@ -3,12 +3,12 @@
 
 use std::time::Duration;
 
-use chorquest_engine::{Action, Media, Playback, Resource, Scene, Step, Timed};
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
     Space, button, column, container, image, row, scrollable, slider, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Font, Length, Theme, event, font};
+use lantern_engine::{Action, Media, Playback, Resource, Scene, Step, Timed};
 
 use crate::search::{Group, Live, supported};
 use crate::stage::Content;
@@ -110,7 +110,7 @@ pub fn key_event(
 
 pub fn theme() -> Theme {
     Theme::custom(
-        "chorquest",
+        "lantern",
         iced::theme::Palette {
             background: BG,
             text: TEXT,

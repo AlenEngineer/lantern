@@ -1,4 +1,4 @@
-# chorquest
+# lantern
 
 A native, offline-first presentation engine for live events: worship services,
 conferences, classes, anything with a projector and someone running it.
@@ -14,7 +14,7 @@ Whoever runs the screen at a live event works in two modes, often in the same ho
 - **Live.** "The pastor just asked for Psalm 23, find it *now*."
 
 The usual tools each cover one part. One app presents the hymnal, another plays
-YouTube, a file manager finds the video, a PDF viewer shows the slides. chorquest
+YouTube, a file manager finds the video, a PDF viewer shows the slides. lantern
 puts all of that in one place:
 
 - **One search box for everything.** Local folders are indexed in memory, so
@@ -39,7 +39,7 @@ crates/
   orchestrator/  plans (steps, live slots) and the running session
   showman/       stage state: program/preview, frames, playback, blackout
   engine/        facade that wires everything together; what a UI embeds
-  app/           the desktop app: operator dashboard + stage window (binary `chorquest`)
+  app/           the desktop app: operator dashboard + stage window (binary `lantern`)
 sources/
   local/         local folders (music, videos, images, presentations, documents)
   link/          pasted links: YouTube, direct files, web pages
@@ -55,7 +55,7 @@ Requires Rust 1.99 or newer, GStreamer with its base and good plugins (and
 YouTube links.
 
 ```sh
-cargo run --release -p chorquest-app
+cargo run --release -p lantern-app
 ```
 
 Two windows open: the **dashboard** for the operator and the fullscreen
@@ -76,14 +76,14 @@ physical keyboard yet.
 | Esc, / | leave / return to the search box |
 
 YouTube videos download ahead of time (720p H.264) into
-`~/.cache/chorquest/youtube` as soon as they enter the plan or the preview,
+`~/.cache/lantern/youtube` as soon as they enter the plan or the preview,
 so playback never depends on the network. The dashboard shows each video's
 download state.
 
 ### Configuration
 
-The app reads `~/.config/chorquest/config.toml`, or the file named by
-`CHORQUEST_CONFIG`. Relative paths are relative to the config file, and `~`
+The app reads `~/.config/lantern/config.toml`, or the file named by
+`LANTERN_CONFIG`. Relative paths are relative to the config file, and `~`
 works. Unknown keys are errors, so typos show up on the dashboard.
 
 ```toml
@@ -105,13 +105,13 @@ shows the item count, or the error for a source that failed to load.
 
 ### Putting the stage on the projector
 
-The stage window has the app id `chorquest-stage`, and the dashboard
-`chorquest-dashboard`. The app can't pick a monitor itself, so ask the
+The stage window has the app id `lantern-stage`, and the dashboard
+`lantern-dashboard`. The app can't pick a monitor itself, so ask the
 compositor. On Hyprland (0.57, Lua config), move the stage to the
 projector's workspace once it is open:
 
 ```sh
-hyprctl dispatch 'hl.dsp.window.move({ workspace = N, window = "class:chorquest-stage" })'
+hyprctl dispatch 'hl.dsp.window.move({ workspace = N, window = "class:lantern-stage" })'
 ```
 
 The e2e harness uses this command. It has not been tried with a real
@@ -127,7 +127,7 @@ screenshot of both windows at every `shot`. `basic`, `media`, `library`,
 PDFs, Bible passages, the dashboard and YouTube.
 
 ```sh
-scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/chorquest/e2e/dashboard
+scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/lantern/e2e/dashboard
 ```
 
 ## Try the engine alone
@@ -149,15 +149,15 @@ No translation text is bundled, because most modern translations are
 copyrighted. Use a file you're allowed to use: Reina-Valera 1909 and the King
 James Version are public domain. The source reads a JSON layout (an array of
 66 books, each with `chapters`) and a simple TSV (`book⇥chapter⇥verse⇥text`).
-See the `chorquest-source-bible` crate docs. `sources/bible/fixtures/sample.tsv`
+See the `lantern-source-bible` crate docs. `sources/bible/fixtures/sample.tsv`
 has a handful of verses to play with.
 
 ## Using the engine
 
 ```rust
 use std::sync::Arc;
-use chorquest_engine::{Engine, Query, SourceId};
-use chorquest_source_local::{Folder, LocalSource};
+use lantern_engine::{Engine, Query, SourceId};
+use lantern_source_local::{Folder, LocalSource};
 
 let engine = Arc::new(Engine::new());
 engine.add_source(

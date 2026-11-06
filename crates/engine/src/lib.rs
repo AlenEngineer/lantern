@@ -1,4 +1,4 @@
-//! The chorquest engine.
+//! The lantern engine.
 //!
 //! One [`Engine`] owns the [`Searcher`] (sources and index), the
 //! [`Session`] (the plan being run) and the stage, and keeps them
@@ -12,7 +12,7 @@
 //! worker threads.
 //!
 //! ```
-//! use chorquest_engine::{Engine, Moved, Plan};
+//! use lantern_engine::{Engine, Moved, Plan};
 //!
 //! let engine = Engine::new();
 //! engine.load_plan(Plan::new("Sunday service"));
@@ -25,15 +25,15 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-pub use chorquest_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
-pub use chorquest_resource::{
+pub use lantern_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
+pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
 };
-pub use chorquest_searcher::{
+pub use lantern_searcher::{
     Origin, Polled, ReindexReport, SearchError, SearchEvent, SearchStream, Searcher,
 };
-use chorquest_showman::Showman;
-pub use chorquest_showman::{
+use lantern_showman::Showman;
+pub use lantern_showman::{
     Media, MediaReport, Playback, Scene, SceneId, StageEvent, StageFeed, StageState, Timed,
 };
 

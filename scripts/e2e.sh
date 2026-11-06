@@ -7,7 +7,7 @@
 # can't hide the dashboard and a locked or sleeping laptop screen doesn't
 # matter. Writes <outdir>/NAME-stage.png, <outdir>/NAME-dashboard.png and
 # <outdir>/app.log. The app reads scripts/e2e/config.toml unless
-# CHORQUEST_CONFIG names another config.
+# LANTERN_CONFIG names another config.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -23,7 +23,7 @@ if (( available_mb < 3072 )); then
     echo "only ${available_mb} MB of memory available, need 3 GB to build" >&2
     exit 1
 fi
-cargo build --manifest-path "$repo/Cargo.toml" -p chorquest-app -j 4
+cargo build --manifest-path "$repo/Cargo.toml" -p lantern-app -j 4
 
 rm -f "$out"/*.png "$out/app.log" "$out/windows.log"
 
@@ -41,9 +41,9 @@ hyprctl output create headless "$E2E_DASHBOARD_OUTPUT" >/dev/null
 # The dashboard gets a laptop-sized 1280x720 logical screen.
 hyprctl eval "hl.monitor({ output = \"$E2E_DASHBOARD_OUTPUT\", mode = \"1920x1080\", position = \"auto\", scale = 1.5 })" >/dev/null
 
-CHORQUEST_CONFIG=${CHORQUEST_CONFIG:-$repo/scripts/e2e/config.toml} \
-    CHORQUEST_SCRIPT=$script CHORQUEST_SHOT="$repo/scripts/e2e/shot.sh" \
-    timeout 600 "$repo/target/debug/chorquest" 2>"$out/app.log" &
+LANTERN_CONFIG=${LANTERN_CONFIG:-$repo/scripts/e2e/config.toml} \
+    LANTERN_SCRIPT=$script LANTERN_SHOT="$repo/scripts/e2e/shot.sh" \
+    timeout 600 "$repo/target/debug/lantern" 2>"$out/app.log" &
 app=$!
 status=0
 wait "$app" || status=$?

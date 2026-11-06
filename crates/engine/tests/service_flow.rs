@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use chorquest_engine::{
+use lantern_engine::{
     Action, Capabilities, Engine, Kind, Location, MediaReport, Moved, Plan, Playback, Query,
     Resource, ResourceId, Source, SourceError, SourceId, StageEvent, StageFeed,
 };

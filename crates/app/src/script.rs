@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chorquest_engine::{
+use lantern_engine::{
     Engine, Hit, Kind, Location, Query, Resource, ResourceId, SearchEvent, SourceId,
 };
-use chorquest_source_link::LinkSource;
+use lantern_source_link::LinkSource;
 
 use crate::dashboard::{self, Op};
 use crate::library::Library;
@@ -338,7 +338,7 @@ impl Script {
     fn shoot(&self, name: &str) {
         let Some(shooter) = &self.shooter else {
             log(format!(
-                "script: shot {name} skipped, CHORQUEST_SHOT is unset"
+                "script: shot {name} skipped, LANTERN_SHOT is unset"
             ));
             return;
         };
@@ -521,7 +521,7 @@ mod tests {
 
         let engine = run("preview clip.mp4\ntake\nplay\nseek 1.5");
         let timed = *engine.stage().program.unwrap().timed().unwrap();
-        assert_eq!(timed.playback, chorquest_engine::Playback::Playing);
+        assert_eq!(timed.playback, lantern_engine::Playback::Playing);
         assert_eq!(timed.position, Duration::from_millis(1500));
 
         let engine = run("add a.png\nnext");

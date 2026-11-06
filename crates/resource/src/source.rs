@@ -27,7 +27,7 @@ impl Capabilities {
     };
 }
 
-/// A place resources come from. This is chorquest's extension point.
+/// A place resources come from. This is lantern's extension point.
 ///
 /// Implementations must be cheap to share between threads: the engine calls
 /// them from worker threads, possibly concurrently. Methods are blocking;

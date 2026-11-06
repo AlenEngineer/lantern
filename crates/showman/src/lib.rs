@@ -1,6 +1,6 @@
 //! The stage: what the audience sees.
 //!
-//! chorquest runs in two windows. The *dashboard* is for the operator and
+//! lantern runs in two windows. The *dashboard* is for the operator and
 //! can show anything. The *stage* window is what goes to the projector, and
 //! it must only ever show what the operator decided to put there. This crate
 //! models that second window, without drawing anything:

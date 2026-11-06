@@ -1,4 +1,4 @@
-# A YouTube link, downloaded with yt-dlp into ~/.cache/chorquest/youtube and
+# A YouTube link, downloaded with yt-dlp into ~/.cache/lantern/youtube and
 # played from there. Needs the network unless the video is cached. With an
 # empty cache the take comes before the download, so the stage stays black
 # until the file arrives and then plays.

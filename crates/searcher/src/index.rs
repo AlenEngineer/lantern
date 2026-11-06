@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Bound;
 use std::sync::Arc;
 
-use chorquest_resource::{Hit, Location, Query, Resource, ResourceId, SourceId};
+use lantern_resource::{Hit, Location, Query, Resource, ResourceId, SourceId};
 
 use crate::normalize::tokens;
 
@@ -329,7 +329,7 @@ fn within_one_edit(a: &str, b: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use chorquest_resource::Kind;
+    use lantern_resource::Kind;
 
     use super::*;
 

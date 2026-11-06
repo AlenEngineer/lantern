@@ -1,6 +1,6 @@
 [package]
-name = "chorquest-resource"
-description = "Shared vocabulary of chorquest: resources, kinds, locations and the Source trait."
+name = "lantern-resource"
+description = "Shared vocabulary of lantern: resources, kinds, locations and the Source trait."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

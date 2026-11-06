@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use chorquest_engine::{Location, Resource};
+use lantern_engine::{Location, Resource};
 
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
@@ -281,7 +281,7 @@ impl Progress {
 
 #[cfg(test)]
 mod tests {
-    use chorquest_engine::{Kind, ResourceId, SourceId};
+    use lantern_engine::{Kind, ResourceId, SourceId};
 
     use super::*;
 

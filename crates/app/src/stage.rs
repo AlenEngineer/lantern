@@ -20,13 +20,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chorquest_engine::{
-    Engine, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId, StageState, Timed,
-};
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use iced::widget::image::Handle;
 use iced_video_player::Video;
+use lantern_engine::{
+    Engine, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId, StageState, Timed,
+};
 
 use crate::youtube::{Downloads, YoutubeVideo};
 
@@ -429,12 +429,12 @@ pub fn cache_dir() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
-        .join("chorquest")
+        .join("lantern")
 }
 
 #[cfg(test)]
 mod tests {
-    use chorquest_engine::SourceId;
+    use lantern_engine::SourceId;
 
     use super::*;
 

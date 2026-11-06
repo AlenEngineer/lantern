@@ -1,6 +1,6 @@
 [package]
-name = "chorquest-source-local"
-description = "chorquest source for local folders: music, videos, images, presentations..."
+name = "lantern-source-local"
+description = "lantern source for local folders: music, videos, images, presentations..."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-chorquest-resource.workspace = true
+lantern-resource.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]

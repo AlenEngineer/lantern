@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chorquest_resource::{Kind, Location, Resource};
+use lantern_resource::{Kind, Location, Resource};
 use serde::{Deserialize, Serialize};
 
 /// Names one scene for its whole life.

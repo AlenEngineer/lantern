@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use chorquest_engine::{Engine, Hit, Kind, Origin, Query, Resource, ResourceId, SearchEvent};
+use lantern_engine::{Engine, Hit, Kind, Origin, Query, Resource, ResourceId, SearchEvent};
 
 /// Results from one source, under its display name.
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +85,7 @@ impl Search {
         &mut self,
         edit: u64,
         engine: &Engine,
-    ) -> Option<chorquest_engine::SearchStream> {
+    ) -> Option<lantern_engine::SearchStream> {
         if self.live != Live::Waiting(edit) {
             return None;
         }

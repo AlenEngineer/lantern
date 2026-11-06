@@ -6,7 +6,7 @@
 //! ```
 //!
 //! `--bible LANG:FILE` loads a translation (`.json` or `.tsv`, see the
-//! `chorquest-source-bible` docs); `LANG` is `es` or `en` and sets the book names.
+//! `lantern-source-bible` docs); `LANG` is `es` or `en` and sets the book names.
 //!
 //! A background thread plays the part of the stage window and prints every
 //! `[stage]` event; the prompt is the dashboard. `:frames N` and `:end` send
@@ -19,12 +19,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use chorquest_engine::{
+use lantern_engine::{
     Action, Engine, Hit, MediaReport, Origin, Query, SearchEvent, SourceId, StageEvent,
 };
-use chorquest_source_bible::{Bible, BibleSource, Language, Translation};
-use chorquest_source_link::LinkSource;
-use chorquest_source_local::{Folder, LocalSource};
+use lantern_source_bible::{Bible, BibleSource, Language, Translation};
+use lantern_source_link::LinkSource;
+use lantern_source_local::{Folder, LocalSource};
 
 const HELP: &str = "\
   <text>        search (index + pasted links + Bible references like `jn 3:16-17`)

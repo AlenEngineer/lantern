@@ -3,7 +3,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 
-use chorquest_resource::{Hit, Query, Resource, Source, SourceError, SourceId};
+use lantern_resource::{Hit, Query, Resource, Source, SourceError, SourceId};
 
 use crate::Index;
 
@@ -293,7 +293,7 @@ fn write<T: ?Sized>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
 mod tests {
     use std::sync::Mutex;
 
-    use chorquest_resource::{Capabilities, Kind, Location, ResourceId};
+    use lantern_resource::{Capabilities, Kind, Location, ResourceId};
 
     use super::*;
 

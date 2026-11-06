@@ -1,6 +1,6 @@
 [package]
-name = "chorquest-engine"
-description = "The chorquest engine: sources, search, plans and stage behind one thread-safe API."
+name = "lantern-engine"
+description = "The lantern engine: sources, search, plans and stage behind one thread-safe API."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,17 +8,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-chorquest-resource.workspace = true
-chorquest-searcher.workspace = true
-chorquest-orchestrator.workspace = true
-chorquest-showman.workspace = true
+lantern-resource.workspace = true
+lantern-searcher.workspace = true
+lantern-orchestrator.workspace = true
+lantern-showman.workspace = true
 thiserror.workspace = true
 
 # The engine never depends on concrete sources; only the demo does.
 [dev-dependencies]
-chorquest-source-local.workspace = true
-chorquest-source-link.workspace = true
-chorquest-source-bible.workspace = true
+lantern-source-local.workspace = true
+lantern-source-link.workspace = true
+lantern-source-bible.workspace = true
 
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-//! The Bible as a chorquest [`Source`](chorquest_resource::Source).
+//! The Bible as a lantern [`Source`](lantern_resource::Source).
 //!
 //! A [`BibleSource`] serves one offline [`Bible`] translation in two ways:
 //!

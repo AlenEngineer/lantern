@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
-use chorquest_resource::{Query, Resource};
+use lantern_resource::{Query, Resource};
 use serde::{Deserialize, Serialize};
 
 /// Errors loading or saving a plan.
@@ -195,7 +195,7 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use chorquest_resource::{Kind, Location, ResourceId, SourceId};
+    use lantern_resource::{Kind, Location, ResourceId, SourceId};
 
     use super::*;
 

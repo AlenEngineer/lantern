@@ -18,7 +18,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use chorquest_source_bible::Language;
+use lantern_source_bible::Language;
 use serde::Deserialize;
 
 /// What the app indexes, with every path absolute or as written.
@@ -122,12 +122,12 @@ impl fmt::Display for Status {
     }
 }
 
-/// Reads `$CHORQUEST_CONFIG`, else `$XDG_CONFIG_HOME/chorquest/config.toml`,
-/// else `~/.config/chorquest/config.toml`. Never fails: a broken file
+/// Reads `$LANTERN_CONFIG`, else `$XDG_CONFIG_HOME/lantern/config.toml`,
+/// else `~/.config/lantern/config.toml`. Never fails: a broken file
 /// yields the default config and a [`Status::Failed`].
 pub fn load(env: impl Fn(&str) -> Option<String>) -> (Config, Status) {
     let home = env("HOME").map(PathBuf::from);
-    let named = env("CHORQUEST_CONFIG").map(PathBuf::from);
+    let named = env("LANTERN_CONFIG").map(PathBuf::from);
     let path = match &named {
         Some(path) => path.clone(),
         None => match (env("XDG_CONFIG_HOME"), &home) {
@@ -135,7 +135,7 @@ pub fn load(env: impl Fn(&str) -> Option<String>) -> (Config, Status) {
             (_, Some(home)) => home.join(".config"),
             (_, None) => PathBuf::from(".config"),
         }
-        .join("chorquest/config.toml"),
+        .join("lantern/config.toml"),
     };
     let source = match std::fs::read_to_string(&path) {
         Ok(source) => source,
@@ -234,16 +234,16 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(
             status,
-            Status::Missing(Path::new(home).join(".config/chorquest/config.toml"))
+            Status::Missing(Path::new(home).join(".config/lantern/config.toml"))
         );
 
         let (_, status) = load_with(&[("HOME", home), ("XDG_CONFIG_HOME", "/nowhere")]);
         assert_eq!(
             status,
-            Status::Missing("/nowhere/chorquest/config.toml".into())
+            Status::Missing("/nowhere/lantern/config.toml".into())
         );
 
-        let (config, status) = load_with(&[("CHORQUEST_CONFIG", "/nowhere/cq.toml")]);
+        let (config, status) = load_with(&[("LANTERN_CONFIG", "/nowhere/cq.toml")]);
         assert_eq!(config, Config::default());
         assert!(matches!(status, Status::Failed { .. }), "{status:?}");
     }
@@ -254,12 +254,12 @@ mod tests {
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "[[folders]]\npath = \"media\"\n").unwrap();
         let named = path.to_str().unwrap();
-        let (config, status) = load_with(&[("CHORQUEST_CONFIG", named)]);
+        let (config, status) = load_with(&[("LANTERN_CONFIG", named)]);
         assert_eq!(config.folders[0].path, dir.path().join("media"));
         assert_eq!(status, Status::Read(path.clone()));
 
         std::fs::write(&path, "[[folders]\n").unwrap();
-        let (config, status) = load_with(&[("CHORQUEST_CONFIG", named)]);
+        let (config, status) = load_with(&[("LANTERN_CONFIG", named)]);
         assert_eq!(config, Config::default());
         let Status::Failed { error, .. } = status else {
             panic!("{status:?}")

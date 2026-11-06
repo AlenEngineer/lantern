@@ -1,9 +1,9 @@
-//! The shared vocabulary of chorquest.
+//! The shared vocabulary of lantern.
 //!
 //! Everything the engine handles is a [`Resource`]: something that can be put
 //! on stage, no matter where it came from. Resources are produced by
 //! [`Source`]s, and implementing [`Source`] is the only thing needed to teach
-//! chorquest about a new place to find media (a folder, YouTube, a Bible
+//! lantern about a new place to find media (a folder, YouTube, a Bible
 //! API, a hymnal...).
 //!
 //! This crate is deliberately small and dependency-light: every other crate

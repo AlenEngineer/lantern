@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
-use chorquest_resource::Resource;
+use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::scene::{Media, MediaReport, Playback, Scene, SceneId, Timed};
@@ -354,7 +354,7 @@ impl Showman {
 mod tests {
     use std::num::NonZeroUsize;
 
-    use chorquest_resource::{Kind, Location, ResourceId, SourceId};
+    use lantern_resource::{Kind, Location, ResourceId, SourceId};
 
     use super::*;
 

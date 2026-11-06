@@ -1,6 +1,6 @@
 [package]
-name = "chorquest-searcher"
-description = "In-memory index and federated search over chorquest sources."
+name = "lantern-searcher"
+description = "In-memory index and federated search over lantern sources."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-chorquest-resource.workspace = true
+lantern-resource.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
 

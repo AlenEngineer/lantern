@@ -1,4 +1,4 @@
-//! Local folders as a chorquest [`Source`].
+//! Local folders as a lantern [`Source`].
 //!
 //! Point it at the folders you keep media in (`Music`, `Videos`,
 //! `Presentations`...) and it lists every file it recognizes, so the engine
@@ -17,7 +17,7 @@ use std::ffi::OsStr;
 use std::iter;
 use std::path::{Path, PathBuf};
 
-use chorquest_resource::{
+use lantern_resource::{
     Capabilities, Kind, Location, Resource, ResourceId, Source, SourceError, SourceId,
 };
 use walkdir::{DirEntry, WalkDir};
@@ -300,11 +300,11 @@ mod tests {
         let dir = tree();
         let partial = source([
             Folder::new(dir.path().join("Videos")),
-            Folder::new("/nope/chorquest"),
+            Folder::new("/nope/lantern"),
         ]);
         assert_eq!(partial.scan().unwrap().len(), 1);
 
-        let none = source([Folder::new("/nope/chorquest")]);
+        let none = source([Folder::new("/nope/lantern")]);
         assert!(matches!(none.scan(), Err(SourceError::Unavailable(_))));
     }
 }

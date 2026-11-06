@@ -1,11 +1,11 @@
-//! The chorquest desktop app: an operator dashboard and a fullscreen stage
+//! The lantern desktop app: an operator dashboard and a fullscreen stage
 //! window for the projector, both following one [`Engine`].
 //!
 //! It reads its media folders and Bibles from a config file (see
 //! [`config::load`]) and indexes them in the background.
 //!
-//! Set `CHORQUEST_SCRIPT=<file>` to drive the engine from a script and exit
-//! after its last line (see [`script`]). `CHORQUEST_SHOT=<program>` is run
+//! Set `LANTERN_SCRIPT=<file>` to drive the engine from a script and exit
+//! after its last line (see [`script`]). `LANTERN_SHOT=<program>` is run
 //! for each `shot NAME` in it.
 
 mod config;
@@ -22,14 +22,14 @@ use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use chorquest_engine::{
-    Action, Engine, Media, MediaReport, Playback, ResourceId, SceneId, SearchEvent, SearchStream,
-    StageEvent, StageFeed, StageState, StepId,
-};
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::widget::{Space, container, image, operation, scrollable, stack, text};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
+use lantern_engine::{
+    Action, Engine, Media, MediaReport, Playback, ResourceId, SceneId, SearchEvent, SearchStream,
+    StageEvent, StageFeed, StageState, StepId,
+};
 
 use crate::dashboard::{Op, RESULTS, SEARCH_BOX};
 use crate::library::Library;
@@ -43,15 +43,15 @@ const LIVE_SEARCH_PAUSE: Duration = Duration::from_millis(250);
 
 /// The Wayland app id of the audience window. A Hyprland rule matches it to
 /// send the window to the projector.
-const STAGE_APP_ID: &str = "chorquest-stage";
-const DASHBOARD_APP_ID: &str = "chorquest-dashboard";
+const STAGE_APP_ID: &str = "lantern-stage";
+const DASHBOARD_APP_ID: &str = "lantern-dashboard";
 
 fn main() -> ExitCode {
     log("starting");
     let script = match load_script() {
         Ok(script) => script,
         Err(err) => {
-            log(format!("CHORQUEST_SCRIPT: {err}"));
+            log(format!("LANTERN_SCRIPT: {err}"));
             return ExitCode::FAILURE;
         }
     };
@@ -88,13 +88,13 @@ fn main() -> ExitCode {
 }
 
 fn load_script() -> Result<Option<Script>, String> {
-    let Some(path) = std::env::var_os("CHORQUEST_SCRIPT") else {
+    let Some(path) = std::env::var_os("LANTERN_SCRIPT") else {
         return Ok(None);
     };
     let path = PathBuf::from(path);
     let source =
         std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let shooter = std::env::var_os("CHORQUEST_SHOT").map(PathBuf::from);
+    let shooter = std::env::var_os("LANTERN_SHOT").map(PathBuf::from);
     let dir = path.parent().unwrap_or(std::path::Path::new("."));
     Script::parse(&source, dir, shooter)
         .map(Some)
@@ -221,9 +221,9 @@ impl App {
 
     fn title(&self, window: window::Id) -> String {
         if window == self.stage_window {
-            "chorquest stage".into()
+            "lantern stage".into()
         } else {
-            "chorquest".into()
+            "lantern".into()
         }
     }
 

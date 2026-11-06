@@ -33,10 +33,10 @@ capture() {
 }
 
 moved=0
-place chorquest-stage "$E2E_STAGE_OUTPUT"
-place chorquest-dashboard "$E2E_DASHBOARD_OUTPUT"
+place lantern-stage "$E2E_STAGE_OUTPUT"
+place lantern-dashboard "$E2E_DASHBOARD_OUTPUT"
 # Let the windows settle after a move and the stage redraw after the last command.
 if (( moved )); then sleep 1; else sleep 0.3; fi
-capture chorquest-stage "$E2E_OUT/$name-stage.png"
-capture chorquest-dashboard "$E2E_OUT/$name-dashboard.png"
-hyprctl clients -j | jq -c '.[] | select(.class | startswith("chorquest")) | {class, monitor, fullscreen, at, size}' >>"$E2E_OUT/windows.log"
+capture lantern-stage "$E2E_OUT/$name-stage.png"
+capture lantern-dashboard "$E2E_OUT/$name-dashboard.png"
+hyprctl clients -j | jq -c '.[] | select(.class | startswith("lantern")) | {class, monitor, fullscreen, at, size}' >>"$E2E_OUT/windows.log"

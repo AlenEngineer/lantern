@@ -1,4 +1,4 @@
-//! Pasted links as a chorquest [`Source`].
+//! Pasted links as a lantern [`Source`].
 //!
 //! The fastest way to get something from the internet on stage is to paste
 //! its link into the search box. This live source recognizes a URL in the
@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use chorquest_resource::{
+use lantern_resource::{
     Capabilities, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
 };
 use url::Url;
