@@ -80,6 +80,19 @@ YouTube videos download ahead of time (720p H.264) into
 so playback never depends on the network. The dashboard shows each video's
 download state.
 
+### Plans
+
+The PLAN panel holds the rundown you build with A. Click its name to rename
+it. **Save** (Ctrl+S) writes it to
+`~/.local/share/lantern/plans/<name>.json` (or under `$XDG_DATA_HOME`); a
+plan that already has a file saves over it, and a new plan never replaces
+another one with the same name (`sunday-service-2.json`). A dot after the
+name means unsaved changes. **Open** (Ctrl+O) lists the saved plans, newest
+first. **New** (Ctrl+N) starts an empty one. Leaving a plan saves it first if
+it has a file, and otherwise asks before discarding it. The app reopens the
+last plan you opened or saved, and says why if it can't. The Ctrl keys work
+while typing in the search box.
+
 ### Configuration
 
 The app reads `~/.config/lantern/config.toml`, or the file named by
@@ -123,11 +136,21 @@ better fix.
 `scripts/e2e.sh <script> <outdir>` runs the real app on two headless
 Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
 screenshot of both windows at every `shot`. `basic`, `media`, `library`,
-`dashboard` and `youtube` (needs the network) cover hymns, images, video,
-PDFs, Bible passages, the dashboard and YouTube.
+`dashboard`, `plans` and `youtube` (needs the network) cover hymns, images,
+video, PDFs, Bible passages, the dashboard, plan files and YouTube.
 
 ```sh
 scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/lantern/e2e/dashboard
+```
+
+Each run saves plans in a fresh `<outdir>/data`, never in your own. `reopen`
+checks that the next start reopens the plan `plans` saved, so it shares its
+data folder:
+
+```sh
+scripts/e2e.sh scripts/e2e/plans.script ~/.cache/lantern/e2e/plans
+E2E_DATA=~/.cache/lantern/e2e/plans/data \
+    scripts/e2e.sh scripts/e2e/reopen.script ~/.cache/lantern/e2e/reopen
 ```
 
 ## Try the engine alone

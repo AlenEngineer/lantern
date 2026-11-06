@@ -122,20 +122,15 @@ impl fmt::Display for Status {
     }
 }
 
-/// Reads `$LANTERN_CONFIG`, else `$XDG_CONFIG_HOME/lantern/config.toml`,
-/// else `~/.config/lantern/config.toml`. Never fails: a broken file
+/// Reads `$LANTERN_CONFIG`, else `config.toml` in [`xdg_dir`] for
+/// `XDG_CONFIG_HOME` (`~/.config/lantern`). Never fails: a broken file
 /// yields the default config and a [`Status::Failed`].
 pub fn load(env: impl Fn(&str) -> Option<String>) -> (Config, Status) {
     let home = env("HOME").map(PathBuf::from);
     let named = env("LANTERN_CONFIG").map(PathBuf::from);
     let path = match &named {
         Some(path) => path.clone(),
-        None => match (env("XDG_CONFIG_HOME"), &home) {
-            (Some(xdg), _) if !xdg.is_empty() => PathBuf::from(xdg),
-            (_, Some(home)) => home.join(".config"),
-            (_, None) => PathBuf::from(".config"),
-        }
-        .join("lantern/config.toml"),
+        None => xdg_dir(&env, "XDG_CONFIG_HOME", ".config").join("config.toml"),
     };
     let source = match std::fs::read_to_string(&path) {
         Ok(source) => source,
@@ -152,6 +147,22 @@ pub fn load(env: impl Fn(&str) -> Option<String>) -> (Config, Status) {
         Ok(config) => (config, Status::Read(path)),
         Err(error) => (Config::default(), Status::Failed { path, error }),
     }
+}
+
+/// The process environment, for [`load`] and [`xdg_dir`].
+pub fn env(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
+/// Lantern's folder in an XDG base directory: `$var/lantern`, else
+/// `~/fallback/lantern`. An empty variable counts as unset.
+pub fn xdg_dir(env: impl Fn(&str) -> Option<String>, var: &str, fallback: &str) -> PathBuf {
+    match (env(var), env("HOME")) {
+        (Some(dir), _) if !dir.is_empty() => PathBuf::from(dir),
+        (_, Some(home)) => Path::new(&home).join(fallback),
+        (_, None) => PathBuf::from(fallback),
+    }
+    .join("lantern")
 }
 
 #[cfg(test)]

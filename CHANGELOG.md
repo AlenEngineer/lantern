@@ -20,13 +20,17 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - `lantern-app`: the operator dashboard, with search results grouped by source, preview
   and take, the plan with its current step, a transport with a timeline and the ended
   state, blackout, and keyboard shortcuts.
+- `lantern-app`: save, open and start plans from the dashboard (Ctrl+S, Ctrl+O, Ctrl+N),
+  rename a plan by clicking its name, see unsaved changes, and reopen the last plan at
+  startup. Plans live in `~/.local/share/lantern/plans`.
 - `scripts/e2e.sh`: runs the real app on headless Hyprland outputs from a script and
-  screenshots both windows.
+  screenshots both windows. Plans go to a fresh data folder per run, or `E2E_DATA`.
 - `lantern-resource`: `Resource`, `Kind`, `Location`, `Query` and the `Source` extension trait.
 - `lantern-searcher`: in-memory index with accent folding, prefix and typo matching;
   federated search streaming results from live sources.
 - `lantern-orchestrator`: plans with show/live/blank/note steps, JSON persistence,
   sessions with an edit-safe cursor and a log of everything shown.
+- `lantern-orchestrator`: `Plan::default()`, an empty "Untitled" plan.
 - `lantern-showman`: stage model with preview/program, frames, playback and blackout,
   plus serializable events for the stage window.
 - `lantern-showman`: `SceneId` on every scene, and `Media` (`Frames`, `Timed` or `Failed`)

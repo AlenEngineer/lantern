@@ -1,0 +1,3 @@
+# Run after plans.script with the same data folder: the saved plan is back.
+wait 1500
+shot 1-reopened
