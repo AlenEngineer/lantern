@@ -9,14 +9,19 @@
 //! `chorquest-source-bible` docs); `LANG` is `es` or `en` and sets the book names.
 //!
 //! A background thread plays the part of the stage window and prints every
-//! `[stage]` event; the prompt is the dashboard. Type `:help` for commands.
+//! `[stage]` event; the prompt is the dashboard. `:frames N` and `:end` send
+//! the reports a real stage window would. Type `:help` for commands.
 
 use std::io::{self, BufRead, Write};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
-use chorquest_engine::{Action, Engine, Hit, Origin, Query, SearchEvent, SourceId, StageEvent};
+use chorquest_engine::{
+    Action, Engine, Hit, MediaReport, Origin, Query, SearchEvent, SourceId, StageEvent,
+};
 use chorquest_source_bible::{Bible, BibleSource, Language, Translation};
 use chorquest_source_link::LinkSource;
 use chorquest_source_local::{Folder, LocalSource};
@@ -31,6 +36,8 @@ const HELP: &str = "\
   :n / :p       next / previous (frame, then step)
   :resume       re-show the current step
   :x            toggle blackout       :play / :pause
+  :seek SECS    jump the video        :frames N  report N pages for the program
+  :end          report that the program's video ended
   :save FILE    save the plan         :open FILE
   :q            quit";
 
@@ -62,9 +69,9 @@ fn main() {
     }
 
     // The "stage window".
-    let stage = engine.subscribe();
+    let feed = engine.subscribe();
     thread::spawn(move || {
-        for event in stage {
+        for event in feed.events {
             match event {
                 StageEvent::Preview { .. } => {} // the audience never sees previews
                 StageEvent::Program { scene: Some(scene) } => {
@@ -141,14 +148,35 @@ fn main() {
             ":p" => println!("{:?}", engine.prev()),
             ":resume" => println!("{:?}", engine.resume()),
             ":x" => {
-                engine.with_stage(|s| s.toggle_blackout());
+                engine.toggle_blackout();
             }
             ":play" => {
-                engine.with_stage(|s| s.play());
+                if !engine.play() {
+                    println!("nothing to play");
+                }
             }
             ":pause" => {
-                engine.with_stage(|s| s.pause());
+                if !engine.pause() {
+                    println!("nothing to pause");
+                }
             }
+            ":seek" => match arg
+                .parse::<f64>()
+                .ok()
+                .and_then(|s| Duration::try_from_secs_f64(s).ok())
+            {
+                Some(position) => {
+                    if !engine.seek(position) {
+                        println!("nothing to seek");
+                    }
+                }
+                None => println!("usage: :seek SECS"),
+            },
+            ":frames" => match arg.parse::<NonZeroUsize>() {
+                Ok(count) => report_on_program(&engine, MediaReport::Frames(count)),
+                Err(_) => println!("usage: :frames N (at least 1)"),
+            },
+            ":end" => report_on_program(&engine, MediaReport::Ended),
             ":save" => report(engine.save_plan(arg)),
             ":open" => report(engine.open_plan(arg)),
             _ if command.starts_with(':') => println!("unknown command; :help lists them"),
@@ -201,6 +229,18 @@ fn print_plan(engine: &Engine) {
             Action::Note => "note".into(),
         };
         println!(" {marker} {} {:30} {what}", step.id, step.label);
+    }
+}
+
+/// Reports on behalf of a stage window, about the scene on program now.
+fn report_on_program(engine: &Engine, report: MediaReport) {
+    match engine.stage().program {
+        Some(scene) => {
+            if !engine.report(scene.id, report) {
+                println!("the program ignored that report");
+            }
+        }
+        None => println!("nothing on stage"),
     }
 }
 

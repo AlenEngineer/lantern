@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 /// The kind decides how the stage renders something; where it came from is
 /// the [`Source`](crate::Source)'s business. A YouTube video and an `.mp4` on
 /// disk are both [`Kind::Video`]; a hymn and a Bible verse are both
-/// [`Kind::Text`].
+/// [`Kind::Text`]. Whether a stage can actually play a given video is the
+/// stage's call, reported per scene.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -44,11 +45,6 @@ impl Kind {
             _ => return None,
         };
         Some(kind)
-    }
-
-    /// Whether the kind has a timeline (play, pause, seek).
-    pub fn is_timed(&self) -> bool {
-        matches!(self, Kind::Video | Kind::Audio)
     }
 
     /// A short lowercase name, e.g. `"video"`.

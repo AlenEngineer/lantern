@@ -1,9 +1,10 @@
 //! The chorquest engine.
 //!
 //! One [`Engine`] owns the [`Searcher`] (sources and index), the
-//! [`Session`] (the plan being run) and the [`Showman`] (the stage), and
-//! keeps them consistent: moving through the plan puts things on stage, and
-//! everything that goes on stage is logged.
+//! [`Session`] (the plan being run) and the stage, and keeps them
+//! consistent: moving through the plan puts things on stage, and everything
+//! that goes on stage is logged. The engine is the only way to change the
+//! stage.
 //!
 //! The engine is `Send + Sync`. Share it behind an `Arc` between the UI
 //! thread, the dashboard and the stage window. Every method returns quickly.
@@ -15,14 +16,14 @@
 //!
 //! let engine = Engine::new();
 //! engine.load_plan(Plan::new("Sunday service"));
-//! let stage = engine.subscribe(); // the stage window listens here
+//! let feed = engine.subscribe(); // the stage window starts from feed.state
 //! assert_eq!(engine.next(), Moved::Nothing); // empty plan
-//! # drop(stage);
+//! # drop(feed);
 //! ```
 
 use std::path::Path;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 pub use chorquest_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
 pub use chorquest_resource::{
@@ -31,7 +32,10 @@ pub use chorquest_resource::{
 pub use chorquest_searcher::{
     Origin, Polled, ReindexReport, SearchError, SearchEvent, SearchStream, Searcher,
 };
-pub use chorquest_showman::{Playback, Scene, Showman, StageEvent, StageState};
+use chorquest_showman::Showman;
+pub use chorquest_showman::{
+    Media, MediaReport, Playback, Scene, SceneId, StageEvent, StageFeed, StageState, Timed,
+};
 
 /// Errors from the engine.
 #[derive(Debug, thiserror::Error)]
@@ -163,86 +167,61 @@ impl Engine {
     /// The "next" button: the next frame of what's on stage if there is one,
     /// otherwise the next step of the plan.
     pub fn next(&self) -> Moved {
-        let mut session = lock(&self.session);
-        let mut stage = lock(&self.stage);
-        if stage.next_frame() {
-            return Moved::Frame(current_frame(&stage));
-        }
-        match session.next().cloned() {
-            Some(step) => {
-                perform(&mut session, &mut stage, &step);
-                Moved::Step(step.id)
+        self.operate(true, |session, stage| {
+            if stage.next_frame() {
+                return Moved::Frame(current_frame(stage));
             }
-            None => Moved::Nothing,
-        }
+            match session.next().cloned() {
+                Some(step) => {
+                    perform(stage, &step);
+                    Moved::Step(step.id)
+                }
+                None => Moved::Nothing,
+            }
+        })
     }
 
     /// The "back" button: the previous frame, otherwise the previous step.
     pub fn prev(&self) -> Moved {
-        let mut session = lock(&self.session);
-        let mut stage = lock(&self.stage);
-        if stage.prev_frame() {
-            return Moved::Frame(current_frame(&stage));
-        }
-        match session.prev().cloned() {
-            Some(step) => {
-                perform(&mut session, &mut stage, &step);
-                Moved::Step(step.id)
+        self.operate(true, |session, stage| {
+            if stage.prev_frame() {
+                return Moved::Frame(current_frame(stage));
             }
-            None => Moved::Nothing,
-        }
+            match session.prev().cloned() {
+                Some(step) => {
+                    perform(stage, &step);
+                    Moved::Step(step.id)
+                }
+                None => Moved::Nothing,
+            }
+        })
     }
 
     /// Jumps to a step and performs it.
     pub fn go_to(&self, id: StepId) -> Result<(), EngineError> {
-        let mut session = lock(&self.session);
-        let step = session
-            .goto(id)
-            .cloned()
-            .ok_or(EngineError::UnknownStep(id))?;
-        perform(&mut session, &mut lock(&self.stage), &step);
-        Ok(())
+        self.operate(true, |session, stage| {
+            let step = session
+                .goto(id)
+                .cloned()
+                .ok_or(EngineError::UnknownStep(id))?;
+            perform(stage, &step);
+            Ok(())
+        })
     }
 
     /// Performs the current step again: back to the plan after showing
     /// things on the fly. Returns the step, if the session has started.
     pub fn resume(&self) -> Option<StepId> {
-        let mut session = lock(&self.session);
-        let step = session.current().cloned()?;
-        perform(&mut session, &mut lock(&self.stage), &step);
-        Some(step.id)
+        self.operate(true, |session, stage| {
+            let step = session.current().cloned()?;
+            perform(stage, &step);
+            Some(step.id)
+        })
     }
 
     /// Rewinds the plan to "not started". The stage is left alone.
     pub fn rewind(&self) {
         lock(&self.session).reset();
-    }
-
-    // ----- Showing things on the fly -------------------------------------
-
-    /// Lines a resource up in preview (dashboard only).
-    pub fn preview(&self, resource: Arc<Resource>) {
-        lock(&self.stage).preview(resource);
-    }
-
-    /// Puts the preview on stage. Returns `false` if the preview was empty.
-    pub fn take(&self) -> bool {
-        let mut session = lock(&self.session);
-        let taken = lock(&self.stage).take();
-        match taken {
-            Some(resource) => {
-                session.record((*resource).clone(), false);
-                true
-            }
-            None => false,
-        }
-    }
-
-    /// Puts a resource on stage right away, off-plan. Your place in the plan is kept.
-    pub fn show_now(&self, resource: Arc<Resource>) {
-        let mut session = lock(&self.session);
-        lock(&self.stage).show(Arc::clone(&resource));
-        session.record((*resource).clone(), false);
     }
 
     /// Adds a resource to the plan right after the current step, turning a
@@ -256,33 +235,126 @@ impl Engine {
         )
     }
 
-    // ----- Stage ---------------------------------------------------------
+    // ----- The stage, operator side --------------------------------------
 
-    /// A snapshot of the stage, for a window that just opened.
+    /// Lines a resource up in preview (dashboard only).
+    pub fn preview(&self, resource: Arc<Resource>) {
+        self.control(|stage| stage.preview(resource));
+    }
+
+    /// Empties the preview.
+    pub fn clear_preview(&self) {
+        self.control(Showman::clear_preview);
+    }
+
+    /// Puts the preview on stage. Returns `false` if the preview was empty.
+    pub fn take(&self) -> bool {
+        self.control(Showman::take)
+    }
+
+    /// Puts a resource on stage right away, off-plan. Your place in the plan is kept.
+    pub fn show_now(&self, resource: Arc<Resource>) {
+        self.control(|stage| stage.show(resource));
+    }
+
+    /// Empties the stage. The plan cursor doesn't move.
+    pub fn clear(&self) {
+        self.control(Showman::clear);
+    }
+
+    /// Turns blackout on or off. Pressing it twice stays black.
+    pub fn set_blackout(&self, on: bool) {
+        self.control(|stage| stage.set_blackout(on));
+    }
+
+    /// Flips blackout. Returns the new value.
+    pub fn toggle_blackout(&self) -> bool {
+        self.control(Showman::toggle_blackout)
+    }
+
+    /// Jumps to a stanza, page or slide. Returns `false` if it doesn't exist.
+    pub fn goto_frame(&self, frame: usize) -> bool {
+        self.control(|stage| stage.goto_frame(frame))
+    }
+
+    /// Plays the program; from the end, replays it. Returns `false` if the
+    /// program has no timeline.
+    pub fn play(&self) -> bool {
+        self.control(Showman::play)
+    }
+
+    /// Pauses the program. Returns `false` if it has no timeline.
+    pub fn pause(&self) -> bool {
+        self.control(Showman::pause)
+    }
+
+    /// The play/pause button. Returns `false` if the program has no timeline.
+    pub fn toggle_playback(&self) -> bool {
+        self.control(Showman::toggle_playback)
+    }
+
+    /// Jumps the program's timeline, clamped to its duration when known.
+    /// Returns `false` if it has no timeline.
+    pub fn seek(&self, position: Duration) -> bool {
+        self.control(|stage| stage.seek(position))
+    }
+
+    // ----- The stage, window side ----------------------------------------
+
+    /// A snapshot of the stage, for a one-off read. To follow the stage, use
+    /// [`subscribe`](Self::subscribe).
     pub fn stage(&self) -> StageState {
         lock(&self.stage).state().clone()
     }
 
-    /// Receives every stage change. The stage window renders only `Program`,
-    /// `Frame`, `Playback`, `Seek` and `Blackout`; `Preview` is for the dashboard.
-    pub fn subscribe(&self) -> Receiver<StageEvent> {
+    /// The stage now and every change after it, taken under one lock. Start
+    /// from `feed.state` and apply each event from `feed.events` with
+    /// [`StageState::apply`].
+    pub fn subscribe(&self) -> StageFeed {
         lock(&self.stage).subscribe()
     }
 
-    /// Direct access to the stage for everything else: blackout, clear,
-    /// play/pause/seek, frame jumps, reporting page counts.
-    pub fn with_stage<R>(&self, f: impl FnOnce(&mut Showman) -> R) -> R {
-        f(&mut lock(&self.stage))
+    /// What a renderer learned about a scene: page count, timeline,
+    /// position, end, failure. Ignored, returning `false`, if the scene has
+    /// left the stage or the report doesn't apply to it.
+    ///
+    /// Takes only the stage lock, so a renderer never waits on the plan
+    /// (`save_plan` writes a file under the session lock). A report can't
+    /// change which scene is on program, so there is nothing to log.
+    pub fn report(&self, scene: SceneId, report: MediaReport) -> bool {
+        lock(&self.stage).report(scene, report)
+    }
+
+    // ----- The one door --------------------------------------------------
+
+    /// Runs an operator action with both locks, session first. This is the
+    /// only place both are taken, so the lock order lives here.
+    ///
+    /// Logging is derived, not called. If `f` left a scene on program that
+    /// wasn't there before (by id, so showing the same resource again
+    /// counts), its resource is recorded, as planned or not.
+    fn operate<R>(&self, planned: bool, f: impl FnOnce(&mut Session, &mut Showman) -> R) -> R {
+        let mut session = lock(&self.session);
+        let mut stage = lock(&self.stage);
+        let before = stage.program().map(|scene| scene.id);
+        let result = f(&mut session, &mut stage);
+        if let Some(scene) = stage.program().filter(|scene| Some(scene.id) != before) {
+            session.record((*scene.resource).clone(), planned);
+        }
+        result
+    }
+
+    /// An off-plan operator action on the stage alone. Anything it puts on
+    /// program is logged as shown live.
+    fn control<R>(&self, f: impl FnOnce(&mut Showman) -> R) -> R {
+        self.operate(false, |_, stage| f(stage))
     }
 }
 
 /// Makes a step take effect on stage.
-fn perform(session: &mut Session, stage: &mut Showman, step: &Step) {
+fn perform(stage: &mut Showman, step: &Step) {
     match &step.action {
-        Action::Show { resource } => {
-            stage.show(Arc::new(resource.clone()));
-            session.record(resource.clone(), true);
-        }
+        Action::Show { resource } => stage.show(Arc::new(resource.clone())),
         Action::Blank => stage.clear(),
         // Live slots and notes leave the stage as the operator left it.
         Action::Live { .. } | Action::Note => {}
@@ -290,7 +362,7 @@ fn perform(session: &mut Session, stage: &mut Showman, step: &Step) {
 }
 
 fn current_frame(stage: &Showman) -> usize {
-    stage.program().map_or(0, |s| s.frame)
+    stage.program().map_or(0, Scene::frame)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

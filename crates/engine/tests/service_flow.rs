@@ -1,10 +1,14 @@
-//! A whole service, end to end: planned steps, a live slot, frames, blackout.
+//! A whole service, end to end: planned steps, a live slot, frames,
+//! blackout, and what the stage window reports back.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use chorquest_engine::{
-    Action, Capabilities, Engine, Kind, Location, Moved, Plan, Query, Resource, ResourceId, Source,
-    SourceError, SourceId, StageEvent,
+    Action, Capabilities, Engine, Kind, Location, MediaReport, Moved, Plan, Playback, Query,
+    Resource, ResourceId, Source, SourceError, SourceId, StageEvent, StageFeed,
 };
 
 /// A tiny offline "hymnal": the kind of extension a real one would be.
@@ -45,14 +49,56 @@ fn hymn(source: &SourceId, number: &str, title: &str, lyrics: &str) -> Resource 
     .with_tag(format!("himno {number}"))
 }
 
-fn image(title: &str) -> Resource {
+fn resource(title: &str, kind: Kind, location: Location) -> Resource {
     let source = SourceId::new("test").unwrap();
-    Resource::new(
-        ResourceId::new(&source, title),
+    Resource::new(ResourceId::new(&source, title), title, kind, location)
+}
+
+fn image(title: &str) -> Resource {
+    resource(title, Kind::Image, Location::Url(title.into()))
+}
+
+fn document(title: &str) -> Resource {
+    resource(
         title,
-        Kind::Image,
-        Location::Url(title.into()),
+        Kind::Document,
+        Location::File(format!("/{title}.pdf").into()),
     )
+}
+
+fn video(title: &str) -> Resource {
+    resource(
+        title,
+        Kind::Video,
+        Location::File(format!("/{title}.mp4").into()),
+    )
+}
+
+fn youtube_link() -> Resource {
+    resource(
+        "Worship video",
+        Kind::Video,
+        Location::Url("https://www.youtube.com/watch?v=x".into()),
+    )
+}
+
+fn pages(n: usize) -> MediaReport {
+    MediaReport::Frames(NonZeroUsize::new(n).unwrap())
+}
+
+fn secs(n: u64) -> Duration {
+    Duration::from_secs(n)
+}
+
+fn playback(engine: &Engine) -> Option<Playback> {
+    engine
+        .stage()
+        .program
+        .and_then(|scene| scene.timed().map(|timed| timed.playback))
+}
+
+fn titles_logged(engine: &Engine) -> Vec<String> {
+    engine.log().into_iter().map(|e| e.resource.title).collect()
 }
 
 #[test]
@@ -75,7 +121,7 @@ fn a_sunday_service() {
     let prayer = plan.push("Prayer", Action::Blank);
     engine.load_plan(plan);
 
-    let stage = engine.subscribe();
+    let StageFeed { mut state, events } = engine.subscribe();
 
     // Opening hymn: the step, then its stanzas.
     assert_eq!(engine.next(), Moved::Step(opening_step));
@@ -108,8 +154,8 @@ fn a_sunday_service() {
 
     // An off-plan image, then back to the plan.
     engine.show_now(Arc::new(image("Announcement")));
-    engine.with_stage(|s| s.toggle_blackout());
-    engine.with_stage(|s| s.toggle_blackout());
+    assert!(engine.toggle_blackout());
+    assert!(!engine.toggle_blackout());
 
     // `next` goes on to Prayer, which blanks the stage.
     assert_eq!(engine.next(), Moved::Step(prayer));
@@ -140,7 +186,7 @@ fn a_sunday_service() {
     );
 
     // And the stage window saw only what the audience should see, plus previews.
-    let events: Vec<_> = stage.try_iter().collect();
+    let events: Vec<_> = events.try_iter().collect();
     let blackouts = events
         .iter()
         .filter(|e| matches!(e, StageEvent::Blackout { .. }))
@@ -150,6 +196,12 @@ fn a_sunday_service() {
         events.last(),
         Some(StageEvent::Program { scene: None })
     ));
+
+    // A window that applied every event holds exactly the engine's stage.
+    for event in &events {
+        state.apply(event);
+    }
+    assert_eq!(state, engine.stage());
 }
 
 #[test]
@@ -178,4 +230,178 @@ fn live_finds_can_join_the_plan() {
     assert_eq!(engine.up_next().unwrap().id, added);
     assert_eq!(engine.next(), Moved::Step(added));
     assert!(engine.go_to(added).is_ok());
+}
+
+#[test]
+fn a_late_page_count_only_reaches_its_scene() {
+    let engine = Engine::new();
+    engine.show_now(Arc::new(document("Bulletin")));
+    let bulletin = engine.stage().program.unwrap().id;
+    engine.show_now(Arc::new(image("Announcement")));
+
+    // The stage finishes rasterizing the bulletin after it has left.
+    assert!(!engine.report(bulletin, pages(3)));
+    assert_eq!(engine.next(), Moved::Nothing);
+}
+
+#[test]
+fn the_stage_reports_how_a_video_plays() {
+    let engine = Engine::new();
+    engine.show_now(Arc::new(video("Welcome")));
+    let welcome = engine.stage().program.unwrap().id;
+    assert_eq!(playback(&engine), Some(Playback::Paused));
+    engine.report(
+        welcome,
+        MediaReport::Timeline {
+            duration: Some(secs(30)),
+        },
+    );
+    assert!(engine.play());
+    engine.report(welcome, MediaReport::Position(secs(29)));
+    engine.report(welcome, MediaReport::Ended);
+    assert_eq!(playback(&engine), Some(Playback::Ended));
+
+    let feed = engine.subscribe();
+    assert!(engine.play());
+    let events: Vec<_> = feed.events.try_iter().collect();
+    assert_eq!(
+        events,
+        [
+            StageEvent::Seek {
+                position: Duration::ZERO
+            },
+            StageEvent::Playback {
+                playback: Playback::Playing
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_link_the_stage_cannot_play_has_no_timeline() {
+    let engine = Engine::new();
+    engine.show_now(Arc::new(youtube_link()));
+    let link = engine.stage().program.unwrap().id;
+    assert!(engine.report(
+        link,
+        MediaReport::Failed {
+            reason: "this stage can't play links".into()
+        }
+    ));
+    assert!(!engine.play());
+    assert!(!engine.toggle_playback());
+    assert!(!engine.seek(secs(5)));
+}
+
+#[test]
+fn controls_and_reports_never_reach_the_log() {
+    let engine = Engine::new();
+    let clip = Arc::new(video("Welcome"));
+    engine.show_now(Arc::clone(&clip));
+    let id = engine.stage().program.unwrap().id;
+
+    engine.report(id, MediaReport::Timeline { duration: None });
+    engine.toggle_playback();
+    engine.report(id, MediaReport::Position(secs(3)));
+    engine.seek(secs(10));
+    engine.pause();
+    engine.set_blackout(true);
+    engine.set_blackout(true);
+    engine.goto_frame(0);
+    engine.preview(Arc::new(image("Later")));
+    engine.clear_preview();
+    assert_eq!(titles_logged(&engine), ["Welcome"]);
+
+    engine.show_now(clip);
+    assert_eq!(titles_logged(&engine), ["Welcome", "Welcome"]);
+    engine.clear();
+    assert_eq!(titles_logged(&engine), ["Welcome", "Welcome"]);
+}
+
+#[test]
+fn a_preview_report_never_reaches_program() {
+    let engine = Engine::new();
+    engine.show_now(Arc::new(document("Bulletin")));
+    engine.preview(Arc::new(document("Sermon notes")));
+    let stage = engine.stage();
+    let bulletin = stage.program.unwrap().id;
+    let notes = stage.preview.unwrap().id;
+
+    assert!(engine.report(notes, pages(3)));
+    assert_eq!(engine.next(), Moved::Nothing);
+
+    assert!(engine.take());
+    let on_air = engine.stage().program.unwrap();
+    assert_ne!(on_air.id, notes);
+    assert!(on_air.has_next_frame());
+    assert!(!engine.report(notes, pages(1)));
+    assert!(!engine.report(bulletin, pages(1)));
+    assert_eq!(engine.next(), Moved::Frame(1));
+    assert_eq!(titles_logged(&engine), ["Bulletin", "Sermon notes"]);
+}
+
+#[test]
+fn a_window_opened_mid_service_converges() {
+    let engine = Arc::new(Engine::new());
+    let writer = {
+        let engine = Arc::clone(&engine);
+        thread::spawn(move || {
+            for round in 0..200 {
+                match round % 5 {
+                    0 => engine.show_now(Arc::new(document("Bulletin"))),
+                    1 => engine.preview(Arc::new(video("Welcome"))),
+                    2 => {
+                        engine.take();
+                    }
+                    3 => {
+                        engine.toggle_blackout();
+                    }
+                    _ => {}
+                }
+                let stage = engine.stage();
+                if let Some(scene) = stage.program {
+                    engine.report(scene.id, pages(round % 4 + 1));
+                    engine.report(
+                        scene.id,
+                        MediaReport::Timeline {
+                            duration: Some(secs(60)),
+                        },
+                    );
+                    engine.toggle_playback();
+                    engine.report(scene.id, MediaReport::Position(secs(round as u64 % 60)));
+                    engine.next();
+                }
+                if let Some(scene) = stage.preview {
+                    engine.report(scene.id, MediaReport::Ended);
+                }
+            }
+        })
+    };
+
+    let mut feeds = Vec::new();
+    while !writer.is_finished() {
+        feeds.push(engine.subscribe());
+        thread::yield_now();
+    }
+    writer.join().unwrap();
+    feeds.push(engine.subscribe());
+
+    let end = engine.stage();
+    for StageFeed { mut state, events } in feeds {
+        let snapshot = state.program.as_ref().map(|scene| scene.id);
+        let mut first_program = None;
+        for event in events.try_iter() {
+            if let StageEvent::Program { scene: Some(scene) } = &event {
+                first_program.get_or_insert(scene.id);
+            }
+            state.apply(&event);
+        }
+        if let (Some(snapshot), Some(first)) = (snapshot, first_program) {
+            assert!(
+                first > snapshot,
+                "ids only grow, so no event predates its snapshot"
+            );
+        }
+        assert_eq!(state, end);
+    }
 }

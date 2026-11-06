@@ -11,14 +11,16 @@
 //!   checked before the audience sees it.
 //! - **Blackout** hides the stage without forgetting what was on it.
 //!
-//! Inside a scene there are *frames*: stanzas of a hymn, pages of a PDF,
-//! slides of a deck. Timed media (audio, video) also has a playback state.
+//! Each [`Scene`] has a [`SceneId`] and a [`Media`]: frames (stanzas of a
+//! hymn, pages of a PDF, slides of a deck), a timeline (audio, video), or a
+//! failure. Renderers send [`MediaReport`]s about one scene by its id.
 //!
-//! Windows don't poll: they [`subscribe`](Showman::subscribe) and react to
-//! [`StageEvent`]s. A window that opens late starts from [`Showman::state`].
+//! Windows don't poll. [`Showman::subscribe`] returns a [`StageFeed`], a
+//! snapshot and the events after it. A window applies each event to its
+//! copy with [`StageState::apply`], the same function the `Showman` uses.
 
 mod scene;
 mod showman;
 
-pub use scene::{Playback, Scene, text_frames};
-pub use showman::{Showman, StageEvent, StageState};
+pub use scene::{Media, MediaReport, Playback, Scene, SceneId, Timed, text_frames};
+pub use showman::{Showman, StageEvent, StageFeed, StageState};
