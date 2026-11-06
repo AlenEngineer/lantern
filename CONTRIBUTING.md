@@ -12,7 +12,7 @@ Thanks for helping. This is a small project, so the rules are few but they matte
 
 ## Workflow
 
-1. Branch from `master`: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`.
+1. Branch from `main`: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`.
 2. Keep each commit focused. Use [Conventional Commits](https://www.conventionalcommits.org/):
    `feat: index local folders`, `fix(searcher): keep entries when a scan fails`.
 3. Before pushing, run:
@@ -36,7 +36,7 @@ Versions follow [Semantic Versioning](https://semver.org/). Every crate
 shares the one version in `[workspace.package]`.
 
 1. Make sure `CHANGELOG.md`'s *Unreleased* section says what changed.
-2. On an up-to-date `master`, run `scripts/release.sh X.Y.Z`. It sets the
+2. On an up-to-date `main`, run `scripts/release.sh X.Y.Z`. It sets the
    version, dates the changelog section, commits and tags `vX.Y.Z`.
 3. Push with the command it prints. The tag runs CI again, then publishes a
    GitHub release with a Linux build and that version's changelog notes.

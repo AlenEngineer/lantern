@@ -11,7 +11,7 @@ version=${1:?usage: $0 X.Y.Z}
 tag=v$version
 cd "$(dirname "$0")/.."
 
-[[ $(git branch --show-current) == master ]] || { echo "release from master" >&2; exit 1; }
+[[ $(git branch --show-current) == main ]] || { echo "release from main" >&2; exit 1; }
 [[ -z $(git status --porcelain --untracked-files=no) ]] || { echo "commit or stash your changes first" >&2; exit 1; }
 ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "$tag already exists" >&2; exit 1; }
 grep -q '^## \[Unreleased\]' CHANGELOG.md || { echo "CHANGELOG.md has no Unreleased section" >&2; exit 1; }
@@ -25,4 +25,4 @@ sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$version] - $(date +%F)/" CH
 git commit --quiet -am "chore(release): $tag"
 git tag -a "$tag" -m "lantern $tag"
 echo "Tagged $tag. Publish it with:"
-echo "  git push origin master $tag"
+echo "  git push origin main $tag"

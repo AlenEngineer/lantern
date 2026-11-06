@@ -54,7 +54,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - Minimum supported Rust version is now 1.99.
-- CI runs on `master` and pull requests: the whole workspace on Linux with GStreamer, and
+- CI runs on `main` and pull requests: the whole workspace on Linux with GStreamer, and
   the engine crates on Windows and macOS.
 - `subscribe` returns a `StageFeed`, the snapshot and the receiver taken under one lock.
 - `Showman::take` returns `bool`.
