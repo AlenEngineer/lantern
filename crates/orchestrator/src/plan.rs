@@ -1,0 +1,257 @@
+use std::fmt;
+use std::path::Path;
+
+use chorquest_resource::{Query, Resource};
+use serde::{Deserialize, Serialize};
+
+/// Errors loading or saving a plan.
+#[derive(Debug, thiserror::Error)]
+pub enum PlanError {
+    /// Reading or writing the file failed.
+    #[error("i/o error: {0}")]
+    Io(#[from] std::io::Error),
+    /// The file is not a valid plan.
+    #[error("invalid plan: {0}")]
+    Format(#[from] serde_json::Error),
+}
+
+/// Identifies a step within its plan. Stays the same when steps are reordered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StepId(u64);
+
+impl fmt::Display for StepId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
+/// What a step does when the session reaches it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Action {
+    /// Put this resource on stage.
+    Show {
+        /// What to show.
+        resource: Resource,
+    },
+    /// A slot for searching and showing things on the fly. The stage is left
+    /// as it is when the slot starts.
+    Live {
+        /// Optional preset search, e.g. "videos only".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hint: Option<Query>,
+        /// What was shown during this slot, filled in while the session runs.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shown: Vec<Resource>,
+    },
+    /// Clear the stage (prayer, sermon without slides...).
+    Blank,
+    /// A reminder for the operator only. Leaves the stage as it is.
+    Note,
+}
+
+/// One entry of a plan.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Step {
+    /// Stable id.
+    pub id: StepId,
+    /// What the operator sees in the rundown.
+    pub label: String,
+    /// Private notes for the operator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// What happens when the step is reached.
+    pub action: Action,
+}
+
+/// An ordered list of steps, prepared ahead of time. Saved as JSON.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Plan {
+    /// E.g. "Sunday service, March 3".
+    pub title: String,
+    steps: Vec<Step>,
+    #[serde(default)]
+    next_id: u64,
+}
+
+impl Plan {
+    /// An empty plan.
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            steps: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// All steps, in order.
+    pub fn steps(&self) -> &[Step] {
+        &self.steps
+    }
+
+    /// Number of steps.
+    pub fn len(&self) -> usize {
+        self.steps.len()
+    }
+
+    /// Whether there are no steps.
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty()
+    }
+
+    /// A step by id.
+    pub fn get(&self, id: StepId) -> Option<&Step> {
+        self.steps.iter().find(|s| s.id == id)
+    }
+
+    /// A step by id, for editing its label, notes or action.
+    pub fn get_mut(&mut self, id: StepId) -> Option<&mut Step> {
+        self.steps.iter_mut().find(|s| s.id == id)
+    }
+
+    /// Where a step currently is.
+    pub fn position(&self, id: StepId) -> Option<usize> {
+        self.steps.iter().position(|s| s.id == id)
+    }
+
+    /// Appends a step.
+    pub fn push(&mut self, label: impl Into<String>, action: Action) -> StepId {
+        self.insert(self.steps.len(), label, action)
+    }
+
+    /// Inserts a step at `index` (clamped to the end).
+    pub fn insert(&mut self, index: usize, label: impl Into<String>, action: Action) -> StepId {
+        let id = StepId(self.next_id);
+        self.next_id += 1;
+        let step = Step {
+            id,
+            label: label.into(),
+            notes: None,
+            action,
+        };
+        self.steps.insert(index.min(self.steps.len()), step);
+        id
+    }
+
+    /// Appends a step showing `resource`, labeled with its title.
+    pub fn show(&mut self, resource: Resource) -> StepId {
+        let label = resource.title.clone();
+        self.push(label, Action::Show { resource })
+    }
+
+    /// Appends a live slot.
+    pub fn live(&mut self, label: impl Into<String>, hint: Option<Query>) -> StepId {
+        self.push(
+            label,
+            Action::Live {
+                hint,
+                shown: Vec::new(),
+            },
+        )
+    }
+
+    /// Removes a step.
+    pub fn remove(&mut self, id: StepId) -> Option<Step> {
+        let index = self.position(id)?;
+        Some(self.steps.remove(index))
+    }
+
+    /// Moves a step to `index` (clamped to the end). Returns whether it exists.
+    pub fn move_to(&mut self, id: StepId, index: usize) -> bool {
+        let Some(from) = self.position(id) else {
+            return false;
+        };
+        let step = self.steps.remove(from);
+        self.steps.insert(index.min(self.steps.len()), step);
+        true
+    }
+
+    /// Serializes to pretty JSON.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("plans always serialize")
+    }
+
+    /// Parses a plan from JSON.
+    pub fn from_json(json: &str) -> Result<Self, PlanError> {
+        let mut plan: Plan = serde_json::from_str(json)?;
+        // Hand-edited files may have a stale counter; never reuse an id.
+        let max = plan.steps.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
+        plan.next_id = plan.next_id.max(max);
+        Ok(plan)
+    }
+
+    /// Writes the plan to a file.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PlanError> {
+        std::fs::write(path, self.to_json())?;
+        Ok(())
+    }
+
+    /// Reads a plan from a file.
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, PlanError> {
+        Self::from_json(&std::fs::read_to_string(path)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chorquest_resource::{Kind, Location, ResourceId, SourceId};
+
+    use super::*;
+
+    fn resource(title: &str) -> Resource {
+        let source = SourceId::new("test").unwrap();
+        Resource::new(
+            ResourceId::new(&source, title),
+            title,
+            Kind::Image,
+            Location::Url(title.into()),
+        )
+    }
+
+    fn labels(plan: &Plan) -> Vec<&str> {
+        plan.steps().iter().map(|s| s.label.as_str()).collect()
+    }
+
+    #[test]
+    fn editing_keeps_ids_stable() {
+        let mut plan = Plan::new("Sunday");
+        let welcome = plan.show(resource("Welcome"));
+        let worship = plan.live("Worship", None);
+        let prayer = plan.push("Prayer", Action::Blank);
+        assert_eq!(labels(&plan), ["Welcome", "Worship", "Prayer"]);
+
+        assert!(plan.move_to(prayer, 0));
+        assert_eq!(labels(&plan), ["Prayer", "Welcome", "Worship"]);
+        assert_eq!(plan.position(welcome), Some(1));
+
+        plan.remove(worship);
+        let notes = plan.insert(99, "Notes", Action::Note);
+        assert_eq!(labels(&plan), ["Prayer", "Welcome", "Notes"]);
+        assert_ne!(notes, worship);
+    }
+
+    #[test]
+    fn json_round_trip_and_id_counter_repair() {
+        let mut plan = Plan::new("Sunday");
+        plan.show(resource("Welcome"));
+        plan.live("Worship", Some(Query::new("").with_kind(Kind::Video)));
+        let back = Plan::from_json(&plan.to_json()).unwrap();
+        assert_eq!(plan, back);
+
+        let stale = plan.to_json().replace("\"next_id\": 2", "\"next_id\": 0");
+        let mut repaired = Plan::from_json(&stale).unwrap();
+        let id = repaired.push("New", Action::Note);
+        assert_eq!(id, StepId(2));
+    }
+
+    #[test]
+    fn save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plan.json");
+        let mut plan = Plan::new("Sunday");
+        plan.push("Prayer", Action::Blank);
+        plan.save(&path).unwrap();
+        assert_eq!(Plan::load(&path).unwrap(), plan);
+    }
+}

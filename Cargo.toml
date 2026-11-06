@@ -1,3 +1,43 @@
 [workspace]
 resolver = "3"
-members = []
+members = ["crates/*", "sources/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+chorquest-resource = { path = "crates/resource" }
+chorquest-searcher = { path = "crates/searcher" }
+chorquest-orchestrator = { path = "crates/orchestrator" }
+chorquest-showman = { path = "crates/showman" }
+chorquest-engine = { path = "crates/engine" }
+chorquest-source-local = { path = "sources/local" }
+chorquest-source-link = { path = "sources/link" }
+chorquest-source-bible = { path = "sources/bible" }
+
+# External crates. Keep this list short: every entry is something to audit.
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+thiserror = "2.0"
+unicode-normalization = "0.1"
+url = "2.5"
+walkdir = "2.5"
+
+# Dev-only
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

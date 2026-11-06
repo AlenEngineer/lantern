@@ -1,0 +1,21 @@
+[package]
+name = "chorquest-source-bible"
+description = "chorquest source for the Bible: offline translations, verse search and reference parsing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+chorquest-resource.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
