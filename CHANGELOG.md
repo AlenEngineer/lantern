@@ -8,6 +8,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `chorquest-app`: the desktop app (binary `chorquest`), an iced dashboard window and a
+  fullscreen stage window that follows the engine.
+- `chorquest-app`: the stage shows text, images, local video and PDF pages, reports page
+  counts, timelines, positions, the end and failures back to the engine, shows black for
+  anything it can't show, and preloads the preview and the next plan step.
+- `chorquest-app`: YouTube links download ahead of time with yt-dlp into
+  `~/.cache/chorquest/youtube` and play from there; the dashboard shows the download state.
+- `chorquest-app`: `~/.config/chorquest/config.toml` (or `CHORQUEST_CONFIG`) lists media
+  folders and Bibles, indexed in the background at startup.
+- `chorquest-app`: the operator dashboard, with search results grouped by source, preview
+  and take, the plan with its current step, a transport with a timeline and the ended
+  state, blackout, and keyboard shortcuts.
+- `scripts/e2e.sh`: runs the real app on headless Hyprland outputs from a script and
+  screenshots both windows.
 - `chorquest-resource`: `Resource`, `Kind`, `Location`, `Query` and the `Source` extension trait.
 - `chorquest-searcher`: in-memory index with accent folding, prefix and typo matching;
   federated search streaming results from live sources.

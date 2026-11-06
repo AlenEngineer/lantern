@@ -3,8 +3,8 @@
 A native, offline-first presentation engine for live events: worship services,
 conferences, classes, anything with a projector and someone running it.
 
-> **Status:** early. This repository currently contains the **engine** only (a
-> set of Rust libraries). There is no graphical interface yet.
+> **Status:** early. The engine and a first desktop app (operator dashboard and
+> stage window) work. Expect rough edges.
 
 ## Why
 
@@ -39,6 +39,7 @@ crates/
   orchestrator/  plans (steps, live slots) and the running session
   showman/       stage state: program/preview, frames, playback, blackout
   engine/        facade that wires everything together; what a UI embeds
+  app/           the desktop app: operator dashboard + stage window (binary `chorquest`)
 sources/
   local/         local folders (music, videos, images, presentations, documents)
   link/          pasted links: YouTube, direct files, web pages
@@ -47,9 +48,87 @@ sources/
 
 The full design is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Try it
+## Run the app
 
-Requires Rust 1.99 or newer.
+Requires Rust 1.99 or newer, GStreamer with its base and good plugins (and
+`gst-libav` for H.264), `pdftoppm` (poppler) for PDFs, and `yt-dlp` for
+YouTube links.
+
+```sh
+cargo run --release -p chorquest-app
+```
+
+Two windows open: the **dashboard** for the operator and the fullscreen
+**stage** for the audience. Type in the search box to find files and Bible
+verses, type a reference like `jn 3 16-17`, or paste a YouTube link. The
+dashboard's bottom line lists the keys:
+
+| Key | Does |
+| --- | --- |
+| Enter | preview the top result, press again to take it to the stage |
+| ↑ ↓ | pick a result (previews it) |
+| A | add the preview to the plan |
+| → / PgDn, ← / PgUp | next / back (stanza, page, or plan step) |
+| Space | play / pause |
+| B | blackout |
+| Esc, / | leave / return to the search box |
+
+YouTube videos download ahead of time (720p H.264) into
+`~/.cache/chorquest/youtube` as soon as they enter the plan or the preview,
+so playback never depends on the network. The dashboard shows each video's
+download state.
+
+### Configuration
+
+The app reads `~/.config/chorquest/config.toml`, or the file named by
+`CHORQUEST_CONFIG`. Relative paths are relative to the config file, and `~`
+works. Unknown keys are errors, so typos show up on the dashboard.
+
+```toml
+[[folders]]
+path = "~/Videos"
+label = "Videos"          # optional
+
+[[folders]]
+path = "/media/church/Music"
+
+[[bibles]]
+lang = "es"               # "es" or "en": which reference names to accept
+path = "~/bibles/rv1909.json"
+name = "RV1909"           # optional
+```
+
+Folders and Bibles are indexed in the background at startup. The dashboard
+shows the item count, or the error for a source that failed to load.
+
+### Putting the stage on the projector
+
+The stage window has the app id `chorquest-stage`, and the dashboard
+`chorquest-dashboard`. The app can't pick a monitor itself, so ask the
+compositor. On Hyprland (0.57, Lua config), move the stage to the
+projector's workspace once it is open:
+
+```sh
+hyprctl dispatch 'hl.dsp.window.move({ workspace = N, window = "class:chorquest-stage" })'
+```
+
+The e2e harness uses this command. It has not been tried with a real
+projector yet, and a permanent window rule for your compositor is the
+better fix.
+
+### End-to-end screenshots
+
+`scripts/e2e.sh <script> <outdir>` runs the real app on two headless
+Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
+screenshot of both windows at every `shot`. `basic`, `media`, `library`,
+`dashboard` and `youtube` (needs the network) cover hymns, images, video,
+PDFs, Bible passages, the dashboard and YouTube.
+
+```sh
+scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/chorquest/e2e/dashboard
+```
+
+## Try the engine alone
 
 ```sh
 cargo test --workspace
@@ -101,10 +180,13 @@ engine.next();                            // next stanza or next step
 - [x] Stage model (program/preview, frames, playback, blackout)
 - [x] Sources: local folders, pasted links, Bible (offline, Spanish/English references)
 - [ ] Watch local folders for changes (no manual reindex)
-- [ ] Persisted configuration (folders, sources, stage settings)
-- [ ] Sources: YouTube search, web image search, online Bible API, hymnal
+- [x] Configuration file (folders, Bibles)
+- [x] Desktop UI (dashboard + stage window): images, video, PDFs, Bible, YouTube
+- [ ] Hymnal source (hymns are a built-in sample today)
+- [ ] Web pages on the stage
+- [ ] Choose the stage monitor from the app
+- [ ] Sources: YouTube search, web image search, online Bible API
 - [ ] Multiple outputs (stage + stage-display/confidence monitor + stream)
-- [ ] Desktop UI (dashboard + stage window)
 
 ## License
 
