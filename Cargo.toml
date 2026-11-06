@@ -1,3 +1,49 @@
 [workspace]
 resolver = "3"
-members = []
+members = ["crates/*", "sources/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+lantern-resource = { path = "crates/resource" }
+lantern-searcher = { path = "crates/searcher" }
+lantern-orchestrator = { path = "crates/orchestrator" }
+lantern-showman = { path = "crates/showman" }
+lantern-engine = { path = "crates/engine" }
+lantern-source-local = { path = "sources/local" }
+lantern-source-link = { path = "sources/link" }
+lantern-source-bible = { path = "sources/bible" }
+
+# External crates. Keep this list short: every entry is something to audit.
+iced = { version = "0.14", features = ["image", "advanced", "wgpu", "tokio"] }
+iced_video_player = "0.6"
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+image = { version = "0.25", default-features = false }
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "1"
+unicode-normalization = "0.1"
+url = "2.5"
+walkdir = "2.5"
+
+# Dev-only
+tempfile = "3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

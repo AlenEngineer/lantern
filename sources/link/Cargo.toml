@@ -1,0 +1,15 @@
+[package]
+name = "lantern-source-link"
+description = "lantern source that turns pasted links (YouTube, images, web pages) into resources."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lantern-resource.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

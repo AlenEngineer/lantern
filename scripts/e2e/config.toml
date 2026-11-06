@@ -1,0 +1,9 @@
+# The config every e2e run uses. Relative paths are relative to this file.
+[[folders]]
+path = "fixtures"
+label = "Fixtures"
+
+[[bibles]]
+lang = "es"
+path = "../../sources/bible/fixtures/sample.tsv"
+name = "RV1909"

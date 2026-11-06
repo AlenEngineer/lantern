@@ -1,0 +1,61 @@
+# Changelog
+
+All notable changes to this project are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project uses [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+
+- `lantern-app`: the desktop app (binary `lantern`), an iced dashboard window and a
+  fullscreen stage window that follows the engine.
+- `lantern-app`: the stage shows text, images, local video and PDF pages, reports page
+  counts, timelines, positions, the end and failures back to the engine, shows black for
+  anything it can't show, and preloads the preview and the next plan step.
+- `lantern-app`: YouTube links download ahead of time with yt-dlp into
+  `~/.cache/lantern/youtube` and play from there; the dashboard shows the download state.
+- `lantern-app`: `~/.config/lantern/config.toml` (or `LANTERN_CONFIG`) lists media
+  folders and Bibles, indexed in the background at startup.
+- `lantern-app`: the operator dashboard, with search results grouped by source, preview
+  and take, the plan with its current step, a transport with a timeline and the ended
+  state, blackout, and keyboard shortcuts.
+- `scripts/e2e.sh`: runs the real app on headless Hyprland outputs from a script and
+  screenshots both windows.
+- `lantern-resource`: `Resource`, `Kind`, `Location`, `Query` and the `Source` extension trait.
+- `lantern-searcher`: in-memory index with accent folding, prefix and typo matching;
+  federated search streaming results from live sources.
+- `lantern-orchestrator`: plans with show/live/blank/note steps, JSON persistence,
+  sessions with an edit-safe cursor and a log of everything shown.
+- `lantern-showman`: stage model with preview/program, frames, playback and blackout,
+  plus serializable events for the stage window.
+- `lantern-showman`: `SceneId` on every scene, and `Media` (`Frames`, `Timed` or `Failed`)
+  for how it is presented. Timed scenes can reach `Playback::Ended`.
+- `lantern-showman`: `MediaReport`, so a stage window can report a page count, a timeline,
+  a position, the end, or a failure for one scene.
+- `lantern-showman`: `StageState::apply`, the reducer the Showman and every window share,
+  and `StageState::scene` to find a scene by id.
+- `lantern-engine`: facade tying everything together, plus a terminal demo.
+- `lantern-engine`: `report`, plus `clear`, `clear_preview`, `set_blackout`, `toggle_blackout`,
+  `goto_frame`, `play`, `pause`, `toggle_playback` and `seek`.
+- `lantern-engine`: the demo has `:seek SECS`, `:frames N` and `:end`.
+- `lantern-source-local`: local folders source.
+- `lantern-source-link`: pasted links source (YouTube, direct files, web pages).
+- `lantern-source-bible`: offline Bible source. Loads translations from JSON or TSV,
+  indexes every verse, and parses Spanish/English references (`jn 3 16-18`,
+  `1 Co 13:4-7`, `primera de Juan 4`) into passages with one slide per verse.
+
+### Changed
+
+- Minimum supported Rust version is now 1.99.
+- `subscribe` returns a `StageFeed`, the snapshot and the receiver taken under one lock.
+- `Showman::take` returns `bool`.
+- Every stage action through the engine is logged when it puts a new scene on program.
+
+### Removed
+
+- `Engine::with_stage`. Use the engine's stage methods.
+- The `Showman` re-export from `lantern-engine`.
+- `Showman::set_frame_count`. Use `report` with `MediaReport::Frames`.
+- The `Scene` fields `frame`, `frame_count` and `playback`, and `Playback::Static`. Use `Scene::media`.
+- `Kind::is_timed`. A stage decides what it can play and reports it.

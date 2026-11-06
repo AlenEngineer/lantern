@@ -1,0 +1,19 @@
+# A YouTube link, downloaded with yt-dlp into ~/.cache/lantern/youtube and
+# played from there. Needs the network unless the video is cached. With an
+# empty cache the take comes before the download, so the stage stays black
+# until the file arrives and then plays.
+add https://www.youtube.com/watch?v=jNQXAC9IVRw
+next
+play
+wait 500
+shot 1-downloading
+wait-ready 120
+wait 2000
+shot 2-early
+wait 5000
+shot 3-later
+# A video that doesn't exist fails instead of staying black forever.
+show https://youtu.be/AAAAAAAAAAA
+wait-ready 60
+wait 300
+shot 4-failed
