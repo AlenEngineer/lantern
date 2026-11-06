@@ -11,6 +11,7 @@
 mod config;
 mod dashboard;
 mod library;
+mod plans;
 mod script;
 mod search;
 mod stage;
@@ -31,8 +32,9 @@ use lantern_engine::{
     StageEvent, StageFeed, StageState, StepId,
 };
 
-use crate::dashboard::{Op, RESULTS, SEARCH_BOX};
+use crate::dashboard::{NAME_BOX, Op, RESULTS, SEARCH_BOX};
 use crate::library::Library;
+use crate::plans::{Plans, Store, Switch};
 use crate::script::{Script, Ui};
 use crate::search::Search;
 use crate::stage::{Content, Loaded, Stage};
@@ -55,12 +57,17 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let (config, config_status) = config::load(|key| std::env::var(key).ok());
+    let (config, config_status) = config::load(config::env);
     log(config_status.to_string());
     let config_status = Arc::new(config_status.to_string());
     let engine = Shared(Arc::new(Engine::new()));
     let library = Shared(Library::start(engine.0.clone(), config));
     let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
+    let store = Store::new(&config::xdg_dir(
+        config::env,
+        "XDG_DATA_HOME",
+        ".local/share",
+    ));
     let result = iced::daemon(
         move || {
             App::boot(
@@ -68,6 +75,7 @@ fn main() -> ExitCode {
                 library.clone(),
                 config_status.clone(),
                 downloads.clone(),
+                store.clone(),
                 script.clone(),
             )
         },
@@ -155,6 +163,15 @@ enum Message {
     Op(Op),
     GoTo(StepId),
     Remove(StepId),
+    /// A saved plan in the open list was clicked.
+    OpenPlan(PathBuf),
+    /// The operator agreed to lose the unsaved plan.
+    DiscardPlan,
+    /// Back to the steps from the name editor, the open list or the question.
+    ClosePlanMode,
+    EditPlanName,
+    PlanName(String),
+    SubmitPlanName,
     /// The timeline is being dragged to this many seconds.
     Scrub(f64),
     /// The timeline was let go.
@@ -167,6 +184,7 @@ struct App {
     /// Which config file was read, or why none was.
     config_status: Arc<String>,
     downloads: Shared<Downloads>,
+    plans: Plans,
     script: Option<Script>,
     stage_window: window::Id,
     /// The stage window's mirror, built only from the engine's feed.
@@ -183,6 +201,7 @@ impl App {
         library: Shared<Library>,
         config_status: Arc<String>,
         downloads: Shared<Downloads>,
+        store: Store,
         script: Option<Script>,
     ) -> (App, Task<Message>) {
         let (dashboard_window, open_dashboard) = window::open(window::Settings {
@@ -196,8 +215,11 @@ impl App {
             platform_specific: platform(STAGE_APP_ID),
             ..window::Settings::default()
         });
+        // The stage feed's first message preloads the reopened plan.
+        let plans = Plans::start(store, &engine.0);
         let app = App {
             media: Stage::new(downloads.0.clone()),
+            plans,
             engine,
             library,
             config_status,
@@ -265,6 +287,15 @@ impl App {
                         }
                     },
                     Ui::Press(op) => self.op(op),
+                    Ui::Open(name) => {
+                        let opened = self.plans.open_named(&self.engine.0, &name);
+                        self.preload_if(opened)
+                    }
+                    Ui::Rename(name) => Task::batch([
+                        self.update(Message::EditPlanName),
+                        self.update(Message::PlanName(name)),
+                        self.update(Message::SubmitPlanName),
+                    ]),
                 };
             }
             Message::Query(query) => return self.query(query),
@@ -292,6 +323,27 @@ impl App {
             Message::Remove(step) => {
                 self.engine.0.edit_plan(|plan| plan.remove(step));
                 return self.preload();
+            }
+            Message::OpenPlan(path) => {
+                let opened = self.plans.switch(&self.engine.0, Switch::Open(path));
+                return self.preload_if(opened);
+            }
+            Message::DiscardPlan => {
+                let replaced = self.plans.discard(&self.engine.0);
+                return self.preload_if(replaced);
+            }
+            Message::ClosePlanMode => {
+                self.plans.cancel();
+                return self.op(Op::FocusSearch);
+            }
+            Message::EditPlanName => {
+                self.plans.edit_name(&self.engine.0);
+                return Task::batch([operation::focus(NAME_BOX), operation::select_all(NAME_BOX)]);
+            }
+            Message::PlanName(text) => self.plans.type_name(text),
+            Message::SubmitPlanName => {
+                self.plans.submit_name(&self.engine.0);
+                return self.op(Op::FocusSearch);
             }
             Message::Scrub(seconds) => self.scrub = Some(seconds),
             Message::Scrubbed => {
@@ -369,8 +421,25 @@ impl App {
                     operation::select_all(SEARCH_BOX),
                 ]);
             }
+            Op::Save => {
+                self.plans.save(&engine);
+            }
+            Op::Open => self.plans.browse(),
+            Op::New => {
+                let replaced = self.plans.switch(&engine, Switch::New);
+                return self.preload_if(replaced);
+            }
         }
         Task::none()
+    }
+
+    /// Preloads for a plan that replaced the last one.
+    fn preload_if(&mut self, replaced: bool) -> Task<Message> {
+        if replaced {
+            self.preload()
+        } else {
+            Task::none()
+        }
     }
 
     fn scroll_to_pick(&self) -> Task<Message> {

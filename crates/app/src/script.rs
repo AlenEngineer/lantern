@@ -104,8 +104,14 @@ pub enum Command {
     /// previews it. Web pages are skipped, as on screen.
     Select(usize),
     /// `press KEY`: a dashboard key, as if pressed outside the search box
-    /// (see [`dashboard::op_named`] for the names).
+    /// (see [`dashboard::op_named`] for the names). `press ctrl+s` saves
+    /// the plan, `ctrl+o` lists saved plans, `ctrl+n` starts a new one.
     Press(String),
+    /// `open NAME`: open the saved plan with this title or file name, as if
+    /// picked from the open list.
+    Open(String),
+    /// `rename TEXT`: rename the plan, as if typed into its name.
+    Rename(String),
     /// `shot NAME`: ask the harness to capture both windows.
     Shot(String),
     /// `quit`: stop here.
@@ -180,6 +186,9 @@ impl Command {
             },
             "type" if !rest.is_empty() => Command::Type(rest.to_string()),
             "type" => return Err("type needs text".into()),
+            "open" | "rename" if rest.is_empty() => return Err(format!("{word} needs a name")),
+            "open" => Command::Open(rest.to_string()),
+            "rename" => Command::Rename(rest.to_string()),
             "select" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
@@ -213,6 +222,8 @@ impl Command {
                 | Command::Type(_)
                 | Command::Select(_)
                 | Command::Press(_)
+                | Command::Open(_)
+                | Command::Rename(_)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
@@ -228,6 +239,8 @@ pub enum Ui {
     Type(String),
     Select(usize),
     Press(Op),
+    Open(String),
+    Rename(String),
 }
 
 /// A parsed script and how to ask for screenshots.
@@ -286,6 +299,8 @@ impl Script {
                 Command::Press(key) => ui(Ui::Press(
                     dashboard::op_named(key).expect("checked by Command::parse"),
                 )),
+                Command::Open(name) => ui(Ui::Open(name.clone())),
+                Command::Rename(name) => ui(Ui::Rename(name.clone())),
                 _ => self.perform(command, engine, downloads),
             }
             acted();
@@ -331,7 +346,9 @@ impl Script {
             | Command::ShowHit(_)
             | Command::Type(_)
             | Command::Select(_)
-            | Command::Press(_) => {}
+            | Command::Press(_)
+            | Command::Open(_)
+            | Command::Rename(_) => {}
         }
     }
 
@@ -500,12 +517,25 @@ mod tests {
         let library = Library::start(engine.clone(), Config::default());
         let downloads = Downloads::new("/nonexistent".into());
         let mut sent = Vec::new();
-        Script::parse("type pa\nselect 2\npress PageDown", Path::new(""), None)
-            .unwrap()
-            .run(&engine, &library, &downloads, |ui| sent.push(ui), || {});
+        let script =
+            "type pa\nselect 2\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
+        Script::parse(script, Path::new(""), None).unwrap().run(
+            &engine,
+            &library,
+            &downloads,
+            |ui| sent.push(ui),
+            || {},
+        );
         assert_eq!(
             sent,
-            [Ui::Type("pa".into()), Ui::Select(1), Ui::Press(Op::Next)]
+            [
+                Ui::Type("pa".into()),
+                Ui::Select(1),
+                Ui::Press(Op::Next),
+                Ui::Press(Op::Save),
+                Ui::Rename("Sunday 3".into()),
+                Ui::Open("Sunday 3".into()),
+            ]
         );
     }
 
@@ -579,6 +609,7 @@ mod tests {
         assert_eq!(err("next 3"), "line 1: next takes no argument");
         assert_eq!(err("search"), "line 1: search needs text");
         assert_eq!(err("type"), "line 1: type needs text");
+        assert_eq!(err("open"), "line 1: open needs a name");
         assert_eq!(
             err("select 0"),
             r#"line 1: select needs a number from 1, got "0""#

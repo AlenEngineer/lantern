@@ -75,6 +75,13 @@ pub struct Plan {
     next_id: u64,
 }
 
+impl Default for Plan {
+    /// An empty plan titled "Untitled".
+    fn default() -> Self {
+        Self::new("Untitled")
+    }
+}
+
 impl Plan {
     /// An empty plan.
     pub fn new(title: impl Into<String>) -> Self {

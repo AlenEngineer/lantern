@@ -81,7 +81,7 @@ impl Engine {
     pub fn new() -> Self {
         Self {
             searcher: Searcher::new(),
-            session: Mutex::new(Session::new(Plan::new("Untitled"))),
+            session: Mutex::new(Session::new(Plan::default())),
             stage: Mutex::new(Showman::new()),
         }
     }

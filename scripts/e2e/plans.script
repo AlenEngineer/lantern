@@ -1,0 +1,25 @@
+# Plans: build one, name it, save it, start another and open it back.
+# reopen.script then checks that the next start reopens it; run both with
+# one data folder (see scripts/e2e.sh).
+add fixtures/pages.pdf
+add fixtures/video.mp4
+add fixtures/image.png
+# Let the dashboard finish preloading the video before the first shot.
+wait 2000
+# Leaving an unsaved plan asks first. Saving answers instead.
+press ctrl+n
+wait 300
+shot 1-unsaved-asks
+rename Sunday service
+press ctrl+s
+wait 300
+shot 2-saved
+press ctrl+n
+wait 300
+shot 3-new
+press ctrl+o
+wait 300
+shot 4-open-list
+open Sunday service
+wait 800
+shot 5-opened

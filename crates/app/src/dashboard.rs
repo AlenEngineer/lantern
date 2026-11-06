@@ -1,15 +1,16 @@
 //! The operator's window: search, preview, program, the plan and the
 //! transport, plus the keys that drive them.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
     Space, button, column, container, image, row, scrollable, slider, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Font, Length, Theme, event, font};
-use lantern_engine::{Action, Media, Playback, Resource, Scene, Step, Timed};
+use lantern_engine::{Action, Media, Plan, Playback, Resource, Scene, Step, Timed};
 
+use crate::plans::{Entry, Mode, Notice, Switch, file_name};
 use crate::search::{Group, Live, supported};
 use crate::stage::Content;
 use crate::youtube::{Download, YoutubeVideo};
@@ -17,6 +18,7 @@ use crate::{App, Message};
 
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
+pub const NAME_BOX: &str = "plan-name";
 
 /// What the operator can do from a key, a button or a script's `press`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,16 +37,24 @@ pub enum Op {
     PickNext,
     PickPrev,
     FocusSearch,
+    /// Saves the plan to its file, or a new one named after it.
+    Save,
+    /// Shows or hides the list of saved plans.
+    Open,
+    /// Starts an empty plan.
+    New,
 }
 
 enum Bind {
     Named(Named),
     Char(char),
+    Ctrl(char),
 }
 
-/// Every key, by the name a script's `press` uses. While the search box has
-/// focus it keeps the keys it uses for typing, so only Enter, Escape (which
-/// leaves the box), Up, Down, Page Up and Page Down reach this table then.
+/// Every key, by the name a script's `press` uses. While a text box has
+/// focus it keeps the keys it uses for typing, so only the Ctrl keys, Enter,
+/// Escape (which leaves the box), Up, Down, Page Up and Page Down reach
+/// this table then.
 const KEYS: &[(&str, Bind, Op)] = &[
     ("enter", Bind::Named(Named::Enter), Op::Enter),
     ("down", Bind::Named(Named::ArrowDown), Op::PickNext),
@@ -58,10 +68,14 @@ const KEYS: &[(&str, Bind, Op)] = &[
     ("b", Bind::Char('b'), Op::Blackout),
     ("a", Bind::Char('a'), Op::AddToPlan),
     ("/", Bind::Char('/'), Op::FocusSearch),
+    ("ctrl+s", Bind::Ctrl('s'), Op::Save),
+    ("ctrl+o", Bind::Ctrl('o'), Op::Open),
+    ("ctrl+n", Bind::Ctrl('n'), Op::New),
 ];
 
 const HELP: &str = "Enter preview, then take · ↑↓ pick · A add to plan · →/PgDn next · ←/PgUp back · \
-                    Space play/pause · B blackout · Esc leaves the search box · / returns to it";
+                    Space play/pause · B blackout · Esc leaves the search box · / returns to it · \
+                    Ctrl+S save · Ctrl+O open · Ctrl+N new plan";
 
 /// The op a script's `press NAME` stands for.
 pub fn op_named(name: &str) -> Option<Op> {
@@ -70,22 +84,22 @@ pub fn op_named(name: &str) -> Option<Op> {
         .map(|(_, _, op)| *op)
 }
 
-fn op_for(key: &Key) -> Option<Op> {
+fn op_for(key: &Key, ctrl: bool) -> Option<Op> {
+    let is = |pressed: &str, c: char| pressed.to_lowercase().chars().eq(std::iter::once(c));
     KEYS.iter()
         .find(|(_, bind, _)| match (bind, key.as_ref()) {
+            (Bind::Ctrl(c), Key::Character(pressed)) => ctrl && is(pressed, *c),
+            _ if ctrl => false,
             (Bind::Named(named), Key::Named(pressed)) => *named == pressed,
             (Bind::Named(Named::Space), Key::Character(" ")) => true,
-            (Bind::Char(c), Key::Character(pressed)) => {
-                pressed.chars().eq(std::iter::once(*c))
-                    || pressed.to_lowercase().chars().eq(std::iter::once(*c))
-            }
+            (Bind::Char(c), Key::Character(pressed)) => is(pressed, *c),
             _ => false,
         })
         .map(|(_, _, op)| *op)
 }
 
-/// Keys the focused search box didn't use. Held keys don't repeat, so
-/// holding B can't flicker the projector.
+/// Ctrl keys, and keys the focused text box didn't use. Held keys don't
+/// repeat, so holding B can't flicker the projector.
 pub fn key_event(
     event: iced::Event,
     status: event::Status,
@@ -100,10 +114,11 @@ pub fn key_event(
     else {
         return None;
     };
-    if status == event::Status::Captured || modifiers.command() || modifiers.alt() {
+    let ctrl = modifiers.command();
+    if modifiers.alt() || (status == event::Status::Captured && !ctrl) {
         return None;
     }
-    let op = op_for(&key)?;
+    let op = op_for(&key, ctrl)?;
     let repeats = matches!(op, Op::PickNext | Op::PickPrev);
     (repeats || !repeat).then_some(Message::Op(op))
 }
@@ -518,9 +533,73 @@ impl App {
     }
 
     fn plan_panel(&self) -> container::Container<'_, Message> {
-        let engine = &self.engine.0;
-        let plan = engine.plan();
-        let current = engine.current_step().map(|step| step.id);
+        let plan = self.engine.0.plan();
+        let mut body = column![self.plan_header(&plan)].spacing(8);
+        if let Some(notice) = self.plan_notice(&plan) {
+            body = body.push(notice);
+        }
+        let below = match &self.plans.mode {
+            Mode::Steps | Mode::Renaming(_) => self.steps(&plan),
+            Mode::Browsing(entries) => self.plan_list(entries),
+            Mode::Confirm(switch) => confirm(&plan, switch),
+        };
+        panel(body.push(below), LINE)
+    }
+
+    fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
+        let name: Element<'_, Message> = match &self.plans.mode {
+            Mode::Renaming(draft) => row![
+                text_input("Plan name", draft)
+                    .id(NAME_BOX)
+                    .on_input(Message::PlanName)
+                    .on_submit(Message::SubmitPlanName)
+                    .size(14)
+                    .padding([4, 8])
+                    .width(240),
+                small_button("✕", Message::ClosePlanMode),
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center)
+            .into(),
+            _ => button(text(plan.title.clone()).size(14).color(TEXT))
+                .padding([4, 8])
+                .on_press(Message::EditPlanName)
+                .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
+                .into(),
+        };
+        let unsaved = self.plans.is_dirty(plan).then_some("•");
+        row![
+            heading("PLAN", MUTED),
+            name,
+            text(unsaved.unwrap_or_default())
+                .size(18)
+                .font(BOLD)
+                .color(AMBER),
+            Space::new().width(Fill),
+            action("New", Message::Op(Op::New)),
+            action("Open", Message::Op(Op::Open)),
+            action("Save", Message::Op(Op::Save)),
+            action("◀ Back", Message::Op(Op::Prev)),
+            action("Next ▶", Message::Op(Op::Next)),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    /// The last save or open: its error, or that it worked while nothing
+    /// has changed since.
+    fn plan_notice(&self, plan: &Plan) -> Option<Element<'_, Message>> {
+        let (message, color) = match self.plans.notice.as_ref()? {
+            Notice::Failed(why) => (why, RED),
+            Notice::Done(_) if self.plans.is_dirty(plan) => return None,
+            Notice::Done(what) => (what, GREEN),
+        };
+        Some(text(message.as_str()).size(13).color(color).into())
+    }
+
+    fn steps(&self, plan: &Plan) -> Element<'_, Message> {
+        let current = self.engine.0.current_step().map(|step| step.id);
         let mut steps = column![].spacing(2);
         for (index, step) in plan.steps().iter().enumerate() {
             steps = steps.push(self.step_row(index, step, Some(step.id) == current));
@@ -532,19 +611,34 @@ impl App {
                     .color(MUTED),
             );
         }
-        let header = row![
-            heading("PLAN", MUTED),
-            text(plan.title).size(14).color(TEXT),
-            Space::new().width(Fill),
-            action("◀ Back", Message::Op(Op::Prev)),
-            action("Next ▶", Message::Op(Op::Next)),
+        scrollable(steps).height(Fill).into()
+    }
+
+    fn plan_list<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
+        let folder = self.plans.store().dir().display().to_string();
+        let mut list = column![
+            row![
+                heading("OPEN A SAVED PLAN", BLUE),
+                text(folder).size(12).color(FAINT).width(Fill),
+                small_button("Cancel", Message::ClosePlanMode),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
         ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        panel(
-            column![header, scrollable(steps).height(Fill)].spacing(8),
-            LINE,
-        )
+        .spacing(2);
+        if entries.is_empty() {
+            list = list.push(
+                text("No saved plans yet. Save makes one.")
+                    .size(14)
+                    .color(MUTED),
+            );
+        }
+        let now = SystemTime::now();
+        for entry in entries {
+            let when = now.duration_since(entry.modified).unwrap_or_default();
+            list = list.push(plan_entry(entry, ago(when)));
+        }
+        scrollable(list).height(Fill).into()
     }
 
     fn step_row(&self, index: usize, step: &Step, current: bool) -> Element<'_, Message> {
@@ -569,10 +663,7 @@ impl App {
                 .color(TEXT)
                 .width(Fill),
             text(detail).size(12).color(MUTED),
-            button(text("✕").size(12).color(MUTED))
-                .padding([2, 8])
-                .on_press(Message::Remove(step.id))
-                .style(|_, status| filled(Color::TRANSPARENT, MUTED, status)),
+            small_button("✕", Message::Remove(step.id)),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -619,6 +710,66 @@ fn download_tag(download: &Download) -> Element<'static, Message> {
         .size(13)
         .color(color)
         .into()
+}
+
+fn plan_entry(entry: &Entry, when: String) -> Element<'_, Message> {
+    let (title, detail, color) = match &entry.summary {
+        Ok((title, steps)) => (title.clone(), format!("{steps} steps · {when}"), TEXT),
+        Err(why) => (file_name(&entry.path), format!("can't read: {why}"), RED),
+    };
+    let line = row![
+        text(title).size(16).color(color).width(Fill),
+        text(detail).size(12).color(MUTED),
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    button(line)
+        .width(Fill)
+        .padding([6, 8])
+        .on_press_maybe(
+            entry
+                .summary
+                .is_ok()
+                .then(|| Message::OpenPlan(entry.path.clone())),
+        )
+        .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
+        .into()
+}
+
+fn confirm<'a>(plan: &Plan, switch: &Switch) -> Element<'a, Message> {
+    let then = match switch {
+        Switch::New => "start a new one",
+        Switch::Open(_) => "open another",
+    };
+    column![
+        text(format!(
+            "“{}” was never saved. Discard it and {then}?",
+            plan.title
+        ))
+        .size(16)
+        .color(TEXT),
+        text("Ctrl+S saves it instead.").size(13).color(MUTED),
+        row![
+            action_tinted("Discard", RED, Some(Message::DiscardPlan)),
+            action("Keep it", Message::ClosePlanMode),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
+    .padding(8)
+    .into()
+}
+
+/// How long ago, roughly: "just now", "5 min ago", "3 h ago", "2 days ago".
+fn ago(elapsed: Duration) -> String {
+    let minutes = elapsed.as_secs() / 60;
+    match minutes {
+        0 => "just now".into(),
+        1..60 => format!("{minutes} min ago"),
+        60..1440 => format!("{} h ago", minutes / 60),
+        1440..2880 => "1 day ago".into(),
+        _ => format!("{} days ago", minutes / 1440),
+    }
 }
 
 fn clock(d: Duration) -> String {
@@ -685,6 +836,14 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .into()
 }
 
+fn small_button(label: &str, message: Message) -> Element<'_, Message> {
+    button(text(label).size(13).color(MUTED))
+        .padding([2, 8])
+        .on_press(message)
+        .style(|_, status| filled(Color::TRANSPARENT, MUTED, status))
+        .into()
+}
+
 fn action(label: &str, message: Message) -> button::Button<'_, Message> {
     action_tinted(label, RAISED, Some(message))
 }
@@ -739,6 +898,14 @@ mod tests {
     use super::*;
 
     fn pressed(key: Key, status: event::Status) -> Option<Message> {
+        pressed_with(key, keyboard::Modifiers::default(), status)
+    }
+
+    fn pressed_with(
+        key: Key,
+        modifiers: keyboard::Modifiers,
+        status: event::Status,
+    ) -> Option<Message> {
         let event = iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: key.clone(),
             modified_key: key,
@@ -746,7 +913,7 @@ mod tests {
                 keyboard::key::NativeCode::Unidentified,
             ),
             location: keyboard::Location::Standard,
-            modifiers: keyboard::Modifiers::default(),
+            modifiers,
             text: None,
             repeat: false,
         });
@@ -789,10 +956,40 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_keys_work_while_typing_and_ctrl_blocks_the_plain_keys() {
+        let ctrl = |c: &str, status| {
+            op(pressed_with(
+                Key::Character(c.into()),
+                keyboard::Modifiers::CTRL,
+                status,
+            ))
+        };
+        assert_eq!(ctrl("s", event::Status::Captured), Some(Op::Save));
+        assert_eq!(ctrl("o", event::Status::Ignored), Some(Op::Open));
+        assert_eq!(ctrl("n", event::Status::Captured), Some(Op::New));
+        assert_eq!(ctrl("b", event::Status::Ignored), None);
+        assert_eq!(
+            op(pressed(Key::Character("s".into()), event::Status::Ignored)),
+            None
+        );
+    }
+
+    #[test]
+    fn ages_are_rough() {
+        let minutes = |m: u64| ago(Duration::from_secs(m * 60));
+        assert_eq!(minutes(0), "just now");
+        assert_eq!(minutes(5), "5 min ago");
+        assert_eq!(minutes(130), "2 h ago");
+        assert_eq!(minutes(1500), "1 day ago");
+        assert_eq!(minutes(3 * 1440), "3 days ago");
+    }
+
+    #[test]
     fn script_key_names_match_the_table() {
         assert_eq!(op_named("Enter"), Some(Op::Enter));
         assert_eq!(op_named("pagedown"), Some(Op::Next));
         assert_eq!(op_named("b"), Some(Op::Blackout));
+        assert_eq!(op_named("Ctrl+S"), Some(Op::Save));
         assert_eq!(op_named("f13"), None);
     }
 }

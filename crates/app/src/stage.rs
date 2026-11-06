@@ -425,11 +425,7 @@ fn render_pdf(path: &Path, cache: &Path) -> Result<Vec<Handle>, String> {
 }
 
 pub fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("lantern")
+    crate::config::xdg_dir(crate::config::env, "XDG_CACHE_HOME", ".cache")
 }
 
 #[cfg(test)]
