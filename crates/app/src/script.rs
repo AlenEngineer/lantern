@@ -14,6 +14,7 @@ use chorquest_engine::{
 };
 use chorquest_source_link::LinkSource;
 
+use crate::dashboard::{self, Op};
 use crate::library::Library;
 use crate::log;
 use crate::youtube::{Downloads, YoutubeVideo};
@@ -96,6 +97,15 @@ pub enum Command {
     Search(String),
     /// `show-hit N`: show hit N of the last search now, counted from 1.
     ShowHit(usize),
+    /// `type TEXT`: wait for the index, then put TEXT in the dashboard's
+    /// search box, as if typed.
+    Type(String),
+    /// `select N`: pick result N in the dashboard, counted from 1, which
+    /// previews it. Web pages are skipped, as on screen.
+    Select(usize),
+    /// `press KEY`: a dashboard key, as if pressed outside the search box
+    /// (see [`dashboard::op_named`] for the names).
+    Press(String),
     /// `shot NAME`: ask the harness to capture both windows.
     Shot(String),
     /// `quit`: stop here.
@@ -168,6 +178,14 @@ impl Command {
                 Ok(n) if n > 0 => Command::ShowHit(n - 1),
                 _ => return Err(format!("show-hit needs a number from 1, got {rest:?}")),
             },
+            "type" if !rest.is_empty() => Command::Type(rest.to_string()),
+            "type" => return Err("type needs text".into()),
+            "select" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Select(n - 1),
+                _ => return Err(format!("select needs a number from 1, got {rest:?}")),
+            },
+            "press" if dashboard::op_named(rest).is_some() => Command::Press(rest.to_lowercase()),
+            "press" => return Err(format!("press needs a key name, got {rest:?}")),
             "next" => Command::Next,
             "prev" => Command::Prev,
             "black" => Command::Black,
@@ -192,12 +210,24 @@ impl Command {
                 | Command::Frame(_)
                 | Command::Search(_)
                 | Command::ShowHit(_)
+                | Command::Type(_)
+                | Command::Select(_)
+                | Command::Press(_)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
         }
         Ok(command)
     }
+}
+
+/// A script command for the dashboard, which only the app's event loop
+/// can carry out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ui {
+    Type(String),
+    Select(usize),
+    Press(Op),
 }
 
 /// A parsed script and how to ask for screenshots.
@@ -227,12 +257,13 @@ impl Script {
     }
 
     /// Runs every command in order, blocking, until the end or `quit`.
-    /// Calls `acted` after each one.
+    /// Hands dashboard commands to `ui`. Calls `acted` after each command.
     pub fn run(
         &self,
         engine: &Engine,
         library: &Library,
         downloads: &Arc<Downloads>,
+        mut ui: impl FnMut(Ui),
         mut acted: impl FnMut(),
     ) {
         let mut hits = Vec::new();
@@ -245,6 +276,16 @@ impl Script {
                     Some(hit) => engine.show_now(hit.resource.clone()),
                     None => log(format!("script: show-hit: only {} hits", hits.len())),
                 },
+                Command::Type(text) => {
+                    if !library.settle(Duration::from_secs(60)) {
+                        log("script: type: indexing still running after 60s");
+                    }
+                    ui(Ui::Type(text.clone()));
+                }
+                Command::Select(n) => ui(Ui::Select(*n)),
+                Command::Press(key) => ui(Ui::Press(
+                    dashboard::op_named(key).expect("checked by Command::parse"),
+                )),
                 _ => self.perform(command, engine, downloads),
             }
             acted();
@@ -285,7 +326,12 @@ impl Script {
             }
             Command::Clear => engine.clear(),
             Command::Shot(name) => self.shoot(name),
-            Command::Quit | Command::Search(_) | Command::ShowHit(_) => {}
+            Command::Quit
+            | Command::Search(_)
+            | Command::ShowHit(_)
+            | Command::Type(_)
+            | Command::Select(_)
+            | Command::Press(_) => {}
         }
     }
 
@@ -390,7 +436,7 @@ mod tests {
         let downloads = Downloads::new("/nonexistent".into());
         Script::parse(source, Path::new("/media"), None)
             .unwrap()
-            .run(&engine, &library, &downloads, || {});
+            .run(&engine, &library, &downloads, |_| {}, || {});
         engine
     }
 
@@ -445,6 +491,21 @@ mod tests {
                 Command::Wait(Duration::from_millis(5)),
                 Command::Shot("first".into())
             ]
+        );
+    }
+
+    #[test]
+    fn dashboard_commands_go_to_the_ui() {
+        let engine = Arc::new(Engine::new());
+        let library = Library::start(engine.clone(), Config::default());
+        let downloads = Downloads::new("/nonexistent".into());
+        let mut sent = Vec::new();
+        Script::parse("type pa\nselect 2\npress PageDown", Path::new(""), None)
+            .unwrap()
+            .run(&engine, &library, &downloads, |ui| sent.push(ui), || {});
+        assert_eq!(
+            sent,
+            [Ui::Type("pa".into()), Ui::Select(1), Ui::Press(Op::Next)]
         );
     }
 
@@ -517,6 +578,15 @@ mod tests {
         );
         assert_eq!(err("next 3"), "line 1: next takes no argument");
         assert_eq!(err("search"), "line 1: search needs text");
+        assert_eq!(err("type"), "line 1: type needs text");
+        assert_eq!(
+            err("select 0"),
+            r#"line 1: select needs a number from 1, got "0""#
+        );
+        assert_eq!(
+            err("press f13"),
+            r#"line 1: press needs a key name, got "f13""#
+        );
         assert_eq!(
             err("show-hit x"),
             r#"line 1: show-hit needs a number from 1, got "x""#

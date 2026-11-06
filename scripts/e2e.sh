@@ -38,6 +38,8 @@ trap cleanup EXIT
 cleanup
 hyprctl output create headless "$E2E_STAGE_OUTPUT" >/dev/null
 hyprctl output create headless "$E2E_DASHBOARD_OUTPUT" >/dev/null
+# The dashboard gets a laptop-sized 1280x720 logical screen.
+hyprctl eval "hl.monitor({ output = \"$E2E_DASHBOARD_OUTPUT\", mode = \"1920x1080\", position = \"auto\", scale = 1.5 })" >/dev/null
 
 CHORQUEST_CONFIG=${CHORQUEST_CONFIG:-$repo/scripts/e2e/config.toml} \
     CHORQUEST_SCRIPT=$script CHORQUEST_SHOT="$repo/scripts/e2e/shot.sh" \

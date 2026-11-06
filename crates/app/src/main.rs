@@ -9,8 +9,10 @@
 //! for each `shot NAME` in it.
 
 mod config;
+mod dashboard;
 mod library;
 mod script;
+mod search;
 mod stage;
 mod youtube;
 
@@ -21,18 +23,23 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use chorquest_engine::{
-    Action, Engine, Media, MediaReport, Playback, Resource, SceneId, StageEvent, StageFeed,
-    StageState,
+    Action, Engine, Media, MediaReport, Playback, ResourceId, SceneId, SearchEvent, SearchStream,
+    StageEvent, StageFeed, StageState, StepId,
 };
 use iced::futures::{SinkExt, Stream, StreamExt};
-use iced::widget::{Space, column, container, image, stack, text};
+use iced::widget::{Space, container, image, operation, scrollable, stack, text};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
 
+use crate::dashboard::{Op, RESULTS, SEARCH_BOX};
 use crate::library::Library;
-use crate::script::Script;
+use crate::script::{Script, Ui};
+use crate::search::Search;
 use crate::stage::{Content, Loaded, Stage};
 use crate::youtube::{Downloads, YoutubeVideo};
+
+/// How long typing must pause before the live sources are asked.
+const LIVE_SEARCH_PAUSE: Duration = Duration::from_millis(250);
 
 /// The Wayland app id of the audience window. A Hyprland rule matches it to
 /// send the window to the projector.
@@ -68,6 +75,7 @@ fn main() -> ExitCode {
         App::view,
     )
     .title(App::title)
+    .theme(|_: &App, _| dashboard::theme())
     .subscription(App::subscription)
     .run();
     match result {
@@ -131,7 +139,26 @@ enum Message {
     /// stage feed doesn't announce.
     Acted,
     ScriptDone,
+    /// A dashboard command from the script.
+    Script(Ui),
     Closed(window::Id),
+    /// The search box changed.
+    Query(String),
+    /// The pause after this edit of the query is over.
+    Paused(u64),
+    /// An event from the live search with this ticket.
+    Searched(u64, Arc<SearchEvent>),
+    /// Every source answered the live search with this ticket.
+    SearchDone(u64),
+    /// A result was clicked.
+    Pick(ResourceId),
+    Op(Op),
+    GoTo(StepId),
+    Remove(StepId),
+    /// The timeline is being dragged to this many seconds.
+    Scrub(f64),
+    /// The timeline was let go.
+    Scrubbed,
 }
 
 struct App {
@@ -145,6 +172,9 @@ struct App {
     /// The stage window's mirror, built only from the engine's feed.
     stage: StageState,
     media: Stage,
+    search: Search,
+    /// Where the timeline is being dragged, until it is let go.
+    scrub: Option<f64>,
 }
 
 impl App {
@@ -155,8 +185,8 @@ impl App {
         downloads: Shared<Downloads>,
         script: Option<Script>,
     ) -> (App, Task<Message>) {
-        let (_, open_dashboard) = window::open(window::Settings {
-            size: iced::Size::new(960.0, 640.0),
+        let (dashboard_window, open_dashboard) = window::open(window::Settings {
+            size: iced::Size::new(1280.0, 720.0),
             platform_specific: platform(DASHBOARD_APP_ID),
             ..window::Settings::default()
         });
@@ -175,10 +205,18 @@ impl App {
             script,
             stage_window,
             stage: StageState::default(),
+            search: Search::default(),
+            scrub: None,
         };
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
         // window back to tiled when another window maps on its workspace.
-        (app, open_dashboard.discard().chain(open_stage.discard()))
+        // Then the keyboard goes back to the dashboard, into the search box.
+        let open = open_dashboard
+            .discard()
+            .chain(open_stage.discard())
+            .chain(window::gain_focus(dashboard_window))
+            .chain(operation::focus(SEARCH_BOX));
+        (app, open)
     }
 
     fn title(&self, window: window::Id) -> String {
@@ -212,12 +250,140 @@ impl App {
                 log("script finished, exiting");
                 return iced::exit();
             }
+            Message::Script(ui) => {
+                log(format!("dashboard: {ui:?}"));
+                return match ui {
+                    Ui::Type(query) => self.query(query),
+                    Ui::Select(n) => match self.search.pick_nth(n) {
+                        Some(resource) => {
+                            self.engine.0.preview(resource);
+                            self.scroll_to_pick()
+                        }
+                        None => {
+                            log(format!("dashboard: no result {}", n + 1));
+                            Task::none()
+                        }
+                    },
+                    Ui::Press(op) => self.op(op),
+                };
+            }
+            Message::Query(query) => return self.query(query),
+            Message::Paused(edit) => {
+                if let Some(stream) = self.search.start_live(edit, &self.engine.0) {
+                    return live_search(stream);
+                }
+            }
+            Message::Searched(ticket, event) => {
+                self.search.live_event(ticket, &event, &self.engine.0);
+            }
+            Message::SearchDone(ticket) => self.search.live_done(ticket),
+            Message::Pick(id) => {
+                if let Some(resource) = self.search.pick(&id) {
+                    self.engine.0.preview(resource);
+                }
+            }
+            Message::Op(op) => return self.op(op),
+            Message::GoTo(step) => {
+                if let Err(err) = self.engine.0.go_to(step) {
+                    log(format!("dashboard: {err}"));
+                }
+                return self.preload();
+            }
+            Message::Remove(step) => {
+                self.engine.0.edit_plan(|plan| plan.remove(step));
+                return self.preload();
+            }
+            Message::Scrub(seconds) => self.scrub = Some(seconds),
+            Message::Scrubbed => {
+                if let Some(seconds) = self.scrub.take() {
+                    self.engine.0.seek(Duration::from_secs_f64(seconds));
+                }
+            }
             Message::Closed(window) => {
                 log(format!("window {window:?} closed, exiting"));
                 return iced::exit();
             }
         }
         Task::none()
+    }
+
+    /// Index results now, the live sources once typing pauses.
+    fn query(&mut self, query: String) -> Task<Message> {
+        let Some(edit) = self.search.edit(query, &self.engine.0) else {
+            return Task::none();
+        };
+        let pause = Task::perform(after(LIVE_SEARCH_PAUSE), move |()| Message::Paused(edit));
+        Task::batch([
+            pause,
+            operation::snap_to(RESULTS, scrollable::RelativeOffset::START),
+        ])
+    }
+
+    fn op(&mut self, op: Op) -> Task<Message> {
+        let engine = self.engine.0.clone();
+        match op {
+            Op::Enter => {
+                if self.search.picked().is_none()
+                    && let Some(first) = self.search.pick_nth(0)
+                {
+                    engine.preview(first);
+                    return self.scroll_to_pick();
+                }
+                return self.op(Op::Take);
+            }
+            Op::Take => {
+                if engine.take() {
+                    self.search.unpick();
+                }
+            }
+            Op::AddToPlan => {
+                if let Some(scene) = engine.stage().preview {
+                    engine.add_after_current(&scene.resource);
+                    return self.preload();
+                }
+            }
+            Op::Next => {
+                engine.next();
+                return self.preload();
+            }
+            Op::Prev => {
+                engine.prev();
+                return self.preload();
+            }
+            Op::PlayPause => {
+                engine.toggle_playback();
+            }
+            Op::Blackout => {
+                engine.toggle_blackout();
+            }
+            Op::Clear => engine.clear(),
+            Op::PickNext | Op::PickPrev => {
+                if let Some(resource) = self.search.step(op == Op::PickNext) {
+                    engine.preview(resource);
+                    return self.scroll_to_pick();
+                }
+            }
+            Op::FocusSearch => {
+                return Task::batch([
+                    operation::focus(SEARCH_BOX),
+                    operation::select_all(SEARCH_BOX),
+                ]);
+            }
+        }
+        Task::none()
+    }
+
+    fn scroll_to_pick(&self) -> Task<Message> {
+        match self.search.picked_offset() {
+            Some(y) => operation::snap_to(
+                RESULTS,
+                scrollable::RelativeOffset {
+                    x: None,
+                    y: Some(y),
+                },
+            ),
+            None => Task::none(),
+        }
     }
 
     fn stage_event(&mut self, event: &StageEvent) -> Task<Message> {
@@ -312,79 +478,11 @@ impl App {
         }
     }
 
-    fn dashboard_view(&self) -> Element<'_, Message> {
-        let engine = &self.engine.0;
-        let plan = engine.plan();
-        let current = engine.current_step().map(|step| step.id);
-        let program = match &self.stage.program {
-            Some(scene) => format!(
-                "Program: {} ({}){}",
-                scene.resource.title,
-                describe(&scene.media),
-                match scene.media {
-                    // The failure already says why.
-                    Media::Failed { .. } => String::new(),
-                    _ => self.download_note(&scene.resource),
-                }
-            ),
-            None => "Program: nothing".into(),
-        };
-        let preview = match &self.stage.preview {
-            Some(scene) => format!(
-                "Preview: {}{}",
-                scene.resource.title,
-                self.download_note(&scene.resource)
-            ),
-            None => "Preview: nothing".into(),
-        };
-        let blackout = if self.stage.blackout {
-            "Blackout: on"
-        } else {
-            "Blackout: off"
-        };
-        let steps = plan.steps().iter().map(|step| {
-            let marker = if Some(step.id) == current { ">" } else { " " };
-            let note = match &step.action {
-                Action::Show { resource } => self.download_note(resource),
-                _ => String::new(),
-            };
-            text(format!("{marker} {}{note}", step.label))
-                .size(20)
-                .into()
-        });
-        let index = self
-            .library
-            .0
-            .lines()
-            .into_iter()
-            .map(|line| text(line).size(16).into());
-        column![
-            text("chorquest").size(32),
-            text(self.config_status.as_str()).size(16),
-            column(index),
-            text(program).size(20),
-            text(preview).size(20),
-            text(blackout).size(20),
-            text(format!("Plan: {}", plan.title)).size(24),
-            column(steps).spacing(4),
-        ]
-        .spacing(12)
-        .padding(24)
-        .into()
-    }
-
-    /// A YouTube video's download state, e.g. " [downloading 42%]", or
-    /// nothing for anything else.
-    fn download_note(&self, resource: &Resource) -> String {
-        YoutubeVideo::of(resource)
-            .and_then(|video| self.downloads.0.state(&video.id))
-            .map_or_else(String::new, |download| format!(" [{download}]"))
-    }
-
     fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             Subscription::run_with(self.engine.clone(), stage_feed),
             window::close_events().map(Message::Closed),
+            iced::event::listen_with(dashboard::key_event),
         ];
         let playing = self
             .stage
@@ -428,27 +526,6 @@ fn fit(image: image::Image<image::Handle>) -> Element<'static, Message> {
         .height(Fill)
         .content_fit(ContentFit::Contain)
         .into()
-}
-
-/// The program's media for the operator, e.g. "frame 2 of 3" or "playing 0:03 / 0:06".
-fn describe(media: &Media) -> String {
-    let clock = |d: Duration| format!("{}:{:02}", d.as_secs() / 60, d.as_secs() % 60);
-    match media {
-        Media::Frames { frame, count } => match count {
-            Some(count) => format!("frame {} of {count}", frame + 1),
-            None => format!("frame {}", frame + 1),
-        },
-        Media::Timed(timed) => {
-            let state = match timed.playback {
-                Playback::Paused => "paused",
-                Playback::Playing => "playing",
-                Playback::Ended => "ended",
-            };
-            let duration = timed.duration.map_or("?".into(), clock);
-            format!("{state} {} / {duration}", clock(timed.position))
-        }
-        Media::Failed { reason } => format!("failed: {reason}"),
-    }
 }
 
 fn platform(application_id: &str) -> window::settings::PlatformSpecific {
@@ -500,9 +577,18 @@ fn run_script(
     iced::stream::channel(64, async move |mut out| {
         let (acted, mut received) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || {
-            script.run(&engine, &library, &downloads, || {
-                let _ = acted.unbounded_send(Message::Acted);
-            });
+            let ui = acted.clone();
+            script.run(
+                &engine,
+                &library,
+                &downloads,
+                |command| {
+                    let _ = ui.unbounded_send(Message::Script(command));
+                },
+                || {
+                    let _ = acted.unbounded_send(Message::Acted);
+                },
+            );
             let _ = acted.unbounded_send(Message::ScriptDone);
         });
         while let Some(message) = received.next().await {
@@ -511,4 +597,35 @@ fn run_script(
             }
         }
     })
+}
+
+/// Resolves after `delay`, timed on its own thread.
+fn after(delay: Duration) -> impl Future<Output = ()> {
+    let (done, wait) = iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let _ = done.send(());
+    });
+    async move {
+        let _ = wait.await;
+    }
+}
+
+/// A live search's events as messages, tagged with its ticket. The stream
+/// blocks, so a thread drains it.
+fn live_search(stream: SearchStream) -> Task<Message> {
+    let ticket = stream.ticket();
+    let (send, events) = iced::futures::channel::mpsc::unbounded();
+    std::thread::spawn(move || {
+        for event in stream {
+            if send
+                .unbounded_send(Message::Searched(ticket, Arc::new(event)))
+                .is_err()
+            {
+                return;
+            }
+        }
+        let _ = send.unbounded_send(Message::SearchDone(ticket));
+    });
+    Task::run(events, |message| message)
 }

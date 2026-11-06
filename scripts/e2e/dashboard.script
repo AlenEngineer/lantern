@@ -1,0 +1,40 @@
+# The dashboard driven the way an operator would: typing into the search
+# box, picking results and pressing keys. Sources from scripts/e2e/config.toml.
+type pa
+wait 800
+shot 1-results
+# Build a plan from searches. With no current step, each add goes first.
+select 1
+wait 300
+press a
+# A Bible reference: the live source's passage tops its group.
+type juan 3:16-17
+wait 800
+select 1
+wait 300
+shot 2-bible-preview
+press a
+type video
+wait 800
+select 1
+wait 300
+press a
+# Start the plan: the video goes on program and plays.
+press pagedown
+wait 1000
+press space
+type image
+wait 800
+select 1
+wait 1500
+shot 3-plan-preview-program
+seek 5
+wait 2500
+shot 4-video-ended
+press b
+wait 300
+shot 5-blackout
+press b
+press enter
+wait 800
+shot 6-took-preview

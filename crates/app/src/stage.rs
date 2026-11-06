@@ -172,6 +172,11 @@ impl Stage {
         }
     }
 
+    /// What a preload has finished loading for `id`.
+    pub fn preloaded(&self, id: &ResourceId) -> Option<&Content> {
+        self.ready.get(id)
+    }
+
     /// The program's player, while a video is on program.
     pub fn video(&mut self) -> Option<(SceneId, &mut Video)> {
         match &mut self.program {
