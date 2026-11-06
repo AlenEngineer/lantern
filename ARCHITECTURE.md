@@ -37,9 +37,9 @@ making structural changes. Update it when you make one.
                      │                                                          │
                      │  ┌──── Session (orchestrator) ────┐   ┌─── Showman ────┐ │
      Dashboard  ◀───▶│  │ Plan: [Show][Live][Blank]...   │──▶│ preview        │ │
-     (operator)      │  │ cursor, log                    │   │ program, frame │─┼──▶ Stage window
-                     │  └────────────────────────────────┘   │ blackout       │ │    (audience)
-                     │                                       └────────────────┘ │
+     (operator)      │  │ cursor, log                    │   │ program, media │─┼──▶ Stage window
+                     │  └────────────────────────────────┘   │ blackout       │◀┼─── (audience)
+                     │                                       └────────────────┘ │  report(id, ..)
                      └──────────────────────────────────────────────────────────┘
 ```
 
@@ -180,33 +180,61 @@ Showman is the model of the audience window. It doesn't draw anything.
 - **Preview**: what the operator has lined up. `take()` moves it to
   program. This is the safety net for live search.
 - **Blackout**: hides the stage without forgetting the program.
-- **Frames**: a `Scene` is a resource plus a frame index (stanza, page,
-  slide). Inline text knows its frame count. For documents and decks, the
-  stage window reports the count once it has opened the file.
-- **Playback**: timed media starts *paused* (pressing play should be
-  deliberate) and has play/pause/seek.
+- **Scenes**: a `Scene` is a resource on stage, with a `SceneId` and a
+  `Media`. An id is never reused, and `take()` gives the scene a fresh id
+  as it moves from preview to program.
+- **Media**: one of three shapes. `Frames` has a current frame and a count
+  (stanzas, pages, slides). `Timed` has a playback state, a position and a
+  duration. `Failed` means the stage can't present the scene. The Showman
+  guesses the shape from the resource, and the stage window corrects it.
+- **Playback**: timed media starts *paused*, because pressing play should be
+  deliberate. Only the stage can report `Ended`. From there, play replays
+  from the start and a seek returns to paused.
+- **Reports**: a renderer sends a `MediaReport` about one scene, by id: a
+  page count, a timeline, a position, the end, or a failure. A report for a
+  scene that has left the stage is ignored. Inline text ignores `Frames` and
+  `Timeline` reports, because the Showman splits it into frames itself.
 
-Windows don't poll. They `subscribe()` and receive `StageEvent`s. A window
-that opens late starts from `state()`. Events are serde-serializable, so they
-can cross into a webview or another process unchanged.
+Windows don't poll. `subscribe()` returns a `StageFeed`: a snapshot and a
+receiver made under one lock, so no event is lost or counted twice. A window
+applies each `StageEvent` to its copy with `StageState::apply`. That is the
+same function the Showman uses to change its own state, so the copy always
+equals the original. A report that changes a scene arrives as a `Media`
+event that carries the result. Events are serde-serializable, so they can
+cross into a webview or another process unchanged.
 
 ### Engine (`crates/engine`)
 
 The engine is what a UI embeds. It owns the `Searcher`, the `Session` and
-the `Showman`, and keeps them consistent:
+the `Showman`, and keeps them consistent. It doesn't re-export `Showman`, so
+the engine is the only way to change its stage.
 
 - `next()` / `prev()` behave like a presentation clicker: next frame if
   there is one, otherwise next step. Reaching a step *performs* it
   (`Show` → stage, `Blank` → clear, `Live`/`Note` → nothing).
-- `preview` / `take` / `show_now` handle off-plan content and log it.
-- `with_stage` exposes everything else on the stage (blackout, playback,
-  frame counts).
+- `preview` / `take` / `show_now` handle off-plan content.
+- `clear`, `clear_preview`, `set_blackout`, `toggle_blackout`,
+  `goto_frame`, `play`, `pause`, `toggle_playback` and `seek` are the other
+  operator controls.
+- `report(id, report)` is how a stage window tells the engine what it
+  learned about a scene.
+- `stage()` returns a snapshot, and `subscribe()` returns a `StageFeed`.
+
+Every operator method runs through one private function, `operate`. It
+takes the locks in order and compares the program's `SceneId` before and
+after the action. If a new scene is on program, `operate` logs it, as
+planned when it came from the plan and as live otherwise.
 
 ## Threading model
 
 - `Engine` is `Send + Sync`. Share one `Arc<Engine>` across the UI.
 - State lives behind `Mutex`/`RwLock`. Critical sections are short and never
-  do I/O. The lock order is `session` before `stage`.
+  do I/O. The lock order is `session` before `stage`, and `Engine::operate`
+  is the only place that takes both.
+- `Engine::report` takes only the stage lock, so a stage window never waits
+  behind `save_plan`.
+- Stage events go out on std `mpsc` channels. A UI thread that can't block
+  moves the feed's receiver to a small thread of its own.
 - Blocking work happens only in `Source::scan` (during reindex, on scoped
   threads) and `Source::search` (one thread per live source per search).
 - Sources are **synchronous** on purpose (see decisions below). A source that
@@ -242,6 +270,20 @@ These are short ADRs. Add new ones at the end.
 7. **Accent folding maps `ñ` to `n`.** Search is forgiving by design. A rare
    false positive (`año`/`ano`) is better than missing *Canción* when
    someone types `cancion`.
+8. **Renderers report facts about one scene, by id.** The stage window
+   knows what the engine can't: a PDF's page count, a video's length, that
+   it reached the end, or that it can't play a link. It says so with a
+   `MediaReport` tagged with the scene's `SceneId`, and it is the authority
+   on how the scene is presented. A late report finds its scene or nothing.
+   The engine never encodes what a renderer can play, which keeps ADR 6.
+9. **Stage state changes only by applying events.** `StageState::apply` is
+   the only code that writes the Showman's state, and every window keeps its
+   copy with the same function. `subscribe()` hands out the snapshot and the
+   receiver together. So a copy can't drift from the original.
+10. **The engine is the only door to its stage, and logging is derived.**
+    `with_stage` used to hand out the whole `Showman`, which skipped the log.
+    Now each control is an engine method, and `operate` logs whatever new
+    scene ends up on program. A new method can't forget to log.
 
 ## Writing a new source
 

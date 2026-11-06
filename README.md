@@ -86,7 +86,7 @@ engine.add_source(
 )?;
 engine.reindex();
 
-let stage = engine.subscribe(); // hand this to the stage window
+let feed = engine.subscribe(); // the stage window starts from feed.state
 
 let hits = engine.search_index(&Query::new("cancion"));
 engine.preview(hits[0].resource.clone()); // operator checks it
