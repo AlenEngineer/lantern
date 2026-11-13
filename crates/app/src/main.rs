@@ -340,7 +340,10 @@ struct App {
     /// search instead of adding to the old one.
     spent: bool,
     /// The plan's "Add step" row is open, showing the kinds of step.
-    adding: bool,
+    /// and which of them the arrows are on, for Enter.
+    adding: Option<usize>,
+    /// The saved plan the arrows are on in the list of plans, for Enter.
+    list_pick: Option<PathBuf>,
     /// The plan before each edit, newest last, for Ctrl+Z.
     undo: Vec<Plan>,
     /// The step whose fields are being typed in, so its keystrokes undo as
@@ -409,7 +412,8 @@ impl App {
             drag: None,
             stepping: false,
             spent: false,
-            adding: false,
+            adding: None,
+            list_pick: None,
             undo: Vec::new(),
             typing: None,
             arrived_at: None,
@@ -745,7 +749,7 @@ impl App {
             }
             Message::AddStep(new) => {
                 let (label, action) = new.step();
-                self.adding = false;
+                self.adding = None;
                 self.remember(None);
                 let id = self.engine.0.add(self.selected, label, action);
                 self.selected = Some(id);
@@ -824,7 +828,12 @@ impl App {
                 let replaced = self.plans.leave(&self.engine.0);
                 return self.switched(replaced);
             }
-            Message::ToggleAdd => self.adding = !self.adding,
+            Message::ToggleAdd => {
+                self.adding = match self.adding {
+                    Some(_) => None,
+                    None => Some(0),
+                }
+            }
             Message::DiscardPlan => {
                 let replaced = self.plans.discard(&self.engine.0);
                 return self.switched(replaced);
@@ -901,6 +910,34 @@ impl App {
     fn op(&mut self, op: Op) -> Task<Message> {
         let engine = self.engine.0.clone();
         match op {
+            // Without a search, Enter takes what the arrows are on in the
+            // plan pane: a kind of step, or a saved plan.
+            Op::Enter if !self.searching() && self.adding.is_some() => {
+                let (kind, _) = plan_edit::NewStep::ALL
+                    [self.adding.unwrap_or(0) % plan_edit::NewStep::ALL.len()];
+                return self.update(Message::AddStep(kind));
+            }
+            Op::Enter
+                if !self.searching()
+                    && self.list_pick.is_some()
+                    && matches!(self.plans.mode, plans::Mode::Browsing(_)) =>
+            {
+                let Some(path) = self.list_pick.take() else {
+                    return Task::none();
+                };
+                let template = match &self.plans.mode {
+                    plans::Mode::Browsing(entries) => entries
+                        .iter()
+                        .find(|entry| entry.path == path)
+                        .is_some_and(|entry| entry.summary.as_ref().is_ok_and(|s| s.template)),
+                    _ => false,
+                };
+                return self.switch_plan(if template {
+                    Switch::FromTemplate(path)
+                } else {
+                    Switch::Open(path)
+                });
+            }
             Op::Enter => {
                 if self.search.completion(&engine).is_some() {
                     return self.op(Op::Complete);
@@ -994,6 +1031,35 @@ impl App {
                 engine.toggle_blackout();
             }
             Op::Clear => engine.clear(),
+            // Without a search the arrows are the plan pane's: the kinds
+            // of step while Add step is open, the saved plans in the list,
+            // the steps in a plan.
+            Op::PickNext | Op::PickPrev if !self.searching() => {
+                let down = op == Op::PickNext;
+                let around = |at: Option<usize>, len: usize| match (at, down) {
+                    _ if len == 0 => None,
+                    (None, true) => Some(0),
+                    (None, false) => Some(len - 1),
+                    (Some(at), true) => Some((at + 1) % len),
+                    (Some(at), false) => Some((at + len - 1) % len),
+                };
+                if let Some(kind) = self.adding {
+                    self.adding = around(Some(kind), plan_edit::NewStep::ALL.len());
+                } else if let plans::Mode::Browsing(entries) = &self.plans.mode {
+                    let order = self.plans.listed(entries);
+                    let at = self
+                        .list_pick
+                        .as_ref()
+                        .and_then(|pick| order.iter().position(|entry| &entry.path == pick));
+                    self.list_pick = around(at, order.len()).map(|at| order[at].path.clone());
+                } else {
+                    let plan = engine.plan();
+                    let at = self.selected.and_then(|id| plan.position(id));
+                    if let Some(at) = around(at, plan.len()) {
+                        return self.update(Message::Select(plan.steps()[at].id));
+                    }
+                }
+            }
             Op::PickNext | Op::PickPrev => {
                 if let Some(resource) = self.search.step(op == Op::PickNext) {
                     engine.preview(resource);
@@ -1008,7 +1074,19 @@ impl App {
                 if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
                     self.plans.cancel();
                 }
-                self.adding = false;
+                // With nothing else to let go of, Esc leaves the list of
+                // plans for the plan that's open.
+                let idle = self.adding.is_none()
+                    && !self.searching()
+                    && !matches!(self.plans.mode, plans::Mode::Renaming(_));
+                if idle
+                    && matches!(self.plans.mode, plans::Mode::Browsing(_))
+                    && self.plans.has_plan(&engine.plan())
+                {
+                    self.plans.cancel();
+                }
+                self.adding = None;
+                self.list_pick = None;
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
             }
@@ -1039,8 +1117,16 @@ impl App {
                     return self.preload();
                 }
             }
-            Op::Open => self.plans.browse(),
-            Op::New => return self.switch_plan(Switch::New),
+            Op::Open => {
+                self.list_pick = None;
+                self.adding = None;
+                self.plans.browse();
+            }
+            // In the list of plans it's a new plan; in a plan, a new step.
+            Op::New if matches!(self.plans.mode, plans::Mode::Browsing(_)) => {
+                return self.switch_plan(Switch::New);
+            }
+            Op::New => return self.update(Message::ToggleAdd),
             Op::MoveUp | Op::MoveDown => {
                 if let Some(step) = self.selected {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
@@ -1228,6 +1314,12 @@ impl App {
             ]);
         }
         preload
+    }
+
+    /// Whether a search is under way: the arrows and Enter are its, and
+    /// otherwise the plan pane's.
+    pub(crate) fn searching(&self) -> bool {
+        !self.search.query.is_empty() || self.search.bang().is_some()
     }
 
     /// Preloads for a plan that replaced the last one.

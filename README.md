@@ -94,6 +94,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Enter | look at the top result, press again to show it; with the box empty, show the selected step |
 | Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
+| ↑ ↓ with no search | move through the plan's steps, or your plans in the list; Enter shows the step or opens the plan |
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
 | click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
@@ -104,7 +105,8 @@ on a result or step only lines it up; a double click shows it at once.
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
-| Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
+| Ctrl+S, Ctrl+O | save the plan, list your plans (Esc goes back) |
+| Ctrl+N | in the list of plans, a new plan; in a plan, **Add step**: ↑ ↓ choose the kind, Enter adds it |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
 ### Changing keys

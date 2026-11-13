@@ -237,6 +237,17 @@ impl Plans {
         self.file.is_some() || !plan.is_empty()
     }
 
+    /// The saved plans in the order the list shows them: templates, then
+    /// the rest, without the plan that's open (it has its own row).
+    pub fn listed<'a>(&self, entries: &'a [Entry]) -> Vec<&'a Entry> {
+        let template = |entry: &&Entry| entry.summary.as_ref().is_ok_and(|s| s.template);
+        let templates = entries.iter().filter(template);
+        let plans = entries
+            .iter()
+            .filter(|entry| !template(entry) && Some(entry.path.as_path()) != self.file());
+        templates.chain(plans).collect()
+    }
+
     /// The open plan's file, once it has one.
     pub fn file(&self) -> Option<&Path> {
         self.file.as_deref()
