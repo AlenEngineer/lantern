@@ -6,6 +6,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- An output picker: Settings → Output lists the screens and puts the stage
+  on the one you pick, now and at every start or plug-in (Hyprland).
+
 ## [0.4.0] - 2026-11-13
 
 ### Added

@@ -134,6 +134,9 @@ pub enum Command {
     /// header's swatch), give it its own and type COLOUR as its
     /// background. `press ctrl+s` saves it.
     PlanLook(String),
+    /// `output NAME`: pick the screen NAME for the stage in the settings
+    /// (`automatic` leaves it to the compositor).
+    Output(String),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
@@ -260,6 +263,8 @@ impl Command {
                 _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
             },
             "drop" => Command::Drop,
+            "output" if !rest.is_empty() => Command::Output(rest.to_string()),
+            "output" => return Err("output needs a screen name or automatic".into()),
             "length" => match rest
                 .split_once(' ')
                 .map(|(n, t)| (n.parse::<usize>(), t.trim()))
@@ -320,6 +325,7 @@ impl Command {
                 | Command::Length(..)
                 | Command::GoOn(_)
                 | Command::PlanLook(_)
+                | Command::Output(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -344,6 +350,7 @@ pub enum Ui {
     Length(usize, String),
     GoOn(usize),
     PlanLook(String),
+    Output(String),
     Step(usize),
     Path(String),
     Font(String),
@@ -408,6 +415,7 @@ impl Script {
                 Command::Click(n) => ui(Ui::Click(*n)),
                 Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
                 Command::Drop => ui(Ui::Drop),
+                Command::Output(name) => ui(Ui::Output(name.clone())),
                 Command::Length(n, text) => ui(Ui::Length(*n, text.clone())),
                 Command::GoOn(n) => ui(Ui::GoOn(*n)),
                 Command::PlanLook(colour) => ui(Ui::PlanLook(colour.clone())),
@@ -481,6 +489,7 @@ impl Script {
             | Command::Length(..)
             | Command::GoOn(_)
             | Command::PlanLook(_)
+            | Command::Output(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)

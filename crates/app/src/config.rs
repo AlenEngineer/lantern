@@ -4,6 +4,7 @@
 //! # Settings come before the first [[table]], or TOML files them under it.
 //! brave_api_key = "…"   # optional, for !gi image search
 //! colors = "~/.config/amane/colors.json"  # optional, see crate::palette
+//! stage_output = "HDMI-A-1"  # optional: the screen for the stage
 //!
 //! [[folders]]
 //! path = "~/Videos"
@@ -39,6 +40,10 @@ pub struct Config {
     /// from, such as one Matugen writes from the wallpaper.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub colors: Option<PathBuf>,
+    /// The screen the stage goes on, by its output name (`HDMI-A-1`).
+    /// Unset, the compositor places it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stage_output: Option<String>,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
@@ -387,6 +392,7 @@ mod tests {
         let config = Config {
             brave_api_key: Some("key".into()),
             colors: Some("/home/ana/.config/amane/colors.json".into()),
+            stage_output: Some("HDMI-A-1".into()),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),
                 label: Some("Music".into()),
