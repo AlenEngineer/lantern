@@ -629,18 +629,29 @@ impl App {
         if let Some(step) = &next {
             section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
         }
+        let (label, moves) = self.next_label(next.is_some());
         section.push(
             pill(
                 p,
-                "Next step · PgDn",
+                &label,
                 Tone::Selected,
                 PILL,
-                next.is_some().then_some(op(Op::Next)),
+                moves.then_some(op(Op::Next)),
             )
             .width(Fill)
             .into(),
         );
         section
+    }
+
+    /// What PgDn does now, for its button, and whether it does anything:
+    /// the next slide or page of what's on stage while it has one, and
+    /// only then the plan's next step.
+    pub(crate) fn next_label(&self, has_next_step: bool) -> (String, bool) {
+        match self.stage.program.as_ref().filter(|s| s.has_next_frame()) {
+            Some(scene) => (format!("Next {} · PgDn", unit(&scene.resource)), true),
+            None => ("Next step · PgDn".into(), has_next_step),
+        }
     }
 
     /// A plan step as a monitor: its first slide or picture, or what kind

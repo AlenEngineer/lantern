@@ -61,6 +61,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   plans list no longer shows its folder's full path.
 - Ctrl+N, or opening another plan, asks first while the plan is running;
   one key mid-service took the plan away.
+- The Next button says "Next slide · PgDn" while PgDn steps through what's
+  on stage, and works then even at the end of the plan.
 
 ## [0.7.0] - 2026-11-13
 
