@@ -59,6 +59,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   their empty length box says "min".
 - The plan pane says "Saved “Domingo”" instead of the file's name, and the
   plans list no longer shows its folder's full path.
+- Ctrl+N, or opening another plan, asks first while the plan is running;
+  one key mid-service took the plan away.
 
 ## [0.7.0] - 2026-11-13
 
