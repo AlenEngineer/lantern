@@ -24,7 +24,7 @@ use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
-use crate::plan_edit::{NewStep, insertion_mark};
+use crate::plan_edit::{NewStep, Part, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::{App, Clicked, Message};
@@ -218,8 +218,8 @@ impl App {
             ))
             .padding(iced::Padding::default().left(indent))
         };
-        // The pink line says its words only while a search has a result
-        // for Ctrl+A to add.
+        // The pink line is there only while a search has a result for
+        // Ctrl+A to add.
         let adds = self.search.first().is_some();
         let mut rows = column![].spacing(2);
         let mut number = 0;
@@ -238,10 +238,8 @@ impl App {
                 in_section = true;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 rows = rows.push(self.draggable(step.id, self.section_row(plan, step, section)));
-                if selected {
-                    rows = rows
-                        .push(self.edit_strip(step))
-                        .push(insertion_mark(p, INDENT, adds));
+                if selected && adds {
+                    rows = rows.push(insertion_mark(p, INDENT));
                 }
                 continue;
             }
@@ -258,13 +256,12 @@ impl App {
             let issue = issues.iter().find(|i| i.step == step.id);
             let mut row =
                 column![self.draggable(step.id, self.step_row(number, step, place, issue))];
-            if selected {
-                row = row
-                    .push(self.edit_strip(step))
-                    .push(insertion_mark(p, 0.0, adds));
-            } else if self.selected.is_none() && Some(step.id) == current && moving.is_none() {
-                // With nothing selected, a new step goes after the current one.
-                row = row.push(insertion_mark(p, 0.0, adds));
+            // The result would go after the selected step, or with nothing
+            // selected after the current one.
+            let after = selected
+                || (self.selected.is_none() && Some(step.id) == current && moving.is_none());
+            if after && adds {
+                row = row.push(insertion_mark(p, 0.0));
             }
             let indent = if in_section { INDENT } else { 0.0 };
             rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
@@ -272,8 +269,13 @@ impl App {
         if landing == Some(rest) {
             rows = rows.push(gap(gap_indent(moving, in_section)));
         }
-        if self.selected.is_none() && current.is_none() && !plan.is_empty() && moving.is_none() {
-            rows = rows.push(insertion_mark(p, 0.0, adds));
+        if adds
+            && self.selected.is_none()
+            && current.is_none()
+            && !plan.is_empty()
+            && moving.is_none()
+        {
+            rows = rows.push(insertion_mark(p, 0.0));
         }
         if plan.is_empty() {
             rows = rows.push(
@@ -353,52 +355,71 @@ impl App {
             |t| t.phase,
         );
         let time = section_time(budget, &phase);
-        let mut line = row![
-            container(
-                single_line(step.label.clone())
-                    .size(BODY)
-                    .font(BOLD)
-                    .color(p.primary)
-            )
-            .width(Fill)
-            .clip(true),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let selected =
+            self.selected == Some(id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
+        // The name is edited where it's read.
+        let title: Element<'_, Message> = if self.editing(id, Part::Name) {
+            self.name_field(step)
+        } else {
+            single_line(step.label.clone())
+                .size(BODY)
+                .font(BOLD)
+                .color(p.primary)
+                .into()
+        };
+        let mut line = row![container(title).width(Fill).clip(true)]
+            .spacing(8)
+            .align_y(Alignment::Center);
         let color = match time.pace {
             Some(pace) if pace != Pace::OnTrack => pace_tone(pace).text(p),
             _ => p.on_surface_variant,
         };
-        if !time.words.is_empty() {
-            line = line.push(
-                row![
+        let set_time = Message::EditStep(Some((id, Part::Length)));
+        if self.editing(id, Part::Length) {
+            // The time is edited where it's read, too.
+            line = line.push(self.section_time_field(id, budget));
+        } else {
+            if !time.words.is_empty() {
+                let words = row![
                     look::icon(Icon::Clock, 13.0, color),
                     text(time.words.clone()).size(META).color(color)
                 ]
                 .spacing(4)
-                .align_y(Alignment::Center),
-            );
-        }
-        if time.offer {
-            line = line.push(pill(
-                p,
-                "Set a time",
-                Tone::Plain,
-                PILL_SMALL,
-                Some(Message::SetTime(id)),
-            ));
-        }
-        let content: Element<'_, Message> = match time.share {
-            Some(share) => {
-                let fill = match (time.pace, &phase) {
-                    (Some(pace), _) if pace != Pace::OnTrack => pace_tone(pace).text(p),
-                    (_, Phase::Running { .. }) => p.tertiary,
-                    _ => p.primary,
+                .align_y(Alignment::Center);
+                // On the selected section a click on its time changes it.
+                line = if selected && !time.offer {
+                    line.push(
+                        button(words)
+                            .padding([2, 4])
+                            .on_press(set_time.clone())
+                            .style(look::row(p, Tone::Plain)),
+                    )
+                } else {
+                    line.push(words)
                 };
-                column![line, bar(p, share, fill, 0.0)].spacing(6).into()
             }
-            None => line.into(),
-        };
+            if time.offer {
+                line = line.push(pill(
+                    p,
+                    "Set a time",
+                    Tone::Plain,
+                    PILL_SMALL,
+                    Some(set_time),
+                ));
+            }
+        }
+        let mut content = column![line].spacing(6);
+        if let Some(share) = time.share {
+            let fill = match (time.pace, &phase) {
+                (Some(pace), _) if pace != Pace::OnTrack => pace_tone(pace).text(p),
+                (_, Phase::Running { .. }) => p.tertiary,
+                _ => p.primary,
+            };
+            content = content.push(bar(p, share, fill, 0.0));
+        }
+        if selected {
+            content = content.push(row![Space::new().width(Fill), self.step_actions(step)]);
+        }
         let tone = if self.selected == Some(id) {
             Tone::Selected
         } else {
@@ -470,12 +491,17 @@ impl App {
             (_, Tone::Plain) => p.on_surface,
             (_, tone) => tone.text(p),
         };
-        let mut label = column![
+        // The name is edited where it's read.
+        let title: Element<'_, Message> = if self.editing(step.id, Part::Name) {
+            self.name_field(step)
+        } else {
             single_line(step.label.clone())
                 .size(BODY)
                 .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
                 .color(label_color)
-        ];
+                .into()
+        };
+        let mut label = column![title];
         // What's wrong with a step comes before anything else about it.
         let (detail, detail_color) = match (note, issue) {
             (Some(note), _) => (Some(note), p.on_surface_variant),
@@ -505,7 +531,25 @@ impl App {
         };
         // "Note / note" says nothing twice: the kind shows once renamed.
         let detail = detail.filter(|detail| !detail.eq_ignore_ascii_case(step.label.trim()));
-        if let Some(detail) = detail {
+        let selected =
+            self.selected == Some(step.id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
+        if self.editing(step.id, Part::Search) {
+            label = label.push(self.search_field(step));
+        } else if selected {
+            // The selected row's second line ends in what can be done to it.
+            let said: Element<'_, Message> = match detail {
+                Some(detail) => single_line(detail).size(META).color(detail_color).into(),
+                None => Space::new().into(),
+            };
+            label = label.push(
+                row![
+                    container(said).width(Fill).clip(true),
+                    self.step_actions(step)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            );
+        } else if let Some(detail) = detail {
             label = label.push(single_line(detail).size(META).color(detail_color));
         }
         // Every row has a picture, so the titles line up: a step that shows
@@ -537,13 +581,31 @@ impl App {
             Action::Blank => kind(None),
             Action::Note | Action::Section { .. } => kind(Some(Icon::Document)),
         };
+        // The length is edited where it's read: on the selected row a click
+        // on it turns it into its field. A live slot has none to set.
+        let has_length = !matches!(step.action, Action::Live { .. });
+        let length = self.step_length(step);
+        let length: Element<'_, Message> = if self.editing(step.id, Part::Length) {
+            self.step_length_field(step)
+        } else if selected && has_length {
+            let shown = if length.is_empty() {
+                "min".to_string()
+            } else {
+                length
+            };
+            button(text(shown).size(META).color(p.on_surface_variant))
+                .padding([2, 4])
+                .on_press(Message::EditStep(Some((step.id, Part::Length))))
+                .style(look::row(p, Tone::Plain))
+                .into()
+        } else {
+            text(length).size(META).color(p.on_surface_variant).into()
+        };
         let line = row![
             text(marker).size(META).color(label_color).width(16),
             picture,
             container(label).width(Fill).clip(true),
-            text(self.step_length(step))
-                .size(META)
-                .color(p.on_surface_variant),
+            length,
         ]
         .spacing(8)
         .align_y(Alignment::Center);

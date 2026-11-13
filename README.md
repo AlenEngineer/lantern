@@ -70,9 +70,11 @@ audience sees above the preview. The stage pane shows once there's
 something on stage, lined up, or coming next in the plan.
 
 There is one screen, the same before and during the service. The plan is
-edited where it is: click a step and a strip opens under it with its name,
-its length (a section's time, a live slot's search) and ↑ ↓ ✕; Ctrl+A adds
-the result you're looking at right after it, where the pink line says.
+edited where it is: the selected step's row carries small buttons to rename
+it, move it and remove it (and to go on by itself), F2 turns its name into
+a field, and a click on its length, or a section's time, turns that into
+one; Enter or Esc is done. Ctrl+A adds the result you're looking at right
+after it, where the pink line shows while you search.
 **Add step** at the end of the plan adds a **Section**, **Live slot**,
 **Black** or **Note**. The **‹** beside the plan's name (Ctrl+O) goes to
 your plans: the one that's open, your templates, **New plan** and the
@@ -107,6 +109,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+K | open the search |
 | Esc | clear the search box; again closes the search |
 | Del | with no search, remove the selected step |
+| F2 | rename the selected step, in its row |
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
