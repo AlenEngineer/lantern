@@ -1,9 +1,10 @@
 //! The launcher's search box: what was typed, the results grouped by
 //! source, and which result is picked.
 //!
-//! A leading bang (`!b juan 3`) asks only the sources it names. While the
-//! box is empty or holds just a bang being typed (`!y`), the list offers the
-//! bangs instead of results.
+//! A leading bang (`!b juan 3`) asks only the sources it names. Once typed
+//! with a space after it, it leaves the box for a chip beside it, so the box
+//! holds only what to look for. While the box is empty or holds just a bang
+//! being typed (`!y`), the list offers the bangs instead of results.
 //!
 //! Every edit searches the in-memory index at once. The live sources (links,
 //! Bible references) run after a pause, through [`Engine::search`], and only
@@ -41,7 +42,11 @@ pub enum Live {
 
 #[derive(Debug)]
 pub struct Search {
+    /// What the search box holds: the text after the bang, once the bang
+    /// has become a chip.
     pub query: String,
+    /// The bang shown as a chip, without its `!`.
+    bang: Option<String>,
     /// Which sources the typed query asks.
     pub scope: Scope,
     /// The bang being typed, without its `!`, while the box is empty or
@@ -62,6 +67,7 @@ impl Default for Search {
     fn default() -> Self {
         Search {
             query: String::new(),
+            bang: None,
             scope: Scope::Everything,
             typing_bang: Some(String::new()),
             asked: Query::new(""),
@@ -89,11 +95,20 @@ impl Search {
         self.groups.clear();
         self.live = Live::Idle;
         self.scope = Scope::Everything;
-        self.typing_bang = typing_bang(&self.query);
+        let full = match &self.bang {
+            Some(bang) => format!("!{bang} {}", self.query),
+            None => self.query.clone(),
+        };
+        self.typing_bang = typing_bang(&full);
         if self.typing_bang.is_some() {
             return None;
         }
-        let parsed = engine.searcher().parse(&self.query);
+        let parsed = engine.searcher().parse(&full);
+        // A bang the sources answer becomes the chip; the box keeps the rest.
+        if let (None, Scope::Bang(bang)) = (&self.bang, &parsed.scope) {
+            self.bang = Some(bang.bang.clone());
+            self.query = parsed.query.text.clone();
+        }
         self.scope = parsed.scope;
         self.asked = parsed.query;
         if matches!(self.scope, Scope::Unknown(_)) || self.asked.text.is_empty() {
@@ -121,6 +136,24 @@ impl Search {
         let mut bangs = engine.searcher().bangs();
         bangs.retain(|b| b.bang.starts_with(prefix.as_str()));
         bangs
+    }
+
+    /// The bang shown as a chip beside the box, without its `!`.
+    pub fn bang(&self) -> Option<&str> {
+        self.bang.as_deref()
+    }
+
+    /// Takes the chip away, searching the box's text everywhere again.
+    pub fn drop_bang(&mut self, engine: &Engine) -> Option<u64> {
+        self.bang = None;
+        let query = std::mem::take(&mut self.query);
+        self.edit(query, engine)
+    }
+
+    /// Empties the box and takes the chip away.
+    pub fn clear(&mut self, engine: &Engine) {
+        self.bang = None;
+        self.edit(String::new(), engine);
     }
 
     /// The text being searched for, without the bang.
@@ -495,6 +528,7 @@ mod tests {
         let groups: Vec<String> = names(&search).into_iter().map(|(name, _)| name).collect();
         assert_eq!(groups, ["Local folders"]);
 
+        search.clear(&engine);
         let edit = search.edit("!b juan 3:16".into(), &engine).unwrap();
         run_live(&mut search, edit, &engine);
         assert_eq!(names(&search)[0].1[0], "Juan 3:16");
@@ -507,6 +541,7 @@ mod tests {
         assert_eq!(search.edit("!zz pa".into(), &engine), None);
         assert_eq!(search.scope, Scope::Unknown("zz".into()));
         assert_eq!(search.edit("!b ".into(), &engine), None);
+        assert_eq!((search.bang(), search.query.as_str()), (Some("b"), ""));
         assert!(matches!(search.scope, Scope::Bang(_)));
         assert!(search.groups().is_empty() && search.bangs(&engine).is_empty());
     }
@@ -522,5 +557,30 @@ mod tests {
         assert!(search.start_on_enter(&engine).is_some());
         assert!(matches!(search.live, Live::Running(_)));
         assert!(search.start_on_enter(&engine).is_none(), "once");
+    }
+
+    #[test]
+    fn a_typed_bang_becomes_the_chip_and_backspace_takes_it_away() {
+        let engine = engine();
+        let mut search = Search::default();
+        search.edit("!F pa".into(), &engine);
+        assert_eq!((search.bang(), search.query.as_str()), (Some("f"), "pa"));
+        assert!(matches!(&search.scope, Scope::Bang(b) if b.bang == "f"));
+
+        // Typing goes on after the chip.
+        search.edit("pag".into(), &engine);
+        assert_eq!(search.text(), "pag");
+        assert!(matches!(&search.scope, Scope::Bang(_)));
+
+        // An unknown bang stays as text.
+        let mut other = Search::default();
+        other.edit("!zz pa".into(), &engine);
+        assert_eq!((other.bang(), other.query.as_str()), (None, "!zz pa"));
+
+        search.drop_bang(&engine);
+        assert_eq!((search.bang(), search.query.as_str()), (None, "pag"));
+        assert_eq!(search.scope, Scope::Everything);
+        search.clear(&engine);
+        assert_eq!(search.query, "");
     }
 }

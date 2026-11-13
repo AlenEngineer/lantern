@@ -42,6 +42,8 @@ pub enum Op {
     Complete,
     /// Edit mode on or off: clicks in the plan edit it instead of running it.
     ToggleEditing,
+    /// Takes the bang chip off the search, so it asks every source again.
+    DropBang,
 }
 
 enum Bind {
@@ -103,6 +105,12 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
         Bind::Named(Named::Escape),
         Op::ClearSearch,
         When::Always,
+    ),
+    (
+        "backspace",
+        Bind::Named(Named::Backspace),
+        Op::DropBang,
+        When::EmptySearch,
     ),
     (
         "ctrl+space",
@@ -259,6 +267,11 @@ mod tests {
         assert_eq!(
             op(press(Key::Named(Named::Escape), NONE, TYPING)),
             Some((Op::ClearSearch, false))
+        );
+        assert_eq!(
+            op(press(Key::Named(Named::Backspace), NONE, TYPING)),
+            Some((Op::DropBang, true)),
+            "only an empty box gives up its chip"
         );
     }
 

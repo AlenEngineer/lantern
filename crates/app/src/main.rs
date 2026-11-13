@@ -323,7 +323,11 @@ impl App {
             Message::Script(ui) => {
                 log(format!("dashboard: {ui:?}"));
                 return match ui {
-                    Ui::Type(query) => self.query(query),
+                    Ui::Type(query) => {
+                        // A script types a whole new search, chip and all.
+                        self.search.clear(&self.engine.0);
+                        self.query(query)
+                    }
                     Ui::Select(n) => match self.search.pick_nth(n) {
                         Some(resource) => {
                             self.engine.0.preview(resource);
@@ -447,7 +451,20 @@ impl App {
         if !query.trim().is_empty() {
             self.mode = Mode::Live;
         }
-        let Some(edit) = self.search.edit(query, &self.engine.0) else {
+        let had_bang = self.search.bang().is_some();
+        let edit = self.search.edit(query, &self.engine.0);
+        let searched = self.searched(edit);
+        // A bang just became the chip: the box got shorter under the cursor.
+        if !had_bang && self.search.bang().is_some() {
+            return Task::batch([searched, operation::move_cursor_to_end(SEARCH_BOX)]);
+        }
+        searched
+    }
+
+    /// After an edit of the search: the live search once typing pauses,
+    /// and the results scrolled to the top.
+    fn searched(&mut self, edit: Option<u64>) -> Task<Message> {
+        let Some(edit) = edit else {
             return Task::none();
         };
         let pause = Task::perform(after(LIVE_SEARCH_PAUSE), move |()| Message::Paused(edit));
@@ -512,7 +529,14 @@ impl App {
                     return self.scroll_to_pick();
                 }
             }
-            Op::ClearSearch => return self.complete(String::new()),
+            Op::ClearSearch => {
+                self.search.clear(&engine);
+                return operation::focus(SEARCH_BOX);
+            }
+            Op::DropBang => {
+                let edit = self.search.drop_bang(&engine);
+                return self.searched(edit);
+            }
             Op::Save => {
                 self.plans.save(&engine);
             }

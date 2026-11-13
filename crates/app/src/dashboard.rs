@@ -172,28 +172,34 @@ impl App {
 
     fn search_box(&self) -> Element<'_, Message> {
         let p = self.palette;
-        let scope: Element<'_, Message> = match &self.search.scope {
-            Scope::Everything => Space::new().into(),
-            Scope::Bang(bang) => chip(p, &bang.sources.join(", "), Tone::Plain),
-            Scope::Unknown(bang) => chip(p, &format!("!{bang}?"), Tone::Danger),
-        };
-        let input = text_input(
-            "Search everything, ! for one source, or paste a link",
-            &self.search.query,
-        )
-        .id(SEARCH_BOX)
-        .on_input(Message::Query)
-        .on_submit(Message::Key {
-            op: Op::Enter,
-            only_if_empty: false,
-        })
-        .size(15)
-        .padding([10, 0])
-        .style(move |theme, status| text_input::Style {
-            background: Color::TRANSPARENT.into(),
-            border: iced::Border::default(),
-            ..look::input(p)(theme, status)
-        });
+        // A bang that became the chip; an unknown one stays as text, and
+        // the results say no source answers it.
+        let (scope, placeholder): (Element<'_, Message>, String) =
+            match (&self.search.scope, self.search.bang()) {
+                (Scope::Bang(bang), Some(_)) => {
+                    let sources = bang.sources.join(", ");
+                    let placeholder = format!("Search {sources} · Backspace for everything");
+                    (chip(p, &sources, Tone::Plain), placeholder)
+                }
+                _ => (
+                    Space::new().into(),
+                    "Search everything, ! for one source, or paste a link".into(),
+                ),
+            };
+        let input = text_input(&placeholder, &self.search.query)
+            .id(SEARCH_BOX)
+            .on_input(Message::Query)
+            .on_submit(Message::Key {
+                op: Op::Enter,
+                only_if_empty: false,
+            })
+            .size(15)
+            .padding([10, 0])
+            .style(move |theme, status| text_input::Style {
+                background: Color::TRANSPARENT.into(),
+                border: iced::Border::default(),
+                ..look::input(p)(theme, status)
+            });
         // The box keeps the focus, so its ring stays on.
         container(
             row![
@@ -243,7 +249,7 @@ impl App {
     /// What to say when there are no results to show, or not yet.
     fn results_note(&self, bangs_offered: usize) -> Option<String> {
         let search = &self.search;
-        if search.query.trim().is_empty() {
+        if search.query.trim().is_empty() && search.bang().is_none() {
             return Some("Type to search everything at once.".into());
         }
         if let Some(bang) = search.typing_bang() {
