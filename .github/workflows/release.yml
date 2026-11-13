@@ -1,10 +1,18 @@
 name: Release
 
-# Pushing a tag like v0.2.0 (made by scripts/release.sh) publishes a GitHub
-# release with a Linux build and that version's CHANGELOG section.
+# Publishes a GitHub release with a Linux build and that version's
+# CHANGELOG section: when a tag like v0.2.0 is pushed (scripts/release.sh
+# by hand), or when the release PR's workflow calls it after tagging (a tag
+# pushed from a workflow doesn't start other workflows).
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The tag to publish, like v0.4.0.
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,9 +28,11 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ github.ref_name }}
+      VERSION: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: The tag matches the workspace version
         run: |
           crate=$(cargo metadata --no-deps --format-version 1 \

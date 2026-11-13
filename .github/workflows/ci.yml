@@ -54,3 +54,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
+
+  # A feat or fix PR says what changed for the operator, so the release PR
+  # can work out the version and notes. See scripts/check-changelog.sh.
+  changelog:
+    name: changelog entry
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/test-release.sh
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: scripts/check-changelog.sh "$BASE" "$TITLE"

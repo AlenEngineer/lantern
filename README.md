@@ -343,6 +343,17 @@ engine.take();                            // audience sees it
 engine.next();                            // next stanza or next step
 ```
 
+## Releases
+
+Every feat or fix PR adds a line under `## [Unreleased]` in
+`CHANGELOG.md`; CI fails it otherwise (`scripts/check-changelog.sh`). On
+`main`, a **release PR** (`chore(release): vX.Y.Z`) keeps itself up to
+date with the next version and its notes: anything added, changed or
+removed bumps the minor version, fixes alone the patch
+(`scripts/next-version.sh`). Merging it tags the version and publishes a
+Linux build on the releases page. A 1.0 or other major version is made by
+hand with `scripts/release.sh X.Y.Z`.
+
 ## Roadmap
 
 - [x] Core model, in-memory index, federated search
