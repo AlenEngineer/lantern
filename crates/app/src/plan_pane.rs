@@ -218,6 +218,9 @@ impl App {
             ))
             .padding(iced::Padding::default().left(indent))
         };
+        // The pink line says its words only while a search has a result
+        // for Ctrl+A to add.
+        let adds = self.search.first().is_some();
         let mut rows = column![].spacing(2);
         let mut number = 0;
         let mut in_section = false;
@@ -238,7 +241,7 @@ impl App {
                 if selected {
                     rows = rows
                         .push(self.edit_strip(step))
-                        .push(insertion_mark(p, INDENT));
+                        .push(insertion_mark(p, INDENT, adds));
                 }
                 continue;
             }
@@ -256,10 +259,12 @@ impl App {
             let mut row =
                 column![self.draggable(step.id, self.step_row(number, step, place, issue))];
             if selected {
-                row = row.push(self.edit_strip(step)).push(insertion_mark(p, 0.0));
+                row = row
+                    .push(self.edit_strip(step))
+                    .push(insertion_mark(p, 0.0, adds));
             } else if self.selected.is_none() && Some(step.id) == current && moving.is_none() {
                 // With nothing selected, a new step goes after the current one.
-                row = row.push(insertion_mark(p, 0.0));
+                row = row.push(insertion_mark(p, 0.0, adds));
             }
             let indent = if in_section { INDENT } else { 0.0 };
             rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
@@ -268,7 +273,7 @@ impl App {
             rows = rows.push(gap(gap_indent(moving, in_section)));
         }
         if self.selected.is_none() && current.is_none() && !plan.is_empty() && moving.is_none() {
-            rows = rows.push(insertion_mark(p, 0.0));
+            rows = rows.push(insertion_mark(p, 0.0, adds));
         }
         if plan.is_empty() {
             rows = rows.push(

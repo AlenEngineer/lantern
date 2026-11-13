@@ -191,29 +191,35 @@ fn note<'a>(p: Palette, words: &'a str) -> Element<'a, Message> {
     text(words).size(META).color(p.on_surface_variant).into()
 }
 
-/// Where Ctrl+A puts the next step: a short `primary` line and its words.
-pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
-    column![
-        row![
-            container(Space::new())
-                .width(16)
-                .height(2)
-                .style(move |_| container::Style::default().background(p.primary)),
+/// Where Ctrl+A puts the next step: a short `primary` line, and its
+/// `words` only while there's a result to add, so the plan isn't
+/// captioned through a whole service.
+pub fn insertion_mark(p: Palette, indent: f32, words: bool) -> Element<'static, Message> {
+    let mut mark = row![
+        container(Space::new())
+            .width(16)
+            .height(2)
+            .style(move |_| container::Style::default().background(p.primary)),
+    ]
+    .spacing(8)
+    .height(16)
+    .align_y(Alignment::Center);
+    if words {
+        mark = mark.push(
             text("Ctrl+A adds the result here")
                 .size(META)
                 .color(p.primary),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-    ]
-    .padding(
-        iced::Padding::default()
-            .left(indent + 10.0)
-            .top(2.0)
-            .bottom(4.0),
-    )
-    .width(Fill)
-    .into()
+        );
+    }
+    column![mark]
+        .padding(
+            iced::Padding::default()
+                .left(indent + 10.0)
+                .top(2.0)
+                .bottom(4.0),
+        )
+        .width(Fill)
+        .into()
 }
 
 /// When a step that goes on by itself would: a video when it ends, a still

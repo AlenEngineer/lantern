@@ -73,6 +73,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   shows it again.
 - Downloaded videos no longer say "ready" on every row and caption; only
   queued, downloading and failed are said.
+- "Ctrl+A adds the result here" shows only while a search has a result to
+  add (the pink line stays), and the line of keys under the results only
+  with the search empty before the plan runs.
 
 ## [0.7.0] - 2026-11-13
 
