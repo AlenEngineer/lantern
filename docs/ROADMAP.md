@@ -45,8 +45,8 @@ a search it isn't, so stepping feels impossible.
 - App (done with the live slots): once something goes on stage, ← → step
   its slides even with text in the search box, until you type again; the
   search stays, so a slow `!yt` search isn't lost.
-- App, later: show the slide strip of what's on stage (verse numbers), and
-  click one to jump to it.
+- App: the slide strip of what's on stage (verse numbers), click one to
+  jump to it. *(done)*
 
 ## Plan
 

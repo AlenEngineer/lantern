@@ -254,6 +254,8 @@ enum Message {
     CheckOutputs,
     /// Time to see whether a watched folder changed the index.
     CheckIndex,
+    /// Show slide (verse, stanza, page) N of what's on stage.
+    GotoFrame(usize),
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
@@ -511,6 +513,7 @@ impl App {
                         }
                     }
                     Ui::Drop => self.update(Message::Pointer(None, false)),
+                    Ui::Slide(n) => self.update(Message::GotoFrame(n)),
                     Ui::Output(name) => {
                         let output = (name != "automatic").then_some(name);
                         self.update(Message::Settings(settings::Edit::Output(output)))
@@ -651,6 +654,10 @@ impl App {
             }
             Message::SaveSettings => self.save_settings(),
             Message::CheckOutputs => self.check_outputs(),
+            Message::GotoFrame(frame) => {
+                self.engine.0.goto_frame(frame);
+                self.stepping = true;
+            }
             Message::CheckIndex => {
                 let changes = self.library.0.changes();
                 if changes != self.index_changes {

@@ -92,6 +92,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
+| click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
 | Ctrl+A | add the result you're looking at after the selected step |
 | Ctrl+Space, play key | play / pause |

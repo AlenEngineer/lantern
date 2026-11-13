@@ -137,6 +137,8 @@ pub enum Command {
     /// `output NAME`: pick the screen NAME for the stage in the settings
     /// (`automatic` leaves it to the compositor).
     Output(String),
+    /// `slide N`: click slide N (from 1) in the strip of what's on stage.
+    Slide(usize),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
@@ -263,6 +265,10 @@ impl Command {
                 _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
             },
             "drop" => Command::Drop,
+            "slide" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Slide(n - 1),
+                _ => return Err(format!("slide needs a number from 1, got {rest:?}")),
+            },
             "output" if !rest.is_empty() => Command::Output(rest.to_string()),
             "output" => return Err("output needs a screen name or automatic".into()),
             "length" => match rest
@@ -326,6 +332,7 @@ impl Command {
                 | Command::GoOn(_)
                 | Command::PlanLook(_)
                 | Command::Output(_)
+                | Command::Slide(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -351,6 +358,7 @@ pub enum Ui {
     GoOn(usize),
     PlanLook(String),
     Output(String),
+    Slide(usize),
     Step(usize),
     Path(String),
     Font(String),
@@ -415,6 +423,7 @@ impl Script {
                 Command::Click(n) => ui(Ui::Click(*n)),
                 Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
                 Command::Drop => ui(Ui::Drop),
+                Command::Slide(n) => ui(Ui::Slide(*n)),
                 Command::Output(name) => ui(Ui::Output(name.clone())),
                 Command::Length(n, text) => ui(Ui::Length(*n, text.clone())),
                 Command::GoOn(n) => ui(Ui::GoOn(*n)),
@@ -490,6 +499,7 @@ impl Script {
             | Command::GoOn(_)
             | Command::PlanLook(_)
             | Command::Output(_)
+            | Command::Slide(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)

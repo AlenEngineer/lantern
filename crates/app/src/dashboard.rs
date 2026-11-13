@@ -436,6 +436,9 @@ impl App {
         });
         if let Some(scene) = scene {
             section = section.push(self.caption(scene));
+            if let Some(strip) = self.slide_strip(scene) {
+                section = section.push(strip);
+            }
             if let Some(timed) = scene.timed() {
                 section = section.push(self.transport(timed));
             }
@@ -758,6 +761,69 @@ pub(crate) fn level_tone(level: Option<Level>) -> Tone {
         Some(Level::Problem) => Tone::Danger,
     }
 }
+
+impl App {
+    /// The slides (verses, stanzas, pages) of what's on stage, the current
+    /// one marked; clicking one shows it. A passage's slides are named by
+    /// its verses. Nothing for a scene of one slide or a timeline.
+    fn slide_strip<'a>(&self, scene: &Scene) -> Option<Element<'a, Message>> {
+        let p = self.palette;
+        let Media::Frames {
+            frame,
+            count: Some(count),
+        } = &scene.media
+        else {
+            return None;
+        };
+        let count = count.get();
+        if count < 2 {
+            return None;
+        }
+        let verses: Vec<String> = scene
+            .resource
+            .meta
+            .get("verses")
+            .map(|list| list.split(',').map(|v| v.trim().to_string()).collect())
+            .unwrap_or_default();
+        let mut labels = match scene.resource.location.as_text() {
+            Some(body) => self.slides.labels(body, &verses),
+            None => Vec::new(),
+        };
+        if labels.len() != count {
+            labels = (1..=count).map(|n| n.to_string()).collect();
+        }
+        let chips = labels.into_iter().enumerate().map(|(n, label)| {
+            let tone = if n == *frame {
+                Tone::Selected
+            } else {
+                Tone::Plain
+            };
+            button(
+                text(label)
+                    .size(META)
+                    .font(if n == *frame { BOLD } else { MEDIUM })
+                    .color(if n == *frame {
+                        p.primary
+                    } else {
+                        p.on_surface_variant
+                    }),
+            )
+            .padding([4, 9])
+            .on_press(Message::GotoFrame(n))
+            .style(look::row(p, tone))
+            .into()
+        });
+        let strip = row(chips).spacing(4).wrap();
+        Some(
+            container(scrollable(strip).spacing(4))
+                .max_height(STRIP_HEIGHT)
+                .into(),
+        )
+    }
+}
+
+/// How tall the slide strip grows before it scrolls: about three rows.
+const STRIP_HEIGHT: f32 = 96.0;
 
 pub(crate) fn unit(resource: &Resource) -> &'static str {
     match resource.kind {

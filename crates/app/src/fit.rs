@@ -13,7 +13,7 @@ use iced::advanced::text::{self, Paragraph as _};
 use iced::advanced::widget::{self, Tree, Widget};
 use iced::alignment::Vertical;
 use iced::{Color, Element, Font, Length, Pixels, Rectangle, Size, mouse};
-use lantern_engine::{Look, Rgb, Scene, fit_frames};
+use lantern_engine::{Look, Rgb, Scene, fit_stanzas, slide_labels};
 
 /// The share of the box's width kept clear on each side, and of its height
 /// above and below.
@@ -146,7 +146,14 @@ pub struct Splitter {
     look: Look,
     /// The stage's width over its height.
     aspect: f32,
-    split: Mutex<HashMap<String, Arc<Vec<String>>>>,
+    split: Mutex<HashMap<String, Split>>,
+}
+
+/// A text's slides, and how many of them each stanza became.
+#[derive(Clone)]
+struct Split {
+    slides: Arc<Vec<String>>,
+    pieces: Arc<Vec<usize>>,
 }
 
 impl Splitter {
@@ -189,23 +196,38 @@ impl Splitter {
 
     /// `body` as slides that fit.
     pub fn slides(&self, body: &str) -> Arc<Vec<String>> {
+        self.split(body).slides
+    }
+
+    /// A name for each of `body`'s slides: the stanza's name from `names`
+    /// (a passage's verse numbers) or its number, `a`, `b` when it took
+    /// more than one slide.
+    pub fn labels(&self, body: &str, names: &[String]) -> Vec<String> {
+        slide_labels(&self.split(body).pieces, names)
+    }
+
+    fn split(&self, body: &str) -> Split {
         let mut split = self.split.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(slides) = split.get(body) {
-            return slides.clone();
+        if let Some(known) = split.get(body) {
+            return known.clone();
         }
         let stage = Size::new(Look::STAGE_HEIGHT * self.aspect, Look::STAGE_HEIGHT);
         let (min, _) = self.look.sizes();
         let font = font(&self.look);
-        let slides = Arc::new(fit_frames(body, |piece| {
+        let stanzas = fit_stanzas(body, |piece| {
             fits::<iced::advanced::graphics::text::Paragraph>(
                 piece,
                 f32::from(min),
                 inner(stage),
                 font,
             )
-        }));
-        split.insert(body.to_string(), slides.clone());
-        slides
+        });
+        let known = Split {
+            pieces: Arc::new(stanzas.iter().map(Vec::len).collect()),
+            slides: Arc::new(stanzas.into_iter().flatten().collect()),
+        };
+        split.insert(body.to_string(), known.clone());
+        known
     }
 
     /// The scene's current slide, for inline text.

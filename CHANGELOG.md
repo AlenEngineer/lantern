@@ -6,6 +6,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A slide strip under On stage: a chip per verse (by its number), stanza,
+  page or slide (`17a`, `17b` when one took two); click one to show it.
+
 ## [0.6.0] - 2026-11-13
 
 ### Added
