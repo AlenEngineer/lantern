@@ -20,6 +20,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   before, or jumps the plan to the selected step.
 - Typing after showing a search result starts a new search instead of
   adding to the old one.
+- A step's name or length field kept only the first letter typed after a
+  save or open; the rest went to the search box.
 
 ## [0.7.0] - 2026-11-13
 
