@@ -1,0 +1,15 @@
+# Path suggestions in the settings: an empty folder field lists the home
+# folder, typing narrows it, and Tab takes the first and goes inside. Run
+# it with LANTERN_CONFIG pointing at a copy, like settings.script.
+wait 1500
+press ctrl+,
+wait 300
+path ~/
+wait 300
+shot 1-home
+path ~/mu
+wait 300
+shot 2-narrowed
+press tab
+wait 300
+shot 3-inside

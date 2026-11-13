@@ -15,6 +15,7 @@ mod length;
 mod library;
 mod look;
 mod palette;
+mod paths;
 mod plan_pane;
 mod plans;
 mod prepare;
@@ -377,6 +378,12 @@ impl App {
                             Task::none()
                         }
                     },
+                    Ui::Path(text) => {
+                        if self.settings.as_ref().is_some_and(|d| d.folder_rows() == 0) {
+                            let _ = self.update(Message::Settings(settings::Edit::AddFolder));
+                        }
+                        self.update(Message::Settings(settings::Edit::FolderPath(0, text)))
+                    }
                     Ui::Press(op) => self.op(op),
                     Ui::Open(name) => {
                         let opened = self.plans.open_named(&self.engine.0, &name);
@@ -419,8 +426,10 @@ impl App {
             }
             Message::CheckPalette => self.check_palette(),
             Message::Settings(edit) => {
-                if let Some(draft) = &mut self.settings {
-                    draft.edit(edit);
+                let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
+                // A chosen path is longer than what was typed: cursor to its end.
+                if let Some(field) = chosen {
+                    return operation::move_cursor_to_end(field.id());
                 }
             }
             Message::SaveSettings => self.save_settings(),
@@ -667,6 +676,9 @@ impl App {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
                     return self.update(Message::Move(step, by));
                 }
+            }
+            Op::Complete if self.settings.is_some() => {
+                return self.update(Message::Settings(settings::Edit::ChooseFirst));
             }
             Op::Complete => {
                 if let Some(text) = self.search.completion(&engine) {

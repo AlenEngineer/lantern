@@ -6,6 +6,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Path fields in the settings suggest folders (and Bible or colours files)
+  as you type, ignoring case and accents; a click or Tab takes one and goes
+  inside it.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added

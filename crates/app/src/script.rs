@@ -85,6 +85,9 @@ pub enum Command {
     Section(Duration, String),
     /// `slot SEARCH`: add a live slot that searches SEARCH (`!b jn 3`).
     Slot(String),
+    /// `path TEXT`: type TEXT in the open settings' first folder path,
+    /// adding a folder row if there's none.
+    Path(String),
     /// `wait-ready SECS`: wait until no YouTube download is queued or running.
     WaitReady(Duration),
     /// `take`: put the preview on stage.
@@ -165,6 +168,7 @@ impl Command {
             "preview" => Command::Preview(Target::parse(rest, dir)?),
             "add" => Command::Add(Target::parse(rest, dir)?),
             "slot" if !rest.is_empty() => Command::Slot(rest.to_string()),
+            "path" => Command::Path(rest.to_string()),
             "slot" => return Err("slot needs what it searches".into()),
             "section" => {
                 let usage = || format!("section needs a budget and a title, got {rest:?}");
@@ -237,6 +241,7 @@ impl Command {
                 | Command::Add(_)
                 | Command::Section(..)
                 | Command::Slot(_)
+                | Command::Path(_)
                 | Command::Seek(_)
                 | Command::Frame(_)
                 | Command::Search(_)
@@ -262,6 +267,7 @@ pub enum Ui {
     Type(String),
     Select(usize),
     Step(usize),
+    Path(String),
     Press(Op),
     Open(String),
     Rename(String),
@@ -321,6 +327,7 @@ impl Script {
                 }
                 Command::Select(n) => ui(Ui::Select(*n)),
                 Command::Step(n) => ui(Ui::Step(*n)),
+                Command::Path(text) => ui(Ui::Path(text.clone())),
                 Command::Press(key) => ui(Ui::Press(
                     keys::op_named(key).expect("checked by Command::parse"),
                 )),
@@ -385,6 +392,7 @@ impl Script {
             | Command::Type(_)
             | Command::Select(_)
             | Command::Step(_)
+            | Command::Path(_)
             | Command::Press(_)
             | Command::Open(_)
             | Command::Rename(_) => {}
