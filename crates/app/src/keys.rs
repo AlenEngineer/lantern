@@ -250,7 +250,7 @@ pub const ACTIONS: &[Action] = &[
         "enter",
         Op::Enter,
         When::Unused,
-        "Look at the top result, again to show it; show the selected step",
+        "Look at the top result, again to show it; show the selected step; open the picked plan",
     ),
     action(
         "complete",
@@ -264,14 +264,14 @@ pub const ACTIONS: &[Action] = &[
         "down",
         Op::PickNext,
         When::Unused,
-        "Pick the next result",
+        "The next result; without a search, the next step or plan",
     ),
     action(
         "pick-prev",
         "up",
         Op::PickPrev,
         When::Unused,
-        "Pick the result before",
+        "The result before; without a search, the step or plan before",
     ),
     action(
         "next",
@@ -339,7 +339,13 @@ pub const ACTIONS: &[Action] = &[
     ),
     action("save", "ctrl+s", Op::Save, When::Always, "Save the plan"),
     action("plans", "ctrl+o", Op::Open, When::Always, "Your plans"),
-    action("new", "ctrl+n", Op::New, When::Always, "New plan"),
+    action(
+        "new",
+        "ctrl+n",
+        Op::New,
+        When::Always,
+        "New plan; in a plan, a new step",
+    ),
     action(
         "undo",
         "ctrl+z",

@@ -20,6 +20,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Keys can be changed: a **Keys** section in Settings, or `[keys]` in the
   config (`new = "ctrl+t"`). Buttons, tooltips and hints show the keys in
   use.
+- The plan pane works from the keyboard. Without a search, ↑ ↓ move
+  through the plan's steps, or the saved plans in the list, and Enter shows
+  the step or opens the plan. Ctrl+N in a plan opens **Add step** (↑ ↓
+  choose the kind, Enter adds it); in the list it's still a new plan. Esc
+  leaves the list for the open plan.
 
 ### Fixed
 

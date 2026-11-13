@@ -293,31 +293,18 @@ impl App {
         if moving.is_none() {
             rows = rows.push(list_action(
                 p,
-                if self.adding { "−" } else { "+" },
+                if self.adding.is_some() { "−" } else { "+" },
                 "Add step".into(),
                 Message::ToggleAdd,
             ));
-            if self.adding {
-                let add = |label, new| {
-                    pill(
-                        p,
-                        label,
-                        Tone::Plain,
-                        PILL_SMALL,
-                        Some(Message::AddStep(new)),
-                    )
-                };
+            if let Some(on) = self.adding {
+                // The arrows move among the kinds; Enter adds the lit one.
+                let kinds = NewStep::ALL.iter().enumerate().map(|(n, (kind, label))| {
+                    let tone = if n == on { Tone::Selected } else { Tone::Plain };
+                    pill(p, label, tone, PILL_SMALL, Some(Message::AddStep(*kind))).into()
+                });
                 rows = rows.push(
-                    container(
-                        row![
-                            add("Section", NewStep::Section),
-                            add("Live slot", NewStep::LiveSlot),
-                            add("Black", NewStep::BlackScreen),
-                            add("Note", NewStep::Note),
-                        ]
-                        .spacing(4),
-                    )
-                    .padding(iced::Padding::default().left(34.0)),
+                    container(row(kinds).spacing(4)).padding(iced::Padding::default().left(34.0)),
                 );
             }
         }
@@ -597,6 +584,8 @@ impl App {
             container(text(title).size(BODY).font(BOLD).color(p.primary)).padding([4, 8])
         };
         let is_template = |entry: &Entry| entry.summary.as_ref().is_ok_and(|s| s.template);
+        // The row the arrows are on, for Enter.
+        let picked = |entry: &Entry| self.list_pick.as_deref() == Some(entry.path.as_path());
         let now = SystemTime::now();
         let when = |entry: &Entry| ago(now.duration_since(entry.modified).unwrap_or_default());
         let mut list = column![].spacing(2);
@@ -632,7 +621,7 @@ impl App {
         if !templates.is_empty() {
             list = list.push(heading("Templates"));
             for entry in templates {
-                list = list.push(saved_plan(p, entry, when(entry)));
+                list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
             }
             list = list.push(Space::new().height(10));
         }
@@ -650,7 +639,7 @@ impl App {
             op(Op::New),
         ));
         for entry in plans {
-            list = list.push(saved_plan(p, entry, when(entry)));
+            list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
         }
         scrolling(list).into()
     }
@@ -871,7 +860,7 @@ fn pace_tone(pace: Pace) -> Tone {
 /// A saved plan in the list. Clicking a plan opens it; clicking a template
 /// starts a new plan from it, and its Edit opens the template itself. The
 /// star makes a plan a template, or not.
-fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
+fn saved_plan(p: Palette, entry: &Entry, when: String, picked: bool) -> Element<'_, Message> {
     let (title, detail, color, template) = match &entry.summary {
         Ok(summary) => (
             summary.title.clone(),
@@ -904,7 +893,10 @@ fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
             Message::OpenPlan(path.clone())
         }
     }))
-    .style(look::row(p, Tone::Plain));
+    .style(look::row(
+        p,
+        if picked { Tone::Selected } else { Tone::Plain },
+    ));
     let star = tooltip(
         button(
             text(if template { "★" } else { "☆" })
