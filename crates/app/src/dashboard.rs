@@ -846,12 +846,15 @@ impl App {
             .unwrap_or_else(|| "loading…".into())
     }
 
-    /// A YouTube video's download state ("downloading 42%"), or `None`.
+    /// A YouTube video's download state while it's worth saying ("queued",
+    /// "downloading 42%", why it failed), or `None`. Ready is how things
+    /// should be, so it goes without saying.
     pub(crate) fn download_state(&self, resource: &Resource) -> Option<String> {
         let video = YoutubeVideo::of(resource)?;
         self.downloads
             .0
             .state(&video.id)
+            .filter(|state| !matches!(state, crate::youtube::Download::Ready(_)))
             .map(|state| state.to_string())
     }
 

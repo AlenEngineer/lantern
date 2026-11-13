@@ -71,6 +71,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - With something shown on the fly in the middle of the plan, On stage says
   "off the plan", the step says it's waiting, and **Back to the plan**
   shows it again.
+- Downloaded videos no longer say "ready" on every row and caption; only
+  queued, downloading and failed are said.
 
 ## [0.7.0] - 2026-11-13
 
