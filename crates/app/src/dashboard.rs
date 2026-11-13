@@ -605,11 +605,9 @@ impl App {
             }
             (None, Some(Content::Image(handle))) => thumb(handle),
             (None, Some(Content::Pages(pages))) => thumb(&pages[frame.min(pages.len() - 1)]),
-            (None, Some(Content::Video { stream, .. })) => row![
+            (None, Some(Content::Video { .. })) => row![
                 look::icon(Icon::Play, 18.0, p.on_surface_variant),
-                text(if *stream { "streaming" } else { "video" })
-                    .size(BODY)
-                    .color(p.on_surface_variant),
+                text("video").size(BODY).color(p.on_surface_variant),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -648,13 +646,7 @@ impl App {
             Media::Timed(_) => {}
             Media::Failed { .. } => facts.push("failed".into()),
         }
-        let stream = matches!(
-            self.media.content(scene.id),
-            Some(Content::Video { stream: true, .. })
-        );
-        if stream {
-            facts.push("streaming".into());
-        } else if let Some(download) = self.download_state(resource) {
+        if let Some(download) = self.download_state(resource) {
             facts.push(download);
         }
         column![

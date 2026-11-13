@@ -6,6 +6,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- YouTube streaming: a video not downloaded yet waits for its download,
+  since a stream started frozen or silent.
+
+### Fixed
+
+- YouTube and image search thumbnails, which never showed.
+
 ### Added
 
 - Thumbnails in the results and the plan: a picture's own image, a PDF's
