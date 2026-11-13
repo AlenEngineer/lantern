@@ -7,10 +7,10 @@
 
 use std::time::{Duration, SystemTime};
 
-use iced::widget::{Space, button, column, container, row, text, text_input};
-use iced::{Alignment, Element, Fill, Length};
+use iced::widget::{Space, button, column, container, mouse_area, row, text, text_input};
+use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
+    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId, Timing,
 };
 
 use crate::dashboard::{
@@ -172,7 +172,8 @@ impl App {
             if step.is_section() {
                 in_section = true;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
-                rows = rows.push(self.section_row(plan, step, section));
+                rows =
+                    rows.push(self.draggable(plan, step.id, self.section_row(plan, step, section)));
                 if selected {
                     rows = rows
                         .push(self.edit_strip(step))
@@ -191,7 +192,8 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let mut row = column![self.step_row(number, step, place, issue)];
+            let mut row =
+                column![self.draggable(plan, step.id, self.step_row(number, step, place, issue))];
             if selected {
                 row = row.push(self.edit_strip(step)).push(insertion_mark(p, 0.0));
             }
@@ -212,6 +214,51 @@ impl App {
             );
         }
         scrolling(rows).into()
+    }
+
+    /// The step being dragged and the row it's over, once that's another
+    /// row: where it would land if dropped now.
+    pub(crate) fn dragged_over(&self) -> Option<StepId> {
+        self.drag
+            .and(self.hovered)
+            .filter(|over| Some(*over) != self.drag)
+    }
+
+    /// `row`, telling the app when the pointer is over it, so a step held
+    /// down can be dropped on it. The row a step is dragged over shows a
+    /// line on the side it would land: above when it comes from below.
+    fn draggable<'a>(
+        &self,
+        plan: &Plan,
+        id: StepId,
+        row: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let landing = self
+            .drag
+            .zip(self.dragged_over())
+            .filter(|(_, over)| *over == id)
+            .and_then(|(dragged, _)| Some((plan.position(dragged)?, plan.position(id)?)));
+        let line = || {
+            container(Space::new().height(3))
+                .width(Fill)
+                .style(move |_| container::Style::default().background(p.primary))
+        };
+        // The line is inside the hover area, so making room for it never
+        // moves the row out from under the pointer.
+        let content: Element<'a, Message> = match landing {
+            Some((from, to)) if from < to => column![row, line()].spacing(2).into(),
+            Some(_) => column![line(), row].spacing(2).into(),
+            None => row,
+        };
+        let area = mouse_area(content)
+            .on_enter(Message::Hover(Some(id)))
+            .on_exit(Message::Hover(None));
+        if self.dragged_over().is_some() {
+            area.interaction(mouse::Interaction::Grabbing).into()
+        } else {
+            area.into()
+        }
     }
 
     /// A section's header: its name and its time in words ("12 of 15 min

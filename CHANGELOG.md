@@ -18,6 +18,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Plan steps can be dragged onto another row to move them there; a line
+  shows where they'll land.
 - A folder can have its own bang (`!h` for the hymns), set in Settings or
   with `bang` in `config.toml`; `!f` still searches every folder.
 - A double click on a result or plan step shows it at once; a single click

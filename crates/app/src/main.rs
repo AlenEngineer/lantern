@@ -198,6 +198,11 @@ enum Message {
     /// A result or plan step was clicked: a single click lines it up, a
     /// double click also shows it.
     Click(Clicked),
+    /// The pointer went over a plan row, or off every row.
+    Hover(Option<StepId>),
+    /// The left button went down (`true`) or up in a window; `None` for a
+    /// script, which has no window.
+    Pointer(Option<window::Id>, bool),
     /// A result was picked, which previews it.
     Pick(ResourceId),
     /// A bang was clicked: start a query with it.
@@ -279,6 +284,11 @@ struct App {
     selected: Option<StepId>,
     /// The last click on a result or step, to tell a double click.
     last_click: Option<(Clicked, Instant)>,
+    /// The plan row under the pointer.
+    hovered: Option<StepId>,
+    /// The plan step the button went down on, while it's held: dropping it
+    /// on another row moves it there.
+    drag: Option<StepId>,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -334,6 +344,8 @@ impl App {
             search: Search::default(),
             selected: None,
             last_click: None,
+            hovered: None,
+            drag: None,
             stepping: false,
             arrived_at: None,
             drafts: HashMap::new(),
@@ -412,6 +424,25 @@ impl App {
                             Task::none()
                         }
                     },
+                    Ui::Drag(from, to) => {
+                        let steps = self.engine.0.plan().steps().to_vec();
+                        match (steps.get(from), steps.get(to)) {
+                            (Some(from), Some(to)) => {
+                                let _ = self.update(Message::Hover(Some(from.id)));
+                                let _ = self.update(Message::Pointer(None, true));
+                                self.update(Message::Hover(Some(to.id)))
+                            }
+                            _ => {
+                                log(format!(
+                                    "dashboard: no plan step {} or {}",
+                                    from + 1,
+                                    to + 1
+                                ));
+                                Task::none()
+                            }
+                        }
+                    }
+                    Ui::Drop => self.update(Message::Pointer(None, false)),
                     Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
                         Some(step) => self.update(Message::Click(Clicked::Step(step.id))),
                         None => {
@@ -451,6 +482,21 @@ impl App {
                 self.search.live_event(ticket, &event, &self.engine.0);
             }
             Message::SearchDone(ticket) => self.search.live_done(ticket),
+            Message::Hover(row) => self.hovered = row,
+            Message::Pointer(window, _) if window == Some(self.stage_window) => {}
+            Message::Pointer(_, true) => self.drag = self.hovered,
+            Message::Pointer(_, false) => {
+                let onto = self.dragged_over();
+                let dropped = self.drag.take().zip(onto);
+                if let Some((step, onto)) = dropped {
+                    self.engine.0.edit_plan(|plan| {
+                        if let Some(at) = plan.position(onto) {
+                            plan.move_to(step, at);
+                        }
+                    });
+                    return self.preload();
+                }
+            }
             Message::Click(target) => {
                 let now = Instant::now();
                 let double = self.last_click.take().is_some_and(|(last, at)| {
@@ -996,6 +1042,7 @@ impl App {
             window::close_events().map(Message::Closed),
             window::resize_events().map(|(window, size)| Message::Resized(window, size)),
             iced::event::listen_with(keys::key_event),
+            iced::event::listen_with(pointer_event),
         ];
         if self.colors.is_some() {
             subscriptions
@@ -1115,6 +1162,24 @@ fn stage_feed(engine: &Shared<Engine>) -> impl Stream<Item = Message> + use<> {
             }
         }
     })
+}
+
+/// The left button going down or up, for dragging plan rows. Every press
+/// counts, even one a button took: the row's button takes it.
+fn pointer_event(
+    event: iced::Event,
+    _: iced::event::Status,
+    window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+            Some(Message::Pointer(Some(window), true))
+        }
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+            Some(Message::Pointer(Some(window), false))
+        }
+        _ => None,
+    }
 }
 
 /// Runs the script on its own thread, since its commands block (`wait`,

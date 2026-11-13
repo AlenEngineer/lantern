@@ -98,7 +98,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+B | blackout |
 | Esc | clear the search box |
 | Backspace | in an empty box, take the bang chip away |
-| Alt+↑ ↓ | move the selected step |
+| Alt+↑ ↓ | move the selected step (or drag a step onto another row; a line shows where it lands) |
 | Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 

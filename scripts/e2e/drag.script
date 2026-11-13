@@ -1,0 +1,23 @@
+# Dragging plan rows: held over another row, a line shows where the step
+# lands (below when it comes from above, above when from below); letting
+# go moves it there. Let go on its own row, nothing moves.
+wait 2500
+add fixtures/image.png
+add fixtures/pages.pdf
+add fixtures/video.mp4
+wait 500
+drag 1 3
+wait 300
+shot 1-held-over-the-last
+drop
+wait 300
+shot 2-dropped-last
+drag 3 1
+wait 300
+shot 3-held-over-the-first
+drop
+wait 300
+drag 2 2
+drop
+wait 300
+shot 4-back-and-unmoved
