@@ -54,6 +54,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - PgDn lets go of the selected step, so while the plan runs only the step
   on stage is lit; the pink line then shows where Ctrl+A adds (after the
   current step). Looking at a step of the plan, the button says "Add again".
+- Live slot, Black and Note rows have a picture like the others (an icon,
+  or black), no longer repeat their name underneath ("Note / note"), and
+  their empty length box says "min".
 
 ## [0.7.0] - 2026-11-13
 

@@ -475,12 +475,39 @@ impl App {
             },
             (true, _) => Some(join(detail, "goes on".into())),
         };
+        // "Note / note" says nothing twice: the kind shows once renamed.
+        let detail = detail.filter(|detail| !detail.eq_ignore_ascii_case(step.label.trim()));
         if let Some(detail) = detail {
             label = label.push(single_line(detail).size(META).color(detail_color));
         }
+        // Every row has a picture, so the titles line up: a step that shows
+        // nothing of its own has its kind's icon, a black screen is black.
+        let kind = |icon: Option<Icon>| -> Element<'_, Message> {
+            let height = STEP_THUMB * 9.0 / 16.0;
+            let inside: Element<'_, Message> = match icon {
+                Some(icon) => look::icon(icon, height * 0.4, p.on_surface_variant).into(),
+                None => Space::new().into(),
+            };
+            let black = icon.is_none();
+            container(inside)
+                .center(Fill)
+                .width(STEP_THUMB)
+                .height(height)
+                .style(move |theme| {
+                    let style = look::thumb(p)(theme);
+                    if black {
+                        style.background(iced::Color::BLACK)
+                    } else {
+                        style
+                    }
+                })
+                .into()
+        };
         let picture: Element<'_, Message> = match &step.action {
             Action::Show { resource } => self.thumbnail(resource, STEP_THUMB),
-            _ => Space::new().width(STEP_THUMB).into(),
+            Action::Live { .. } => kind(Some(Icon::Search)),
+            Action::Blank => kind(None),
+            Action::Note | Action::Section { .. } => kind(Some(Icon::Document)),
         };
         let line = row![
             text(marker).size(META).color(label_color).width(16),
