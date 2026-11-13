@@ -126,6 +126,18 @@ fn veil(under: Color, p: Palette) -> Color {
 }
 
 /// A small pill label (a mode, a scope, a state) in `tone`.
+/// A thumbnail's frame: slightly rounded, on the darkest container.
+pub fn thumb(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface_container_highest)),
+        border: Border {
+            radius: 6.0.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 pub fn chip(p: Palette, tone: Tone) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| {
         let (fill, text) = tone.colors(p);

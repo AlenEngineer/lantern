@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Thumbnails in the results and the plan: a picture's own image, a PDF's
+  first page, a video's still, a YouTube video's still, and a passage or
+  song's first slide in the stage look.
 - Text too long for one slide at the smallest size is split into more
   slides (at lines, then sentences, then words, about even in length), and
   stepping goes through them.

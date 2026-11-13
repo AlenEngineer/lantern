@@ -91,7 +91,7 @@ pub fn image_cached(url: &str) -> bool {
 }
 
 /// Where an image link is cached: a file in `dir` named by the link.
-fn image_path(url: &str, dir: &Path) -> PathBuf {
+pub(crate) fn image_path(url: &str, dir: &Path) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     url.hash(&mut hasher);
     dir.join(format!("{:016x}", hasher.finish()))
@@ -520,7 +520,7 @@ fn fetch_image(urls: &[String], dir: &Path) -> Result<Handle, String> {
 
 /// Saves `url` at `path`, through a temporary file so a cut-off download
 /// never looks finished.
-fn download(url: &str, path: &Path) -> Result<(), String> {
+pub(crate) fn download(url: &str, path: &Path) -> Result<(), String> {
     let fail = |err: &dyn fmt::Display| format!("{url}: {err}");
     let bytes = ureq::get(url)
         .call()
@@ -546,7 +546,7 @@ fn download(url: &str, path: &Path) -> Result<(), String> {
 /// A stream changes resolution as the network allows, but the player keeps
 /// the size of its first frame, so a stream is scaled to one size (with
 /// black bars to keep its shape).
-fn open_video(uri: &url::Url) -> Result<Video, String> {
+pub(crate) fn open_video(uri: &url::Url) -> Result<Video, String> {
     let file = uri.to_file_path().ok();
     // A stream's link is long and signed: name it, don't print it.
     let name = file.as_ref().map_or_else(

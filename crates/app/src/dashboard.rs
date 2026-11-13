@@ -31,6 +31,9 @@ pub const NAME_BOX: &str = "plan-name";
 const STAGE_WIDTH: f32 = 360.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
 const MONITOR_HEIGHT: f32 = 184.0;
+/// How wide a result's thumbnail is; a plan row's is smaller.
+const RESULT_THUMB: f32 = 96.0;
+pub(crate) const STEP_THUMB: f32 = 64.0;
 
 /// The keys worth knowing, under the results.
 const HINTS: &str = "PgDn next step · Enter look, again to show · Ctrl+A add to the plan · \
@@ -289,7 +292,7 @@ impl App {
             (true, _) => p.on_surface,
         };
         let line = row![
-            icon_disc(p, Icon::of(&resource.kind), tone),
+            self.thumbnail(resource, RESULT_THUMB),
             column![
                 single_line(&resource.title)
                     .size(BODY)
@@ -308,6 +311,50 @@ impl App {
             .padding([8, 12])
             .on_press_maybe(ok.then(|| Message::Pick(resource.id.clone())))
             .style(look::row(p, tone))
+            .into()
+    }
+
+    /// A small picture of `resource`, `width` wide at 16:9: a text's first
+    /// slide in the stage's look, a picture, page or video still once it's
+    /// made, and the kind's icon until then (or when there's none).
+    pub(crate) fn thumbnail<'a>(&self, resource: &Resource, width: f32) -> Element<'a, Message> {
+        let p = self.palette;
+        let height = width * 9.0 / 16.0;
+        let look = &self.config.stage;
+        let picture: Element<'a, Message> = match resource.location.as_text() {
+            Some(body) => {
+                let first = self
+                    .slides
+                    .slides(body)
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                crate::backdrop(look, fit::fit_text(first, look))
+            }
+            None => match self.thumbs.get(resource) {
+                Some(handle) => container(
+                    image(handle)
+                        .width(Fill)
+                        .height(Fill)
+                        .content_fit(iced::ContentFit::Cover),
+                )
+                .style(|_| container::Style::default().background(Color::BLACK))
+                .into(),
+                None => container(look::icon(
+                    Icon::of(&resource.kind),
+                    height * 0.4,
+                    p.on_surface_variant,
+                ))
+                .center(Fill)
+                .style(look::chip(p, Tone::Plain))
+                .into(),
+            },
+        };
+        container(picture)
+            .width(width)
+            .height(height)
+            .clip(true)
+            .style(look::thumb(p))
             .into()
     }
 
@@ -720,28 +767,6 @@ pub(crate) fn chip<'a>(p: Palette, label: &str, tone: Tone) -> Element<'a, Messa
     container(text(label.to_string()).size(META).font(BOLD))
         .padding([3, 10])
         .style(look::chip(p, tone))
-        .into()
-}
-
-/// A kind's icon in a small disc, tinted like its row.
-fn icon_disc(p: Palette, icon: Icon, tone: Tone) -> Element<'static, Message> {
-    let color = match tone {
-        Tone::Plain => p.on_surface_variant,
-        tone => tone.text(p),
-    };
-    container(look::icon(icon, 16.0, color))
-        .width(32)
-        .height(32)
-        .center_x(32)
-        .center_y(32)
-        .style(look::chip(
-            p,
-            if tone == Tone::Plain {
-                Tone::Plain
-            } else {
-                tone
-            },
-        ))
         .into()
 }
 
