@@ -13,7 +13,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 concurrency:
   group: release-pr
@@ -77,8 +76,6 @@ jobs:
           else
             gh pr create --head "$BRANCH" --base main --title "$title" --body "$body"
           fi
-          # The checks main requires, on the PR's commit.
-          gh workflow run ci.yml --ref "$BRANCH"
 
   publish:
     needs: prepare
