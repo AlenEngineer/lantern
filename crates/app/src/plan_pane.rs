@@ -1,9 +1,9 @@
-//! The run view's left pane: the plan. Its steps, grouped under section
-//! headers that say how each part of the service is keeping to its time,
-//! and the plan's files (open, save, new).
+//! The left pane: the plan. Its steps, grouped under section headers that
+//! say how each part is keeping to its time, edited in place (see
+//! [`crate::plan_edit`]), and behind the Plans button the saved plans.
 //!
-//! Clicking a step selects it and lines it up in the preview; Enter puts it
-//! on stage. Editing the plan is the prepare view's job.
+//! Clicking a step selects it, opens its edit strip and lines it up in the
+//! preview; Enter puts it on stage, and Ctrl+A adds after it.
 
 use std::time::{Duration, SystemTime};
 
@@ -13,16 +13,17 @@ use lantern_engine::{
     Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
 };
 
-use crate::dashboard::{NAME_BOX, chip, level_tone, op, pill, scrolling, single_line, unit, wide};
+use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
 use crate::keys::Op;
 use crate::length;
-use crate::look::{self, BODY, BOLD, HEADING, MEDIUM, META, PILL_SMALL, Tone};
+use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
+use crate::plan_edit::{NewStep, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::{App, Message};
 
-const PLAN_WIDTH: f32 = 280.0;
+const PLAN_WIDTH: f32 = 380.0;
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
 
@@ -55,14 +56,19 @@ impl App {
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
             plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
         });
-        let small = |label, message| wide(pill(p, label, Tone::Plain, PILL_SMALL, Some(message)));
+        let small = |label, message| pill(p, label, Tone::Plain, PILL_SMALL, Some(message));
         let buttons = match &self.plans.mode {
-            plans::Mode::Browsing(_) => row![small("Cancel", Message::ClosePlanMode)],
-            _ => row![
-                small("Open", op(Op::Open)),
-                small("Save", op(Op::Save)),
-                small("New", op(Op::New)),
-            ],
+            plans::Mode::Browsing(_) => row![wide(small("New plan · Ctrl+N", op(Op::New)))],
+            _ => {
+                let add = |label, new| small(label, Message::AddStep(new));
+                row![
+                    add("Section", NewStep::Section),
+                    add("Live slot", NewStep::LiveSlot),
+                    add("Black", NewStep::BlackScreen),
+                    add("Note", NewStep::Note),
+                ]
+                .align_y(Alignment::Center)
+            }
         };
         pane.push(buttons.spacing(4))
             .padding([16, 12])
@@ -71,9 +77,22 @@ impl App {
             .into()
     }
 
-    /// The plan's name (click to rename), and where the service is: "3 of 7".
+    /// The Plans button, the plan's name (click to rename), and where the
+    /// service is: "3 of 7".
     fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
         let p = self.palette;
+        let browsing = matches!(self.plans.mode, plans::Mode::Browsing(_));
+        let plans_button = pill(
+            p,
+            if browsing { "‹ Back" } else { "Plans" },
+            if browsing {
+                Tone::Selected
+            } else {
+                Tone::Plain
+            },
+            PILL_SMALL,
+            Some(op(Op::Open)),
+        );
         let name: Element<'_, Message> = match &self.plans.mode {
             plans::Mode::Renaming(draft) => text_input("Plan name", draft)
                 .id(NAME_BOX)
@@ -101,17 +120,25 @@ impl App {
             .0
             .current_step()
             .and_then(|current| items.iter().position(|s| s.id == current.id));
-        let mut place = match at {
+        let place = match at {
             Some(at) => format!("{} of {}", at + 1, items.len()),
             None => count(items.len(), "step"),
         };
+        let mut header = row![
+            plans_button,
+            name,
+            text(place).size(META).color(p.on_surface_variant)
+        ];
         if self.plans.is_dirty(plan) {
-            place.push_str(" · unsaved");
+            header = header.push(pill(
+                p,
+                "Save",
+                Tone::Selected,
+                PILL_SMALL,
+                Some(op(Op::Save)),
+            ));
         }
-        row![name, text(place).size(META).color(p.on_surface_variant)]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into()
+        header.spacing(6).align_y(Alignment::Center).into()
     }
 
     /// The last save or open: its error, or that it worked while nothing
@@ -139,10 +166,16 @@ impl App {
         let mut number = 0;
         let mut in_section = false;
         for (index, step) in plan.steps().iter().enumerate() {
+            let selected = self.selected == Some(step.id);
             if step.is_section() {
                 in_section = true;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
-                rows = rows.push(self.section_row(step, section));
+                rows = rows.push(self.section_row(plan, step, section));
+                if selected {
+                    rows = rows
+                        .push(self.edit_strip(step))
+                        .push(insertion_mark(p, INDENT));
+                }
                 continue;
             }
             number += 1;
@@ -156,17 +189,20 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let row = self.step_row(number, step, place, issue);
-            rows = rows.push(if in_section {
-                container(row).padding(iced::Padding::default().left(INDENT))
-            } else {
-                container(row)
-            });
+            let mut row = column![self.step_row(number, step, place, issue)];
+            if selected {
+                row = row.push(self.edit_strip(step)).push(insertion_mark(p, 0.0));
+            }
+            let indent = if in_section { INDENT } else { 0.0 };
+            rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
+        }
+        if self.selected.is_none() && !plan.is_empty() {
+            rows = rows.push(insertion_mark(p, 0.0));
         }
         if plan.is_empty() {
             rows = rows.push(
                 container(
-                    text("The plan is empty. Preview something and press Ctrl+A to add it.")
+                    text("The plan is empty. Search, then Ctrl+A adds the result here.")
                         .size(BODY)
                         .color(p.on_surface_variant),
                 )
@@ -176,11 +212,28 @@ impl App {
         scrolling(rows).into()
     }
 
-    /// A section's header: its name, its time against its budget, and how
-    /// it's doing. Clicking it goes to its first step.
-    fn section_row(&self, step: &Step, timing: Option<&SectionTiming>) -> Element<'_, Message> {
+    /// A section's header: its name and its time in words ("12 of 15 min
+    /// planned", "6:40 of 15 min") over a bar, or a button to set one.
+    /// Clicking it selects it, to rename it or change its time.
+    fn section_row(
+        &self,
+        plan: &Plan,
+        step: &Step,
+        timing: Option<&SectionTiming>,
+    ) -> Element<'_, Message> {
         let p = self.palette;
-        let (time, pace) = timing.map_or((String::new(), None), |t| (section_time(t), t.pace()));
+        let id = step.id;
+        let budget = match step.action {
+            Action::Section { budget } => budget,
+            _ => None,
+        };
+        let phase = timing.map_or(
+            Phase::Coming {
+                planned: self.planned(plan, id),
+            },
+            |t| t.phase,
+        );
+        let time = section_time(budget, &phase);
         let mut line = row![
             container(
                 single_line(step.label.clone())
@@ -190,18 +243,53 @@ impl App {
             )
             .width(Fill)
             .clip(true),
-            text(time).size(META).color(p.on_surface_variant),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        if let Some(pace) = pace {
-            line = line.push(chip(p, pace_word(pace), pace_tone(pace)));
+        let color = match time.pace {
+            Some(pace) if pace != Pace::OnTrack => pace_tone(pace).text(p),
+            _ => p.on_surface_variant,
+        };
+        if !time.words.is_empty() {
+            line = line.push(
+                row![
+                    look::icon(Icon::Clock, 13.0, color),
+                    text(time.words.clone()).size(META).color(color)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            );
         }
-        button(line)
+        if time.offer {
+            line = line.push(pill(
+                p,
+                "Set a time",
+                Tone::Plain,
+                PILL_SMALL,
+                Some(Message::SetTime(id)),
+            ));
+        }
+        let content: Element<'_, Message> = match time.share {
+            Some(share) => {
+                let fill = match (time.pace, &phase) {
+                    (Some(pace), _) if pace != Pace::OnTrack => pace_tone(pace).text(p),
+                    (_, Phase::Running { .. }) => p.tertiary,
+                    _ => p.primary,
+                };
+                column![line, bar(p, share, fill, 0.0)].spacing(6).into()
+            }
+            None => line.into(),
+        };
+        let tone = if self.selected == Some(id) {
+            Tone::Selected
+        } else {
+            Tone::Plain
+        };
+        button(content)
             .width(Fill)
             .padding([10, 10])
-            .on_press(Message::Select(step.id))
-            .style(look::row(p, Tone::Plain))
+            .on_press(Message::Select(id))
+            .style(look::row(p, tone))
             .into()
     }
 
@@ -294,7 +382,9 @@ impl App {
         .spacing(8)
         .align_y(Alignment::Center);
         let content: Element<'_, Message> = match progress {
-            Some((_, done)) => column![line, bar(p, done)].spacing(6).into(),
+            Some((_, done)) => column![line, bar(p, done, p.tertiary, 24.0)]
+                .spacing(6)
+                .into(),
             None => line.into(),
         };
         button(content)
@@ -322,10 +412,7 @@ impl App {
         let mut list = column![
             container(
                 column![
-                    text("Open a saved plan")
-                        .size(BODY)
-                        .font(BOLD)
-                        .color(p.primary),
+                    text("Your plans").size(BODY).font(BOLD).color(p.primary),
                     single_line(folder).size(META).color(p.on_surface_variant),
                 ]
                 .spacing(2)
@@ -352,19 +439,81 @@ impl App {
     }
 }
 
-/// A section's time: `6:40 / 15:00` while it runs, `took 14:20` once done,
-/// `~12 min / 15:00` before it starts.
-fn section_time(section: &SectionTiming) -> String {
-    let of = |time: String| match section.budget {
-        Some(budget) => format!("{time} / {}", length::clock(budget)),
-        None => time,
+/// What a section's header says about its time.
+#[derive(Debug, Clone, PartialEq)]
+struct SectionTime {
+    /// "12 of 15 min planned", "6:40 of 15 min", "took 14:20".
+    words: String,
+    /// How much of the time is used, for the bar; `None` without a time.
+    share: Option<f32>,
+    pace: Option<Pace>,
+    /// No time yet and not started: offer to set one.
+    offer: bool,
+}
+
+fn section_time(budget: Option<Duration>, phase: &Phase) -> SectionTime {
+    let share = |used: Duration| budget.map(|b| used.as_secs_f32() / b.as_secs_f32().max(1.0));
+    let of = |used: String| match budget {
+        Some(budget) => format!("{used} of {}", minutes(budget)),
+        None => used,
     };
-    match section.phase {
-        Phase::Coming { planned } if planned.is_zero() => of("empty".into()),
-        Phase::Coming { planned } => of(length::rough(planned)),
-        Phase::Running { elapsed, .. } => of(length::clock(elapsed)),
-        Phase::Done { took: Some(took) } => format!("took {}", length::clock(took)),
-        Phase::Done { took: None } => "done".into(),
+    match *phase {
+        Phase::Coming { planned } => {
+            let pace = budget
+                .filter(|_| !planned.is_zero())
+                .map(|b| Pace::of(planned, b));
+            let mut words = match (budget, planned.is_zero()) {
+                (None, true) => String::new(),
+                (None, false) => format!("{} planned", length::rough(planned)),
+                (Some(_), true) => of("0".into()) + " planned",
+                (Some(_), false) => {
+                    of(length::rough(planned).trim_start_matches('~').to_string()) + " planned"
+                }
+            };
+            if let (Some(Pace::Over), Some(budget)) = (pace, budget) {
+                words.push_str(&format!(" · {} over", minutes(planned - budget)));
+            }
+            SectionTime {
+                words,
+                share: share(planned),
+                pace,
+                offer: budget.is_none(),
+            }
+        }
+        Phase::Running { elapsed, expected } => {
+            let pace = budget.map(|b| Pace::of(expected, b));
+            let mut words = of(length::clock(elapsed));
+            if let Some(pace) = pace {
+                words.push_str(" · ");
+                words.push_str(pace_word(pace));
+            }
+            SectionTime {
+                words,
+                share: share(elapsed),
+                pace,
+                offer: false,
+            }
+        }
+        Phase::Done { took } => SectionTime {
+            words: match took {
+                Some(took) => of(format!("took {}", length::clock(took))),
+                None => "done".into(),
+            },
+            share: None,
+            pace: budget.zip(took).map(|(b, took)| Pace::of(took, b)),
+            offer: false,
+        },
+    }
+}
+
+/// A time as a person says it: "15 min", "1 h 30 min", "4:30".
+fn minutes(time: Duration) -> String {
+    let secs = time.as_secs();
+    match (secs / 3600, secs % 3600 / 60, secs % 60) {
+        (0, m, 0) => format!("{m} min"),
+        (h, 0, 0) => format!("{h} h"),
+        (h, m, 0) => format!("{h} h {m} min"),
+        _ => length::clock(time),
     }
 }
 
@@ -423,8 +572,9 @@ pub(crate) fn progress(media: &Media, resource: &Resource) -> Option<(String, f3
     }
 }
 
-/// A thin bar, `done` of it filled in the on-stage tint.
-fn bar<'a>(p: Palette, done: f32) -> Element<'a, Message> {
+/// A thin bar, `done` of it filled in `color`, `indent` in from the left.
+fn bar<'a>(p: Palette, done: f32, color: iced::Color, indent: f32) -> Element<'a, Message> {
+    let done = done.clamp(0.0, 1.0);
     let part = |portion: f32| (portion * 1000.0).round().max(1.0) as u16;
     let fill =
         |color: iced::Color| move |_: &iced::Theme| container::Style::default().background(color);
@@ -435,10 +585,10 @@ fn bar<'a>(p: Palette, done: f32) -> Element<'a, Message> {
         .height(3)
         .width(Length::FillPortion(part(1.0 - done)));
     container(row![
-        filled.style(fill(p.tertiary)),
+        filled.style(fill(color)),
         rest.style(fill(p.surface_container_highest)),
     ])
-    .padding(iced::Padding::default().left(24.0))
+    .padding(iced::Padding::default().left(indent))
     .into()
 }
 
@@ -594,21 +744,41 @@ mod tests {
     }
 
     #[test]
-    fn sections_say_their_time_against_their_budget() {
-        let coming = section(Some(15 * MIN), Phase::Coming { planned: 12 * MIN });
-        assert_eq!(section_time(&coming), "~12 min / 15:00");
+    fn sections_say_their_time_in_words_or_offer_to_set_one() {
+        let coming = |planned| Phase::Coming { planned };
+        let budget = Some(15 * MIN);
+
+        let empty = section_time(None, &coming(Duration::ZERO));
+        assert_eq!((empty.words.as_str(), empty.offer), ("", true));
+        let unset = section_time(None, &coming(12 * MIN));
+        assert_eq!(
+            (unset.words.as_str(), unset.offer),
+            ("~12 min planned", true)
+        );
+
+        let none_yet = section_time(budget, &coming(Duration::ZERO));
+        assert_eq!(none_yet.words, "0 of 15 min planned");
+        assert!(!none_yet.offer);
+        let planned = section_time(budget, &coming(12 * MIN));
+        assert_eq!(planned.words, "12 min of 15 min planned");
+        assert_eq!(planned.share, Some(0.8));
+        let over = section_time(budget, &coming(19 * MIN));
+        assert_eq!(over.words, "19 min of 15 min planned · 4 min over");
+        assert_eq!(over.pace, Some(Pace::Over));
+
         let running = Phase::Running {
             elapsed: 6 * MIN + Duration::from_secs(40),
             expected: 12 * MIN,
         };
         assert_eq!(
-            section_time(&section(Some(15 * MIN), running)),
-            "6:40 / 15:00"
+            section_time(budget, &running).words,
+            "6:40 of 15 min · on track"
         );
         let done = Phase::Done {
             took: Some(14 * MIN),
         };
-        assert_eq!(section_time(&section(None, done)), "took 14:00");
+        assert_eq!(section_time(None, &done).words, "took 14:00");
+        assert_eq!(minutes(90 * MIN), "1 h 30 min");
     }
 
     #[test]

@@ -25,6 +25,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
   as you type, ignoring case and accents; a click or Tab takes one and goes
   inside it.
 
+### Changed
+
+- One screen instead of Prepare/Run and the live/plan modes. The plan is
+  edited in place (click a step for its strip; Ctrl+A adds after it), the
+  lower stage box shows what you're looking at or else the next step, and
+  **Plans** lists your saved plans. Ctrl+R and Ctrl+P are gone.
+- Section headers say their time in words over a bar ("12 min of 15 min
+  planned", "6:40 of 15 min · on track"), and a section without one offers
+  **Set a time**. New sections start without a time.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added

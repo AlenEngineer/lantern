@@ -80,9 +80,9 @@ pub enum Command {
     Preview(Target),
     /// `add PATH|URL`: add a file or link to the plan after the current step.
     Add(Target),
-    /// `section BUDGET TITLE`: add a section with a budget (`15`, `0:20`)
-    /// after the current step.
-    Section(Duration, String),
+    /// `section BUDGET TITLE`: add a section with a budget (`15`, `0:20`,
+    /// or `none`) after the current step.
+    Section(Option<Duration>, String),
     /// `slot SEARCH`: add a live slot that searches SEARCH (`!b jn 3`).
     Slot(String),
     /// `path TEXT`: type TEXT in the open settings' first folder path,
@@ -177,7 +177,10 @@ impl Command {
             "section" => {
                 let usage = || format!("section needs a budget and a title, got {rest:?}");
                 let (budget, title) = rest.split_once(' ').ok_or_else(usage)?;
-                let budget = crate::length::parse(budget).flatten().ok_or_else(usage)?;
+                let budget = match budget {
+                    "none" => None,
+                    budget => Some(crate::length::parse(budget).flatten().ok_or_else(usage)?),
+                };
                 Command::Section(budget, title.trim().to_string())
             }
             "wait-ready" => {
@@ -374,9 +377,7 @@ impl Script {
                 engine.add(None, "Live search", action);
             }
             Command::Section(budget, title) => {
-                let action = lantern_engine::Action::Section {
-                    budget: Some(*budget),
-                };
+                let action = lantern_engine::Action::Section { budget: *budget };
                 engine.add(None, title.clone(), action);
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),

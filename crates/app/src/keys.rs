@@ -36,13 +36,9 @@ pub enum Op {
     Open,
     /// Starts an empty plan.
     New,
-    /// Switches between live and plan mode.
-    ToggleMode,
     /// Completes a half-typed bang (`!y` → `!yt `).
     Complete,
-    /// Switches between the run and prepare views.
-    ToggleView,
-    /// Moves the selected step up or down (prepare view).
+    /// Moves the selected step up or down.
     MoveUp,
     MoveDown,
     /// Takes the bang chip off the search, so it asks every source again.
@@ -135,8 +131,6 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
     ("ctrl+s", Bind::Ctrl('s'), Op::Save, When::Always),
     ("ctrl+o", Bind::Ctrl('o'), Op::Open, When::Always),
     ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
-    ("ctrl+p", Bind::Ctrl('p'), Op::ToggleMode, When::Always),
-    ("ctrl+r", Bind::Ctrl('r'), Op::ToggleView, When::Always),
     (
         "alt+up",
         Bind::Alt(Named::ArrowUp),
@@ -262,7 +256,6 @@ mod tests {
             )),
             Some((Op::MoveUp, false))
         );
-        assert_eq!(ctrl("r"), Some((Op::ToggleView, false)));
     }
 
     #[test]

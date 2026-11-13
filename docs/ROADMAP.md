@@ -20,7 +20,7 @@ optional overlays (a lower third with the reference or song title, a logo).
 - Core: a `StageTheme` in the stage model, saved with the plan (a default,
   overridable per step), so a saved plan looks the same anywhere. The stage
   events carry which theme is active.
-- App: the stage window renders the layers; Prepare gets a theme editor;
+- App: the stage window renders the layers; the plan gets a theme editor;
   Settings holds the default theme.
 
 **Fonts.** The family and a size range per theme. *(done, app-wide)*
@@ -54,8 +54,7 @@ a search it isn't, so stepping feels impossible.
 Today a search result goes to the preview, and Enter or Show now sends it.
 Some operators want a click to send it straight to the stage.
 - Core: nothing; the engine already has `show_now`.
-- App: a setting per view mode, "Send on click" for live and for plan,
-  off by default. When on, clicking a result or a step shows it at once,
+- App: a setting, "Send on click", off by default. When on, clicking a result or a step shows it at once,
   and the preview pane shows what's next instead.
 
 ## Configurable bangs

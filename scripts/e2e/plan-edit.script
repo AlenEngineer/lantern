@@ -1,0 +1,31 @@
+# Editing the plan in place, on the one screen: selecting a step opens its
+# strip, Ctrl+A adds the result right after it, Alt+↑ moves it, and with
+# the search empty Enter puts the selected step on stage.
+section 15 Alabanza
+add fixtures/video.mp4
+section 30 Palabra
+wait 800
+shot 1-plan
+step 2
+type image
+wait 800
+press ctrl+a
+type !b juan 3:16-17
+wait 800
+press ctrl+a
+wait 500
+shot 2-added-in-place
+press alt+up
+wait 300
+shot 3-moved-up
+press escape
+step 3
+wait 800
+shot 4-cued
+press enter
+wait 800
+shot 5-shown
+# A section without a time offers one.
+section none Ofrendas
+wait 500
+shot 6-no-time
