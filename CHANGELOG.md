@@ -34,6 +34,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   too, where it showed the image.
 - On stage, Up next and Preview show a video's still instead of a black
   box that says "video".
+- Passages in the results all had the same unreadable thumbnail; each now
+  has a book and says how it starts.
 
 ## [0.7.0] - 2026-11-13
 
