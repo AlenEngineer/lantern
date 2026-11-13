@@ -263,6 +263,9 @@ impl App {
                 column![self.draggable(step.id, self.step_row(number, step, place, issue))];
             if selected {
                 row = row.push(self.edit_strip(step)).push(insertion_mark(p, 0.0));
+            } else if self.selected.is_none() && Some(step.id) == current && moving.is_none() {
+                // With nothing selected, a new step goes after the current one.
+                row = row.push(insertion_mark(p, 0.0));
             }
             let indent = if in_section { INDENT } else { 0.0 };
             rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
@@ -270,7 +273,7 @@ impl App {
         if landing == Some(rest) {
             rows = rows.push(gap(gap_indent(moving, in_section)));
         }
-        if self.selected.is_none() && !plan.is_empty() && moving.is_none() {
+        if self.selected.is_none() && current.is_none() && !plan.is_empty() && moving.is_none() {
             rows = rows.push(insertion_mark(p, 0.0));
         }
         if plan.is_empty() {

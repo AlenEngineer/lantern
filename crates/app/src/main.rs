@@ -954,10 +954,20 @@ impl App {
                 }
             }
             Op::Next | Op::Prev => {
-                if op == Op::Next {
-                    engine.next();
+                let moved = if op == Op::Next {
+                    engine.next()
                 } else {
-                    engine.prev();
+                    engine.prev()
+                };
+                // The operator moved the plan on: the step that was being
+                // looked at lets go, so the row on stage is the only one
+                // lit and Up next shows what follows. A step going on by
+                // itself leaves the selection alone: it may be mid-edit.
+                if matches!(moved, lantern_engine::Moved::Step(_))
+                    && self.selected.take().is_some()
+                    && self.search.picked().is_none()
+                {
+                    engine.clear_preview();
                 }
                 return Task::batch([self.preload(), self.arrive()]);
             }
