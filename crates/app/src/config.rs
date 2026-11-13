@@ -22,6 +22,7 @@
 //! folder. The settings view writes the file back with [`Config::save`].
 
 use lantern_engine::Look;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -51,6 +52,10 @@ pub struct Config {
     /// How the stage looks, as the `[stage]` table.
     #[serde(default, skip_serializing_if = "Look::is_default")]
     pub stage: Look,
+    /// Keys that aren't the usual ones, as the `[keys]` table: an action's
+    /// name to its key (`new = "ctrl+t"`). See `keys::ACTIONS`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
 }
 
 /// A media folder to index.
@@ -393,6 +398,7 @@ mod tests {
             brave_api_key: Some("key".into()),
             colors: Some("/home/ana/.config/amane/colors.json".into()),
             stage_output: Some("HDMI-A-1".into()),
+            keys: [("new".to_string(), "ctrl+t".to_string())].into(),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),
                 label: Some("Music".into()),

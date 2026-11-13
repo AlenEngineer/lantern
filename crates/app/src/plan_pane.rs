@@ -20,7 +20,7 @@ use crate::dashboard::{
 };
 use crate::drag::{Drag, Half};
 use crate::fit;
-use crate::keys::Op;
+use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
@@ -94,7 +94,7 @@ impl App {
                 .padding([2, 10])
                 .on_press(op(Op::Open))
                 .style(look::row(p, Tone::Plain)),
-            container(text("All plans · Ctrl+O").size(META))
+            container(text(keys::with_key("All plans", Op::Open)).size(META))
                 .padding([4, 8])
                 .style(look::tip(p)),
             tooltip::Position::Bottom,
@@ -278,9 +278,12 @@ impl App {
         if plan.is_empty() {
             rows = rows.push(
                 container(
-                    text("The plan is empty. Search, then Ctrl+A adds the result here.")
-                        .size(BODY)
-                        .color(p.on_surface_variant),
+                    text(format!(
+                        "The plan is empty. Search, then {} adds the result here.",
+                        keys::label(Op::AddToPlan)
+                    ))
+                    .size(BODY)
+                    .color(p.on_surface_variant),
                 )
                 .padding([4, 8]),
             );
@@ -291,7 +294,7 @@ impl App {
             rows = rows.push(list_action(
                 p,
                 if self.adding { "−" } else { "+" },
-                "Add step",
+                "Add step".into(),
                 Message::ToggleAdd,
             ));
             if self.adding {
@@ -469,7 +472,10 @@ impl App {
                 }
                 _ => ("●".to_string(), Some("current step".to_string())),
             },
-            Place::Next => ("○".to_string(), Some("next, PgDn".to_string())),
+            Place::Next => (
+                "○".to_string(),
+                Some(format!("next, {}", keys::label(Op::Next))),
+            ),
             Place::Done | Place::Later => (number.to_string(), None),
         };
         let label_color = match (place, tone) {
@@ -637,7 +643,12 @@ impl App {
             .filter(|e| !is_template(e) && Some(e.path.as_path()) != self.plans.file())
             .collect();
         list = list.push(heading("Your plans"));
-        list = list.push(list_action(p, "+", "New plan · Ctrl+N", op(Op::New)));
+        list = list.push(list_action(
+            p,
+            "+",
+            keys::with_key("New plan", Op::New),
+            op(Op::New),
+        ));
         for entry in plans {
             list = list.push(saved_plan(p, entry, when(entry)));
         }
@@ -650,7 +661,7 @@ impl App {
 fn list_action<'a>(
     p: Palette,
     sign: &'a str,
-    label: &'a str,
+    label: String,
     message: Message,
 ) -> Element<'a, Message> {
     button(
@@ -941,7 +952,7 @@ fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch, leaving: bool) -> Eleme
     let (ask, more, yes, go, no) = if leaving {
         (
             format!("“{}” is running. Leave it and {then}?", plan.title),
-            "What's on stage stays there. The plan is in Plans to come back to.",
+            "What's on stage stays there. The plan is in Plans to come back to.".to_string(),
             "Leave it",
             Message::LeavePlan,
             "Stay",
@@ -949,7 +960,7 @@ fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch, leaving: bool) -> Eleme
     } else {
         (
             format!("“{}” was never saved. Discard it and {then}?", plan.title),
-            "Ctrl+S saves it instead.",
+            format!("{} saves it instead.", keys::label(Op::Save)),
             "Discard",
             Message::DiscardPlan,
             "Keep it",

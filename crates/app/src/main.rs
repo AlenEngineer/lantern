@@ -79,6 +79,9 @@ fn main() -> ExitCode {
     };
     let (config, config_status) = config::load(config::env);
     log(config_status.to_string());
+    if let Err(err) = keys::configure(&config.keys) {
+        log(format!("keys: {err} Using the usual keys."));
+    }
     let config_status = Arc::new(config_status);
     let engine = Shared(Arc::new(Engine::new()));
     let library = Shared(Library::start(engine.0.clone(), config.clone()));
@@ -1144,6 +1147,8 @@ impl App {
                     }
                 }
                 log(format!("settings: saved {}", path.display()));
+                // Read fine when the draft became this config.
+                let _ = keys::configure(&config.keys);
                 self.library.0.apply(config.clone());
                 if config.colors != self.config.colors {
                     self.colors = config.colors.clone().map(palette::Source::new);
