@@ -44,6 +44,8 @@ sources/
   local/         local folders (music, videos, images, presentations, documents)
   link/          pasted links: YouTube, direct files, web pages
   bible/         offline translations: verse text search + reference parsing
+  youtube/       YouTube search through yt-dlp (!yt, on request)
+  brave/         image search through the Brave Search API (!gi, on request)
 ```
 
 The full design is in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -90,6 +92,14 @@ search bangs. An empty box lists them; Tab or Enter completes one.
 | --- | --- |
 | `!b` | the Bibles: verse text, or a reference like `!b jn 3 16` |
 | `!f` | the media folders |
+| `!yt` | YouTube, through `yt-dlp` |
+| `!gi` | images on the web, through the [Brave Search API](https://brave.com/search/api/) (needs a key) |
+
+`!yt` and `!gi` go over the network and take a few seconds, so they search
+when you press Enter instead of as you type, and a plain search never asks
+them. A YouTube result previews and downloads like a pasted link. An image
+is downloaded into `~/.cache/lantern/images`, so pasted image links work
+too. Image search uses SafeSearch strict.
 
 Every source declares its own bang (`Source::bang`), so a new source brings
 its own.
@@ -130,7 +140,14 @@ path = "/media/church/Music"
 lang = "es"               # "es" or "en": which reference names to accept
 path = "~/bibles/rv1909.json"
 name = "RV1909"           # optional
+
+brave_api_key = "…"       # optional, for !gi image search
 ```
+
+`!gi` needs a Brave Search API key: sign up at
+[brave.com/search/api](https://brave.com/search/api/), which includes free
+monthly credit, and paste the key into the config. Keep the config file
+private, since the key is billed to you.
 
 Folders and Bibles are indexed in the background at startup. The dashboard
 shows the item count, or the error for a source that failed to load.
@@ -155,9 +172,9 @@ better fix.
 `scripts/e2e.sh <script> <outdir>` runs the real app on two headless
 Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
 screenshot of both windows at every `shot`. `basic`, `media`, `library`,
-`dashboard`, `launcher`, `plans` and `youtube` (needs the network) cover
-hymns, images, video, PDFs, Bible passages, the dashboard, bangs, plan files
-and YouTube.
+`dashboard`, `launcher`, `plans`, `youtube` and `online` (both need the
+network) cover hymns, images, video, PDFs, Bible passages, the dashboard,
+bangs, plan files, YouTube downloads and search, and image links.
 
 ```sh
 scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/lantern/e2e/dashboard
@@ -223,12 +240,14 @@ engine.next();                            // next stanza or next step
 - [x] Core model, in-memory index, federated search
 - [x] Plans with live slots, session log
 - [x] Stage model (program/preview, frames, playback, blackout)
-- [x] Sources: local folders, pasted links, Bible (offline, Spanish/English references)
+- [x] Sources: local folders, pasted links, Bible (offline, Spanish/English references),
+  YouTube search, image search
 - [ ] Watch local folders for changes (no manual reindex)
 - [x] Configuration file (folders, Bibles)
 - [x] Desktop UI (dashboard + stage window): images, video, PDFs, Bible, YouTube
 - [x] Launcher dashboard with search bangs (`!b`, `!f`)
-- [ ] `!yt` YouTube search, `!gi` Google Images, `!h` hymnal
+- [x] `!yt` YouTube search, `!gi` image search (Brave), image links on stage
+- [ ] `!h` hymnal
 - [ ] Stream YouTube when there's no time to download it
 - [ ] Hymnal source (hymns are a built-in sample today)
 - [ ] Web pages on the stage

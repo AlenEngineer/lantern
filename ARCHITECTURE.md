@@ -47,13 +47,16 @@ Dependency graph (arrows point to dependencies):
 
 ```
 engine ──▶ searcher ──────▶ resource ◀── sources/local
-   │                          ▲   ▲ ▲
-   ├──────▶ orchestrator ─────┘   │ └─── sources/link
-   └──────▶ showman ──────────┘   └───── sources/bible
+   │                          ▲   ▲ ▲ ▲
+   ├──────▶ orchestrator ─────┘   │ │ └─ sources/link ◀── sources/youtube
+   └──────▶ showman ──────────┘   │ └─── sources/bible
+                                  └───── sources/brave
 ```
 
 `resource` is the only crate everybody depends on, and it has no internal
-dependencies. Sources depend only on `resource`. The engine never depends on a
+dependencies. Sources depend only on `resource`, except that `youtube`
+builds its results with `link`'s `youtube_video`, so every YouTube video is
+the same kind of resource wherever it was found. The engine never depends on a
 concrete source. The application decides which sources to register.
 
 ## Core concepts
@@ -80,7 +83,8 @@ the source that produced it is gone or has been re-indexed.
 pub trait Source: Send + Sync {
     fn id(&self) -> &SourceId;
     fn name(&self) -> &str;
-    fn capabilities(&self) -> Capabilities;           // { scan, search }
+    fn capabilities(&self) -> Capabilities;           // { scan, search, on_request }
+    fn bang(&self) -> Option<&str>;                   // "b" for `!b juan 3`
     fn scan(&self) -> Result<Vec<Resource>, SourceError>;
     fn search(&self, query: &Query) -> Result<Vec<Resource>, SourceError>;
 }
@@ -92,6 +96,17 @@ A source declares one or both capabilities:
 |---|---|---|---|
 | `scan` (indexed) | on reindex | the in-memory index | local folders, downloaded hymnal, offline Bible |
 | `search` (live) | on every federated search | straight to the caller | YouTube, web search, Bible APIs, pasted links |
+
+A live source can also be **on request**: it is only asked when the query
+names it with its bang (`!yt amazing grace`), never by a plain search. That
+is for slow, remote or metered sources (YouTube through `yt-dlp`, the Brave
+image API), so typing doesn't start a request on every pause. The dashboard
+searches them when Enter is pressed.
+
+**Bangs.** `Searcher::parse(text)` reads a leading `!bang` into a `Query`
+whose source filter holds every source with that bang (all the Bibles share
+`!b`), plus a `Scope` the UI shows. `Searcher::bangs()` lists them for
+completion.
 
 The Bible source (`sources/bible`) uses both. One source serves one translation:
 
@@ -289,7 +304,9 @@ These are short ADRs. Add new ones at the end.
 
 1. Create `sources/<name>/` with a crate named `lantern-source-<name>`
    that depends only on `lantern-resource` (plus whatever it needs).
-2. Implement `Source`. Pick `Capabilities::INDEXED`, `LIVE`, or both.
+2. Implement `Source`. Pick `Capabilities::INDEXED`, `LIVE`, or both, or
+   `ON_REQUEST` for a slow or metered live source. Give it a `bang` if the
+   operator should be able to search it alone.
 3. Build ids with `ResourceId::new(self.id(), key)` and a stable key.
 4. Choose the `Kind` by *how it should be presented*. Put source-specific
    data in `meta` and document the keys in the crate docs.

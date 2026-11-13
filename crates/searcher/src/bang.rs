@@ -31,6 +31,9 @@ pub struct Bang {
     pub bang: String,
     /// Their display names.
     pub sources: Vec<String>,
+    /// Every one of them is [on request](lantern_resource::Capabilities::on_request),
+    /// so the bang is worth searching only once the operator asks.
+    pub on_request: bool,
 }
 
 /// Splits `!b juan 3` into `("b", "juan 3")`. Only a leading bang counts,

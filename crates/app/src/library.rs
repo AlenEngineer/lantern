@@ -6,8 +6,10 @@ use std::time::Duration;
 
 use lantern_engine::{Engine, SourceId};
 use lantern_source_bible::{Bible, BibleSource, Translation};
+use lantern_source_brave::BraveImages;
 use lantern_source_link::LinkSource;
 use lantern_source_local::{Folder, LocalSource};
+use lantern_source_youtube::YoutubeSource;
 
 use crate::config::{BibleEntry, Config};
 use crate::log;
@@ -27,11 +29,17 @@ pub struct Library {
 }
 
 impl Library {
-    /// Registers the link source now, and the configured sources and their
+    /// Registers the sources that need no indexing now (links, and YouTube
+    /// and image search on request), and the configured sources and their
     /// index on a worker thread.
     pub fn start(engine: Arc<Engine>, config: Config) -> Arc<Library> {
-        if let Err(err) = engine.add_source(LinkSource::new(id("link"))) {
-            log(format!("link source: {err}"));
+        let instant = [
+            engine.add_source(LinkSource::new(id("link"))),
+            engine.add_source(YoutubeSource::new(id("youtube"))),
+            engine.add_source(BraveImages::new(id("images"), config.brave_api_key.clone())),
+        ];
+        for err in instant.into_iter().filter_map(Result::err) {
+            log(format!("source: {err}"));
         }
         let library = Arc::new(Library::default());
         let worker = library.clone();

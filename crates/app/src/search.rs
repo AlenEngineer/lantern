@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use lantern_engine::{
-    Bang, Engine, Hit, Kind, Origin, Query, Resource, ResourceId, Scope, SearchEvent,
+    Bang, Engine, Hit, Kind, Origin, Query, Resource, ResourceId, Scope, SearchEvent, SearchStream,
 };
 
 /// Results from one source, under its display name.
@@ -32,6 +32,9 @@ pub enum Live {
     Idle,
     /// Waiting out the pause after edit `n`.
     Waiting(u64),
+    /// The bang's sources are on request: they're asked when Enter is
+    /// pressed, not after a pause.
+    OnEnter,
     /// Live search `ticket` is running.
     Running(u64),
 }
@@ -96,6 +99,10 @@ impl Search {
         if matches!(self.scope, Scope::Unknown(_)) || self.asked.text.is_empty() {
             return None;
         }
+        if matches!(&self.scope, Scope::Bang(bang) if bang.on_request) {
+            self.live = Live::OnEnter;
+            return None;
+        }
         let names = source_names(engine);
         for hit in engine.search_index(&self.asked) {
             let source = hit.resource.id.source().to_string();
@@ -138,17 +145,19 @@ impl Search {
 
     /// The pause after edit `edit` is over. Starts the live search unless
     /// the operator kept typing.
-    pub fn start_live(
-        &mut self,
-        edit: u64,
-        engine: &Engine,
-    ) -> Option<lantern_engine::SearchStream> {
-        if self.live != Live::Waiting(edit) {
-            return None;
-        }
+    pub fn start_live(&mut self, edit: u64, engine: &Engine) -> Option<SearchStream> {
+        (self.live == Live::Waiting(edit)).then(|| self.run(engine))
+    }
+
+    /// Enter was pressed. Starts the search an on-request bang waits for.
+    pub fn start_on_enter(&mut self, engine: &Engine) -> Option<SearchStream> {
+        (self.live == Live::OnEnter).then(|| self.run(engine))
+    }
+
+    fn run(&mut self, engine: &Engine) -> SearchStream {
         let stream = engine.search(self.asked.clone());
         self.live = Live::Running(stream.ticket());
-        Some(stream)
+        stream
     }
 
     /// An event from live search `ticket`. Ignored unless it is the latest.
@@ -459,11 +468,11 @@ mod tests {
         let mut search = Search::default();
         assert_eq!(
             bang_names(&search, &engine),
-            ["b", "f"],
+            ["b", "f", "gi", "yt"],
             "before any typing"
         );
         assert_eq!(search.edit(String::new(), &engine), None);
-        assert_eq!(bang_names(&search, &engine), ["b", "f"]);
+        assert_eq!(bang_names(&search, &engine), ["b", "f", "gi", "yt"]);
         assert_eq!(search.completion(&engine), None, "nothing typed yet");
 
         search.edit("!F".into(), &engine);
@@ -500,5 +509,18 @@ mod tests {
         assert_eq!(search.edit("!b ".into(), &engine), None);
         assert!(matches!(search.scope, Scope::Bang(_)));
         assert!(search.groups().is_empty() && search.bangs(&engine).is_empty());
+    }
+
+    #[test]
+    fn an_on_request_bang_waits_for_enter() {
+        let engine = engine();
+        let mut search = Search::default();
+        // Image search without a key fails at once, without the network.
+        assert_eq!(search.edit("!gi cross".into(), &engine), None);
+        assert_eq!(search.live, Live::OnEnter);
+        assert_eq!(search.text(), "cross");
+        assert!(search.start_on_enter(&engine).is_some());
+        assert!(matches!(search.live, Live::Running(_)));
+        assert!(search.start_on_enter(&engine).is_none(), "once");
     }
 }

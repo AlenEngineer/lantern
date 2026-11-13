@@ -11,6 +11,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Search bangs: `!b juan 3` asks only the Bibles, `!f` only the media
   folders. An empty search box lists them, and Tab completes one. Sources
   declare their bang through `Source::bang`.
+- `!yt` searches YouTube through `yt-dlp`. Results preview and download
+  like a pasted link.
+- `!gi` searches images through the Brave Search API, with SafeSearch
+  strict. It needs `brave_api_key` in the config.
+- Sources can be on request (`Capabilities::on_request`): only their bang
+  asks them, and the dashboard waits for Enter before searching them.
+- The stage shows images from links, downloaded into
+  `~/.cache/lantern/images`, falling back to a source's thumbnail.
 
 ### Changed
 

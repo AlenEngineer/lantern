@@ -1,0 +1,31 @@
+{
+  "type": "images",
+  "query": { "original": "cruz atardecer", "spellcheck_off": false, "show_strict_warning": false },
+  "results": [
+    {
+      "type": "image_result",
+      "title": "Cruz al atardecer en la montaña",
+      "url": "https://example.org/fotos/cruz-atardecer",
+      "source": "example.org",
+      "page_fetched": "2026-10-02T11:20:00Z",
+      "thumbnail": { "src": "https://imgs.search.brave.com/abc/rs:fit:500:0:0/aHR0cHM6Ly9leGFtcGxl", "width": 500, "height": 333 },
+      "properties": {
+        "url": "https://example.org/images/cruz-atardecer.jpg",
+        "placeholder": "https://imgs.search.brave.com/abc/rs:fit:32:0:0/aHR0cHM6Ly9leGFtcGxl",
+        "width": 1920,
+        "height": 1280
+      },
+      "meta_url": { "scheme": "https", "netloc": "example.org", "hostname": "example.org", "path": "› fotos" },
+      "confidence": "high"
+    },
+    {
+      "type": "image_result",
+      "title": "",
+      "url": "https://fotos.example.net/p/123",
+      "source": "fotos.example.net",
+      "thumbnail": { "src": "https://imgs.search.brave.com/def/rs:fit:500:0:0/aHR0cHM6Ly9mb3Rvcw" },
+      "properties": { "url": "https://fotos.example.net/full/123.png" }
+    }
+  ],
+  "extra": { "might_be_offensive": false }
+}

@@ -88,6 +88,7 @@ impl Source for BibleSource {
         Capabilities {
             scan: self.index_verses,
             search: true,
+            on_request: false,
         }
     }
 
