@@ -498,7 +498,14 @@ impl App {
             (_, None, Some(Content::Pages(pages))) => {
                 thumb(&pages[scene.frame().min(pages.len() - 1)])
             }
-            (_, None, Some(Content::Video(_))) => text("▶ video").size(16).color(MUTED).into(),
+            (_, None, Some(Content::Video { stream, .. })) => {
+                let label = if *stream {
+                    "▶ streaming"
+                } else {
+                    "▶ video"
+                };
+                text(label).size(16).color(MUTED).into()
+            }
             (_, None, None) => text(self.loading_note(&scene.resource))
                 .size(14)
                 .color(MUTED)

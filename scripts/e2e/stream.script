@@ -1,0 +1,16 @@
+# A YouTube video taken before its download is done streams at once while
+# the download goes on (needs the network). Pick a result the other scripts
+# don't download, or clear ~/.cache/lantern/youtube first.
+wait 1500
+type !yt sublime gracia himno
+press enter
+wait 15000
+select 7
+wait 9000
+shot 1-preview-streams
+press enter
+press space
+wait 6000
+shot 2-on-stage-streaming
+wait 4000
+shot 3-still-playing
