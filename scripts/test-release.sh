@@ -45,4 +45,12 @@ changelog $'### Added\n\n- Drag to reorder.'
 expect "a feat with an entry passes" pass "$(check 'feat(app): drag')"
 expect "a breaking feat with an entry passes" pass "$(check 'feat!: drag')"
 
+# The workflows that run all this, when actionlint is installed (it also
+# runs shellcheck on their scripts when that is).
+if command -v actionlint >/dev/null; then
+    if actionlint "$repo"/.github/workflows/*.yml; then echo "ok   workflows lint clean"; else fails=1; fi
+else
+    echo "skip workflows lint: actionlint isn't installed"
+fi
+
 exit $fails
