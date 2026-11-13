@@ -6,6 +6,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-13
+
 ### Added
 
 - A plan can have its own stage look, saved with it: the swatch in the
