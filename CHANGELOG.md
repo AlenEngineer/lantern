@@ -32,6 +32,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - With nothing on stage, On stage shows the stage's image as the projector
   does, instead of "Nothing on the projector"; and blackout is black then
   too, where it showed the image.
+- On stage, Up next and Preview show a video's still instead of a black
+  box that says "video".
 
 ## [0.7.0] - 2026-11-13
 
