@@ -6,6 +6,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The media folders are watched: files added, removed or renamed show up in
+  search a second later, even in a search already on screen.
+
 ## [0.5.0] - 2026-11-13
 
 ### Added

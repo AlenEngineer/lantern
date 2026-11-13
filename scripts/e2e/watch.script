@@ -1,0 +1,11 @@
+# A watched folder: a search on screen follows files added and removed,
+# with no reindex. The run copies cordero.png into the folder after about
+# 5 s and removes it after about 10 s (see the PR for the command).
+wait 2500
+type cordero
+wait 1000
+shot 1-nothing-yet
+wait 3500
+shot 2-file-added
+wait 5000
+shot 3-file-removed

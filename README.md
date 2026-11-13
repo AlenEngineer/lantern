@@ -237,6 +237,11 @@ comments in it are not kept. Path fields suggest what's on disk as you
 type, like a shell: an empty field lists your home folder, `musica` finds
 *Música*, and clicking a suggestion or Tab takes it and goes inside.
 
+The media folders are watched: a file added, removed or renamed shows up in
+search (and in a search already on screen) about a second later, without
+a reindex. A folder that isn't there when Lantern starts, such as an
+unplugged drive, isn't watched until the next save or start.
+
 The app reads `~/.config/lantern/config.toml`, or the file named by
 `LANTERN_CONFIG`. Relative paths are relative to the config file, and `~`
 works. Unknown keys are errors, so typos show up on the dashboard.
@@ -377,7 +382,7 @@ hand with `scripts/release.sh X.Y.Z`.
 - [x] Stage model (program/preview, frames, playback, blackout)
 - [x] Sources: local folders, pasted links, Bible (offline, Spanish/English references),
   YouTube search, image search
-- [ ] Watch local folders for changes (no manual reindex)
+- [x] Watch local folders for changes (no manual reindex)
 - [x] Configuration file (folders, Bibles)
 - [x] Desktop UI (dashboard + stage window): images, video, PDFs, Bible, YouTube
 - [x] Launcher dashboard with search bangs (`!b`, `!f`)
