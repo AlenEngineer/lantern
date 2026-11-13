@@ -1,0 +1,25 @@
+# The stage look: a short slide set large, a long one shrunk to fit, both
+# over the look's background, then the Stage section in the settings with
+# its sample. Run it with LANTERN_CONFIG pointing at a config that has a
+# [stage] table like:
+#   [stage]
+#   background = "#1b2a3a"
+#   image = "/abs/path/to/fixtures/image.png"
+#   text = "#fff4d6"
+#   font = "DejaVu Serif".
+wait 1500
+text "Cristo vive"
+wait 600
+shot 1-short
+text "Porque de tal manera amó Dios al mundo, que ha dado á su Hijo unigénito, para que todo aquel que en él cree, no se pierda, mas tenga vida eterna. Porque no envió Dios á su Hijo al mundo, para que condene al mundo, mas para que el mundo sea salvo por él. El que en él cree, no es condenado; mas el que no cree, ya es condenado, porque no creyó en el nombre del unigénito Hijo de Dios."
+wait 600
+shot 2-long
+press ctrl+,
+wait 600
+shot 3-settings
+font serif
+wait 600
+shot 4-font
+press tab
+wait 600
+shot 5-font-chosen

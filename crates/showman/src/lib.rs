@@ -15,12 +15,17 @@
 //! hymn, pages of a PDF, slides of a deck), a timeline (audio, video), or a
 //! failure. Renderers send [`MediaReport`]s about one scene by its id.
 //!
+//! A [`Look`] says how the stage looks: its background, and how text is
+//! set (font, colour, the size range text fits within).
+//!
 //! Windows don't poll. [`Showman::subscribe`] returns a [`StageFeed`], a
 //! snapshot and the events after it. A window applies each event to its
 //! copy with [`StageState::apply`], the same function the `Showman` uses.
 
+mod look;
 mod scene;
 mod showman;
 
+pub use look::{Look, Rgb};
 pub use scene::{Media, MediaReport, Playback, Scene, SceneId, Timed, text_frames};
 pub use showman::{Showman, StageEvent, StageFeed, StageState};

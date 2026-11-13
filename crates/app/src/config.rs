@@ -19,6 +19,7 @@
 //! file's folder. Unknown keys are errors, so a typo doesn't silently drop a
 //! folder. The settings view writes the file back with [`Config::save`].
 
+use lantern_engine::Look;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -41,6 +42,9 @@ pub struct Config {
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
     pub bibles: Vec<BibleEntry>,
+    /// How the stage looks, as the `[stage]` table.
+    #[serde(default, skip_serializing_if = "Look::is_default")]
+    pub stage: Look,
 }
 
 /// A media folder to index.
@@ -100,6 +104,7 @@ impl Config {
             .map(|f| &mut f.path)
             .chain(self.bibles.iter_mut().map(|b| &mut b.path))
             .chain(self.colors.as_mut())
+            .chain(self.stage.image.as_mut())
     }
 
     /// The file's text, with paths under `home` written as `~/…`.
@@ -366,8 +371,14 @@ mod tests {
                 path: "/srv/bibles/rv1909.tsv".into(),
                 name: None,
             }],
+            stage: Look {
+                image: Some("/home/ana/Pictures/cross.jpg".into()),
+                font: Some("DejaVu Serif".into()),
+                ..Look::default()
+            },
         };
         let text = config.to_toml(Some(home));
+        assert!(text.contains("image = \"~/Pictures/cross.jpg\""), "{text}");
         assert!(text.contains("path = \"~/Music\""), "{text}");
         assert!(text.contains("/srv/bibles/rv1909.tsv"), "{text}");
         let settings = text.find("colors").unwrap();

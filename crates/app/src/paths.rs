@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use lantern_engine::fold;
 
 /// How many suggestions to offer at once.
-const MAX: usize = 8;
+pub const MAX: usize = 8;
 
 /// What a path field takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

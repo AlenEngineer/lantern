@@ -36,7 +36,8 @@ pub use lantern_searcher::{
 };
 use lantern_showman::Showman;
 pub use lantern_showman::{
-    Media, MediaReport, Playback, Scene, SceneId, StageEvent, StageFeed, StageState, Timed,
+    Look, Media, MediaReport, Playback, Rgb, Scene, SceneId, StageEvent, StageFeed, StageState,
+    Timed,
 };
 
 /// Errors from the engine.

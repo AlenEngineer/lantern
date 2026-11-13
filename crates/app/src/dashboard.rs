@@ -11,6 +11,7 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
 
+use crate::fit;
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
@@ -610,11 +611,11 @@ impl App {
     ) -> Element<'a, Message> {
         let p = self.palette;
         let picture: Element<'a, Message> = match (slide, content) {
-            (Some(body), _) => text(body)
-                .size(BODY)
-                .color(Color::WHITE)
-                .align_x(iced::alignment::Horizontal::Center)
-                .into(),
+            // A slide is a miniature of the stage, edge to edge.
+            (Some(body), _) => {
+                let look = &self.config.stage;
+                return framed_with(crate::backdrop(look, fit::fit_text(body, look)), ring, 2);
+            }
             (None, Some(Content::Image(handle))) => thumb(handle),
             (None, Some(Content::Pages(pages))) => thumb(&pages[frame.min(pages.len() - 1)]),
             (None, Some(Content::Video { stream, .. })) => row![
@@ -852,11 +853,20 @@ fn framed<'a>(
     content: impl Into<Element<'a, Message>>,
     ring: Option<Color>,
 ) -> Element<'a, Message> {
+    framed_with(content, ring, 12)
+}
+
+/// A monitor, its content `padding` inside the ring.
+fn framed_with<'a>(
+    content: impl Into<Element<'a, Message>>,
+    ring: Option<Color>,
+    padding: u16,
+) -> Element<'a, Message> {
     container(content)
         .center_x(Fill)
         .height(MONITOR_HEIGHT)
         .center_y(MONITOR_HEIGHT)
-        .padding(12)
+        .padding(padding)
         .clip(true)
         .style(look::monitor(ring))
         .into()
