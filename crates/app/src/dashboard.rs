@@ -543,8 +543,7 @@ impl App {
                 resource
                     .location
                     .as_text()
-                    .and_then(|body| body.split("\n\n").next())
-                    .map(str::to_string),
+                    .and_then(|body| self.slides.slides(body).first().cloned()),
                 0,
                 self.media.preloaded(&resource.id),
                 self.loading_note(resource),
@@ -596,7 +595,13 @@ impl App {
             );
         }
         let loading = self.loading_note(&scene.resource);
-        self.picture(scene.text(), scene.frame(), content, loading, ring)
+        self.picture(
+            self.slides.slide(scene),
+            scene.frame(),
+            content,
+            loading,
+            ring,
+        )
     }
 
     /// What a monitor shows: the slide's text, the loaded image or page,

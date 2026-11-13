@@ -167,6 +167,8 @@ enum Message {
     /// A dashboard command from the script.
     Script(Ui),
     Closed(window::Id),
+    /// A window's size, at the start and on every resize.
+    Resized(window::Id, iced::Size),
     /// The search box changed.
     Query(String),
     /// The pause after this edit of the query is over.
@@ -237,6 +239,8 @@ struct App {
     downloads: Shared<Downloads>,
     plans: Plans,
     palette: Palette,
+    /// How slide text is split to fit the stage.
+    slides: fit::Splitter,
     /// The roles file the palette follows, if the config names one.
     colors: Option<palette::Source>,
     /// Why the roles file couldn't be read, while it can't.
@@ -295,6 +299,7 @@ impl App {
             config_status,
             palette: Palette::default(),
             colors: config.colors.clone().map(palette::Source::new),
+            slides: fit::Splitter::new(&config.stage),
             config,
             settings: None,
             home: config::env("HOME").map(PathBuf::from),
@@ -320,7 +325,10 @@ impl App {
             .discard()
             .chain(open_stage.discard())
             .chain(window::gain_focus(dashboard_window))
-            .chain(operation::focus(SEARCH_BOX));
+            .chain(operation::focus(SEARCH_BOX))
+            .chain(
+                window::size(stage_window).map(move |size| Message::Resized(stage_window, size)),
+            );
         (app, open)
     }
 
@@ -519,6 +527,11 @@ impl App {
             Message::Closed(window) => {
                 log(format!("window {window:?} closed, exiting"));
                 return iced::exit();
+            }
+            Message::Resized(window, size) => {
+                if window == self.stage_window && self.slides.set_stage(size) {
+                    self.report_slides();
+                }
             }
         }
         Task::none()
@@ -758,8 +771,12 @@ impl App {
                     }
                     self.check_palette();
                 }
+                let restyled = self.slides.set_look(&config.stage);
                 self.config = config;
                 self.config_status = Arc::new(config::Status::Read(path));
+                if restyled {
+                    self.report_slides();
+                }
             }
             Err(err) => draft.notice = Some(Err(err)),
         }
@@ -820,8 +837,14 @@ impl App {
         }
         let engine = &self.engine.0;
         match event {
-            StageEvent::Program { .. } => return self.program_changed(),
-            StageEvent::Preview { .. } => return self.preload(),
+            StageEvent::Program { .. } => {
+                self.report_slides();
+                return self.program_changed();
+            }
+            StageEvent::Preview { .. } => {
+                self.report_slides();
+                return self.preload();
+            }
             StageEvent::Playback { .. } => {
                 if let Some(timed) = self.stage.program.as_ref().and_then(|s| s.timed()) {
                     self.media.sync_playback(timed, engine);
@@ -831,6 +854,28 @@ impl App {
             StageEvent::Frame { .. } | StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
         }
         Task::none()
+    }
+
+    /// Tells the stage how many slides the texts on program and in preview
+    /// need with the current look and stage shape, so stepping goes through
+    /// every piece of a text too long for one slide.
+    fn report_slides(&self) {
+        for scene in [&self.stage.program, &self.stage.preview]
+            .into_iter()
+            .flatten()
+        {
+            let Some(body) = scene.resource.location.as_text() else {
+                continue;
+            };
+            let Some(count) = std::num::NonZeroUsize::new(self.slides.slides(body).len()) else {
+                continue;
+            };
+            let known =
+                matches!(scene.media, Media::Frames { count: Some(known), .. } if known == count);
+            if !known {
+                self.engine.0.report(scene.id, MediaReport::Frames(count));
+            }
+        }
     }
 
     fn program_changed(&mut self) -> Task<Message> {
@@ -879,7 +924,7 @@ impl App {
         let Some(scene) = &self.stage.program else {
             return backdrop(look, Space::new());
         };
-        let content: Element<'_, Message> = match (&scene.media, scene.text()) {
+        let content: Element<'_, Message> = match (&scene.media, self.slides.slide(scene)) {
             (Media::Failed { .. }, _) => Space::new().into(),
             (_, Some(body)) => fit::fit_text(body, look).into(),
             (_, None) => match self.media.content(scene.id) {
@@ -908,6 +953,7 @@ impl App {
         let mut subscriptions = vec![
             Subscription::run_with(self.engine.clone(), stage_feed),
             window::close_events().map(Message::Closed),
+            window::resize_events().map(|(window, size)| Message::Resized(window, size)),
             iced::event::listen_with(keys::key_event),
         ];
         if self.colors.is_some() {

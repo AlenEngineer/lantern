@@ -154,7 +154,10 @@ started, right after the current step.
 colour and image (covering the screen, also shown when the stage is clear;
 blackout stays black), the text colour, the font (type to find an installed
 one), and a size range. Text is set as large as fits between the two sizes,
-so a short line is big and a long passage shrinks to fill the screen. A
+so a short line is big and a long passage shrinks to fill the screen. Text
+that doesn't fit even at the smallest size is split into more slides, at
+its lines, then sentences, then words, about even in length; PgDn and the
+arrows step through them like verses. A
 sample shows the look as you type, and the dashboard's monitors are true
 miniatures of the stage. In `config.toml` it's the `[stage]` table:
 
