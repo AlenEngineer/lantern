@@ -9,6 +9,8 @@
 //! lang = "es"           # "es" or "en": the language of the book names
 //! path = "~/bibles/rv1909.json"
 //! name = "RV1909"       # optional, defaults to the file name
+//!
+//! brave_api_key = "…"   # optional, for !gi image search
 //! ```
 //!
 //! `~` is the home folder, and a relative path is relative to the config
@@ -29,6 +31,8 @@ pub struct Config {
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
     pub bibles: Vec<BibleEntry>,
+    /// The Brave Search API key that `!gi` image search needs.
+    pub brave_api_key: Option<String>,
 }
 
 /// A media folder to index.

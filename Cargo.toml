@@ -19,6 +19,8 @@ lantern-engine = { path = "crates/engine" }
 lantern-source-local = { path = "sources/local" }
 lantern-source-link = { path = "sources/link" }
 lantern-source-bible = { path = "sources/bible" }
+lantern-source-youtube = { path = "sources/youtube" }
+lantern-source-brave = { path = "sources/brave" }
 
 # External crates. Keep this list short: every entry is something to audit.
 iced = { version = "0.14", features = ["image", "advanced", "wgpu", "tokio"] }
@@ -31,6 +33,9 @@ serde_json = "1.0"
 thiserror = "2.0"
 toml = "1"
 unicode-normalization = "0.1"
+# Blocking HTTPS for the online sources and remote images. Sources are
+# blocking by contract, so no async runtime is needed.
+ureq = "3"
 url = "2.5"
 walkdir = "2.5"
 

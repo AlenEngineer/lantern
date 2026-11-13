@@ -219,7 +219,9 @@ impl Searcher {
         read(&self.index).search(query)
     }
 
-    /// Searches the index and every live source that `query` allows.
+    /// Searches the index and every live source that `query` allows. A
+    /// source [on request](lantern_resource::Capabilities::on_request) is
+    /// only asked when the query names it in its source filter.
     ///
     /// Each live source runs on its own thread, so a slow network never delays
     /// local results. Live sources are usually remote: debounce keystrokes
@@ -235,10 +237,12 @@ impl Searcher {
         });
 
         let query = Arc::new(query);
-        let live = self
-            .sources()
-            .into_iter()
-            .filter(|s| s.capabilities().search && query.wants_source(s.id()));
+        let live = self.sources().into_iter().filter(|s| {
+            let caps = s.capabilities();
+            caps.search
+                && query.wants_source(s.id())
+                && (!caps.on_request || query.sources.contains(s.id()))
+        });
         for source in live {
             let tx = tx.clone();
             let query = Arc::clone(&query);
@@ -273,21 +277,16 @@ impl Searcher {
             };
         };
         let bang = bang.to_lowercase();
-        let mut query = Query::new(rest);
-        let mut names = Vec::new();
-        for source in self.sources() {
-            if source.bang().is_some_and(|b| b.eq_ignore_ascii_case(&bang)) {
-                query = query.with_source(source.id().clone());
-                names.push(source.name().to_string());
-            }
-        }
-        let scope = if names.is_empty() {
-            Scope::Unknown(bang)
-        } else {
-            Scope::Bang(Bang {
-                bang,
-                sources: names,
-            })
+        let query = self
+            .sources()
+            .iter()
+            .filter(|s| s.bang().is_some_and(|b| b.eq_ignore_ascii_case(&bang)))
+            .fold(Query::new(rest), |query, s| {
+                query.with_source(s.id().clone())
+            });
+        let scope = match self.bangs().into_iter().find(|b| b.bang == bang) {
+            Some(found) => Scope::Bang(found),
+            None => Scope::Unknown(bang),
         };
         Parsed { query, scope }
     }
@@ -298,11 +297,16 @@ impl Searcher {
         for source in self.sources() {
             let Some(name) = source.bang() else { continue };
             let name = name.to_lowercase();
+            let on_request = source.capabilities().on_request;
             match bangs.iter_mut().find(|b| b.bang == name) {
-                Some(bang) => bang.sources.push(source.name().to_string()),
+                Some(bang) => {
+                    bang.sources.push(source.name().to_string());
+                    bang.on_request &= on_request;
+                }
                 None => bangs.push(Bang {
                     bang: name,
                     sources: vec![source.name().to_string()],
+                    on_request,
                 }),
             }
         }
@@ -506,6 +510,19 @@ mod tests {
             .unwrap();
         let query = Query::new("x").with_source(SourceId::new("local").unwrap());
         assert_eq!(searcher.search(query).count(), 1); // only the (empty) index batch
+    }
+
+    #[test]
+    fn an_on_request_source_answers_only_when_named() {
+        let searcher = Searcher::new();
+        let caps = Capabilities::ON_REQUEST;
+        searcher
+            .register(Fake::banged("yt", caps, "yt", &["x"]))
+            .unwrap();
+        assert_eq!(searcher.search(Query::new("x")).count(), 1, "index only");
+        let parsed = searcher.parse("!yt x");
+        assert!(matches!(&parsed.scope, Scope::Bang(bang) if bang.on_request));
+        assert_eq!(searcher.search(parsed.query).count(), 2);
     }
 
     #[test]

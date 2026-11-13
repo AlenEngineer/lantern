@@ -10,7 +10,9 @@
 //!
 //! A YouTube video loads like a local one, from the download cache. Its
 //! loader waits for the download, so a take before it is ready shows black
-//! until the file arrives.
+//! until the file arrives. An image at a link is downloaded into the cache
+//! first, falling back to its [thumbnail](Resource::THUMBNAIL) when the
+//! site refuses.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -44,6 +46,8 @@ pub enum Content {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Loader {
     Image(PathBuf),
+    /// An image at a link, then the links to try if it fails.
+    RemoteImage(Vec<String>),
     Video(PathBuf),
     Pdf(PathBuf),
     Youtube(YoutubeVideo),
@@ -59,7 +63,14 @@ impl Loader {
         let path = match &resource.location {
             Location::Inline(_) => return Ok(None),
             Location::File(path) => path.clone(),
-            Location::Url(url) => return Err(format!("the stage can't show links yet ({url})")),
+            Location::Url(url) if resource.kind == Kind::Image => {
+                let thumbnail = resource.meta.get(Resource::THUMBNAIL).cloned();
+                let urls = std::iter::once(url.clone()).chain(thumbnail).collect();
+                return Ok(Some(Loader::RemoteImage(urls)));
+            }
+            Location::Url(url) => {
+                return Err(format!("the stage can't show this link yet ({url})"));
+            }
         };
         let is_pdf = path
             .extension()
@@ -72,20 +83,30 @@ impl Loader {
         }
     }
 
-    /// Blocks: decodes, builds a player, runs `pdftoppm` or waits for a download.
+    /// Blocks: decodes, builds a player, runs `pdftoppm`, or waits for or
+    /// makes a download.
     fn load(&self, downloads: &Arc<Downloads>) -> Result<Content, String> {
-        let path = match self {
-            Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path) => path.clone(),
-            Loader::Youtube(video) => downloads.ready(video)?,
-        };
-        if !path.is_file() {
-            return Err(format!("file not found: {}", path.display()));
-        }
         match self {
-            Loader::Image(_) => decode_image(&path).map(Content::Image),
-            Loader::Video(_) | Loader::Youtube(_) => open_video(&path).map(Content::Video),
-            Loader::Pdf(_) => render_pdf(&path, &cache_dir().join("pdf")).map(Content::Pages),
+            Loader::Image(path) => decode_image(existing(path)?).map(Content::Image),
+            Loader::RemoteImage(urls) => {
+                fetch_image(urls, &cache_dir().join("images")).map(Content::Image)
+            }
+            Loader::Video(path) => open_video(existing(path)?).map(Content::Video),
+            Loader::Youtube(video) => {
+                open_video(existing(&downloads.ready(video)?)?).map(Content::Video)
+            }
+            Loader::Pdf(path) => {
+                render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
+            }
         }
+    }
+}
+
+fn existing(path: &Path) -> Result<&Path, String> {
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("file not found: {}", path.display()))
     }
 }
 
@@ -361,6 +382,54 @@ fn decode_image(path: &Path) -> Result<Handle, String> {
     Ok(Handle::from_rgba(width, height, image.into_raw()))
 }
 
+/// The biggest image download accepted, so a wrong link can't fill the cache.
+const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Downloads and decodes the first of `urls` that works. Each download is
+/// kept in `dir`, named by its link, so showing it again is offline.
+fn fetch_image(urls: &[String], dir: &Path) -> Result<Handle, String> {
+    let mut failures = Vec::new();
+    for url in urls {
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        let path = dir.join(format!("{:016x}", hasher.finish()));
+        let fetched = if path.is_file() {
+            Ok(())
+        } else {
+            download(url, &path)
+        };
+        match fetched.and_then(|()| decode_image(&path)) {
+            Ok(handle) => return Ok(handle),
+            Err(err) => {
+                let _ = std::fs::remove_file(&path);
+                failures.push(err);
+            }
+        }
+    }
+    Err(failures.join("; "))
+}
+
+/// Saves `url` at `path`, through a temporary file so a cut-off download
+/// never looks finished.
+fn download(url: &str, path: &Path) -> Result<(), String> {
+    let fail = |err: &dyn fmt::Display| format!("{url}: {err}");
+    let bytes = ureq::get(url)
+        .call()
+        .and_then(|mut response| {
+            response
+                .body_mut()
+                .with_config()
+                .limit(MAX_IMAGE_BYTES)
+                .read_to_vec()
+        })
+        .map_err(|err| fail(&err))?;
+    let partial = path.with_extension("part");
+    std::fs::create_dir_all(path.parent().unwrap_or(Path::new(".")))
+        .and_then(|()| std::fs::write(&partial, bytes))
+        .and_then(|()| std::fs::rename(&partial, path))
+        .map_err(|err| fail(&err))
+}
+
 /// Builds a player, paused at the start and muted, so a preload is silent.
 /// [`Video::new`] would start playing with sound while it prerolls.
 fn open_video(path: &Path) -> Result<Video, String> {
@@ -465,6 +534,63 @@ mod tests {
             Err("the stage can't show web files".into())
         );
         assert!(Loader::for_resource(&file(Kind::Document, "notes.docx")).is_err());
+    }
+
+    #[test]
+    fn an_image_link_loads_remotely_with_its_thumbnail_as_fallback() {
+        let url = |kind| resource(kind, Location::Url("https://example.org/a.jpg".into()));
+        let image = url(Kind::Image).with_meta(Resource::THUMBNAIL, "https://example.org/t.jpg");
+        assert_eq!(
+            Loader::for_resource(&image),
+            Ok(Some(Loader::RemoteImage(vec![
+                "https://example.org/a.jpg".into(),
+                "https://example.org/t.jpg".into(),
+            ])))
+        );
+        assert!(Loader::for_resource(&url(Kind::Web)).is_err());
+    }
+
+    /// Serves `image.png` at `/ok.png` and 404 for anything else, for
+    /// `requests` connections. Returns its base URL.
+    fn image_server(requests: usize) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let png = std::fs::read(fixture("image.png")).unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(requests) {
+                let mut stream = stream.unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let (status, body) = if line.starts_with("GET /ok.png ") {
+                    ("200 OK", png.as_slice())
+                } else {
+                    ("404 Not Found", &b""[..])
+                };
+                let head = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(head.as_bytes()).unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+        base
+    }
+
+    #[test]
+    fn a_remote_image_falls_back_to_the_next_link_and_is_cached() {
+        let base = image_server(2);
+        let cache = tempfile::tempdir().unwrap();
+        let urls = [format!("{base}/gone.jpg"), format!("{base}/ok.png")];
+        assert!(fetch_image(&urls, cache.path()).is_ok());
+        let cached = std::fs::read_dir(cache.path()).unwrap().count();
+        assert_eq!(cached, 1, "only the image that worked is kept");
+        // The server answers only two requests; this one comes from the cache.
+        assert!(fetch_image(&urls[1..], cache.path()).is_ok());
+
+        let err = fetch_image(&[format!("{base}/gone.jpg")], cache.path()).unwrap_err();
+        assert!(err.contains("gone.jpg"), "{err}");
     }
 
     #[test]

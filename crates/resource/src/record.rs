@@ -33,6 +33,11 @@ pub struct Resource {
 }
 
 impl Resource {
+    /// Meta key for the URL of a smaller copy of an image at a
+    /// [`Location::Url`]: the stage shows it when the full image can't be
+    /// fetched, and the dashboard can use it as a preview.
+    pub const THUMBNAIL: &'static str = "thumbnail";
+
     /// A resource with the required fields; use the `with_*` methods for the rest.
     pub fn new(id: ResourceId, title: impl Into<String>, kind: Kind, location: Location) -> Self {
         Self {

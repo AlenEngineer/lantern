@@ -38,17 +38,7 @@ impl LinkSource {
         let url = parse(text)?;
 
         if let Some(video) = youtube_id(&url) {
-            let canonical = format!("https://www.youtube.com/watch?v={video}");
-            let mut resource = Resource::new(
-                ResourceId::new(&self.id, &canonical),
-                format!("YouTube video {video}"),
-                Kind::Video,
-                Location::Url(canonical),
-            )
-            .with_subtitle("YouTube")
-            .with_tag("youtube")
-            .with_meta("provider", "youtube")
-            .with_meta("youtube_id", video);
+            let mut resource = youtube_video(&self.id, &video);
             let start = url
                 .query_pairs()
                 .find(|(k, _)| k == "t" || k == "start")
@@ -98,6 +88,24 @@ impl Source for LinkSource {
     fn search(&self, query: &Query) -> Result<Vec<Resource>, SourceError> {
         Ok(self.resolve(&query.text).into_iter().collect())
     }
+}
+
+/// A YouTube video as a resource: a [`Kind::Video`] at its canonical watch
+/// URL, titled `YouTube video <id>`, with meta `provider = "youtube"` and
+/// `youtube_id`. Every source that finds YouTube videos builds them here, so
+/// the app downloads and plays them alike.
+pub fn youtube_video(source: &SourceId, video: &str) -> Resource {
+    let canonical = format!("https://www.youtube.com/watch?v={video}");
+    Resource::new(
+        ResourceId::new(source, &canonical),
+        format!("YouTube video {video}"),
+        Kind::Video,
+        Location::Url(canonical),
+    )
+    .with_subtitle("YouTube")
+    .with_tag("youtube")
+    .with_meta("provider", "youtube")
+    .with_meta("youtube_id", video)
 }
 
 /// Accepts `http(s)://...`, and a few scheme-less forms people actually paste.

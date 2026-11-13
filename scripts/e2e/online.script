@@ -1,0 +1,28 @@
+# The on-request bangs, over the network: !yt waits for Enter, then lists
+# YouTube videos that preview and download like a pasted link. !gi without
+# an API key in the config says how to add one.
+wait 1500
+type !
+wait 300
+shot 1-every-bang
+type !yt sublime gracia himno
+wait 800
+shot 2-yt-waits-for-enter
+press enter
+wait 15000
+shot 3-yt-results
+press enter
+wait 3000
+shot 4-yt-preview
+# A pasted image link: downloaded into the cache, then shown.
+type https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png
+wait 800
+press enter
+wait 4000
+press enter
+wait 1000
+shot 5-image-link-on-stage
+type !gi cruz
+press enter
+wait 1500
+shot 6-gi-needs-a-key

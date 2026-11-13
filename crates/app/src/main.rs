@@ -36,7 +36,7 @@ use crate::dashboard::{NAME_BOX, Op, Pane, RESULTS, SEARCH_BOX};
 use crate::library::Library;
 use crate::plans::{Plans, Store, Switch};
 use crate::script::{Script, Ui};
-use crate::search::Search;
+use crate::search::{Live, Search};
 use crate::stage::{Content, Loaded, Stage};
 use crate::youtube::{Downloads, YoutubeVideo};
 
@@ -384,11 +384,18 @@ impl App {
                 if self.search.completion(&engine).is_some() {
                     return self.op(Op::Complete);
                 }
-                if self.search.picked().is_none()
-                    && let Some(first) = self.search.pick_nth(0)
-                {
-                    engine.preview(first);
-                    return self.scroll_to_pick();
+                if let Some(stream) = self.search.start_on_enter(&engine) {
+                    return live_search(stream);
+                }
+                if self.search.picked().is_none() {
+                    if let Some(first) = self.search.pick_nth(0) {
+                        engine.preview(first);
+                        return self.scroll_to_pick();
+                    }
+                    // Still searching: there's nothing new to take yet.
+                    if self.search.live != Live::Idle {
+                        return Task::none();
+                    }
                 }
                 return self.op(Op::Take);
             }

@@ -12,6 +12,11 @@ pub struct Capabilities {
     /// [`Source::search`]. Use this for anything too big or too dynamic to
     /// index: YouTube, web search, online Bible APIs, pasted links.
     pub search: bool,
+    /// The source is only asked when the query names it with its
+    /// [bang](Source::bang), never by a plain search. Use this for slow,
+    /// remote or metered sources (YouTube, a paid image API), so typing
+    /// doesn't start a request on every pause.
+    pub on_request: bool,
 }
 
 impl Capabilities {
@@ -19,11 +24,19 @@ impl Capabilities {
     pub const INDEXED: Self = Self {
         scan: true,
         search: false,
+        on_request: false,
     };
     /// Search only.
     pub const LIVE: Self = Self {
         scan: false,
         search: true,
+        on_request: false,
+    };
+    /// Search only, and only when the query's bang names the source.
+    pub const ON_REQUEST: Self = Self {
+        scan: false,
+        search: true,
+        on_request: true,
     };
 }
 

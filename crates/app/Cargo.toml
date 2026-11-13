@@ -16,6 +16,8 @@ lantern-engine.workspace = true
 lantern-source-link.workspace = true
 lantern-source-local.workspace = true
 lantern-source-bible.workspace = true
+lantern-source-youtube.workspace = true
+lantern-source-brave.workspace = true
 iced.workspace = true
 iced_video_player.workspace = true
 gstreamer.workspace = true
@@ -24,6 +26,7 @@ image.workspace = true
 url.workspace = true
 serde.workspace = true
 toml.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -314,6 +314,10 @@ impl App {
                 (Scope::Unknown(bang), _) => Some(format!(
                     "No source answers !{bang}. Clear the box to see the bangs."
                 )),
+                (Scope::Bang(bang), Live::OnEnter) => Some(format!(
+                    "Press Enter to search {}.",
+                    bang.sources.join(", ")
+                )),
                 (_, Live::Waiting(_) | Live::Running(_)) => Some("Still searching…".to_string()),
                 (Scope::Bang(bang), _) if search.text().is_empty() => Some(format!(
                     "Type what to look for in {}.",
@@ -328,7 +332,7 @@ impl App {
         if let Some(note) = note {
             list = list.push(container(text(note).size(14).color(MUTED)).padding([6, 8]));
         }
-        panel(scrollable(list).id(RESULTS).height(Fill), LINE)
+        panel(scrolling(list).id(RESULTS), LINE)
     }
 
     fn group_view<'a>(&'a self, group: &'a Group) -> Element<'a, Message> {
@@ -675,7 +679,7 @@ impl App {
                     .color(MUTED),
             );
         }
-        scrollable(steps).height(Fill).into()
+        scrolling(steps).into()
     }
 
     fn plan_list<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
@@ -702,7 +706,7 @@ impl App {
             let when = now.duration_since(entry.modified).unwrap_or_default();
             list = list.push(plan_entry(entry, ago(when)));
         }
-        scrollable(list).height(Fill).into()
+        scrolling(list).into()
     }
 
     fn step_row(&self, index: usize, step: &Step, current: bool) -> Element<'_, Message> {
@@ -868,6 +872,12 @@ fn panel<'a>(
             },
             ..container::Style::default()
         })
+}
+
+/// A list that scrolls, with its scrollbar beside the rows instead of over
+/// their right edge.
+fn scrolling<'a>(content: impl Into<Element<'a, Message>>) -> scrollable::Scrollable<'a, Message> {
+    scrollable(content).spacing(6).height(Fill)
 }
 
 fn heading(label: &str, color: Color) -> Element<'_, Message> {
