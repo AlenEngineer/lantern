@@ -9,6 +9,7 @@
 //! for each `shot NAME` in it.
 
 mod config;
+mod cut;
 mod dashboard;
 mod drag;
 mod fit;

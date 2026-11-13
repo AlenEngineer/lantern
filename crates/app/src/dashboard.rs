@@ -532,7 +532,7 @@ impl App {
             }
             (None, Some(step)) => {
                 section.push(self.step_picture(step));
-                section.push(text(step.label.clone()).size(BODY).font(BOLD).into());
+                section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
             }
             (None, None) => section.push(empty_monitor(p, "Pick a result to preview it here")),
         }
@@ -569,7 +569,7 @@ impl App {
             None => empty_monitor(p, "The end of the plan"),
         });
         if let Some(step) = &next {
-            section.push(text(step.label.clone()).size(BODY).font(BOLD).into());
+            section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
         }
         section.push(
             pill(
@@ -675,16 +675,23 @@ impl App {
                 mark = mark.push(look::icon(icon, 14.0, Color::WHITE));
             }
             // White on a dark scrim: it reads over any still.
-            let mark = container(mark.push(single_line(words).size(META).color(Color::WHITE)))
-                .padding([3, 8])
-                .style(|_| container::Style {
-                    background: Some(Color::BLACK.scale_alpha(0.7).into()),
-                    border: iced::Border {
-                        radius: look::PILL_RADIUS.into(),
-                        ..iced::Border::default()
-                    },
-                    ..container::Style::default()
-                });
+            let mark = container(
+                mark.push(
+                    text(words)
+                        .size(META)
+                        .color(Color::WHITE)
+                        .wrapping(text::Wrapping::None),
+                ),
+            )
+            .padding([3, 8])
+            .style(|_| container::Style {
+                background: Some(Color::BLACK.scale_alpha(0.7).into()),
+                border: iced::Border {
+                    radius: look::PILL_RADIUS.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
             framed_with(
                 stack![
                     thumb(still),
@@ -919,8 +926,8 @@ pub(crate) fn scrolling<'a>(
 }
 
 /// One line of text; what doesn't fit is cut at the row's edge.
-pub(crate) fn single_line<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
-    text(content).wrapping(text::Wrapping::None)
+pub(crate) fn single_line(content: impl Into<String>) -> crate::cut::Cut {
+    crate::cut::cut(content)
 }
 
 /// How a text starts, on one line, for a row's second line: its first
