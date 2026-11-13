@@ -1,0 +1,34 @@
+# Dragging plan rows. Plan: image; Alabanza [pages, video]; Palabra [image].
+# While held, the carried rows leave the list, a gap opens where they'd
+# land and a card follows the pointer. A section carries its steps and
+# lands only between sections. Esc lets go without moving anything.
+wait 2500
+add fixtures/image.png
+section 10 Alabanza
+add fixtures/pages.pdf
+add fixtures/video.mp4
+section 5 Palabra
+add fixtures/image.png
+wait 800
+shot 0-plan
+# The loose image, into Alabanza as its first step.
+drag 1 2 below
+wait 300
+shot 1-step-held-into-a-section
+drop
+wait 300
+shot 2-step-dropped
+# Alabanza (now first) with its three steps, after Palabra.
+drag 1 5 below
+wait 300
+shot 3-section-held-after-palabra
+drop
+wait 300
+shot 4-section-dropped
+# Held, then Esc: nothing moves.
+drag 1 4 above
+wait 200
+press escape
+drop
+wait 300
+shot 5-cancelled

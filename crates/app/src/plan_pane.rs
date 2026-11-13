@@ -7,15 +7,16 @@
 
 use std::time::{Duration, SystemTime};
 
-use iced::widget::{Space, button, column, container, row, text, text_input};
-use iced::{Alignment, Element, Fill, Length};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, text, text_input};
+use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
+    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId, Timing,
 };
 
 use crate::dashboard::{
     NAME_BOX, STEP_THUMB, level_tone, op, pill, scrolling, single_line, unit, wide,
 };
+use crate::drag::{Drag, Half};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
@@ -164,15 +165,35 @@ impl App {
         let current = self.engine.0.current_step().map(|step| step.id);
         let next = self.engine.0.up_next().map(|step| step.id);
         let at = current.and_then(|id| plan.position(id));
+        // While a drag moves, its rows leave the list and a gap opens where
+        // they'd land; the editing strip and marks step aside.
+        let moving = self.drag.as_ref().filter(|drag| drag.moving);
+        let carried = moving.map_or(&[][..], |drag| drag.carried.as_slice());
+        let landing = moving.and_then(|drag| drag.landing);
+        let gap = |indent: f32| {
+            container(drop_gap(
+                p,
+                moving.map(|d| d.label(plan)).unwrap_or_default(),
+            ))
+            .padding(iced::Padding::default().left(indent))
+        };
         let mut rows = column![].spacing(2);
         let mut number = 0;
         let mut in_section = false;
+        let mut rest = 0;
         for (index, step) in plan.steps().iter().enumerate() {
-            let selected = self.selected == Some(step.id);
+            if carried.contains(&step.id) {
+                continue;
+            }
+            if landing == Some(rest) {
+                rows = rows.push(gap(gap_indent(moving, in_section)));
+            }
+            rest += 1;
+            let selected = self.selected == Some(step.id) && moving.is_none();
             if step.is_section() {
                 in_section = true;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
-                rows = rows.push(self.section_row(plan, step, section));
+                rows = rows.push(self.draggable(step.id, self.section_row(plan, step, section)));
                 if selected {
                     rows = rows
                         .push(self.edit_strip(step))
@@ -191,14 +212,18 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let mut row = column![self.step_row(number, step, place, issue)];
+            let mut row =
+                column![self.draggable(step.id, self.step_row(number, step, place, issue))];
             if selected {
                 row = row.push(self.edit_strip(step)).push(insertion_mark(p, 0.0));
             }
             let indent = if in_section { INDENT } else { 0.0 };
             rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
         }
-        if self.selected.is_none() && !plan.is_empty() {
+        if landing == Some(rest) {
+            rows = rows.push(gap(gap_indent(moving, in_section)));
+        }
+        if self.selected.is_none() && !plan.is_empty() && moving.is_none() {
             rows = rows.push(insertion_mark(p, 0.0));
         }
         if plan.is_empty() {
@@ -211,7 +236,27 @@ impl App {
                 .padding([4, 8]),
             );
         }
-        scrolling(rows).into()
+        // Leaving the list means letting go would move nothing.
+        mouse_area(scrolling(rows))
+            .on_exit(Message::LeftPlan)
+            .into()
+    }
+
+    /// `row`, telling the app which half of it the pointer is over, so a
+    /// held row can be dropped above or below it. While a drag moves, the
+    /// pointer is a closed hand.
+    fn draggable<'a>(&self, id: StepId, row: Element<'a, Message>) -> Element<'a, Message> {
+        let half = |half: Half| {
+            mouse_area(Space::new().width(Fill).height(Fill))
+                .on_enter(Message::Hover(Some((id, half))))
+        };
+        let area = mouse_area(stack![row, column![half(Half::Upper), half(Half::Lower)]])
+            .on_exit(Message::Unhover(id));
+        if self.drag.as_ref().is_some_and(|drag| drag.moving) {
+            area.interaction(mouse::Interaction::Grabbing).into()
+        } else {
+            area.into()
+        }
     }
 
     /// A section's header: its name and its time in words ("12 of 15 min
@@ -719,6 +764,29 @@ fn ago(elapsed: Duration) -> String {
         1440..2880 => "1 day ago".into(),
         _ => format!("{} days ago", minutes / 1440),
     }
+}
+
+/// A dragged step lands indented inside a section; a section never does.
+fn gap_indent(moving: Option<&Drag>, in_section: bool) -> f32 {
+    let step = moving.is_some_and(|drag| drag.carried.len() == 1 && !drag.is_section());
+    if step && in_section { INDENT } else { 0.0 }
+}
+
+/// Where a drag would land: a highlighted slot naming what it carries.
+fn drop_gap<'a>(p: Palette, label: String) -> Element<'a, Message> {
+    container(text(label).size(BODY).font(MEDIUM).color(p.primary))
+        .width(Fill)
+        .padding([12, 12])
+        .style(move |_| container::Style {
+            background: Some(Palette::tint(p.primary, 0.12).into()),
+            border: iced::Border {
+                color: p.primary,
+                width: 2.0,
+                radius: 14.0.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
 }
 
 #[cfg(test)]

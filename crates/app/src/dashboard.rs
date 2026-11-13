@@ -6,7 +6,7 @@
 use std::time::{Duration, SystemTime};
 
 use iced::widget::{
-    Space, button, column, container, image, row, scrollable, slider, text, text_input,
+    Space, button, column, container, image, pin, row, scrollable, slider, stack, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
@@ -57,11 +57,40 @@ impl App {
             self.stage_pane(),
         ]
         .height(Fill);
-        container(panes)
+        let window = container(panes)
             .width(Fill)
             .height(Fill)
-            .style(look::window(p))
-            .into()
+            .style(look::window(p));
+        // A moving drag's card follows the pointer, just off to its side so
+        // the rows under the pointer still know it's there.
+        match self.drag.as_ref().filter(|drag| drag.moving) {
+            Some(drag) => {
+                let card = container(
+                    text(drag.label(&self.engine.0.plan()))
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.primary),
+                )
+                .padding([10, 14])
+                .max_width(320)
+                .style(move |_| container::Style {
+                    background: Some(p.surface_container_highest.into()),
+                    border: iced::Border {
+                        color: p.primary,
+                        width: 1.0,
+                        radius: 14.0.into(),
+                    },
+                    shadow: iced::Shadow {
+                        color: Color::BLACK.scale_alpha(0.4),
+                        offset: iced::Vector::new(0.0, 4.0),
+                        blur_radius: 12.0,
+                    },
+                    ..container::Style::default()
+                });
+                stack![window, pin(card).x(drag.at.x + 16.0).y(drag.at.y + 8.0)].into()
+            }
+            None => window.into(),
+        }
     }
 
     // The launcher

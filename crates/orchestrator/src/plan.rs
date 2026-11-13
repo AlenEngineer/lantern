@@ -199,6 +199,37 @@ impl Plan {
         true
     }
 
+    /// What moving `id` takes along: the step alone, or a section with
+    /// every step up to the next section. Empty if there's no such step.
+    pub fn carried(&self, id: StepId) -> Vec<StepId> {
+        let Some(at) = self.position(id) else {
+            return Vec::new();
+        };
+        let mut ids = vec![id];
+        if self.steps[at].is_section() {
+            ids.extend(
+                self.steps[at + 1..]
+                    .iter()
+                    .take_while(|step| !step.is_section())
+                    .map(|step| step.id),
+            );
+        }
+        ids
+    }
+
+    /// Moves the steps `ids`, in their plan order, to `index` in the plan
+    /// without them (clamped to the end). Returns whether any exist.
+    pub fn move_steps(&mut self, ids: &[StepId], index: usize) -> bool {
+        let (moving, mut rest): (Vec<Step>, Vec<Step>) = std::mem::take(&mut self.steps)
+            .into_iter()
+            .partition(|step| ids.contains(&step.id));
+        let moved = !moving.is_empty();
+        let at = index.min(rest.len());
+        rest.splice(at..at, moving);
+        self.steps = rest;
+        moved
+    }
+
     /// Serializes to pretty JSON.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("plans always serialize")
@@ -279,6 +310,29 @@ mod tests {
         let notes = plan.insert(99, "Notes", Action::Note);
         assert_eq!(labels(&plan), ["Prayer", "Welcome", "Notes"]);
         assert_ne!(notes, worship);
+    }
+
+    #[test]
+    fn a_section_carries_its_steps_and_moves_as_one() {
+        let mut plan = Plan::new("Sunday");
+        let welcome = plan.show(resource("Welcome"));
+        let worship = plan.section("Worship", None);
+        let song = plan.show(resource("Song"));
+        let hymn = plan.show(resource("Hymn"));
+        let word = plan.section("Word", None);
+        let reading = plan.show(resource("Reading"));
+        assert_eq!(plan.carried(worship), [worship, song, hymn]);
+        assert_eq!(plan.carried(word), [word, reading]);
+        assert_eq!(plan.carried(song), [song]);
+
+        // After Word's steps: index 3 in [Welcome, Word, Reading].
+        assert!(plan.move_steps(&plan.carried(worship), 3));
+        assert_eq!(
+            labels(&plan),
+            ["Welcome", "Word", "Reading", "Worship", "Song", "Hymn"]
+        );
+        assert_eq!(plan.position(welcome), Some(0));
+        assert!(!plan.move_steps(&[StepId(999)], 0));
     }
 
     #[test]

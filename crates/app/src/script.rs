@@ -14,6 +14,7 @@ use lantern_engine::{
 };
 use lantern_source_link::LinkSource;
 
+use crate::drag::Half;
 use crate::keys::{self, Op};
 use crate::library::Library;
 use crate::log;
@@ -121,6 +122,12 @@ pub enum Command {
     /// included: it becomes the selection. Twice in a row is a double
     /// click, which shows it.
     Step(usize),
+    /// `drag N M above|below`: press on plan entry N and hold it over the
+    /// upper or lower half of entry M, as the mouse would, counted from 1.
+    /// `drop` lets go.
+    Drag(usize, usize, Half),
+    /// `drop`: let go of what `drag` holds, moving it to where it's over.
+    Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
     /// (see [`keys::op_named`] for the names). `press ctrl+s` saves
     /// the plan, `ctrl+o` lists saved plans, `ctrl+n` starts a new one.
@@ -228,6 +235,23 @@ impl Command {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
             },
+            "drag" => match rest.split_whitespace().collect::<Vec<_>>()[..] {
+                [from, to, side] => {
+                    let half = match side {
+                        "above" => Half::Upper,
+                        "below" => Half::Lower,
+                        _ => return Err(format!("drag ends with above or below, got {side:?}")),
+                    };
+                    match (from.parse::<usize>(), to.parse::<usize>()) {
+                        (Ok(from), Ok(to)) if from > 0 && to > 0 => {
+                            Command::Drag(from - 1, to - 1, half)
+                        }
+                        _ => return Err(format!("drag needs two numbers from 1, got {rest:?}")),
+                    }
+                }
+                _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
+            },
+            "drop" => Command::Drop,
             "click" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Click(n - 1),
                 _ => return Err(format!("click needs a number from 1, got {rest:?}")),
@@ -265,6 +289,7 @@ impl Command {
                 | Command::Type(_)
                 | Command::Select(_)
                 | Command::Click(_)
+                | Command::Drag(..)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -284,6 +309,8 @@ pub enum Ui {
     Type(String),
     Select(usize),
     Click(usize),
+    Drag(usize, usize, Half),
+    Drop,
     Step(usize),
     Path(String),
     Font(String),
@@ -346,6 +373,8 @@ impl Script {
                 }
                 Command::Select(n) => ui(Ui::Select(*n)),
                 Command::Click(n) => ui(Ui::Click(*n)),
+                Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
+                Command::Drop => ui(Ui::Drop),
                 Command::Step(n) => ui(Ui::Step(*n)),
                 Command::Path(text) => ui(Ui::Path(text.clone())),
                 Command::Font(text) => ui(Ui::Font(text.clone())),
@@ -411,6 +440,8 @@ impl Script {
             | Command::Type(_)
             | Command::Select(_)
             | Command::Click(_)
+            | Command::Drag(..)
+            | Command::Drop
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)
@@ -585,7 +616,7 @@ mod tests {
         let library = Library::start(engine.clone(), Config::default());
         let downloads = Downloads::new("/nonexistent".into());
         let mut sent = Vec::new();
-        let script = "type pa\nselect 2\nclick 3\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
+        let script = "type pa\nselect 2\nclick 3\ndrag 1 3 below\ndrop\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
         Script::parse(script, Path::new(""), None).unwrap().run(
             &engine,
             &library,
@@ -599,6 +630,8 @@ mod tests {
                 Ui::Type("pa".into()),
                 Ui::Select(1),
                 Ui::Click(2),
+                Ui::Drag(0, 2, Half::Lower),
+                Ui::Drop,
                 Ui::Press(Op::Next),
                 Ui::Press(Op::Save),
                 Ui::Rename("Sunday 3".into()),
