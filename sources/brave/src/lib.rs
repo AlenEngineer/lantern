@@ -141,8 +141,8 @@ impl Source for BraveImages {
         Capabilities::ON_REQUEST
     }
 
-    fn bang(&self) -> Option<&str> {
-        Some("gi")
+    fn bangs(&self) -> Vec<&str> {
+        vec!["gi"]
     }
 
     fn search(&self, query: &Query) -> Result<Vec<Resource>, SourceError> {

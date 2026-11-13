@@ -13,7 +13,7 @@ use lantern_source_link::LinkSource;
 use lantern_source_local::{Folder, LocalSource};
 use lantern_source_youtube::YoutubeSource;
 
-use crate::config::{BibleEntry, Config};
+use crate::config::{self, BibleEntry, Config, FolderEntry};
 use crate::log;
 
 /// How one source fared: its indexed item count, or why it has none.
@@ -127,7 +127,8 @@ fn problems(reports: Option<&[Indexed]>) -> Vec<String> {
     }
 }
 
-/// Registers one local source for every folder, one source per Bible, and
+/// Registers the folders (one local source for those without a bang, and
+/// one per bang for the rest), one source per Bible, and
 /// image search with the config's key. Returns the ids registered, and a
 /// report for each source that couldn't be loaded or registered.
 fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
@@ -147,23 +148,20 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
             .map(|()| id("images"))
             .map_err(|err| err.to_string()),
     );
-    let local = config.folders.into_iter().fold(
-        LocalSource::new(id("local"), "Local folders"),
-        |local, entry| {
-            let folder = Folder::new(entry.path);
-            local.with_folder(match entry.label {
-                Some(label) => folder.labeled(label),
-                None => folder,
-            })
-        },
-    );
-    add(
-        "local".into(),
-        engine
+    let mut bad = Vec::new();
+    let locals = folder_sources(config.folders, &mut |source, error| {
+        bad.push((source, error))
+    });
+    for (source, error) in bad {
+        add(source, Err(error));
+    }
+    for (source, local) in locals {
+        let result = engine
             .add_source(local)
-            .map(|()| id("local"))
-            .map_err(|err| err.to_string()),
-    );
+            .map(|()| id(&source))
+            .map_err(|err| err.to_string());
+        add(source, result);
+    }
     for entry in config.bibles {
         let name = bible_name(&entry);
         let source = format!("bible-{}", slug(&name));
@@ -181,6 +179,65 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
         add(source, result);
     }
     (registered, failed)
+}
+
+/// The local sources for `folders`, with their source ids: `local` for
+/// the folders without a bang (left out when every folder has one), then `local-h` for
+/// the folders with `!h`, in the order their bang first appears. A bang
+/// that can't be one is reported with `bad` and the folder goes in `local`.
+fn folder_sources(
+    folders: Vec<FolderEntry>,
+    bad: &mut dyn FnMut(String, String),
+) -> Vec<(String, LocalSource)> {
+    let mut groups: Vec<(Option<String>, Vec<FolderEntry>)> = vec![(None, Vec::new())];
+    for entry in folders {
+        let bang = entry.bang.as_deref().and_then(|text| {
+            config::folder_bang(text)
+                .map_err(|err| bad(format!("folder {}", entry.path.display()), err))
+                .ok()
+        });
+        match groups.iter_mut().find(|(b, _)| *b == bang) {
+            Some((_, entries)) => entries.push(entry),
+            None => groups.push((bang, vec![entry])),
+        }
+    }
+    let every_one_banged = groups[0].1.is_empty() && groups.len() > 1;
+    groups
+        .into_iter()
+        .skip(usize::from(every_one_banged))
+        .map(|(bang, entries)| {
+            let (source, local) = match &bang {
+                None => (
+                    "local".to_string(),
+                    LocalSource::new(id("local"), "Local folders"),
+                ),
+                Some(bang) => {
+                    let names: Vec<String> = entries.iter().map(folder_name).collect();
+                    let source = format!("local-{bang}");
+                    let local = LocalSource::new(id(&source), names.join(", ")).with_bang(bang);
+                    (source, local)
+                }
+            };
+            let local = entries.into_iter().fold(local, |local, entry| {
+                let folder = Folder::new(entry.path);
+                local.with_folder(match entry.label {
+                    Some(label) => folder.labeled(label),
+                    None => folder,
+                })
+            });
+            (source, local)
+        })
+        .collect()
+}
+
+/// A folder's label, or else its own name.
+fn folder_name(entry: &FolderEntry) -> String {
+    entry.label.clone().unwrap_or_else(|| {
+        entry.path.file_name().map_or_else(
+            || entry.path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    })
 }
 
 fn bible_name(entry: &BibleEntry) -> String {
@@ -243,6 +300,75 @@ mod tests {
         let library = Library::start(engine.clone(), config);
         assert!(library.settle(Duration::from_secs(30)), "indexing finished");
         (engine, library)
+    }
+
+    fn bang_names(engine: &Engine) -> Vec<(String, Vec<String>)> {
+        engine
+            .searcher()
+            .bangs()
+            .into_iter()
+            .map(|b| (b.bang, b.sources))
+            .collect()
+    }
+
+    #[test]
+    fn the_taken_bangs_are_the_ones_lantern_answers_on_its_own() {
+        let (engine, _library) = started(
+            r#"
+            [[folders]]
+            path = "scripts/e2e/fixtures"
+            [[bibles]]
+            lang = "es"
+            path = "sources/bible/fixtures/sample.tsv"
+            "#,
+        );
+        let own: Vec<String> = bang_names(&engine).into_iter().map(|(b, _)| b).collect();
+        assert_eq!(own, config::TAKEN_BANGS);
+    }
+
+    #[test]
+    fn a_folder_with_a_bang_answers_it_and_still_answers_f() {
+        let (engine, library) = started(
+            r#"
+            [[folders]]
+            path = "scripts/e2e/fixtures"
+            label = "Fixtures"
+            bang = "!FX"
+            [[folders]]
+            path = "sources/bible/fixtures"
+            bang = "b"
+            "#,
+        );
+        let bangs = bang_names(&engine);
+        let sources = |bang: &str| {
+            bangs
+                .iter()
+                .find(|(b, _)| b == bang)
+                .map(|(_, s)| s.clone())
+        };
+        assert_eq!(sources("fx"), Some(vec!["Fixtures".to_string()]));
+        assert_eq!(
+            sources("f"),
+            Some(vec!["Local folders".to_string(), "Fixtures".to_string()]),
+            "the folder with a bad bang is in Local folders"
+        );
+        let only = |text: &str| -> Vec<String> {
+            let query = engine.searcher().parse(text).query;
+            let mut titles: Vec<String> = engine
+                .searcher()
+                .search_index(&query)
+                .into_iter()
+                .map(|hit| hit.resource.title.clone())
+                .collect();
+            titles.sort();
+            titles
+        };
+        assert_eq!(only("!fx image"), ["image"]);
+        assert_eq!(only("!f image"), ["image"], "!f still finds it");
+        assert_eq!(sources("b"), None, "the bad bang wasn't given");
+        let problems = library.problems();
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("!b is taken"), "{problems:?}");
     }
 
     #[test]

@@ -114,6 +114,7 @@ the chip away again.
 | --- | --- |
 | `!b` | the Bibles: verse text, or a reference like `!b jn 3 16` |
 | `!f` | the media folders |
+| `!h`, … | one folder, by the bang you gave it in Settings |
 | `!yt` | YouTube, through `yt-dlp` |
 | `!gi` | images on the web, through the [Brave Search API](https://brave.com/search/api/) (needs a key) |
 
@@ -123,8 +124,13 @@ them. A YouTube result previews and downloads like a pasted link. An image
 is downloaded into `~/.cache/lantern/images`, so pasted image links work
 too. Image search uses SafeSearch strict.
 
-Every source declares its own bang (`Source::bang`), so a new source brings
-its own.
+Give a folder its own bang in Settings (the field after its path) or with
+`bang = "h"` in `config.toml`, and `!h himno` searches only that folder;
+folders may share a bang. `!f` still searches every folder. A bang Lantern
+already uses (`b`, `f`, `gi`, `yt`) can't be taken.
+
+Every source declares its own bangs (`Source::bangs`), so a new source
+brings its own.
 
 YouTube videos download ahead of time (720p H.264) into
 `~/.cache/lantern/youtube` as soon as they enter the plan or the preview.
@@ -227,6 +233,7 @@ colors = "~/.config/amane/colors.json"  # optional, see below
 [[folders]]
 path = "~/Videos"
 label = "Videos"          # optional
+bang = "v"                # optional: !v searches only this folder
 
 [[folders]]
 path = "/media/church/Music"

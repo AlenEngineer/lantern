@@ -280,7 +280,7 @@ impl Searcher {
         let query = self
             .sources()
             .iter()
-            .filter(|s| s.bang().is_some_and(|b| b.eq_ignore_ascii_case(&bang)))
+            .filter(|s| s.bangs().iter().any(|b| b.eq_ignore_ascii_case(&bang)))
             .fold(Query::new(rest), |query, s| {
                 query.with_source(s.id().clone())
             });
@@ -295,19 +295,20 @@ impl Searcher {
     pub fn bangs(&self) -> Vec<Bang> {
         let mut bangs: Vec<Bang> = Vec::new();
         for source in self.sources() {
-            let Some(name) = source.bang() else { continue };
-            let name = name.to_lowercase();
             let on_request = source.capabilities().on_request;
-            match bangs.iter_mut().find(|b| b.bang == name) {
-                Some(bang) => {
-                    bang.sources.push(source.name().to_string());
-                    bang.on_request &= on_request;
+            for name in source.bangs() {
+                let name = name.to_lowercase();
+                match bangs.iter_mut().find(|b| b.bang == name) {
+                    Some(bang) => {
+                        bang.sources.push(source.name().to_string());
+                        bang.on_request &= on_request;
+                    }
+                    None => bangs.push(Bang {
+                        bang: name,
+                        sources: vec![source.name().to_string()],
+                        on_request,
+                    }),
                 }
-                None => bangs.push(Bang {
-                    bang: name,
-                    sources: vec![source.name().to_string()],
-                    on_request,
-                }),
             }
         }
         bangs.sort_by(|a, b| a.bang.cmp(&b.bang));
@@ -353,7 +354,7 @@ mod tests {
     struct Fake {
         id: SourceId,
         caps: Capabilities,
-        bang: Option<&'static str>,
+        bangs: Vec<&'static str>,
         items: Mutex<Result<Vec<String>, String>>,
     }
 
@@ -362,14 +363,23 @@ mod tests {
             Arc::new(Self {
                 id: SourceId::new(id).unwrap(),
                 caps,
-                bang: None,
+                bangs: Vec::new(),
                 items: Mutex::new(Ok(titles.iter().map(|t| (*t).to_owned()).collect())),
             })
         }
 
         fn banged(id: &str, caps: Capabilities, bang: &'static str, titles: &[&str]) -> Arc<Self> {
+            Self::with_bangs(id, caps, vec![bang], titles)
+        }
+
+        fn with_bangs(
+            id: &str,
+            caps: Capabilities,
+            bangs: Vec<&'static str>,
+            titles: &[&str],
+        ) -> Arc<Self> {
             let mut fake = Arc::into_inner(Self::new(id, caps, titles)).unwrap();
-            fake.bang = Some(bang);
+            fake.bangs = bangs;
             Arc::new(fake)
         }
 
@@ -408,8 +418,8 @@ mod tests {
         fn capabilities(&self) -> Capabilities {
             self.caps
         }
-        fn bang(&self) -> Option<&str> {
-            self.bang
+        fn bangs(&self) -> Vec<&str> {
+            self.bangs.clone()
         }
         fn scan(&self) -> Result<Vec<Resource>, SourceError> {
             self.items()
@@ -595,5 +605,29 @@ mod tests {
             .map(|b| (b.bang, b.sources.len()))
             .collect();
         assert_eq!(listed, [("b".to_string(), 2), ("f".to_string(), 1)]);
+    }
+
+    #[test]
+    fn a_folder_with_its_own_bang_answers_it_and_the_shared_one() {
+        let searcher = bible_and_folders();
+        searcher
+            .register(Fake::with_bangs(
+                "local-h",
+                Capabilities::INDEXED,
+                vec!["f", "h"],
+                &["cross hymn"],
+            ))
+            .unwrap();
+        searcher.reindex_all();
+        let listed: Vec<(String, usize)> = searcher
+            .bangs()
+            .into_iter()
+            .map(|b| (b.bang, b.sources.len()))
+            .collect();
+        assert_eq!(listed, [("b".into(), 2), ("f".into(), 2), ("h".into(), 1)]);
+        let hymns = searcher.parse("!h cross").query;
+        assert_eq!(titles(&searcher, &hymns), ["cross hymn"]);
+        let folders = searcher.parse("!F cross").query;
+        assert_eq!(titles(&searcher, &folders), ["cross hymn", "cross local"]);
     }
 }

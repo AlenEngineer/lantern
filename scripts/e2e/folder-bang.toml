@@ -1,0 +1,12 @@
+# scripts/e2e/folder-bang.script's config: the fixtures folder answers !fx.
+colors = "fixtures/colors.json"
+
+[[folders]]
+path = "fixtures"
+label = "Fixtures"
+bang = "fx"
+
+[[bibles]]
+lang = "es"
+path = "../../sources/bible/fixtures/sample.tsv"
+name = "RV1909"

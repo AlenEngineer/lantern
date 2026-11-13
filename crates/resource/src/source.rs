@@ -59,11 +59,13 @@ pub trait Source: Send + Sync {
     /// Which of [`scan`](Self::scan) and [`search`](Self::search) the engine should use.
     fn capabilities(&self) -> Capabilities;
 
-    /// The word the operator types after `!` to search only this source,
-    /// like `b` in `!b juan 3`. Sources of one sort share it: every Bible
-    /// answers `!b`. `None`, the default, means it has no bang.
-    fn bang(&self) -> Option<&str> {
-        None
+    /// The words the operator types after `!` to search only this source,
+    /// like `b` in `!b juan 3`. Sources of one sort share one: every Bible
+    /// answers `!b`. A source may answer more than one: a folder with its
+    /// own `!h` still answers `!f` with the other folders. None, the
+    /// default, means it has no bang.
+    fn bangs(&self) -> Vec<&str> {
+        Vec::new()
     }
 
     /// Lists every resource this source has. Called only if

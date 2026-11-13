@@ -18,6 +18,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A folder can have its own bang (`!h` for the hymns), set in Settings or
+  with `bang` in `config.toml`; `!f` still searches every folder.
 - A double click on a result or plan step shows it at once; a single click
   still only lines it up.
 - Downloaded YouTube videos unused for 30 days are deleted at startup.

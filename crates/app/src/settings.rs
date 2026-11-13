@@ -21,6 +21,7 @@ use crate::{App, Message};
 
 const LABEL_FIELD: f32 = 160.0;
 const SMALL_FIELD: f32 = 110.0;
+const BANG_FIELD: f32 = 80.0;
 /// The settings' scrolling body.
 pub const SCROLL: &str = "settings-body";
 const SAMPLE_WIDTH: f32 = 384.0;
@@ -91,6 +92,8 @@ impl Field {
 struct Folder {
     label: String,
     path: String,
+    /// Its bang as typed, `!` or not.
+    bang: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +107,7 @@ struct Bible {
 #[derive(Debug, Clone)]
 pub enum Edit {
     FolderLabel(usize, String),
+    FolderBang(usize, String),
     FolderPath(usize, String),
     AddFolder,
     RemoveFolder(usize),
@@ -140,6 +144,7 @@ impl Draft {
                 .map(|f| Folder {
                     label: f.label.clone().unwrap_or_default(),
                     path: shown(&f.path),
+                    bang: f.bang.as_ref().map(|b| format!("!{b}")).unwrap_or_default(),
                 })
                 .collect(),
             bibles: config
@@ -266,6 +271,7 @@ impl Draft {
     fn change(&mut self, edit: Edit) {
         match edit {
             Edit::FolderLabel(i, text) => self.folder(i, |f| f.label = text),
+            Edit::FolderBang(i, text) => self.folder(i, |f| f.bang = text),
             Edit::FolderPath(i, text) => self.folder(i, |f| f.path = text),
             Edit::AddFolder => self.folders.push(Folder::default()),
             Edit::RemoveFolder(i) => {
@@ -322,6 +328,10 @@ impl Draft {
                 (_, Some(p)) => folders.push(FolderEntry {
                     path: path(&p),
                     label: optional(&folder.label),
+                    bang: optional(&folder.bang)
+                        .map(|bang| config::folder_bang(&bang))
+                        .transpose()
+                        .map_err(|err| format!("The folder {p}: {err}"))?,
                 }),
                 (Some(label), None) => return Err(format!("The folder “{label}” needs a path.")),
                 (None, None) => {}
@@ -390,7 +400,8 @@ impl App {
         let mut folders = column![section(
             p,
             "Media folders",
-            "Lantern finds every file it can show in these folders, and in the folders inside them."
+            "Lantern finds every file it can show in these folders, and in the folders inside them. \
+             Give a folder a bang, like !h, to search only it: !h himno. !f searches every folder."
         )]
         .spacing(6);
         for (i, folder) in draft.folders.iter().enumerate() {
@@ -401,6 +412,8 @@ impl App {
                     field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t))
                         .id(Field::Folder(i).id())
                         .width(Fill),
+                    field(p, "!bang", &folder.bang, move |t| Edit::FolderBang(i, t))
+                        .width(BANG_FIELD),
                     remove(p, Edit::RemoveFolder(i)),
                 ]
                 .spacing(6)
@@ -766,6 +779,23 @@ mod tests {
         draft.edit(Edit::FolderLabel(1, "Videos".into()));
         let err = draft.config(dir, home()).unwrap_err();
         assert_eq!(err, "The folder “Videos” needs a path.");
+
+        draft.edit(Edit::FolderPath(1, "~/Himnos".into()));
+        draft.edit(Edit::FolderBang(1, "!H".into()));
+        let config = draft.config(dir, home()).unwrap();
+        assert_eq!(config.folders[1].bang.as_deref(), Some("h"));
+        assert_eq!(Draft::of(&config, home()).folders[1].bang, "!h");
+        draft.edit(Edit::FolderBang(1, "b".into()));
+        let err = draft.config(dir, home()).unwrap_err();
+        assert_eq!(
+            err,
+            "The folder ~/Himnos: !b is taken by Lantern's own search: pick another."
+        );
+        draft.edit(Edit::FolderBang(1, "him nos".into()));
+        assert!(
+            draft.config(dir, home()).is_err(),
+            "a space can't be in a bang"
+        );
 
         draft.edit(Edit::RemoveFolder(1));
         draft.edit(Edit::AddBible);

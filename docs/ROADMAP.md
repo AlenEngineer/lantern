@@ -49,22 +49,6 @@ a search it isn't, so stepping feels impossible.
 - App, later: show the slide strip of what's on stage (verse numbers), and
   click one to jump to it.
 
-## Showing without confirming
-
-Today a search result goes to the preview, and Enter or Show now sends it.
-Some operators want a click to send it straight to the stage.
-- Core: nothing; the engine already has `show_now`.
-- App: a setting, "Send on click", off by default. When on, clicking a result or a step shows it at once,
-  and the preview pane shows what's next instead.
-
-## Configurable bangs
-
-A folder can have its own bang: a hymnal folder answers `!h`.
-- Core: `LocalSource` takes a bang per folder; the searcher already maps a
-  bang to every source that declares it. One local source per bang, or a
-  source that answers several bangs, each limited to its folders.
-- App: a bang field per folder in Settings and in `config.toml`.
-
 ## Plan
 
 - **Live slots** carry a search (`!yt`, `!b`, a folder's bang); reaching one

@@ -8,6 +8,7 @@
 //! [[folders]]
 //! path = "~/Videos"
 //! label = "Videos"      # optional
+//! bang = "v"            # optional: !v searches only this folder
 //!
 //! [[bibles]]
 //! lang = "es"           # "es" or "en": the language of the book names
@@ -54,6 +55,30 @@ pub struct FolderEntry {
     pub path: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Typed after `!` to search only this folder (and any other folder
+    /// with the same bang). It still answers `!f` with every folder.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bang: Option<String>,
+}
+
+/// The bangs Lantern's own sources answer, which a folder can't take.
+pub const TAKEN_BANGS: [&str; 4] = ["b", "f", "gi", "yt"];
+
+/// A folder's bang as typed (`h`, `!H`), lowercased without its `!`, or
+/// why it can't be one.
+pub fn folder_bang(text: &str) -> Result<String, String> {
+    let bang = text.trim().trim_start_matches('!').to_lowercase();
+    if bang.is_empty() || bang.len() > 8 || !bang.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!(
+            "“!{bang}” can't be a bang: use 1 to 8 letters or digits, like !h."
+        ));
+    }
+    if TAKEN_BANGS.contains(&bang.as_str()) {
+        return Err(format!(
+            "!{bang} is taken by Lantern's own search: pick another."
+        ));
+    }
+    Ok(bang)
 }
 
 /// A Bible translation file, `.json` or `.tsv`.
@@ -365,6 +390,7 @@ mod tests {
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),
                 label: Some("Music".into()),
+                bang: Some("m".into()),
             }],
             bibles: vec![BibleEntry {
                 lang: Lang::Es,
