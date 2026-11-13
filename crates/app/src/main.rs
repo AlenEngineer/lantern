@@ -33,7 +33,7 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::widget::{Space, container, image, operation, scrollable, stack};
@@ -77,7 +77,15 @@ fn main() -> ExitCode {
     let config_status = Arc::new(config_status);
     let engine = Shared(Arc::new(Engine::new()));
     let library = Shared(Library::start(engine.0.clone(), config.clone()));
-    let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
+    let videos = stage::cache_dir().join("youtube");
+    // Before anything loads, so no player opens a file being deleted.
+    for gone in youtube::forget_unused(&videos, youtube::KEEP, SystemTime::now()) {
+        log(format!(
+            "youtube: deleted {}, unused for 30 days",
+            gone.display()
+        ));
+    }
+    let downloads = Shared(Downloads::new(videos));
     let store = Store::new(&config::xdg_dir(
         config::env,
         "XDG_DATA_HOME",

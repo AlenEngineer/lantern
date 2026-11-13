@@ -17,6 +17,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Downloaded YouTube videos unused for 30 days are deleted at startup.
 - Thumbnails in the results and the plan: a picture's own image, a PDF's
   first page, a video's still, a YouTube video's still, and a passage or
   song's first slide in the stage look.
