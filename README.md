@@ -178,7 +178,9 @@ of it exactly.
 app: media folders, Bibles, the Brave key and the colours file. **Save**
 (Ctrl+S) writes the file and applies it at once: the folders and Bibles are
 reindexed and the colours reload, no restart. It rewrites the file, so
-comments in it are not kept.
+comments in it are not kept. Path fields suggest what's on disk as you
+type, like a shell: an empty field lists your home folder, `musica` finds
+*Música*, and clicking a suggestion or Tab takes it and goes inside.
 
 The app reads `~/.config/lantern/config.toml`, or the file named by
 `LANTERN_CONFIG`. Relative paths are relative to the config file, and `~`

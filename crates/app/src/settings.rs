@@ -1,8 +1,9 @@
 //! The settings view (Ctrl+,): what `config.toml` holds, as fields. Save
 //! writes the file and applies it at once: the library swaps its sources
-//! and reindexes, and the colours reload.
+//! and reindexes, and the colours reload. Path fields suggest what's on
+//! disk as they're typed (see [`crate::paths`]).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use iced::widget::{Space, button, column, row, text, text_input};
 use iced::{Alignment, Element, Fill};
@@ -12,6 +13,7 @@ use crate::dashboard::{chip, pill, scrolling, wide};
 use crate::keys::Op;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
+use crate::paths::{self, Suggestion, Want};
 use crate::{App, Message};
 
 const LABEL_FIELD: f32 = 160.0;
@@ -25,6 +27,36 @@ pub struct Draft {
     colors: String,
     /// What the last save did.
     pub notice: Option<Result<String, String>>,
+    home: Option<PathBuf>,
+    /// The path field being typed in, and what it could become.
+    suggesting: Option<(PathField, Vec<Suggestion>)>,
+}
+
+/// A field that holds a path, which suggestions fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathField {
+    Folder(usize),
+    Bible(usize),
+    Colors,
+}
+
+impl PathField {
+    fn want(self) -> Want {
+        match self {
+            PathField::Folder(_) => Want::Folders,
+            PathField::Bible(_) => Want::Files(&["json", "tsv"]),
+            PathField::Colors => Want::Files(&["json"]),
+        }
+    }
+
+    /// The field's widget id, to put the cursor at its end after a choice.
+    pub fn id(self) -> String {
+        match self {
+            PathField::Folder(i) => format!("settings-folder-{i}"),
+            PathField::Bible(i) => format!("settings-bible-{i}"),
+            PathField::Colors => "settings-colors".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -54,6 +86,10 @@ pub enum Edit {
     RemoveBible(usize),
     BraveKey(String),
     Colors(String),
+    /// A suggestion was chosen for a path field.
+    Choose(PathField, String),
+    /// Tab: the first suggestion for the field being typed in.
+    ChooseFirst,
 }
 
 impl Draft {
@@ -84,11 +120,79 @@ impl Draft {
             brave_key: config.brave_api_key.clone().unwrap_or_default(),
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
             notice: None,
+            home: home.map(Path::to_path_buf),
+            suggesting: None,
         }
     }
 
-    pub fn edit(&mut self, edit: Edit) {
+    /// Applies `edit`. Returns the path field it filled in, if any, so the
+    /// view can put the cursor at its end.
+    pub fn edit(&mut self, edit: Edit) -> Option<PathField> {
         self.notice = None;
+        let typed = match &edit {
+            Edit::FolderPath(i, _) => Some(PathField::Folder(*i)),
+            Edit::BiblePath(i, _) => Some(PathField::Bible(*i)),
+            Edit::Colors(_) => Some(PathField::Colors),
+            _ => None,
+        };
+        let chosen = match edit {
+            Edit::Choose(field, path) => Some((field, path)),
+            Edit::ChooseFirst => self
+                .suggesting
+                .as_ref()
+                .and_then(|(field, found)| Some((*field, found.first()?.path.clone()))),
+            edit => {
+                self.change(edit);
+                None
+            }
+        };
+        if let Some((field, path)) = &chosen {
+            self.set_path(*field, path.clone());
+        }
+        // Keep suggesting while a path is typed or a folder chosen; a
+        // chosen file, or any other edit, ends it.
+        let field = chosen
+            .as_ref()
+            .filter(|(_, path)| path.ends_with('/'))
+            .map(|(field, _)| *field)
+            .or(typed);
+        self.suggesting = field.map(|field| {
+            let found = paths::complete(self.path(field), self.home.as_deref(), field.want());
+            (field, found)
+        });
+        chosen.map(|(field, _)| field)
+    }
+
+    /// How many folder rows there are.
+    pub fn folder_rows(&self) -> usize {
+        self.folders.len()
+    }
+
+    fn path(&self, field: PathField) -> &str {
+        match field {
+            PathField::Folder(i) => self.folders.get(i).map_or("", |f| f.path.as_str()),
+            PathField::Bible(i) => self.bibles.get(i).map_or("", |b| b.path.as_str()),
+            PathField::Colors => &self.colors,
+        }
+    }
+
+    fn set_path(&mut self, field: PathField, path: String) {
+        match field {
+            PathField::Folder(i) => self.folder(i, |f| f.path = path),
+            PathField::Bible(i) => self.bible(i, |b| b.path = path),
+            PathField::Colors => self.colors = path,
+        }
+    }
+
+    /// The suggestions under `field`, while it's the one being typed in.
+    fn suggestions(&self, field: PathField) -> &[Suggestion] {
+        match &self.suggesting {
+            Some((typed, found)) if *typed == field => found,
+            _ => &[],
+        }
+    }
+
+    fn change(&mut self, edit: Edit) {
         match edit {
             Edit::FolderLabel(i, text) => self.folder(i, |f| f.label = text),
             Edit::FolderPath(i, text) => self.folder(i, |f| f.path = text),
@@ -113,6 +217,7 @@ impl Draft {
             }
             Edit::BraveKey(text) => self.brave_key = text,
             Edit::Colors(text) => self.colors = text,
+            Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
 
@@ -196,12 +301,15 @@ impl App {
                 row![
                     field(p, "Label", &folder.label, move |t| Edit::FolderLabel(i, t))
                         .width(LABEL_FIELD),
-                    field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t)).width(Fill),
+                    field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t))
+                        .id(PathField::Folder(i).id())
+                        .width(Fill),
                     remove(p, Edit::RemoveFolder(i)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
             );
+            folders = folders.push(suggestions(p, draft, PathField::Folder(i)));
         }
         folders = folders.push(add(p, "Add folder", Edit::AddFolder));
 
@@ -235,12 +343,14 @@ impl App {
                     field(p, "~/bibles/rv1909.tsv", &bible.path, move |t| {
                         Edit::BiblePath(i, t)
                     })
+                    .id(PathField::Bible(i).id())
                     .width(Fill),
                     remove(p, Edit::RemoveBible(i)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
             );
+            bibles = bibles.push(suggestions(p, draft, PathField::Bible(i)));
         }
         bibles = bibles.push(add(p, "Add Bible", Edit::AddBible));
 
@@ -259,7 +369,9 @@ impl App {
                 "Colours",
                 "A Matugen colours file, so Lantern follows your desktop's theme. Empty uses Lantern's own."
             ),
-            field(p, "~/.config/amane/colors.json", &draft.colors, Edit::Colors),
+            field(p, "~/.config/amane/colors.json", &draft.colors, Edit::Colors)
+                .id(PathField::Colors.id()),
+            suggestions(p, draft, PathField::Colors),
         ]
         .spacing(6);
 
@@ -328,6 +440,42 @@ fn field<'a>(
         .font(MEDIUM)
         .padding([8, 10])
         .style(look::input(p))
+}
+
+/// What a path field could become, under it while it's typed in: click one,
+/// or Tab for the first.
+fn suggestions<'a>(p: Palette, draft: &Draft, field: PathField) -> Element<'a, Message> {
+    let found = draft.suggestions(field);
+    if found.is_empty() {
+        return Space::new().into();
+    }
+    let mut list = column![].spacing(2);
+    for (n, suggestion) in found.iter().enumerate() {
+        let icon = if suggestion.folder {
+            Icon::Folder
+        } else {
+            Icon::Document
+        };
+        let mut line = row![
+            look::icon(icon, 14.0, p.on_surface_variant),
+            text(suggestion.path.clone()).size(BODY).width(Fill),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if n == 0 {
+            line = line.push(text("Tab").size(META).color(p.on_surface_variant));
+        }
+        list = list.push(
+            button(line)
+                .width(Fill)
+                .padding([6, 10])
+                .on_press(settings(Edit::Choose(field, suggestion.path.clone())))
+                .style(look::row(p, Tone::Plain)),
+        );
+    }
+    iced::widget::container(list)
+        .padding(iced::Padding::default().left(LABEL_FIELD + 6.0))
+        .into()
 }
 
 fn remove(p: Palette, edit: Edit) -> Element<'static, Message> {
@@ -416,5 +564,32 @@ mod tests {
         let config = draft.config(dir, home()).unwrap();
         assert_eq!(config.bibles[1].path, Path::new("/home/ana/kjv.json"));
         assert_eq!(config.bibles[1].lang, Lang::En);
+    }
+
+    #[test]
+    fn typing_a_path_suggests_and_choosing_a_folder_keeps_going() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("Music/Himnario")).unwrap();
+        let mut draft = Draft::of(&Config::default(), Some(home.path()));
+        draft.edit(Edit::AddFolder);
+        draft.edit(Edit::FolderPath(0, "~/Mu".into()));
+        assert_eq!(draft.suggestions(PathField::Folder(0))[0].path, "~/Music/");
+        assert!(
+            draft.suggestions(PathField::Colors).is_empty(),
+            "only under the field typed in"
+        );
+
+        assert_eq!(draft.edit(Edit::ChooseFirst), Some(PathField::Folder(0)));
+        assert_eq!(draft.folders[0].path, "~/Music/");
+        assert_eq!(
+            draft.suggestions(PathField::Folder(0))[0].path,
+            "~/Music/Himnario/"
+        );
+
+        draft.edit(Edit::FolderLabel(0, "Himnos".into()));
+        assert!(
+            draft.suggestions(PathField::Folder(0)).is_empty(),
+            "another edit ends it"
+        );
     }
 }

@@ -32,7 +32,7 @@ pub use lantern_resource::{
 };
 pub use lantern_searcher::{
     Bang, Origin, Parsed, Polled, ReindexReport, Scope, SearchError, SearchEvent, SearchStream,
-    Searcher,
+    Searcher, fold,
 };
 use lantern_showman::Showman;
 pub use lantern_showman::{
