@@ -29,7 +29,6 @@ use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::{App, Clicked, Message};
 
-const PLAN_WIDTH: f32 = 380.0;
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
 
@@ -84,7 +83,7 @@ impl App {
         };
         pane.push(buttons.spacing(4))
             .padding([16, 12])
-            .width(PLAN_WIDTH)
+            .width(self.plan_width())
             .height(Fill)
             .into()
     }
