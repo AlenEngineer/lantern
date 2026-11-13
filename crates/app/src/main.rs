@@ -10,6 +10,7 @@
 
 mod config;
 mod dashboard;
+mod fit;
 mod keys;
 mod length;
 mod library;
@@ -34,12 +35,12 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use iced::futures::{SinkExt, Stream, StreamExt};
-use iced::widget::{Space, container, image, operation, scrollable, stack, text};
+use iced::widget::{Space, container, image, operation, scrollable, stack};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
 use lantern_engine::{
-    Action, Engine, Media, MediaReport, Plan, Playback, Query, ResourceId, SceneId, SearchEvent,
-    SearchStream, StageEvent, StageFeed, StageState, Step, StepId,
+    Action, Engine, Look, Media, MediaReport, Plan, Playback, Query, ResourceId, SceneId,
+    SearchEvent, SearchStream, StageEvent, StageFeed, StageState, Step, StepId,
 };
 
 use crate::config::Config;
@@ -385,6 +386,10 @@ impl App {
                         }
                         self.update(Message::Settings(settings::Edit::FolderPath(0, text)))
                     }
+                    Ui::Font(text) => Task::batch([
+                        self.update(Message::Settings(settings::Edit::Font(text))),
+                        operation::snap_to_end(settings::SCROLL),
+                    ]),
                     Ui::Press(op) => self.op(op),
                     Ui::Open(name) => {
                         let opened = self.plans.open_named(&self.engine.0, &name);
@@ -648,7 +653,10 @@ impl App {
             Op::Settings => {
                 self.settings = match self.settings {
                     Some(_) => None,
-                    None => Some(settings::Draft::of(&self.config, self.home.as_deref())),
+                    None => Some(
+                        settings::Draft::of(&self.config, self.home.as_deref())
+                            .with_fonts(fit::families()),
+                    ),
                 };
                 if self.settings.is_none() {
                     return operation::focus(SEARCH_BOX);
@@ -862,20 +870,18 @@ impl App {
         }
     }
 
-    /// Black, with the program on top unless it failed. Blackout covers
-    /// the program instead of removing it, so a video keeps playing and
-    /// still reports its end.
+    /// The look's background, with the program on top unless it failed.
+    /// Blackout covers the program instead of removing it, so a video
+    /// keeps playing and still reports its end; it's black whatever the
+    /// look.
     fn stage_view(&self) -> Element<'_, Message> {
+        let look = &self.config.stage;
         let Some(scene) = &self.stage.program else {
-            return black(Space::new());
+            return backdrop(look, Space::new());
         };
         let content: Element<'_, Message> = match (&scene.media, scene.text()) {
             (Media::Failed { .. }, _) => Space::new().into(),
-            (_, Some(body)) => text(body)
-                .size(64)
-                .color(Color::WHITE)
-                .align_x(iced::alignment::Horizontal::Center)
-                .into(),
+            (_, Some(body)) => fit::fit_text(body, look).into(),
             (_, None) => match self.media.content(scene.id) {
                 None => Space::new().into(),
                 Some(Content::Image(handle)) => fit(image(handle.clone())),
@@ -892,9 +898,9 @@ impl App {
             },
         };
         if self.stage.blackout {
-            stack![black(content), black(Space::new())].into()
+            stack![backdrop(look, content), black(Space::new())].into()
         } else {
-            black(content)
+            backdrop(look, content)
         }
     }
 
@@ -949,6 +955,32 @@ fn set_length(plan: &mut Plan, id: StepId, value: Option<Duration>) {
         Action::Section { budget } => *budget = value,
         _ => step.estimate = value,
     }
+}
+
+/// `content` over the look's background: its colour, and its image
+/// covering the stage.
+pub(crate) fn backdrop<'a>(
+    look: &Look,
+    content: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let colour = fit::color(look.background);
+    let content = container(content).center(Fill);
+    let layers: Element<'a, Message> = match &look.image {
+        Some(path) => stack![
+            image(image::Handle::from_path(path))
+                .width(Fill)
+                .height(Fill)
+                .content_fit(ContentFit::Cover),
+            content,
+        ]
+        .into(),
+        None => content.into(),
+    };
+    container(layers)
+        .center(Fill)
+        .clip(true)
+        .style(move |_| container::Style::default().background(colour))
+        .into()
 }
 
 fn black<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

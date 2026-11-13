@@ -7,9 +7,13 @@ window). Each item says what it needs from each side.
 
 ## Stage appearance
 
-Today the stage draws text in white on black at one size.
+Done: one stage look for the whole app (Settings → Stage, `[stage]` in the
+config): background colour and image, text colour, font, and text set as
+large as fits between a smallest and largest size, measured by the
+renderer at the real size. The `Look` type lives in the stage crate, ready
+to be carried by a plan. Still to do below.
 
-**Themes with layers.** A stage theme is a stack of layers, drawn bottom to
+**Themes with layers.** *(background colour and image done, app-wide)* A stage theme is a stack of layers, drawn bottom to
 top: a background (colour, image or looping video), the content, and
 optional overlays (a lower third with the reference or song title, a logo).
 - Core: a `StageTheme` in the stage model, saved with the plan (a default,
@@ -18,11 +22,12 @@ optional overlays (a lower third with the reference or song title, a logo).
 - App: the stage window renders the layers; Prepare gets a theme editor;
   Settings holds the default theme.
 
-**Fonts.** The family and a size range per theme.
+**Fonts.** The family and a size range per theme. *(done, app-wide)*
 - Core: `font`, `max_size`, `min_size` in the theme.
 - App: load the family (system fonts through iced), pick it in the editor.
 
-**Text that fits.** The size is an upper limit: the text grows to fill its
+**Text that fits.** *(growing and shrinking done; splitting into more
+slides still to do)* The size is an upper limit: the text grows to fill its
 box up to `max_size`, and shrinks for long text down to `min_size`. Text
 that still doesn't fit at `min_size` is split into more slides, at line or
 sentence breaks, and those slides step like verses.

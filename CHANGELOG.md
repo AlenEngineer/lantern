@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A stage look (Settings → Stage, or `[stage]` in the config): background
+  colour and image, text colour, font (with installed fonts suggested), and
+  text set as large as fits between a smallest and largest size. The
+  dashboard's monitors and a sample in the settings show the same look.
 - A ready check: Prepare sums up by the plan's name whether everything can
   be shown, and each step that can't says why (missing file, a kind the
   stage can't show, a YouTube download going or failed, an image link not
