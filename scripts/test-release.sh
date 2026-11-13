@@ -53,4 +53,10 @@ else
     echo "skip workflows lint: actionlint isn't installed"
 fi
 
+if command -v shellcheck >/dev/null; then
+    if shellcheck "$repo"/scripts/*.sh; then echo "ok   scripts lint clean"; else fails=1; fi
+else
+    echo "skip scripts lint: shellcheck isn't installed"
+fi
+
 exit $fails
