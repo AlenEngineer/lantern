@@ -40,6 +40,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   video on stage: the monitors now shrink to leave the buttons room.
 - A title too long for its place ends in "…" instead of being chopped
   mid-letter or running off the pane.
+- In a window narrower than about 1140 points the plan and stage panes
+  narrow, down to 330 and 280, so the search and results keep some room;
+  the bang rows no longer draw over themselves.
 
 ## [0.7.0] - 2026-11-13
 

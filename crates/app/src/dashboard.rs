@@ -28,9 +28,27 @@ pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
 pub const NAME_BOX: &str = "plan-name";
 
-const STAGE_WIDTH: f32 = 360.0;
+/// The side panes' widths with room to spare, and the least they shrink to
+/// in a narrow window (the plan's four Add buttons; a readable monitor).
+const PLAN_WIDTH: (f32, f32) = (380.0, 330.0);
+const STAGE_WIDTH: (f32, f32) = (360.0, 280.0);
+/// What the launcher keeps before the side panes start to shrink.
+const LAUNCHER_ROOM: f32 = 400.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
-const MONITOR_HEIGHT: f32 = 184.0;
+/// The stage pane's padding, each side.
+const STAGE_PADDING: f32 = 16.0;
+
+/// The plan and stage panes' widths in a window `width` wide: their full
+/// widths while the launcher has room, then both narrower by the same
+/// share, down to their least.
+pub(crate) fn pane_widths(width: f32) -> (f32, f32) {
+    let (plan, stage) = (PLAN_WIDTH.0, STAGE_WIDTH.0);
+    let share = ((width - LAUNCHER_ROOM) / (plan + stage)).min(1.0);
+    (
+        (plan * share).max(PLAN_WIDTH.1).round(),
+        (stage * share).max(STAGE_WIDTH.1).round(),
+    )
+}
 /// What the stage pane's estimate of its own height may be short by.
 const FIT_SLACK: f32 = 24.0;
 /// How wide a result's thumbnail is; a plan row's is smaller.
@@ -42,6 +60,25 @@ const HINTS: &str = "PgDn next step · Enter look, again to show · double-click
                      ← → slides · Ctrl+B blackout · Esc clear";
 
 impl App {
+    pub(crate) fn plan_width(&self) -> f32 {
+        pane_widths(self.dashboard_size.width).0
+    }
+
+    fn stage_width(&self) -> f32 {
+        pane_widths(self.dashboard_size.width).1
+    }
+
+    /// A monitor at its full height: 16:9 of the stage pane's width.
+    fn monitor_height(&self) -> f32 {
+        ((self.stage_width() - 2.0 * STAGE_PADDING) * 9.0 / 16.0).round()
+    }
+
+    /// What's left for the launcher, between the panes and their seams.
+    fn launcher_width(&self) -> f32 {
+        let (plan, stage) = pane_widths(self.dashboard_size.width);
+        self.dashboard_size.width - plan - stage - 2.0
+    }
+
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
         let seam = || {
@@ -194,6 +231,10 @@ impl App {
                     let sources = bang.sources.join(", ");
                     let placeholder = format!("Search {sources} · Backspace for everything");
                     (chip(p, &sources, Tone::Plain), placeholder)
+                }
+                // The whole hint only where it fits.
+                _ if self.launcher_width() < 520.0 => {
+                    (Space::new().into(), "Search, or ! for one source".into())
                 }
                 _ => (
                     Space::new().into(),
@@ -418,12 +459,13 @@ impl App {
         .sum::<f32>()
             + 10.0 * (upper.len() + lower.len()) as f32
             + FIT_SLACK;
-        let roomy = rest + 2.0 * MONITOR_HEIGHT <= self.dashboard_size.height;
+        let full = self.monitor_height();
+        let roomy = rest + 2.0 * full <= self.dashboard_size.height;
         for section in [&mut upper, &mut lower] {
             let monitor = std::mem::replace(&mut section[1], Space::new().into());
             let slot = container(monitor).width(Fill);
             section[1] = if roomy {
-                slot.height(MONITOR_HEIGHT).into()
+                slot.height(full).into()
             } else {
                 slot.height(Fill).into()
             };
@@ -439,8 +481,8 @@ impl App {
             .push(seam)
             .extend(lower)
             .spacing(10)
-            .padding(16)
-            .width(STAGE_WIDTH)
+            .padding(STAGE_PADDING)
+            .width(self.stage_width())
             .height(Fill)
             .into()
     }
@@ -980,7 +1022,7 @@ fn bang_row(p: Palette, bang: Bang) -> Element<'static, Message> {
             .font(BOLD)
             .color(p.primary)
             .width(48),
-        text(bang.sources.join(", ")).size(BODY).width(Fill),
+        container(single_line(bang.sources.join(", ")).size(BODY)).width(Fill),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -988,7 +1030,8 @@ fn bang_row(p: Palette, bang: Bang) -> Element<'static, Message> {
         line = line.push(
             text("Enter to search")
                 .size(META)
-                .color(p.on_surface_variant),
+                .color(p.on_surface_variant)
+                .wrapping(text::Wrapping::None),
         );
     }
     button(line)
@@ -1013,11 +1056,10 @@ fn framed_with<'a>(
     ring: Option<Color>,
     padding: u16,
 ) -> Element<'a, Message> {
-    // As tall as the pane has room for, up to its full height.
+    // As tall as its slot in the stage pane.
     container(content)
         .center_x(Fill)
         .center_y(Fill)
-        .max_height(MONITOR_HEIGHT)
         .padding(padding)
         .clip(true)
         .style(look::monitor(ring))
@@ -1079,5 +1121,24 @@ mod tests {
         let long = "amó ".repeat(40);
         let cut = opening(&long).unwrap();
         assert!(cut.ends_with('…') && cut.chars().count() <= 91, "{cut}");
+    }
+
+    #[test]
+    fn the_side_panes_narrow_together_and_stop_at_their_least() {
+        use super::pane_widths;
+        assert_eq!(pane_widths(1920.0), (380.0, 360.0));
+        assert_eq!(
+            pane_widths(1140.0),
+            (380.0, 360.0),
+            "the launcher has its room"
+        );
+        let (plan, stage) = pane_widths(1100.0);
+        assert!(plan < 380.0 && stage < 360.0, "{plan} {stage}");
+        assert_eq!(pane_widths(940.0), (330.0, 280.0));
+        assert_eq!(
+            pane_widths(300.0),
+            (330.0, 280.0),
+            "never below their least"
+        );
     }
 }
