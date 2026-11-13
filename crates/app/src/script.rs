@@ -83,6 +83,8 @@ pub enum Command {
     /// `section BUDGET TITLE`: add a section with a budget (`15`, `0:20`)
     /// after the current step.
     Section(Duration, String),
+    /// `slot SEARCH`: add a live slot that searches SEARCH (`!b jn 3`).
+    Slot(String),
     /// `wait-ready SECS`: wait until no YouTube download is queued or running.
     WaitReady(Duration),
     /// `take`: put the preview on stage.
@@ -162,6 +164,8 @@ impl Command {
             "show" => Command::Show(Target::parse(rest, dir)?),
             "preview" => Command::Preview(Target::parse(rest, dir)?),
             "add" => Command::Add(Target::parse(rest, dir)?),
+            "slot" if !rest.is_empty() => Command::Slot(rest.to_string()),
+            "slot" => return Err("slot needs what it searches".into()),
             "section" => {
                 let usage = || format!("section needs a budget and a title, got {rest:?}");
                 let (budget, title) = rest.split_once(' ').ok_or_else(usage)?;
@@ -232,6 +236,7 @@ impl Command {
                 | Command::Preview(_)
                 | Command::Add(_)
                 | Command::Section(..)
+                | Command::Slot(_)
                 | Command::Seek(_)
                 | Command::Frame(_)
                 | Command::Search(_)
@@ -346,6 +351,13 @@ impl Script {
             Command::Preview(target) => engine.preview(Arc::new(target.resource(downloads))),
             Command::Add(target) => {
                 engine.add_resource(None, &target.resource(downloads));
+            }
+            Command::Slot(search) => {
+                let action = lantern_engine::Action::Live {
+                    hint: Some(lantern_engine::Query::new(search.clone())),
+                    shown: Vec::new(),
+                };
+                engine.add(None, "Live search", action);
             }
             Command::Section(budget, title) => {
                 let action = lantern_engine::Action::Section {

@@ -1,0 +1,21 @@
+# Live slots: reaching one opens the search it carries, what's shown in it
+# is remembered, and once something's on stage the arrows step its slides
+# even with text still in the search box.
+section 15 Alabanza
+add fixtures/video.mp4
+slot !b juan 3:16-18
+add fixtures/image.png
+wait 1500
+press pagedown
+wait 800
+press pagedown
+wait 1500
+shot 1-slot-opened
+press enter
+wait 400
+press enter
+wait 600
+shot 2-shown
+press right
+wait 400
+shot 3-next-verse

@@ -21,6 +21,7 @@ use crate::{App, Message};
 
 const SEARCH_WIDTH: f32 = 560.0;
 const LENGTH_FIELD: f32 = 56.0;
+const SLOT_FIELD: f32 = 180.0;
 const BUDGET_FIELD: f32 = 48.0;
 const TITLE_SIZE: f32 = 22.0;
 
@@ -303,12 +304,27 @@ impl App {
             Basis::Guess => length::rough(estimate.length),
             Basis::Set | Basis::Known => length::clock(estimate.length),
         };
+        // A live slot says what it will search, as a field.
+        let about: Element<'_, Message> = match &step.action {
+            Action::Live { hint, .. } => {
+                let text = hint.as_ref().map(|q| q.text.as_str()).unwrap_or_default();
+                text_input("searches… (!yt, !b)", text)
+                    .on_input(move |text| Message::SlotSearch(id, text))
+                    .size(META)
+                    .padding([5, 8])
+                    .width(SLOT_FIELD)
+                    .style(look::input(p))
+                    .into()
+            }
+            _ => container(single_line(about).size(META).color(p.on_surface_variant))
+                .max_width(220)
+                .clip(true)
+                .into(),
+        };
         let line = row![
             disc(p, icon, tone),
             name.width(Fill),
-            container(single_line(about).size(META).color(p.on_surface_variant))
-                .max_width(220)
-                .clip(true),
+            about,
             self.length_field(id, step.estimate, shown, LENGTH_FIELD),
         ]
         .spacing(12)

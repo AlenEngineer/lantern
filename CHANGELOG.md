@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Live slots carry a search (`!yt`, `!b juan 3`): reaching one opens the
+  search with it, and its row counts what was shown in it.
+- Once something's on stage, ← → step its slides even with text left in the
+  search box, until you type again.
+- docs/ROADMAP.md: what's planned next, core and app.
 - The Prepare view (Ctrl+R): the plan as a document with every name, length
   and budget a field, and the launcher beside it adding results after the
   selected step. "Add here" adds sections, live slots, black screens and

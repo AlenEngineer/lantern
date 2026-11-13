@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 
 use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill};
-use lantern_engine::{Action, Basis, Pace, Phase, Plan, SectionTiming, Step, Timing};
+use lantern_engine::{Action, Basis, Pace, Phase, Plan, Query, SectionTiming, Step, Timing};
 
 use crate::dashboard::{NAME_BOX, chip, op, pill, scrolling, single_line, wide};
 use crate::keys::Op;
@@ -213,7 +213,14 @@ impl App {
         };
         let (marker, note) = match place {
             Place::Current if shown => ("●".to_string(), Some("on stage".to_string())),
-            Place::Current => ("●".to_string(), Some("current step".to_string())),
+            // A live slot under way says what it searches and showed.
+            Place::Current => match &step.action {
+                Action::Live { hint, shown } => (
+                    "●".to_string(),
+                    Some(slot_detail(hint.as_ref(), shown.len())),
+                ),
+                _ => ("●".to_string(), Some("current step".to_string())),
+            },
             Place::Next => ("○".to_string(), Some("next, PgDn".to_string())),
             Place::Done | Place::Later => (number.to_string(), None),
         };
@@ -230,7 +237,7 @@ impl App {
         ];
         let detail = note.or_else(|| match &step.action {
             Action::Show { resource } => self.download_state(resource),
-            Action::Live { .. } => Some("live search".into()),
+            Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
             Action::Blank => Some("black screen".into()),
             Action::Note => Some("note".into()),
             Action::Section { .. } => None,
@@ -344,6 +351,21 @@ pub(crate) fn section_status(section: &SectionTiming) -> (String, Tone) {
         ),
     };
     (text, pace_tone(pace))
+}
+
+/// A live slot's line: how much was shown in it, then what it searches,
+/// "2 shown · !yt" (the count first: it's what changes, and a long search
+/// may be cut at the row's edge).
+pub(crate) fn slot_detail(hint: Option<&Query>, shown: usize) -> String {
+    let mut detail = vec![match shown {
+        0 => "live search".to_string(),
+        n => format!("{n} shown"),
+    }];
+    detail.extend(
+        hint.map(|q| q.text.trim().to_string())
+            .filter(|t| !t.is_empty()),
+    );
+    detail.join(" · ")
 }
 
 fn pace_word(pace: Pace) -> &'static str {
@@ -515,5 +537,11 @@ mod tests {
         );
         let (text, _) = section_status(&section(None, running(3 * MIN, 3 * MIN)));
         assert_eq!(text, "Alabanza · 3:00");
+    }
+
+    #[test]
+    fn a_live_slot_says_what_it_searches_and_what_it_showed() {
+        assert_eq!(slot_detail(None, 0), "live search");
+        assert_eq!(slot_detail(Some(&Query::new("!yt ")), 2), "2 shown · !yt");
     }
 }

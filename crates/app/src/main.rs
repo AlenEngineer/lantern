@@ -36,8 +36,8 @@ use iced::widget::{Space, container, image, operation, scrollable, stack, text};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
 use lantern_engine::{
-    Action, Engine, Media, MediaReport, Plan, Playback, ResourceId, SceneId, SearchEvent,
-    SearchStream, StageEvent, StageFeed, StageState, StepId,
+    Action, Engine, Media, MediaReport, Plan, Playback, Query, ResourceId, SceneId, SearchEvent,
+    SearchStream, StageEvent, StageFeed, StageState, Step, StepId,
 };
 
 use crate::config::Config;
@@ -194,6 +194,8 @@ enum Message {
     AddStep(prepare::NewStep),
     /// The plan's new name, typed in the prepare view.
     PlanTitle(String),
+    /// What a live slot searches when the service reaches it ("!yt", "!b").
+    SlotSearch(StepId, String),
     /// A step's or section's new name.
     Rename(StepId, String),
     /// What was typed in a step's length or a section's budget.
@@ -248,6 +250,11 @@ struct App {
     /// The selected plan step: where new steps go, and in the run view
     /// what Enter puts on stage.
     selected: Option<StepId>,
+    /// Something just went on stage and nothing's been typed since: the
+    /// arrows step its slides even with text in the search box.
+    stepping: bool,
+    /// The plan step the service was at, to notice arriving at a new one.
+    arrived_at: Option<StepId>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
     /// Where the timeline is being dragged, until it is let go.
@@ -297,6 +304,8 @@ impl App {
             mode: Mode::default(),
             view: View::default(),
             selected: None,
+            stepping: false,
+            arrived_at: None,
             drafts: HashMap::new(),
             scrub: None,
         };
@@ -397,13 +406,14 @@ impl App {
             }
             Message::Bang(bang) => return self.complete(format!("!{bang} ")),
             Message::Key { op, only_if_empty } => {
-                if !(only_if_empty && !self.search.query.is_empty()) {
+                if !only_if_empty || self.search.query.is_empty() || self.stepping {
                     return self.op(op);
                 }
             }
             // Typing goes to the search box, which settings cover.
             Message::Type(_) if self.settings.is_some() => {}
             Message::Type(typed) => {
+                self.stepping = false;
                 let query = format!("{}{typed}", self.search.query);
                 return self.complete(query);
             }
@@ -436,6 +446,15 @@ impl App {
                 self.selected = Some(self.engine.0.add(self.selected, label, action));
             }
             Message::PlanTitle(title) => self.engine.0.edit_plan(|plan| plan.title = title),
+            Message::SlotSearch(id, text) => self.engine.0.edit_plan(|plan| {
+                if let Some(Step {
+                    action: Action::Live { hint, .. },
+                    ..
+                }) = plan.get_mut(id)
+                {
+                    *hint = Some(text).filter(|t| !t.trim().is_empty()).map(Query::new);
+                }
+            }),
             Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
                 if let Some(step) = plan.get_mut(id) {
                     step.label = label;
@@ -492,6 +511,7 @@ impl App {
 
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
+        self.stepping = false;
         if !query.trim().is_empty() {
             self.mode = Mode::Live;
             // Running, a new search takes over Enter from the selected step.
@@ -566,10 +586,11 @@ impl App {
                     if let Err(err) = engine.go_to(step.id) {
                         log(format!("dashboard: {err}"));
                     }
-                    return self.preload();
+                    return Task::batch([self.preload(), self.arrive()]);
                 }
                 if engine.take() {
                     self.search.unpick();
+                    self.stepping = true;
                 }
             }
             Op::AddToPlan => {
@@ -593,7 +614,7 @@ impl App {
                 } else {
                     engine.prev();
                 }
-                return self.preload();
+                return Task::batch([self.preload(), self.arrive()]);
             }
             Op::PlayPause => {
                 engine.toggle_playback();
@@ -654,6 +675,40 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// The service may have reached a new step. Stepping on keeps the arrows
+    /// stepping; a live slot opens the search with what it searches, ready
+    /// for Enter.
+    fn arrive(&mut self) -> Task<Message> {
+        let current = self.engine.0.current_step();
+        let id = current.as_ref().map(|step| step.id);
+        if id == self.arrived_at {
+            self.stepping = true;
+            return Task::none();
+        }
+        self.arrived_at = id;
+        let Some(Step {
+            action: Action::Live { hint, .. },
+            ..
+        }) = current
+        else {
+            self.stepping = true;
+            return Task::none();
+        };
+        self.mode = Mode::Live;
+        self.search.clear(&self.engine.0);
+        let text = hint.map(|query| query.text).unwrap_or_default();
+        if text.is_empty() {
+            return operation::focus(SEARCH_BOX);
+        }
+        // The slot's bang becomes the chip, so a space ends it.
+        let text = if text.contains(char::is_whitespace) || !text.starts_with('!') {
+            text
+        } else {
+            format!("{text} ")
+        };
+        self.complete(text)
     }
 
     /// Writes the settings to the config file and applies them: the library
