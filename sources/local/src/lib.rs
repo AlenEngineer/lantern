@@ -81,6 +81,8 @@ pub struct LocalSource {
     name: String,
     folders: Vec<Folder>,
     include_hidden: bool,
+    /// Its own bang, besides the `!f` every local source answers.
+    bang: Option<String>,
 }
 
 impl LocalSource {
@@ -91,7 +93,14 @@ impl LocalSource {
             name: name.into(),
             folders: Vec::new(),
             include_hidden: false,
+            bang: None,
         }
+    }
+
+    /// Also answers `!bang`, besides `!f`.
+    pub fn with_bang(mut self, bang: impl Into<String>) -> Self {
+        self.bang = Some(bang.into());
+        self
     }
 
     /// Adds a folder.
@@ -173,8 +182,8 @@ impl Source for LocalSource {
         Capabilities::INDEXED
     }
 
-    fn bang(&self) -> Option<&str> {
-        Some("f")
+    fn bangs(&self) -> Vec<&str> {
+        std::iter::once("f").chain(self.bang.as_deref()).collect()
     }
 
     /// Lists every recognized file. Folders that don't exist (an unplugged

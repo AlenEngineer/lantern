@@ -1,0 +1,12 @@
+# A folder with its own bang: the empty box lists !fx beside !f, !fx
+# searches only that folder, and Settings shows the bang by its folder.
+# Run with LANTERN_CONFIG=scripts/e2e/folder-bang.toml.
+wait 2500
+shot 1-bangs-listed
+type !fx image
+wait 800
+shot 2-fx-search
+press escape
+press ctrl+,
+wait 400
+shot 3-settings

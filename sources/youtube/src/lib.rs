@@ -128,8 +128,8 @@ impl Source for YoutubeSource {
         Capabilities::ON_REQUEST
     }
 
-    fn bang(&self) -> Option<&str> {
-        Some("yt")
+    fn bangs(&self) -> Vec<&str> {
+        vec!["yt"]
     }
 
     fn search(&self, query: &Query) -> Result<Vec<Resource>, SourceError> {
