@@ -433,6 +433,9 @@ impl App {
                     "●".to_string(),
                     Some(slot_detail(hint.as_ref(), shown.len())),
                 ),
+                _ if self.off_plan().is_some() => {
+                    ("●".to_string(), Some("waiting · off the plan".to_string()))
+                }
                 _ => ("●".to_string(), Some("current step".to_string())),
             },
             Place::Next => ("○".to_string(), Some("next, PgDn".to_string())),
