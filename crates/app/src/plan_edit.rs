@@ -86,8 +86,9 @@ impl App {
             }
             _ => {
                 let estimate = self.estimate(step);
+                // Without a length to suggest, the empty box says what goes in it.
                 let hint = match estimate.basis {
-                    lantern_engine::Basis::Guess if estimate.length.is_zero() => String::new(),
+                    lantern_engine::Basis::Guess if estimate.length.is_zero() => "min".into(),
                     _ => length::typed(estimate.length),
                 };
                 line.push(self.length_field(id, step.estimate, hint, format!("step-length-{id}")))
