@@ -43,6 +43,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - In a window narrower than about 1140 points the plan and stage panes
   narrow, down to 330 and 280, so the search and results keep some room;
   the bang rows no longer draw over themselves.
+- A step's name and a folder's or Bible's path have a line to themselves:
+  they showed about twenty characters.
 
 ## [0.7.0] - 2026-11-13
 

@@ -65,7 +65,9 @@ impl App {
             .size(BODY)
             .padding([6, 10])
             .style(look::input(p));
-        let mut line = row![name.width(Fill)].spacing(6).align_y(Alignment::Center);
+        // The name has the strip's first line to itself: beside the length
+        // and the buttons it showed about eighteen characters.
+        let mut line = row![].spacing(6).align_y(Alignment::Center);
         line = match &step.action {
             Action::Section { budget } => line
                 .push(note(p, "time"))
@@ -78,7 +80,7 @@ impl App {
                         .on_input(move |text| Message::SlotSearch(id, text))
                         .size(META)
                         .padding([6, 8])
-                        .width(150)
+                        .width(Fill)
                         .style(look::input(p)),
                 )
             }
@@ -103,11 +105,7 @@ impl App {
                 tooltip::Position::Top,
             )
         };
-        line = line
-            .push(small("↑", "Move up · Alt+↑", Message::Move(id, -1)))
-            .push(small("↓", "Move down · Alt+↓", Message::Move(id, 1)))
-            .push(small("✕", "Remove", Message::Remove(id)));
-        let mut strip = column![line].spacing(4);
+        // Going on by itself sits beside the length it waits for.
         if let Some(when) = goes_on_when(step) {
             let on = step.advance;
             let switch = button(
@@ -125,12 +123,23 @@ impl App {
             .padding([6, 10])
             .on_press(Message::SetAdvance(id, !on))
             .style(look::row(p, if on { Tone::Selected } else { Tone::Plain }));
-            strip = strip.push(
-                row![switch, text(when).size(META).color(p.on_surface_variant)]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-            );
+            line = line.push(tooltip(
+                switch,
+                container(text(when).size(META).color(p.on_surface))
+                    .padding([4, 8])
+                    .style(look::chip(p, Tone::Plain)),
+                tooltip::Position::Top,
+            ));
         }
+        // A live slot's search already fills the line.
+        if !matches!(step.action, Action::Live { .. }) {
+            line = line.push(Space::new().width(Fill));
+        }
+        line = line
+            .push(small("↑", "Move up · Alt+↑", Message::Move(id, -1)))
+            .push(small("↓", "Move down · Alt+↓", Message::Move(id, 1)))
+            .push(small("✕", "Remove", Message::Remove(id)));
+        let strip = column![name.width(Fill), line].spacing(4);
         container(strip)
             .padding(iced::Padding::default().left(24.0).right(4.0).bottom(4.0))
             .into()
