@@ -18,6 +18,13 @@ pub fn parse(text: &str) -> Option<Option<Duration>> {
     (seconds < 60).then(|| Some(Duration::from_secs(minutes * 60 + seconds)))
 }
 
+/// Whether `text` could still become a length: digits and one colon.
+/// A length field takes nothing else, so it never holds what [`parse`]
+/// can't read once finished.
+pub fn typeable(text: &str) -> bool {
+    text.chars().all(|c| c.is_ascii_digit() || c == ':') && text.matches(':').count() <= 1
+}
+
 /// `4:05`, `1:02:03` past an hour.
 pub fn clock(d: Duration) -> String {
     let s = d.as_secs();
@@ -53,6 +60,16 @@ mod tests {
 
     const fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
+    }
+
+    #[test]
+    fn a_length_field_takes_digits_and_one_colon() {
+        for ok in ["", "4", "4:", "4:3", "4:30", ":30"] {
+            assert!(typeable(ok), "{ok}");
+        }
+        for no in ["a", "4a", "4:3:0", "4.5", "-4", "4 30"] {
+            assert!(!typeable(no), "{no}");
+        }
     }
 
     #[test]
