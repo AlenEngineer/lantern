@@ -90,7 +90,7 @@ lists the keys for the mode you're in.
 | Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
-| → ← | the same, while the search box is empty |
+| → ← | the same, while the search box is empty, or once something's on stage until you type again |
 | Ctrl+A | add the preview to the plan |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
@@ -149,6 +149,12 @@ last plan you opened or saved, and says why if it can't.
 
 Before the service starts, Ctrl+A adds to the end of the plan; once it has
 started, right after the current step.
+
+**Live slots** are the parts of a service you'll fill on the spot ("the
+director's song choice"). Give one a search in Prepare (`!yt`, `!b`, or a
+whole query like `!b juan 3:16-18`); when the service reaches it, the
+search box opens with it, ready for Enter. Its row says how much was shown
+in it.
 
 In Run, clicking a step selects it and lines it up in the preview; Enter
 (or **Show now**) puts it on stage and moves the plan there, so nothing

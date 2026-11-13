@@ -527,7 +527,18 @@ impl App {
                 self.loading_note(resource),
                 Some(p.primary),
             ),
-            Action::Live { .. } => empty_monitor(p, "A live slot: search when you get there"),
+            Action::Live { hint, .. } => {
+                match hint.as_ref().filter(|q| !q.text.trim().is_empty()) {
+                    Some(query) => empty_monitor(
+                        p,
+                        &format!(
+                            "A live slot: “{}” opens when you get there",
+                            query.text.trim()
+                        ),
+                    ),
+                    None => empty_monitor(p, "A live slot: search when you get there"),
+                }
+            }
             Action::Blank => empty_monitor(p, "A black screen"),
             Action::Note | Action::Section { .. } => {
                 empty_monitor(p, "A note for you, nothing on stage")
