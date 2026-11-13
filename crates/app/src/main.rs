@@ -342,6 +342,9 @@ struct App {
     /// The plan's "Add step" row is open, showing the kinds of step.
     /// and which of them the arrows are on, for Enter.
     adding: Option<usize>,
+    /// The search is open in the middle pane. Closed, the middle shows
+    /// the keys, and the arrows and Enter are the plan pane's.
+    search_open: bool,
     /// The saved plan the arrows are on in the list of plans, for Enter.
     list_pick: Option<PathBuf>,
     /// The plan before each edit, newest last, for Ctrl+Z.
@@ -413,6 +416,7 @@ impl App {
             stepping: false,
             spent: false,
             adding: None,
+            search_open: false,
             list_pick: None,
             undo: Vec::new(),
             typing: None,
@@ -689,6 +693,8 @@ impl App {
             }
             // Typing goes to the search box, which settings cover.
             Message::Type(_) if self.settings.is_some() => {}
+            // With the search closed there's nowhere to type.
+            Message::Type(_) if !self.search_open => {}
             Message::Type(typed) => {
                 self.stepping = false;
                 let query = if std::mem::take(&mut self.spent) {
@@ -875,6 +881,8 @@ impl App {
 
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
+        // A search from anywhere (a bang row, a live slot, a script) opens it.
+        self.search_open = true;
         self.stepping = false;
         // What was searched is on stage: typing starts the next search.
         let fresh = std::mem::take(&mut self.spent)
@@ -1085,6 +1093,11 @@ impl App {
                 {
                     self.plans.cancel();
                 }
+                // Esc empties the search, and closes it once it's empty.
+                if self.search_open && self.search.query.is_empty() && self.search.bang().is_none()
+                {
+                    self.search_open = false;
+                }
                 self.adding = None;
                 self.list_pick = None;
                 self.search.clear(&engine);
@@ -1106,6 +1119,19 @@ impl App {
             }
             Op::Save => {
                 self.plans.save(&engine);
+            }
+            Op::Search => {
+                self.search_open = true;
+                self.adding = None;
+                return Task::batch([
+                    operation::focus(SEARCH_BOX),
+                    operation::move_cursor_to_end(SEARCH_BOX),
+                ]);
+            }
+            Op::RemoveStep => {
+                if let Some(step) = self.selected.filter(|_| !self.searching()) {
+                    return self.update(Message::Remove(step));
+                }
             }
             Op::Undo => {
                 if let Some(before) = self.undo.pop() {
@@ -1165,6 +1191,8 @@ impl App {
             return Task::none();
         };
         self.search.clear(&self.engine.0);
+        // A live slot is the time to search.
+        self.search_open = true;
         let text = hint.map(|query| query.text).unwrap_or_default();
         if text.is_empty() {
             return operation::focus(SEARCH_BOX);
@@ -1319,7 +1347,7 @@ impl App {
     /// Whether a search is under way: the arrows and Enter are its, and
     /// otherwise the plan pane's.
     pub(crate) fn searching(&self) -> bool {
-        !self.search.query.is_empty() || self.search.bang().is_some()
+        self.search_open
     }
 
     /// Preloads for a plan that replaced the last one.

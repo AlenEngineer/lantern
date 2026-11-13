@@ -61,7 +61,8 @@ broadcast tally, because red is blackout's.
 
 ## Keys
 
-Typing always goes to the search box, so shortcuts are keys that don't
-type (see `crates/app/src/keys.rs`). Each button shows its key in its
-label ("Blackout · Ctrl+B"), and before the plan runs, the line under the empty search lists the keys worth
-knowing.
+Typing goes to the search box while the search is open, so shortcuts are
+keys that don't type (see `crates/app/src/keys.rs`), and each can be
+changed in Settings. A button shows its key in its label ("Blackout ·
+Ctrl+B"), and while the search is closed the middle pane lists the keys
+worth knowing.

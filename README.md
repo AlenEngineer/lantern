@@ -63,9 +63,11 @@ cargo run --release -p lantern-app
 ```
 
 Two windows open: the **dashboard** for the operator and the fullscreen
-**stage** for the audience. The dashboard has three panes: the plan on the
-left, a launcher in the middle (search box and results), and the stage on
-the right, with what the audience sees above the preview.
+**stage** for the audience. The dashboard has up to three panes: the plan
+on the left; the middle, which lists the keys until Ctrl+K opens the search
+there (search box and results); and the stage on the right, with what the
+audience sees above the preview. The stage pane shows once there's
+something on stage, lined up, or coming next in the plan.
 
 There is one screen, the same before and during the service. The plan is
 edited where it is: click a step and a strip opens under it with its name,
@@ -82,8 +84,9 @@ Results and plan steps show a thumbnail: a picture, a PDF's first page or a
 video's still (YouTube too). A passage has a book instead, and its result
 says how it starts.
 
-Typing always goes to the search box, so every shortcut is a key that
-doesn't type. Find files and Bible verses, type a reference like
+Ctrl+K opens the search, and while it's open typing goes to its box, so
+every shortcut is a key that doesn't type. Esc empties the box, and closes
+the search once it's empty. Find files and Bible verses, type a reference like
 `jn 3 16-17`, or paste a YouTube link. The lower box of the stage pane shows
 what you're looking at (a result, or a step you clicked), and otherwise the
 plan's next step: Enter shows the first, PgDn the second. A single click
@@ -101,7 +104,9 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+A | add the result you're looking at after the selected step |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
-| Esc | clear the search box |
+| Ctrl+K | open the search |
+| Esc | clear the search box; again closes the search |
+| Del | with no search, remove the selected step |
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |

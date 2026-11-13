@@ -25,6 +25,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the step or opens the plan. Ctrl+N in a plan opens **Add step** (↑ ↓
   choose the kind, Enter adds it); in the list it's still a new plan. Esc
   leaves the list for the open plan.
+- The search opens on a key, Ctrl+K, in the middle pane. Esc empties it and
+  then closes it; closed, the middle lists the keys as they're set. Typing
+  outside the search no longer goes into it.
+- The stage pane shows only once something is on stage, lined up, or coming
+  next in the plan.
+- Del removes the selected step.
 
 ### Fixed
 

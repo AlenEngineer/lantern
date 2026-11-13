@@ -1,6 +1,7 @@
-//! The keyboard. Typing always goes to the search box, so every shortcut
-//! is a key that doesn't type: Ctrl combinations, Enter, Tab, the arrows,
-//! Page Up/Down (what presentation clickers send), Escape and media keys.
+//! The keyboard. Typing goes to the search box while the search is open,
+//! so every shortcut is a key that doesn't type: Ctrl combinations, Enter,
+//! Tab, the arrows, Page Up/Down (what presentation clickers send), Escape
+//! and media keys.
 //!
 //! One table, [`ACTIONS`], names what keys do and gives each its key; the
 //! config's `[keys]` table can give any of them another ([`Keymap`]). A
@@ -52,6 +53,10 @@ pub enum Op {
     DropBang,
     /// Opens or closes the settings.
     Settings,
+    /// Opens the search, with the keyboard in its box.
+    Search,
+    /// Removes the selected step.
+    RemoveStep,
     /// Takes back the last edit of the plan.
     Undo,
 }
@@ -368,6 +373,14 @@ pub const ACTIONS: &[Action] = &[
         "Move the selected step down",
     ),
     action("settings", "ctrl+,", Op::Settings, When::Always, "Settings"),
+    action("search", "ctrl+k", Op::Search, When::Always, "Search"),
+    action(
+        "remove-step",
+        "delete",
+        Op::RemoveStep,
+        When::Unused,
+        "Remove the selected step",
+    ),
 ];
 
 /// The op a script's `press NAME` stands for: NAME is the key an action

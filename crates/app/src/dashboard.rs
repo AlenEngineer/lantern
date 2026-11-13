@@ -55,22 +55,6 @@ const FIT_SLACK: f32 = 24.0;
 const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
-/// The keys worth knowing, under the empty search before the plan runs.
-fn hints() -> String {
-    let key = keys::label;
-    format!(
-        "{} next step · {} look, again to show · double-click shows · {} add to the plan · \
-         {} {} slides · {} blackout · {} clear",
-        key(Op::Next),
-        key(Op::Enter),
-        key(Op::AddToPlan),
-        keys::label_of("prev-arrow"),
-        keys::label_of("next-arrow"),
-        key(Op::Blackout),
-        key(Op::ClearSearch),
-    )
-}
-
 impl App {
     pub(crate) fn plan_width(&self) -> f32 {
         pane_widths(self.dashboard_size.width).0
@@ -88,7 +72,18 @@ impl App {
     /// What's left for the launcher, between the panes and their seams.
     fn launcher_width(&self) -> f32 {
         let (plan, stage) = pane_widths(self.dashboard_size.width);
-        self.dashboard_size.width - plan - stage - 2.0
+        let stage = if self.stage_shown() { stage + 1.0 } else { 0.0 };
+        self.dashboard_size.width - plan - stage - 1.0
+    }
+
+    /// Whether the stage pane has anything to show: something on stage or
+    /// lined up, a blackout, or a step of the plan to come.
+    fn stage_shown(&self) -> bool {
+        self.stage.program.is_some()
+            || self.stage.preview.is_some()
+            || self.stage.blackout
+            || self.engine.0.up_next().is_some()
+            || self.engine.0.current_step().is_some()
     }
 
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
@@ -100,14 +95,12 @@ impl App {
                 .style(look::hairline(p))
         };
         let timing = self.timing();
-        let panes = row![
-            self.plan_pane(&timing),
-            seam(),
-            self.launcher(&timing),
-            seam(),
-            self.stage_pane(),
-        ]
-        .height(Fill);
+        let mut panes = row![self.plan_pane(&timing), seam(), self.launcher(&timing)];
+        // The stage pane is there once it has something to show.
+        if self.stage_shown() {
+            panes = panes.push(seam()).push(self.stage_pane());
+        }
+        let panes = panes.height(Fill);
         let window = container(panes)
             .width(Fill)
             .height(Fill)
@@ -214,21 +207,99 @@ impl App {
             .on_press(op(Op::Settings))
             .style(look::pill(p, Tone::Plain));
         header = header.push(gear);
-        let mut body = column![header, self.search_box(), self.results()]
-            .spacing(12)
-            .height(Fill);
+        // The search is here once its key opens it; until then, the keys.
+        let mut body = if self.search_open {
+            column![header, self.search_box(), self.results()]
+        } else {
+            column![header, self.key_sheet()]
+        }
+        .spacing(12)
+        .height(Fill);
         for problem in self.problems() {
             body = body.push(text(problem).size(META).color(p.error));
         }
-        // The keys, while nothing else is going on: before the plan runs
-        // and with the search empty. Mid-service they're only noise.
-        let idle = self.search.query.is_empty()
-            && self.search.bang().is_none()
-            && self.engine.0.current_step().is_none();
-        if idle {
-            body = body.push(text(hints()).size(META).color(p.on_surface_variant));
-        }
         centered(body)
+    }
+
+    /// The keys worth knowing, as they're set: what the middle shows while
+    /// the search is closed.
+    fn key_sheet(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let key = keys::label;
+        let arrows = |a: &str, b: &str| format!("{} {}", keys::label_of(a), keys::label_of(b));
+        let groups: [(&str, Vec<(String, &str)>); 3] = [
+            (
+                "Find",
+                vec![
+                    (key(Op::Search), "Search everything, or paste a link"),
+                    (key(Op::Enter), "Look at the top result; again to show it"),
+                    (key(Op::AddToPlan), "Add the result to the plan"),
+                    (key(Op::ClearSearch), "Clear the search, then close it"),
+                ],
+            ),
+            (
+                "Plan",
+                vec![
+                    (key(Op::Open), "Your plans"),
+                    (key(Op::New), "New plan; in a plan, a new step"),
+                    (
+                        arrows("pick-prev", "pick-next"),
+                        "Move through the steps, or your plans",
+                    ),
+                    (key(Op::Enter), "Show the step, or open the plan"),
+                    (
+                        format!("{} {}", key(Op::MoveUp), key(Op::MoveDown)),
+                        "Move the step",
+                    ),
+                    (key(Op::RemoveStep), "Remove the step"),
+                    (key(Op::Undo), "Undo"),
+                    (key(Op::Save), "Save"),
+                ],
+            ),
+            (
+                "Stage",
+                vec![
+                    (
+                        format!("{} {}", key(Op::Next), key(Op::Prev)),
+                        "Next and back: slide, page or step",
+                    ),
+                    (arrows("prev-arrow", "next-arrow"), "The same"),
+                    (key(Op::PlayPause), "Play or pause"),
+                    (key(Op::Blackout), "Blackout"),
+                    (key(Op::Settings), "Settings, where keys can be changed"),
+                ],
+            ),
+        ];
+        let mut sheet = column![].spacing(18);
+        for (name, rows) in groups {
+            let mut group = column![text(name).size(BODY).font(BOLD).color(p.primary)].spacing(6);
+            for (keys, what) in rows {
+                group = group.push(
+                    row![
+                        container(
+                            container(
+                                text(keys)
+                                    .size(META)
+                                    .font(MEDIUM)
+                                    .color(p.on_surface)
+                                    .wrapping(text::Wrapping::None)
+                            )
+                            .padding([3, 8])
+                            .style(look::chip(p, Tone::Plain))
+                        )
+                        .width(150),
+                        text(what).size(BODY).color(p.on_surface_variant),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                );
+            }
+            sheet = sheet.push(group);
+        }
+        container(scrolling(sheet))
+            .padding([12, 0])
+            .height(Fill)
+            .into()
     }
 
     /// The config, the index and the colours, only when something is wrong
