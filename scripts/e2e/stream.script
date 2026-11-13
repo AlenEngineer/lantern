@@ -9,7 +9,7 @@ select 7
 wait 9000
 shot 1-preview-streams
 press enter
-press space
+press ctrl+space
 wait 6000
 shot 2-on-stage-streaming
 wait 4000

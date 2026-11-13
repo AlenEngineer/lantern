@@ -23,7 +23,7 @@ lantern-source-youtube = { path = "sources/youtube" }
 lantern-source-brave = { path = "sources/brave" }
 
 # External crates. Keep this list short: every entry is something to audit.
-iced = { version = "0.14", features = ["image", "advanced", "wgpu", "tokio"] }
+iced = { version = "0.14", features = ["image", "svg", "advanced", "wgpu", "tokio"] }
 iced_video_player = "0.6"
 gstreamer = "0.23"
 gstreamer-app = "0.23"

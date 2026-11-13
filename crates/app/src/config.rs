@@ -1,6 +1,10 @@
 //! The config file: which folders to index and which Bibles to load.
 //!
 //! ```toml
+//! # Settings come before the first [[table]], or TOML files them under it.
+//! brave_api_key = "…"   # optional, for !gi image search
+//! colors = "~/.config/amane/colors.json"  # optional, see crate::palette
+//!
 //! [[folders]]
 //! path = "~/Videos"
 //! label = "Videos"      # optional
@@ -9,8 +13,6 @@
 //! lang = "es"           # "es" or "en": the language of the book names
 //! path = "~/bibles/rv1909.json"
 //! name = "RV1909"       # optional, defaults to the file name
-//!
-//! brave_api_key = "…"   # optional, for !gi image search
 //! ```
 //!
 //! `~` is the home folder, and a relative path is relative to the config
@@ -33,6 +35,9 @@ pub struct Config {
     pub bibles: Vec<BibleEntry>,
     /// The Brave Search API key that `!gi` image search needs.
     pub brave_api_key: Option<String>,
+    /// A JSON file of Material colour roles to take the dashboard's colours
+    /// from, such as one Matugen writes from the wallpaper.
+    pub colors: Option<PathBuf>,
 }
 
 /// A media folder to index.
@@ -79,7 +84,8 @@ impl Config {
             .folders
             .iter_mut()
             .map(|f| &mut f.path)
-            .chain(config.bibles.iter_mut().map(|b| &mut b.path));
+            .chain(config.bibles.iter_mut().map(|b| &mut b.path))
+            .chain(config.colors.as_mut());
         for path in paths {
             *path = resolve(path, dir, home);
         }
@@ -123,6 +129,13 @@ impl fmt::Display for Status {
                 path.display()
             ),
         }
+    }
+}
+
+impl Status {
+    /// What the dashboard should say about the config: only a failure.
+    pub fn problem(&self) -> Option<String> {
+        matches!(self, Status::Failed { .. }).then(|| self.to_string())
     }
 }
 
@@ -183,6 +196,7 @@ mod tests {
     fn paths_expand_tilde_and_resolve_against_the_config_folder() {
         let config = parse(
             r#"
+            colors = "~/.config/amane/colors.json"
             [[folders]]
             path = "~/Videos"
             label = "Videos"
@@ -205,6 +219,10 @@ mod tests {
                 PathBuf::from("/etc/cq/media"),
                 PathBuf::from("/srv/pictures"),
             ]
+        );
+        assert_eq!(
+            config.colors,
+            Some(PathBuf::from("/home/ana/.config/amane/colors.json"))
         );
         assert_eq!(config.folders[0].label.as_deref(), Some("Videos"));
         assert_eq!(config.folders[1].label, None);
