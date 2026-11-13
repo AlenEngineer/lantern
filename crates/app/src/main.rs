@@ -308,6 +308,8 @@ struct App {
     palette_error: Option<String>,
     script: Option<Script>,
     stage_window: window::Id,
+    /// The dashboard window's size, to lay out for the room there is.
+    dashboard_size: iced::Size,
     /// The stage window's mirror, built only from the engine's feed.
     stage: StageState,
     media: Stage,
@@ -386,6 +388,7 @@ impl App {
             downloads,
             script,
             stage_window,
+            dashboard_size: iced::Size::new(1280.0, 720.0),
             stage: StageState::default(),
             search: Search::default(),
             selected: None,
@@ -410,8 +413,10 @@ impl App {
             .chain(open_stage.discard())
             .chain(window::gain_focus(dashboard_window))
             .chain(operation::focus(SEARCH_BOX))
+            .chain(window::size(stage_window).map(move |size| Message::Resized(stage_window, size)))
             .chain(
-                window::size(stage_window).map(move |size| Message::Resized(stage_window, size)),
+                window::size(dashboard_window)
+                    .map(move |size| Message::Resized(dashboard_window, size)),
             );
         (app, open)
     }
@@ -830,8 +835,11 @@ impl App {
                 log(format!("window {window:?} closed, exiting"));
                 return iced::exit();
             }
-            Message::Resized(window, size) => {
-                if window == self.stage_window && self.slides.set_stage(size) {
+            Message::Resized(window, size) if window != self.stage_window => {
+                self.dashboard_size = size;
+            }
+            Message::Resized(_, size) => {
+                if self.slides.set_stage(size) {
                     self.report_slides();
                 }
             }

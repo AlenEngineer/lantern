@@ -31,6 +31,8 @@ pub const NAME_BOX: &str = "plan-name";
 const STAGE_WIDTH: f32 = 360.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
 const MONITOR_HEIGHT: f32 = 184.0;
+/// What the stage pane's estimate of its own height may be short by.
+const FIT_SLACK: f32 = 24.0;
 /// How wide a result's thumbnail is; a plan row's is smaller.
 const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
@@ -393,9 +395,39 @@ impl App {
         } else {
             self.next_section()
         };
-        // One column, so the two monitors are siblings: they share what
-        // height the rest leaves, and shrink together in a short window
-        // instead of pushing the last button off its bottom.
+        let mut upper = self.on_stage_section();
+        let mut lower = lower;
+        // The monitors (second in each section) are full height when the
+        // window has room for everything. In a shorter one they share what
+        // the rest leaves, so they shrink together instead of pushing the
+        // last button off the bottom.
+        let scene = self.stage.program.as_ref();
+        let rest = [
+            (true, 32.0 + 5.0 + 24.0 + 22.0 + 2.0 * PILL),
+            (scene.is_some(), 36.0),
+            (
+                scene.is_some_and(|s| self.slide_strip(s).is_some()),
+                STRIP_HEIGHT,
+            ),
+            (scene.is_some_and(|s| s.timed().is_some()), PILL),
+            (lower.len() > 3, 36.0),
+        ]
+        .iter()
+        .filter(|(there, _)| *there)
+        .map(|(_, height)| height)
+        .sum::<f32>()
+            + 10.0 * (upper.len() + lower.len()) as f32
+            + FIT_SLACK;
+        let roomy = rest + 2.0 * MONITOR_HEIGHT <= self.dashboard_size.height;
+        for section in [&mut upper, &mut lower] {
+            let monitor = std::mem::replace(&mut section[1], Space::new().into());
+            let slot = container(monitor).width(Fill);
+            section[1] = if roomy {
+                slot.height(MONITOR_HEIGHT).into()
+            } else {
+                slot.height(Fill).into()
+            };
+        }
         let seam = container(
             container(Space::new())
                 .height(1)
@@ -403,7 +435,7 @@ impl App {
                 .style(look::hairline(p)),
         )
         .padding([2, 0]);
-        column(self.on_stage_section())
+        column(upper)
             .push(seam)
             .extend(lower)
             .spacing(10)
