@@ -128,10 +128,9 @@ its own.
 YouTube videos download ahead of time (720p H.264) into
 `~/.cache/lantern/youtube` as soon as they enter the plan or the preview.
 The dashboard shows each video's download state. A video needed before its
-download is done (searched live, say) streams instead, a few seconds after
-you preview it, while the download goes on; the stage monitor says
-"streaming". A stream can't be scrubbed or replayed, since GStreamer can
-hang seeking one: take it again once it's downloaded. Planned videos
+download is done (searched live, say) waits for it, usually a few seconds
+longer than streaming would; it never streams, since a stream started with
+frozen frames or no sound. Planned videos
 usually finish downloading long before they're needed, so the service
 doesn't depend on the network.
 

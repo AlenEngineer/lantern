@@ -1,7 +1,6 @@
 //! YouTube videos, downloaded ahead of time with `yt-dlp` into a cache
 //! folder and played from there like a local file. A video needed before
-//! its download is done plays from a [stream](stream_url) instead, while the
-//! download goes on for next time.
+//! its download is done waits for it.
 //!
 //! [`Downloads`] runs at most one download per video id and is shared by the
 //! dashboard (which shows each video's [`Download`] state), the stage's
@@ -19,10 +18,6 @@ use lantern_engine::{Location, Resource};
 
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
-
-/// Any HLS rendition: its `manifest_url` is YouTube's HLS master playlist,
-/// which carries H.264 video and AAC audio under one URL.
-const STREAM_FORMAT: &str = "bv*[protocol=m3u8_native]";
 
 /// A YouTube video, as the link source describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,15 +142,6 @@ impl Downloads {
         }
     }
 
-    /// Fetches `video`, and returns its file if the download is done.
-    pub fn file(self: &Arc<Self>, video: &YoutubeVideo) -> Option<PathBuf> {
-        self.fetch(video);
-        match self.lock().get(&video.id) {
-            Some(Download::Ready(path)) => Some(path.clone()),
-            _ => None,
-        }
-    }
-
     /// Fetches `video` and blocks until its file is ready or it failed.
     pub fn ready(self: &Arc<Self>, video: &YoutubeVideo) -> Result<PathBuf, String> {
         self.fetch(video);
@@ -211,27 +197,6 @@ fn cache_path(dir: &Path, id: &str) -> PathBuf {
 /// so a half-written file is never played.
 fn partial_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.download.mp4"))
-}
-
-/// Where to stream `video` from: YouTube's HLS master playlist, which
-/// GStreamer plays like a file (seekable, with sound) while picking the
-/// quality the network allows. Asking `yt-dlp` takes a few seconds, and the
-/// link expires after some hours, so it is fetched each time a player is
-/// built.
-pub fn stream_url(video: &YoutubeVideo) -> Result<url::Url, String> {
-    let output = Command::new("yt-dlp")
-        .args(["-f", STREAM_FORMAT, "--print", "%(manifest_url)s"])
-        .args(["--no-playlist", "--no-warnings"])
-        .arg(&video.url)
-        .output()
-        .map_err(|err| format!("can't run yt-dlp: {err}"))?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        return Err(failure(stderr.lines(), output.status));
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().next().unwrap_or_default().trim();
-    url::Url::parse(line).map_err(|_| format!("yt-dlp gave no stream for {}", video.id))
 }
 
 /// What `yt-dlp` said went wrong: its last `ERROR:` line, or how it exited.
@@ -398,8 +363,8 @@ mod tests {
             url: "unused".into(),
         };
         assert_eq!(
-            downloads.file(&video),
-            Some(cache_path(dir.path(), "jNQXAC9IVRw"))
+            downloads.ready(&video),
+            Ok(cache_path(dir.path(), "jNQXAC9IVRw"))
         );
         assert!(!downloads.busy());
         assert!(downloads.settle(Duration::ZERO));
