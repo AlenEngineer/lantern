@@ -585,8 +585,7 @@ mod tests {
         let library = Library::start(engine.clone(), Config::default());
         let downloads = Downloads::new("/nonexistent".into());
         let mut sent = Vec::new();
-        let script =
-            "type pa\nselect 2\nclick 3\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
+        let script = "type pa\nselect 2\nclick 3\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
         Script::parse(script, Path::new(""), None).unwrap().run(
             &engine,
             &library,
