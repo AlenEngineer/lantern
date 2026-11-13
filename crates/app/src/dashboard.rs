@@ -420,6 +420,8 @@ impl App {
         let state = match (scene, blackout) {
             (_, true) => chip(p, "blackout", Tone::Danger),
             (Some(_), false) => chip(p, "● live", Tone::Live),
+            // Without a program the projector still shows the look's image.
+            (None, false) if self.look.image.is_some() => chip(p, "background", Tone::Plain),
             (None, false) => chip(p, "empty", Tone::Plain),
         };
         let mut section = column![
@@ -428,10 +430,14 @@ impl App {
         ]
         .spacing(10);
         section = section.push(match scene {
-            Some(_) if blackout => {
-                empty_monitor(p, "The projector is black. Ctrl+B brings it back.")
-            }
+            _ if blackout => empty_monitor(p, "The projector is black. Ctrl+B brings it back."),
             Some(scene) => self.monitor(scene, self.media.content(scene.id), Some(p.tertiary)),
+            // What the audience sees with nothing on: the look's image.
+            None if self.look.image.is_some() => framed_with(
+                crate::backdrop(&self.look, Space::new(), crate::Over::Nothing),
+                None,
+                2,
+            ),
             None => empty_monitor(p, "Nothing on the projector"),
         });
         if let Some(scene) = scene {
