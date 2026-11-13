@@ -269,6 +269,8 @@ enum Message {
     OpenPlan(PathBuf),
     /// The operator agreed to lose the unsaved plan.
     DiscardPlan,
+    /// Yes, replace the plan that's running.
+    LeavePlan,
     /// Back to the steps from the name editor, the open list or the question.
     ClosePlanMode,
     EditPlanName,
@@ -792,12 +794,7 @@ impl App {
                 });
                 return self.preload();
             }
-            Message::FromTemplate(path) => {
-                let started = self
-                    .plans
-                    .switch(&self.engine.0, Switch::FromTemplate(path));
-                return self.preload_if(started);
-            }
+            Message::FromTemplate(path) => return self.switch_plan(Switch::FromTemplate(path)),
             Message::SetTemplate(path, template) => {
                 if let Err(err) = self.plans.store().set_template(&path, template) {
                     log(format!("plans: {}: {err}", path.display()));
@@ -805,9 +802,10 @@ impl App {
                 // The list shows it in its new group.
                 self.plans.refresh();
             }
-            Message::OpenPlan(path) => {
-                let opened = self.plans.switch(&self.engine.0, Switch::Open(path));
-                return self.preload_if(opened);
+            Message::OpenPlan(path) => return self.switch_plan(Switch::Open(path)),
+            Message::LeavePlan => {
+                let replaced = self.plans.leave(&self.engine.0);
+                return self.preload_if(replaced);
             }
             Message::DiscardPlan => {
                 let replaced = self.plans.discard(&self.engine.0);
@@ -1019,10 +1017,7 @@ impl App {
                 }
             }
             Op::Open => self.plans.browse(),
-            Op::New => {
-                let replaced = self.plans.switch(&engine, Switch::New);
-                return self.preload_if(replaced);
-            }
+            Op::New => return self.switch_plan(Switch::New),
             Op::MoveUp | Op::MoveDown => {
                 if let Some(step) = self.selected {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
@@ -1183,6 +1178,16 @@ impl App {
             self.undo.remove(0);
         }
         self.undo.push(self.engine.0.plan());
+    }
+
+    /// Replaces the plan with `to`, asking first while the plan is running.
+    fn switch_plan(&mut self, to: Switch) -> Task<Message> {
+        if self.engine.0.current_step().is_some() {
+            self.plans.ask_to_leave(to);
+            return Task::none();
+        }
+        let replaced = self.plans.switch(&self.engine.0, to);
+        self.preload_if(replaced)
     }
 
     /// Preloads for a plan that replaced the last one.

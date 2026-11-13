@@ -55,7 +55,8 @@ impl App {
         pane = pane.push(match &self.plans.mode {
             plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
-            plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
+            plans::Mode::Confirm(switch) => confirm(p, &plan, switch, false),
+            plans::Mode::Leaving(switch) => confirm(p, &plan, switch, true),
         });
         let mut status = row![].spacing(8).align_y(Alignment::Center);
         // Readiness only when something isn't: "ready" would be noise here.
@@ -854,32 +855,39 @@ fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
     line.push(star).into()
 }
 
-fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch) -> Element<'a, Message> {
+/// Asks before `switch` replaces the plan: `leaving` a plan that's
+/// running, or else discarding one that was never saved.
+fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch, leaving: bool) -> Element<'a, Message> {
     let then = match switch {
         Switch::New => "start a new one",
         Switch::Open(_) => "open another",
         Switch::FromTemplate(_) => "start one from the template",
     };
+    let (ask, more, yes, go, no) = if leaving {
+        (
+            format!("“{}” is running. Leave it and {then}?", plan.title),
+            "What's on stage stays there. The plan is in Plans to come back to.",
+            "Leave it",
+            Message::LeavePlan,
+            "Stay",
+        )
+    } else {
+        (
+            format!("“{}” was never saved. Discard it and {then}?", plan.title),
+            "Ctrl+S saves it instead.",
+            "Discard",
+            Message::DiscardPlan,
+            "Keep it",
+        )
+    };
     column![
-        text(format!(
-            "“{}” was never saved. Discard it and {then}?",
-            plan.title
-        ))
-        .size(BODY),
-        text("Ctrl+S saves it instead.")
-            .size(META)
-            .color(p.on_surface_variant),
+        text(ask).size(BODY),
+        text(more).size(META).color(p.on_surface_variant),
         row![
+            wide(pill(p, yes, Tone::Danger, PILL_SMALL, Some(go))),
             wide(pill(
                 p,
-                "Discard",
-                Tone::Danger,
-                PILL_SMALL,
-                Some(Message::DiscardPlan)
-            )),
-            wide(pill(
-                p,
-                "Keep it",
+                no,
                 Tone::Plain,
                 PILL_SMALL,
                 Some(Message::ClosePlanMode)

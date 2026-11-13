@@ -183,6 +183,8 @@ pub enum Mode {
     Browsing(Vec<Entry>),
     /// The plan has unsaved changes and no file; asks before discarding them.
     Confirm(Switch),
+    /// The plan is running; asks before another takes its place.
+    Leaving(Switch),
 }
 
 /// The outcome of the last save, open or startup, for the operator.
@@ -326,6 +328,21 @@ impl Plans {
                 self.notice = Some(Notice::Failed(format!("No saved plan named “{name}”")));
                 false
             }
+        }
+    }
+
+    /// Asks before `to` replaces a plan that's running: one key mid-service
+    /// would otherwise take the plan away.
+    pub fn ask_to_leave(&mut self, to: Switch) {
+        self.mode = Mode::Leaving(to);
+    }
+
+    /// Goes ahead with the switch that was waiting on [`Mode::Leaving`],
+    /// as [`switch`](Self::switch) does.
+    pub fn leave(&mut self, engine: &Engine) -> bool {
+        match std::mem::replace(&mut self.mode, Mode::Steps) {
+            Mode::Leaving(to) => self.switch(engine, to),
+            _ => false,
         }
     }
 
@@ -541,6 +558,13 @@ mod tests {
         let mut plans = Plans::start(store, &engine);
         add_step(&engine);
         assert!(!plans.switch(&engine, Switch::New));
+        assert!(matches!(plans.mode, Mode::Confirm(Switch::New)));
+        plans.ask_to_leave(Switch::New);
+        assert!(!engine.plan().is_empty(), "asking replaces nothing");
+        plans.cancel();
+        assert!(!plans.leave(&engine), "nothing was waiting");
+        plans.ask_to_leave(Switch::New);
+        assert!(!plans.leave(&engine), "then the unsaved plan still asks");
         assert!(matches!(plans.mode, Mode::Confirm(Switch::New)));
         assert!(plans.discard(&engine));
         assert!(engine.plan().is_empty());
