@@ -45,6 +45,8 @@ pub enum Op {
     DropBang,
     /// Opens or closes the settings.
     Settings,
+    /// Takes back the last edit of the plan.
+    Undo,
 }
 
 enum Bind {
@@ -131,6 +133,7 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
     ("ctrl+s", Bind::Ctrl('s'), Op::Save, When::Always),
     ("ctrl+o", Bind::Ctrl('o'), Op::Open, When::Always),
     ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
+    ("ctrl+z", Bind::Ctrl('z'), Op::Undo, When::Always),
     (
         "alt+up",
         Bind::Alt(Named::ArrowUp),

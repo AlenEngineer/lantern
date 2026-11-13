@@ -100,6 +100,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Esc | clear the search box |
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
+| Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
 | Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 

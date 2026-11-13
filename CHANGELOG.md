@@ -10,10 +10,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - Templates: ☆ makes a saved plan a template; clicking it in the list
   starts a new plan with its order of service, dated today.
+- Ctrl+Z takes back the last edit of the plan: a removed, added, moved or
+  renamed step, a changed length.
 
 ### Fixed
 
 - A long plan name is cut at its edge instead of drawn over the step count.
+- Enter on a search that found nothing no longer shows what was looked at
+  before, or jumps the plan to the selected step.
+- Typing after showing a search result starts a new search instead of
+  adding to the old one.
 
 ## [0.7.0] - 2026-11-13
 

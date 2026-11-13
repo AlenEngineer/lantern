@@ -162,6 +162,8 @@ impl<T> Hash for Shared<T> {
 
 /// Two clicks on the same thing this close together are a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// How many plan edits Ctrl+Z can take back.
+const UNDO_DEPTH: usize = 50;
 
 /// What a click lands on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +324,14 @@ struct App {
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
+    /// A search result just went on stage: what's typed next starts a new
+    /// search instead of adding to the old one.
+    spent: bool,
+    /// The plan before each edit, newest last, for Ctrl+Z.
+    undo: Vec<Plan>,
+    /// The step whose fields are being typed in, so its keystrokes undo as
+    /// one edit.
+    typing: Option<StepId>,
     /// The plan step the service was at, to notice arriving at a new one.
     arrived_at: Option<StepId>,
     /// What's on stage (scene and frame) and since when, to move a still
@@ -383,6 +393,9 @@ impl App {
             hovered: None,
             drag: None,
             stepping: false,
+            spent: false,
+            undo: Vec::new(),
+            typing: None,
             arrived_at: None,
             shown_since: None,
             drafts: HashMap::new(),
@@ -617,6 +630,7 @@ impl App {
             Message::Pointer(_, false) => {
                 let dropped = self.drag.take().filter(|drag| drag.moving);
                 if let Some((drag, at)) = dropped.and_then(|d| d.landing.map(|at| (d, at))) {
+                    self.remember(None);
                     self.engine
                         .0
                         .edit_plan(|plan| plan.move_steps(&drag.carried, at));
@@ -655,7 +669,11 @@ impl App {
             Message::Type(_) if self.settings.is_some() => {}
             Message::Type(typed) => {
                 self.stepping = false;
-                let query = format!("{}{typed}", self.search.query);
+                let query = if std::mem::take(&mut self.spent) {
+                    typed
+                } else {
+                    format!("{}{typed}", self.search.query)
+                };
                 return self.complete(query);
             }
             Message::CheckPalette => self.check_palette(),
@@ -697,11 +715,13 @@ impl App {
                 if self.selected == Some(step) {
                     self.selected = None;
                 }
+                self.remember(None);
                 self.engine.0.edit_plan(|plan| plan.remove(step));
                 return self.preload();
             }
             Message::AddStep(new) => {
                 let (label, action) = new.step();
+                self.remember(None);
                 let id = self.engine.0.add(self.selected, label, action);
                 self.selected = Some(id);
                 return operation::focus(plan_edit::name_id(id));
@@ -711,15 +731,18 @@ impl App {
                 self.engine.0.clear_preview();
                 return operation::focus(plan_edit::time_id(section));
             }
-            Message::SlotSearch(id, text) => self.engine.0.edit_plan(|plan| {
-                if let Some(Step {
-                    action: Action::Live { hint, .. },
-                    ..
-                }) = plan.get_mut(id)
-                {
-                    *hint = Some(text).filter(|t| !t.trim().is_empty()).map(Query::new);
-                }
-            }),
+            Message::SlotSearch(id, text) => {
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(Step {
+                        action: Action::Live { hint, .. },
+                        ..
+                    }) = plan.get_mut(id)
+                    {
+                        *hint = Some(text).filter(|t| !t.trim().is_empty()).map(Query::new);
+                    }
+                })
+            }
             Message::PlanLook => {
                 let mut draft = self
                     .settings
@@ -729,23 +752,31 @@ impl App {
                 self.settings = Some(draft);
                 return operation::snap_to(settings::SCROLL, scrollable::RelativeOffset::START);
             }
-            Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
-                if let Some(step) = plan.get_mut(id) {
-                    step.label = label;
-                }
-            }),
-            Message::SetAdvance(id, on) => self.engine.0.edit_plan(|plan| {
-                if let Some(step) = plan.get_mut(id) {
-                    step.advance = on;
-                }
-            }),
+            Message::Rename(id, label) => {
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(step) = plan.get_mut(id) {
+                        step.label = label;
+                    }
+                })
+            }
+            Message::SetAdvance(id, on) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(step) = plan.get_mut(id) {
+                        step.advance = on;
+                    }
+                })
+            }
             Message::Length(id, typed) => {
                 if let Some(value) = length::parse(&typed) {
+                    self.remember(Some(id));
                     self.engine.0.edit_plan(|plan| set_length(plan, id, value));
                 }
                 self.drafts.insert(id, typed);
             }
             Message::Move(id, by) => {
+                self.remember(None);
                 self.engine.0.edit_plan(|plan| {
                     if let Some(at) = plan.position(id) {
                         plan.move_to(id, at.saturating_add_signed(by));
@@ -809,9 +840,17 @@ impl App {
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
         self.stepping = false;
+        // What was searched is on stage: typing starts the next search.
+        let fresh = std::mem::take(&mut self.spent)
+            .then(|| typed_into(&self.search.query, &query))
+            .flatten();
+        let restarted = fresh.is_some();
         let had_bang = self.search.bang().is_some();
-        let edit = self.search.edit(query, &self.engine.0);
+        let edit = self.search.edit(fresh.unwrap_or(query), &self.engine.0);
         let searched = self.searched(edit);
+        if restarted {
+            return Task::batch([searched, operation::move_cursor_to_end(SEARCH_BOX)]);
+        }
         // A bang just became the chip: the box got shorter under the cursor.
         if !had_bang && self.search.bang().is_some() {
             return Task::batch([searched, operation::move_cursor_to_end(SEARCH_BOX)]);
@@ -852,8 +891,9 @@ impl App {
                         engine.preview(first);
                         return self.scroll_to_pick();
                     }
-                    // Still searching: there's nothing new to take yet.
-                    if self.search.live != Live::Idle {
+                    // Nothing found, or still searching: Enter has nothing
+                    // to show, and must not show what was looked at before.
+                    if self.search.live != Live::Idle || !self.search.query.trim().is_empty() {
                         return Task::none();
                     }
                 }
@@ -870,6 +910,7 @@ impl App {
                 });
                 if let Some(step) = cued {
                     self.selected = None;
+                    self.spent = !self.search.query.is_empty();
                     if let Err(err) = engine.go_to(step.id) {
                         log(format!("dashboard: {err}"));
                     }
@@ -881,6 +922,7 @@ impl App {
                 if engine.take() {
                     self.search.unpick();
                     self.stepping = true;
+                    self.spent = !self.search.query.is_empty();
                 }
             }
             Op::AddToPlan => {
@@ -895,6 +937,7 @@ impl App {
                         .or_else(|| self.search.first())
                 };
                 if let Some(resource) = resource {
+                    self.remember(None);
                     self.selected = Some(engine.add_resource(self.selected, &resource));
                     return self.preload();
                 }
@@ -943,6 +986,16 @@ impl App {
             }
             Op::Save => {
                 self.plans.save(&engine);
+            }
+            Op::Undo => {
+                if let Some(before) = self.undo.pop() {
+                    self.typing = None;
+                    self.drafts.clear();
+                    engine.edit_plan(|plan| *plan = before);
+                    let plan = engine.plan();
+                    self.selected = self.selected.filter(|id| plan.get(*id).is_some());
+                    return self.preload();
+                }
             }
             Op::Open => self.plans.browse(),
             Op::New => {
@@ -1098,9 +1151,25 @@ impl App {
         ])
     }
 
+    /// Keeps the plan as it is, before an edit, for Ctrl+Z. Keystrokes in
+    /// one step's fields (`typing`) are kept once, so they undo together.
+    fn remember(&mut self, typing: Option<StepId>) {
+        if typing.is_some() && typing == self.typing {
+            return;
+        }
+        self.typing = typing;
+        if self.undo.len() == UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+        self.undo.push(self.engine.0.plan());
+    }
+
     /// Preloads for a plan that replaced the last one.
     fn preload_if(&mut self, replaced: bool) -> Task<Message> {
         if replaced {
+            // Ctrl+Z never reaches back into the plan that was open before.
+            self.undo.clear();
+            self.typing = None;
             self.preload()
         } else {
             Task::none()
@@ -1369,6 +1438,29 @@ impl App {
 }
 
 /// Sets a section's budget or a step's length.
+/// What was typed into `old` to make `new`: the text between what the two
+/// share at the start and at the end. `None` when nothing was added to a
+/// box that had text, as when deleting.
+fn typed_into(old: &str, new: &str) -> Option<String> {
+    if old.is_empty() || new.len() <= old.len() {
+        return None;
+    }
+    let start: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    let end: usize = old[start..]
+        .chars()
+        .rev()
+        .zip(new[start..].chars().rev())
+        .take_while(|(a, b)| a == b)
+        .map(|(a, _)| a.len_utf8())
+        .sum();
+    (start + end == old.len()).then(|| new[start..new.len() - end].to_string())
+}
+
 fn set_length(plan: &mut Plan, id: StepId, value: Option<Duration>) {
     let Some(step) = plan.get_mut(id) else { return };
     match &mut step.action {
@@ -1567,5 +1659,27 @@ fn move_stage(output: &str) {
             on.as_deref().unwrap_or("no screen yet")
         )),
         Err(why) => log(format!("outputs: can't put the stage on {output}: {why}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::typed_into;
+
+    #[test]
+    fn typing_after_a_show_keeps_only_what_was_typed() {
+        let typed = |old, new| typed_into(old, new);
+        assert_eq!(typed("jn 3 16", "jn 3 16s").as_deref(), Some("s"));
+        assert_eq!(typed("jn 3 16", "sjn 3 16").as_deref(), Some("s"));
+        assert_eq!(typed("jn 3 16", "jn sal 3 16").as_deref(), Some("sal "));
+        assert_eq!(typed("amén", "aménñ").as_deref(), Some("ñ"));
+        assert_eq!(typed("aa", "aaa").as_deref(), Some("a"));
+        assert_eq!(
+            typed("jn 3 16", "jn 3 1"),
+            None,
+            "deleting edits the old search"
+        );
+        assert_eq!(typed("", "s"), None, "an empty box has nothing to replace");
+        assert_eq!(typed("jn 3", "salmo 23"), None, "replaced, not added to");
     }
 }
