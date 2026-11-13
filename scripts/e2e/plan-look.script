@@ -1,0 +1,22 @@
+# A plan with its own stage look. Run with LANTERN_CONFIG on a copy of
+# scripts/e2e/config.toml in the same folder: saving the settings writes it.
+wait 2500
+rename Santa Cena
+press ctrl+s
+text "Porque de tal manera amó Dios al mundo"
+wait 500
+shot 1-default-look
+plan-look #5a1830
+wait 400
+shot 2-editing-this-plan
+press ctrl+s
+wait 800
+press escape
+wait 400
+shot 3-its-own-look
+press ctrl+n
+wait 600
+shot 4-new-plan-default
+open Santa Cena
+wait 600
+shot 5-reopened-own-look

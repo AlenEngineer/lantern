@@ -10,8 +10,7 @@ window). Each item says what it needs from each side.
 Done: one stage look for the whole app (Settings → Stage, `[stage]` in the
 config): background colour and image, text colour, font, and text set as
 large as fits between a smallest and largest size, measured by the
-renderer at the real size. The `Look` type lives in the stage crate, ready
-to be carried by a plan. Text that still doesn't fit is split into more
+renderer at the real size. A plan can carry its own look (`Plan::look`). Text that still doesn't fit is split into more
 slides. Still to do below.
 
 **Themes with layers.** *(background colour and image done, app-wide)* A stage theme is a stack of layers, drawn bottom to

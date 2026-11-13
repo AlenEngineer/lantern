@@ -3,6 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use lantern_resource::{Query, Resource};
+use lantern_showman::Look;
 use serde::{Deserialize, Serialize};
 
 /// Errors loading or saving a plan.
@@ -96,6 +97,10 @@ pub struct Plan {
     steps: Vec<Step>,
     #[serde(default)]
     next_id: u64,
+    /// How the stage looks while this plan runs; `None` uses the app's
+    /// default look. Saved with the plan, so it looks the same anywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
 }
 
 impl Default for Plan {
@@ -112,6 +117,7 @@ impl Plan {
             title: title.into(),
             steps: Vec::new(),
             next_id: 0,
+            look: None,
         }
     }
 
@@ -352,6 +358,20 @@ mod tests {
         let mut repaired = Plan::from_json(&stale).unwrap();
         let id = repaired.push("New", Action::Note);
         assert_eq!(id, StepId(2));
+    }
+
+    #[test]
+    fn a_plan_keeps_its_own_look_and_old_files_use_the_default() {
+        let mut plan = Plan::new("Santa Cena");
+        assert!(!plan.to_json().contains("look"), "no look, nothing written");
+        plan.look = Some(Look {
+            background: lantern_showman::Rgb([0x30, 0x10, 0x10]),
+            ..Look::default()
+        });
+        let back = Plan::from_json(&plan.to_json()).unwrap();
+        assert_eq!(back.look, plan.look);
+        let old = Plan::from_json(r#"{"title": "Old", "steps": []}"#).unwrap();
+        assert_eq!(old.look, None);
     }
 
     #[test]
