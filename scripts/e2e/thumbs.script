@@ -1,0 +1,12 @@
+# Thumbnails: results and plan rows show a small picture of each item, an
+# image, a PDF's first page, a video's still, a passage's first slide.
+add fixtures/image.png
+add fixtures/pages.pdf
+add fixtures/video.mp4
+type !b juan 3:16
+wait 800
+press ctrl+a
+press escape
+type e
+wait 3000
+shot 1-results-and-plan

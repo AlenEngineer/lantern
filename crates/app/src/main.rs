@@ -25,6 +25,7 @@ mod script;
 mod search;
 mod settings;
 mod stage;
+mod thumbs;
 mod youtube;
 
 use std::collections::HashMap;
@@ -240,6 +241,8 @@ struct App {
     palette: Palette,
     /// How slide text is split to fit the stage.
     slides: fit::Splitter,
+    /// Thumbnails for results and plan steps.
+    thumbs: thumbs::Thumbs,
     /// The roles file the palette follows, if the config names one.
     colors: Option<palette::Source>,
     /// Why the roles file couldn't be read, while it can't.
@@ -296,6 +299,7 @@ impl App {
             palette: Palette::default(),
             colors: config.colors.clone().map(palette::Source::new),
             slides: fit::Splitter::new(&config.stage),
+            thumbs: thumbs::Thumbs::start(),
             config,
             settings: None,
             home: config::env("HOME").map(PathBuf::from),
@@ -962,7 +966,7 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
         }
-        if self.downloads.0.busy() || self.library.0.indexing() {
+        if self.downloads.0.busy() || self.library.0.indexing() || self.thumbs.busy() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
         }

@@ -13,7 +13,9 @@ use lantern_engine::{
     Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
 };
 
-use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
+use crate::dashboard::{
+    NAME_BOX, STEP_THUMB, level_tone, op, pill, scrolling, single_line, unit, wide,
+};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
@@ -372,8 +374,13 @@ impl App {
         if let Some(detail) = detail {
             label = label.push(single_line(detail).size(META).color(detail_color));
         }
+        let picture: Element<'_, Message> = match &step.action {
+            Action::Show { resource } => self.thumbnail(resource, STEP_THUMB),
+            _ => Space::new().width(STEP_THUMB).into(),
+        };
         let line = row![
             text(marker).size(META).color(label_color).width(16),
+            picture,
             container(label).width(Fill).clip(true),
             text(self.step_length(step))
                 .size(META)
