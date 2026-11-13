@@ -57,6 +57,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Live slot, Black and Note rows have a picture like the others (an icon,
   or black), no longer repeat their name underneath ("Note / note"), and
   their empty length box says "min".
+- The plan pane says "Saved “Domingo”" instead of the file's name, and the
+  plans list no longer shows its folder's full path.
 
 ## [0.7.0] - 2026-11-13
 
