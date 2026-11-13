@@ -17,6 +17,8 @@ use lantern_engine::{Engine, Plan};
 pub struct Store {
     dir: PathBuf,
     last: PathBuf,
+    /// Where the side panes' widths are kept.
+    layout: PathBuf,
 }
 
 /// A saved plan, as the open list shows it.
@@ -44,7 +46,25 @@ impl Store {
         Store {
             dir: data.join("plans"),
             last: data.join("last-plan"),
+            layout: data.join("layout"),
         }
+    }
+
+    /// The side panes' widths as the operator dragged them, plan then
+    /// stage; `None` for one left as it comes.
+    pub fn layout(&self) -> (Option<f32>, Option<f32>) {
+        parse_layout(&std::fs::read_to_string(&self.layout).unwrap_or_default())
+    }
+
+    /// Keeps the side panes' widths for the next start.
+    pub fn set_layout(&self, plan: Option<f32>, stage: Option<f32>) -> io::Result<()> {
+        if let Some(dir) = self.layout.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let line = |name: &str, width: Option<f32>| {
+            width.map_or(String::new(), |w| format!("{name}={}\n", w.round()))
+        };
+        std::fs::write(&self.layout, line("plan", plan) + &line("stage", stage))
     }
 
     /// Every `.json` file in the folder, newest first. A missing folder is empty.
@@ -113,6 +133,19 @@ impl Store {
         let path = std::fs::read_to_string(&self.last).ok()?;
         Some(PathBuf::from(path.trim_end_matches('\n')))
     }
+}
+
+/// `plan=320` and `stage=300` lines, either or neither; anything else is
+/// skipped.
+fn parse_layout(text: &str) -> (Option<f32>, Option<f32>) {
+    let width = |name: &str| {
+        text.lines()
+            .filter_map(|line| line.split_once('='))
+            .find(|(key, _)| key.trim() == name)
+            .and_then(|(_, value)| value.trim().parse::<f32>().ok())
+            .filter(|width| width.is_finite() && *width > 0.0)
+    };
+    (width("plan"), width("stage"))
 }
 
 /// Today's date, `2026-11-15`, in local time: the system's `date` when it
@@ -544,6 +577,20 @@ mod tests {
         assert!(engine.plan().is_empty());
         assert!(matches!(plans.mode, Mode::Browsing(_)));
         assert!(store.last().is_none(), "nothing to reopen");
+    }
+
+    #[test]
+    fn dragged_pane_widths_are_kept_for_the_next_start() {
+        let (_data, store, _engine) = setup();
+        assert_eq!(store.layout(), (None, None));
+        store.set_layout(Some(300.4), None).unwrap();
+        assert_eq!(store.layout(), (Some(300.0), None));
+        store.set_layout(Some(260.0), Some(312.0)).unwrap();
+        assert_eq!(store.layout(), (Some(260.0), Some(312.0)));
+        assert_eq!(
+            parse_layout("stage = 280\nnonsense\nplan=-4"),
+            (None, Some(280.0))
+        );
     }
 
     #[test]

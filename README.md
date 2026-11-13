@@ -67,7 +67,9 @@ Two windows open: the **dashboard** for the operator and the fullscreen
 on the left; the middle, which lists the keys until Ctrl+K opens the search
 there (search box and results); and the stage on the right, with what the
 audience sees above the preview. The stage pane shows once there's
-something on stage, lined up, or coming next in the plan.
+something on stage, lined up, or coming next in the plan. Drag the line
+between two panes to make the plan or the stage pane narrower or wider; a
+double click on it lets the pane size itself again. The widths are kept.
 
 There is one screen, the same before and during the service. The plan is
 edited where it is: the selected step's row carries small buttons to rename

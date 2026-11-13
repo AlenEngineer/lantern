@@ -28,7 +28,7 @@ const BANG_FIELD: f32 = 80.0;
 pub const SCROLL: &str = "settings-body";
 const SAMPLE_WIDTH: f32 = 384.0;
 /// The list of the settings' parts, and the most a part's fields spread.
-const CATEGORIES: f32 = 170.0;
+const CATEGORIES: f32 = 132.0;
 const PART_WIDTH: f32 = 640.0;
 
 /// The settings as they're being edited.
