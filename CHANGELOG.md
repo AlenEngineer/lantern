@@ -17,6 +17,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   plans. A new plan starts on its name. **‹** beside the name goes back to
   the list, and **Add step** at the end of the plan replaces the four
   buttons at the bottom.
+- Keys can be changed: a **Keys** section in Settings, or `[keys]` in the
+  config (`new = "ctrl+t"`). Buttons, tooltips and hints show the keys in
+  use.
 
 ### Fixed
 

@@ -9,6 +9,7 @@ use iced::widget::{Space, button, column, container, row, text, text_input, tool
 use iced::{Alignment, Element, Fill};
 use lantern_engine::{Action, Kind, Plan, Step, StepId};
 
+use crate::keys::{self, Op};
 use crate::look::{self, BODY, META, Tone};
 use crate::palette::Palette;
 use crate::{App, Message, length};
@@ -94,7 +95,7 @@ impl App {
                 line.push(self.length_field(id, step.estimate, hint, format!("step-length-{id}")))
             }
         };
-        let small = |label: &'static str, about: &'static str, message| {
+        let small = |label: &'static str, about: String, message| {
             tooltip(
                 button(text(label).size(META).color(p.primary))
                     .padding([6, 8])
@@ -137,9 +138,17 @@ impl App {
             line = line.push(Space::new().width(Fill));
         }
         line = line
-            .push(small("↑", "Move up · Alt+↑", Message::Move(id, -1)))
-            .push(small("↓", "Move down · Alt+↓", Message::Move(id, 1)))
-            .push(small("✕", "Remove", Message::Remove(id)));
+            .push(small(
+                "↑",
+                keys::with_key("Move up", Op::MoveUp),
+                Message::Move(id, -1),
+            ))
+            .push(small(
+                "↓",
+                keys::with_key("Move down", Op::MoveDown),
+                Message::Move(id, 1),
+            ))
+            .push(small("✕", "Remove".into(), Message::Remove(id)));
         let strip = column![name.width(Fill), line].spacing(4);
         container(strip)
             .padding(iced::Padding::default().left(24.0).right(4.0).bottom(4.0))
@@ -206,9 +215,12 @@ pub fn insertion_mark(p: Palette, indent: f32, words: bool) -> Element<'static, 
     .align_y(Alignment::Center);
     if words {
         mark = mark.push(
-            text("Ctrl+A adds the result here")
-                .size(META)
-                .color(p.primary),
+            text(format!(
+                "{} adds the result here",
+                keys::label(Op::AddToPlan)
+            ))
+            .size(META)
+            .color(p.primary),
         );
     }
     column![mark]

@@ -3,6 +3,7 @@
 //! and reindexes, and the colours reload. Path fields suggest what's on
 //! disk as they're typed (see [`crate::paths`]).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use iced::widget::{Space, button, column, row, text, text_input};
@@ -13,7 +14,7 @@ use lantern_engine::{Look, Rgb, fold};
 use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
 use crate::dashboard::{chip, pill, scrolling, wide};
 use crate::fit;
-use crate::keys::Op;
+use crate::keys::{self, Keymap, Op};
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::outputs::Output;
 use crate::palette::Palette;
@@ -52,6 +53,8 @@ pub struct Draft {
     home: Option<PathBuf>,
     /// The path field being typed in, and what it could become.
     suggesting: Option<(Field, Vec<Suggestion>)>,
+    /// The key of each of `keys::ACTIONS`, as typed (`ctrl+n`).
+    keys: Vec<String>,
 }
 
 /// Which look the stage section edits.
@@ -196,6 +199,8 @@ pub enum Edit {
     RemoveBible(usize),
     BraveKey(String),
     Colors(String),
+    /// The key of action N of `keys::ACTIONS`.
+    Key(usize, String),
     Background(String),
     StageImage(String),
     /// Put the stage on this screen (`None`: wherever the compositor puts it).
@@ -254,6 +259,13 @@ impl Draft {
             notice: None,
             home: home.map(Path::to_path_buf),
             suggesting: None,
+            // Keys the config gets wrong show as the usual ones.
+            keys: {
+                let map = Keymap::with(&config.keys).unwrap_or_else(|_| Keymap::defaults());
+                (0..keys::ACTIONS.len())
+                    .map(|at| map.bind(at).written())
+                    .collect()
+            },
         }
     }
 
@@ -378,6 +390,11 @@ impl Draft {
             }
             Edit::BraveKey(text) => self.brave_key = text,
             Edit::Colors(text) => self.colors = text,
+            Edit::Key(at, text) => {
+                if let Some(key) = self.keys.get_mut(at) {
+                    *key = text;
+                }
+            }
             Edit::Scope(scope) => self.scope = scope,
             Edit::Output(output) => self.output = output,
             Edit::OwnLook => {
@@ -448,7 +465,16 @@ impl Draft {
             }
         }
         let stage = self.stage.look(&|text: &str| path(text))?;
+        // An emptied field goes back to the usual key.
+        let typed: BTreeMap<String, String> = keys::ACTIONS
+            .iter()
+            .zip(&self.keys)
+            .filter(|(_, key)| !key.trim().is_empty())
+            .map(|(action, key)| (action.name.to_string(), key.clone()))
+            .collect();
+        let keys = Keymap::with(&typed)?.changed();
         Ok(Config {
+            keys,
             brave_api_key: optional(&self.brave_key),
             colors: optional(&self.colors).map(|c| path(&c)),
             stage_output: self.output.clone(),
@@ -545,7 +571,9 @@ impl App {
             text("Settings").size(HEADING).font(BOLD).color(p.primary),
             chip(p, &shown_file, Tone::Plain),
             Space::new().width(Fill),
-            text("Esc closes").size(META).color(p.on_surface_variant),
+            text(format!("{} closes", keys::label(Op::ClearSearch)))
+                .size(META)
+                .color(p.on_surface_variant),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
@@ -762,6 +790,20 @@ impl App {
         stage =
             stage.push(row![Space::new().width(LABEL_FIELD), self.stage_sample(draft)].spacing(8));
 
+        let mut keys = column![section(
+            p,
+            "Keys",
+            "What each key does. Write a key like ctrl+n, alt+up, f9 or pagedown; a letter needs ctrl or alt, or it would type. Empty goes back to the usual key."
+        )]
+        .spacing(6);
+        for (at, (action, key)) in keys::ACTIONS.iter().zip(&draft.keys).enumerate() {
+            keys = keys.push(line(row![
+                text(action.about).size(BODY).width(Fill),
+                field(p, action.key, key, move |text| Edit::Key(at, text))
+                    .width(SMALL_FIELD + 30.0),
+            ]));
+        }
+
         // Opened for a plan's look, the stage comes first.
         let output = column![
             section(
@@ -773,9 +815,9 @@ impl App {
         ]
         .spacing(6);
         let sections = if draft.scope == Scope::ThisPlan {
-            column![stage, output, folders, bibles, images, colors]
+            column![stage, output, folders, bibles, images, colors, keys]
         } else {
-            column![output, folders, bibles, stage, images, colors]
+            column![output, folders, bibles, stage, images, colors, keys]
         };
         let body = scrolling(sections.spacing(24)).id(SCROLL);
         let mut footer = row![].spacing(8).align_y(Alignment::Center);
@@ -794,7 +836,7 @@ impl App {
         footer = footer
             .push(pill(
                 p,
-                "Close · Esc",
+                &keys::with_key("Close", Op::ClearSearch),
                 Tone::Plain,
                 PILL,
                 Some(Message::Key {
@@ -804,7 +846,7 @@ impl App {
             ))
             .push(pill(
                 p,
-                "Save · Ctrl+S",
+                &keys::with_key("Save", Op::Save),
                 Tone::Selected,
                 PILL,
                 Some(Message::SaveSettings),

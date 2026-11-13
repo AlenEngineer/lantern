@@ -107,6 +107,20 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
+### Changing keys
+
+Every key in the table can be another: Settings has a **Keys** section, one
+field per action. Write a key like `ctrl+t`, `alt+up`, `f9` or `pagedown`;
+a letter needs `ctrl` or `alt`, or it would type. Buttons and hints show
+the keys you chose. In `config.toml` it's the `[keys]` table, holding only
+what differs from the usual:
+
+```toml
+[keys]
+new = "ctrl+t"
+blackout = "f9"
+```
+
 ### Running a plan
 
 The plan moves when you move it: PgDn (or a clicker) goes to the next

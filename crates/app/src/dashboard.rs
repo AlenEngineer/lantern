@@ -12,7 +12,7 @@ use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
 
 use crate::fit;
-use crate::keys::Op;
+use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
@@ -56,8 +56,20 @@ const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
 /// The keys worth knowing, under the empty search before the plan runs.
-const HINTS: &str = "PgDn next step · Enter look, again to show · double-click shows · Ctrl+A add to the plan · \
-                     ← → slides · Ctrl+B blackout · Esc clear";
+fn hints() -> String {
+    let key = keys::label;
+    format!(
+        "{} next step · {} look, again to show · double-click shows · {} add to the plan · \
+         {} {} slides · {} blackout · {} clear",
+        key(Op::Next),
+        key(Op::Enter),
+        key(Op::AddToPlan),
+        keys::label_of("prev-arrow"),
+        keys::label_of("next-arrow"),
+        key(Op::Blackout),
+        key(Op::ClearSearch),
+    )
+}
 
 impl App {
     pub(crate) fn plan_width(&self) -> f32 {
@@ -214,7 +226,7 @@ impl App {
             && self.search.bang().is_none()
             && self.engine.0.current_step().is_none();
         if idle {
-            body = body.push(text(HINTS).size(META).color(p.on_surface_variant));
+            body = body.push(text(hints()).size(META).color(p.on_surface_variant));
         }
         centered(body)
     }
@@ -322,7 +334,8 @@ impl App {
                 "No source answers !{bang}. Clear the box to see the bangs."
             )),
             (Scope::Bang(bang), Live::OnEnter) => Some(format!(
-                "Press Enter to search {}.",
+                "Press {} to search {}.",
+                keys::label(Op::Enter),
                 bang.sources.join(", ")
             )),
             (_, Live::Waiting(_) | Live::Running(_)) => Some("Still searching…".into()),
@@ -514,7 +527,13 @@ impl App {
                 .into(),
         ];
         section.push(match scene {
-            _ if blackout => empty_monitor(p, "The projector is black. Ctrl+B brings it back."),
+            _ if blackout => empty_monitor(
+                p,
+                &format!(
+                    "The projector is black. {} brings it back.",
+                    keys::label(Op::Blackout)
+                ),
+            ),
             Some(scene) => self.monitor(scene, self.media.content(scene.id), Some(p.tertiary)),
             // What the audience sees with nothing on: the look's image.
             None if self.look.image.is_some() => framed_with(
@@ -534,15 +553,15 @@ impl App {
             }
         }
         let blackout_label = if blackout {
-            "Blackout on · Ctrl+B"
+            keys::with_key("Blackout on", Op::Blackout)
         } else {
-            "Blackout · Ctrl+B"
+            keys::with_key("Blackout", Op::Blackout)
         };
         section.push(
             row![
                 wide(pill(
                     p,
-                    blackout_label,
+                    &blackout_label,
                     Tone::Danger,
                     PILL,
                     Some(Message::Key {
@@ -601,22 +620,22 @@ impl App {
                 _ => false,
             };
         let add = if in_plan {
-            "Add again · Ctrl+A"
+            keys::with_key("Add again", Op::AddToPlan)
         } else {
-            "Add · Ctrl+A"
+            keys::with_key("Add", Op::AddToPlan)
         };
         section.push(
             row![
                 wide(pill(
                     p,
-                    "Show now · Enter",
+                    &keys::with_key("Show now", Op::Enter),
                     Tone::Selected,
                     PILL,
                     has.then_some(op(Op::Take))
                 )),
                 wide(pill(
                     p,
-                    add,
+                    &add,
                     Tone::Plain,
                     PILL,
                     has.then_some(op(Op::AddToPlan))
@@ -694,8 +713,11 @@ impl App {
     /// only then the plan's next step.
     pub(crate) fn next_label(&self, has_next_step: bool) -> (String, bool) {
         match self.stage.program.as_ref().filter(|s| s.has_next_frame()) {
-            Some(scene) => (format!("Next {} · PgDn", unit(&scene.resource)), true),
-            None => ("Next step · PgDn".into(), has_next_step),
+            Some(scene) => (
+                keys::with_key(&format!("Next {}", unit(&scene.resource)), Op::Next),
+                true,
+            ),
+            None => (keys::with_key("Next step", Op::Next), has_next_step),
         }
     }
 
@@ -1103,7 +1125,7 @@ fn bang_row(p: Palette, bang: Bang) -> Element<'static, Message> {
     .align_y(Alignment::Center);
     if bang.on_request {
         line = line.push(
-            text("Enter to search")
+            text(format!("{} to search", keys::label(Op::Enter)))
                 .size(META)
                 .color(p.on_surface_variant)
                 .wrapping(text::Wrapping::None),

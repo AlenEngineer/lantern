@@ -2,8 +2,15 @@
 //! is a key that doesn't type: Ctrl combinations, Enter, Tab, the arrows,
 //! Page Up/Down (what presentation clickers send), Escape and media keys.
 //!
-//! One table, [`KEYS`], maps keys to [`Op`]s for the keyboard and for a
-//! script's `press NAME`, so a script presses exactly what a person would.
+//! One table, [`ACTIONS`], names what keys do and gives each its key; the
+//! config's `[keys]` table can give any of them another ([`Keymap`]). A
+//! script's `press NAME` goes by the table's own keys, so a script presses
+//! what a person would with no config.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::str::FromStr;
+use std::sync::RwLock;
 
 use iced::event;
 use iced::keyboard::{self, Key, key::Named};
@@ -49,11 +56,151 @@ pub enum Op {
     Undo,
 }
 
-enum Bind {
+/// A key with its modifiers, as the config writes it (`ctrl+n`, `alt+up`,
+/// `pagedown`) and as a button shows it (`Ctrl+N`, `Alt+↑`, `PgDn`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bind {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+    key: Pressed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pressed {
+    Char(char),
     Named(Named),
-    Ctrl(char),
-    CtrlNamed(Named),
-    Alt(Named),
+}
+
+/// The keys with a name: how the config writes each, and how a label does.
+const NAMED: &[(&str, Named, &str)] = &[
+    ("enter", Named::Enter, "Enter"),
+    ("tab", Named::Tab, "Tab"),
+    ("up", Named::ArrowUp, "↑"),
+    ("down", Named::ArrowDown, "↓"),
+    ("left", Named::ArrowLeft, "←"),
+    ("right", Named::ArrowRight, "→"),
+    ("pageup", Named::PageUp, "PgUp"),
+    ("pagedown", Named::PageDown, "PgDn"),
+    ("escape", Named::Escape, "Esc"),
+    ("backspace", Named::Backspace, "Backspace"),
+    ("delete", Named::Delete, "Del"),
+    ("space", Named::Space, "Space"),
+    ("home", Named::Home, "Home"),
+    ("end", Named::End, "End"),
+    ("insert", Named::Insert, "Ins"),
+    ("playpause", Named::MediaPlayPause, "Play"),
+    ("f1", Named::F1, "F1"),
+    ("f2", Named::F2, "F2"),
+    ("f3", Named::F3, "F3"),
+    ("f4", Named::F4, "F4"),
+    ("f5", Named::F5, "F5"),
+    ("f6", Named::F6, "F6"),
+    ("f7", Named::F7, "F7"),
+    ("f8", Named::F8, "F8"),
+    ("f9", Named::F9, "F9"),
+    ("f10", Named::F10, "F10"),
+    ("f11", Named::F11, "F11"),
+    ("f12", Named::F12, "F12"),
+];
+
+impl FromStr for Bind {
+    type Err = String;
+
+    /// `ctrl+n`, `alt+up`, `ctrl+shift+s`, `pagedown`. A letter alone is
+    /// refused: it would type.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let wrong = || {
+            format!(
+                "“{}” isn't a key like ctrl+n, alt+up or pagedown",
+                text.trim()
+            )
+        };
+        let lower = text.trim().to_lowercase();
+        // `ctrl++` and a lone `+` end in the key `+`.
+        let (mods, key) = match lower.strip_suffix('+') {
+            Some(mods) if !lower.is_empty() => (mods.trim_end_matches('+'), "+"),
+            _ => match lower.rsplit_once('+') {
+                Some((mods, key)) => (mods, key),
+                None => ("", lower.as_str()),
+            },
+        };
+        let mut bind = Bind {
+            ctrl: false,
+            alt: false,
+            shift: false,
+            key: Pressed::Char(' '),
+        };
+        for word in mods.split('+').filter(|m| !m.is_empty()) {
+            match word.trim() {
+                "ctrl" | "control" | "cmd" => bind.ctrl = true,
+                "alt" => bind.alt = true,
+                "shift" => bind.shift = true,
+                _ => return Err(wrong()),
+            }
+        }
+        let key = key.trim();
+        let mut chars = key.chars();
+        bind.key = match (chars.next(), chars.next()) {
+            (Some(c), None) => Pressed::Char(c),
+            _ => match NAMED.iter().find(|(name, ..)| *name == key) {
+                Some((_, named, _)) => Pressed::Named(*named),
+                None if key == "esc" => Pressed::Named(Named::Escape),
+                None => return Err(wrong()),
+            },
+        };
+        if matches!(bind.key, Pressed::Char(_)) && !bind.ctrl && !bind.alt {
+            return Err(format!(
+                "“{}” alone would type: add ctrl or alt",
+                text.trim()
+            ));
+        }
+        Ok(bind)
+    }
+}
+
+impl Bind {
+    fn parts(&self, ctrl: &str, alt: &str, shift: &str, key: String) -> String {
+        let mut parts = Vec::new();
+        if self.ctrl {
+            parts.push(ctrl.to_string());
+        }
+        if self.alt {
+            parts.push(alt.to_string());
+        }
+        if self.shift {
+            parts.push(shift.to_string());
+        }
+        parts.push(key);
+        parts.join("+")
+    }
+
+    fn named(named: Named) -> (&'static str, &'static str) {
+        NAMED
+            .iter()
+            .find(|(_, n, _)| *n == named)
+            .map_or(("?", "?"), |(written, _, label)| (*written, *label))
+    }
+
+    /// As the config writes it: `ctrl+n`.
+    pub fn written(&self) -> String {
+        let key = match self.key {
+            Pressed::Char(c) => c.to_string(),
+            Pressed::Named(named) => Bind::named(named).0.to_string(),
+        };
+        self.parts("ctrl", "alt", "shift", key)
+    }
+}
+
+impl fmt::Display for Bind {
+    /// As a button shows it: `Ctrl+N`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let key = match self.key {
+            Pressed::Char(c) => c.to_uppercase().to_string(),
+            Pressed::Named(named) => Bind::named(named).1.to_string(),
+        };
+        f.write_str(&self.parts("Ctrl", "Alt", "Shift", key))
+    }
 }
 
 /// When a key counts while the search box has focus, which is nearly always.
@@ -69,105 +216,299 @@ enum When {
     EmptySearch,
 }
 
-/// Every key, by the name a script's `press` uses.
-const KEYS: &[(&str, Bind, Op, When)] = &[
-    ("enter", Bind::Named(Named::Enter), Op::Enter, When::Unused),
-    ("tab", Bind::Named(Named::Tab), Op::Complete, When::Unused),
-    (
-        "down",
-        Bind::Named(Named::ArrowDown),
-        Op::PickNext,
-        When::Unused,
-    ),
-    (
-        "up",
-        Bind::Named(Named::ArrowUp),
-        Op::PickPrev,
-        When::Unused,
-    ),
-    (
-        "pagedown",
-        Bind::Named(Named::PageDown),
-        Op::Next,
-        When::Unused,
-    ),
-    ("pageup", Bind::Named(Named::PageUp), Op::Prev, When::Unused),
-    (
-        "right",
-        Bind::Named(Named::ArrowRight),
-        Op::Next,
-        When::EmptySearch,
-    ),
-    (
-        "left",
-        Bind::Named(Named::ArrowLeft),
-        Op::Prev,
-        When::EmptySearch,
-    ),
-    (
-        "escape",
-        Bind::Named(Named::Escape),
-        Op::ClearSearch,
-        When::Always,
-    ),
-    (
-        "backspace",
-        Bind::Named(Named::Backspace),
-        Op::DropBang,
-        When::EmptySearch,
-    ),
-    (
-        "ctrl+space",
-        Bind::CtrlNamed(Named::Space),
-        Op::PlayPause,
-        When::Always,
-    ),
-    (
-        "playpause",
-        Bind::Named(Named::MediaPlayPause),
-        Op::PlayPause,
-        When::Always,
-    ),
-    ("ctrl+b", Bind::Ctrl('b'), Op::Blackout, When::Always),
-    ("ctrl+a", Bind::Ctrl('a'), Op::AddToPlan, When::Always),
-    ("ctrl+s", Bind::Ctrl('s'), Op::Save, When::Always),
-    ("ctrl+o", Bind::Ctrl('o'), Op::Open, When::Always),
-    ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
-    ("ctrl+z", Bind::Ctrl('z'), Op::Undo, When::Always),
-    (
-        "alt+up",
-        Bind::Alt(Named::ArrowUp),
-        Op::MoveUp,
-        When::Always,
-    ),
-    (
-        "alt+down",
-        Bind::Alt(Named::ArrowDown),
-        Op::MoveDown,
-        When::Always,
-    ),
-    ("ctrl+,", Bind::Ctrl(','), Op::Settings, When::Always),
-];
-
-/// The op a script's `press NAME` stands for.
-pub fn op_named(name: &str) -> Option<Op> {
-    KEYS.iter()
-        .find(|(n, ..)| n.eq_ignore_ascii_case(name))
-        .map(|(_, _, op, _)| *op)
+/// Something a key does: its name in the config's `[keys]` table, the key
+/// it has unless the config says otherwise (also what a script's `press`
+/// calls it), and what it does, for the settings.
+pub struct Action {
+    pub name: &'static str,
+    pub key: &'static str,
+    pub op: Op,
+    when: When,
+    pub about: &'static str,
 }
 
-fn lookup(key: &Key, ctrl: bool, alt: bool) -> Option<(Op, When)> {
-    let is = |pressed: &str, c: char| pressed.to_lowercase().chars().eq(std::iter::once(c));
-    KEYS.iter()
-        .find(|(_, bind, ..)| match (bind, key.as_ref()) {
-            _ if alt => matches!((bind, key.as_ref()), (Bind::Alt(named), Key::Named(pressed)) if *named == pressed),
-            (Bind::Ctrl(c), Key::Character(pressed)) => ctrl && is(pressed, *c),
-            (Bind::CtrlNamed(named), Key::Named(pressed)) => ctrl && *named == pressed,
-            (Bind::CtrlNamed(Named::Space), Key::Character(" ")) => ctrl,
-            (Bind::Named(named), Key::Named(pressed)) => !ctrl && *named == pressed,
-            _ => false,
+const fn action(
+    name: &'static str,
+    key: &'static str,
+    op: Op,
+    when: When,
+    about: &'static str,
+) -> Action {
+    Action {
+        name,
+        key,
+        op,
+        when,
+        about,
+    }
+}
+
+/// Every key.
+pub const ACTIONS: &[Action] = &[
+    action(
+        "show",
+        "enter",
+        Op::Enter,
+        When::Unused,
+        "Look at the top result, again to show it; show the selected step",
+    ),
+    action(
+        "complete",
+        "tab",
+        Op::Complete,
+        When::Unused,
+        "Complete a half-typed bang",
+    ),
+    action(
+        "pick-next",
+        "down",
+        Op::PickNext,
+        When::Unused,
+        "Pick the next result",
+    ),
+    action(
+        "pick-prev",
+        "up",
+        Op::PickPrev,
+        When::Unused,
+        "Pick the result before",
+    ),
+    action(
+        "next",
+        "pagedown",
+        Op::Next,
+        When::Unused,
+        "Next slide, page or plan step",
+    ),
+    action(
+        "prev",
+        "pageup",
+        Op::Prev,
+        When::Unused,
+        "Back a slide, page or plan step",
+    ),
+    action(
+        "next-arrow",
+        "right",
+        Op::Next,
+        When::EmptySearch,
+        "Next, while the search is empty",
+    ),
+    action(
+        "prev-arrow",
+        "left",
+        Op::Prev,
+        When::EmptySearch,
+        "Back, while the search is empty",
+    ),
+    action(
+        "close",
+        "escape",
+        Op::ClearSearch,
+        When::Always,
+        "Clear the search; close what's open",
+    ),
+    action(
+        "drop-bang",
+        "backspace",
+        Op::DropBang,
+        When::EmptySearch,
+        "Take the bang chip off an empty search",
+    ),
+    action(
+        "play-pause",
+        "ctrl+space",
+        Op::PlayPause,
+        When::Always,
+        "Play or pause",
+    ),
+    action(
+        "play-pause-media",
+        "playpause",
+        Op::PlayPause,
+        When::Always,
+        "Play or pause (media key)",
+    ),
+    action("blackout", "ctrl+b", Op::Blackout, When::Always, "Blackout"),
+    action(
+        "add-to-plan",
+        "ctrl+a",
+        Op::AddToPlan,
+        When::Always,
+        "Add the result to the plan",
+    ),
+    action("save", "ctrl+s", Op::Save, When::Always, "Save the plan"),
+    action("plans", "ctrl+o", Op::Open, When::Always, "Your plans"),
+    action("new", "ctrl+n", Op::New, When::Always, "New plan"),
+    action(
+        "undo",
+        "ctrl+z",
+        Op::Undo,
+        When::Always,
+        "Undo the last edit of the plan",
+    ),
+    action(
+        "move-up",
+        "alt+up",
+        Op::MoveUp,
+        When::Always,
+        "Move the selected step up",
+    ),
+    action(
+        "move-down",
+        "alt+down",
+        Op::MoveDown,
+        When::Always,
+        "Move the selected step down",
+    ),
+    action("settings", "ctrl+,", Op::Settings, When::Always, "Settings"),
+];
+
+/// The op a script's `press NAME` stands for: NAME is the key an action
+/// has before any config, so scripts don't depend on the operator's keys.
+pub fn op_named(name: &str) -> Option<Op> {
+    ACTIONS
+        .iter()
+        .find(|action| action.key.eq_ignore_ascii_case(name))
+        .map(|action| action.op)
+}
+
+/// The key each of [`ACTIONS`] has, in the same order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keymap(Vec<Bind>);
+
+impl Keymap {
+    pub fn defaults() -> Keymap {
+        Keymap(
+            ACTIONS
+                .iter()
+                .map(|action| action.key.parse().expect("every default key reads"))
+                .collect(),
+        )
+    }
+
+    /// The defaults with `changed` over them: action name to key, as the
+    /// config's `[keys]` table has them. Says what's wrong with the first
+    /// entry that is: an unknown action, a key that doesn't read, or one
+    /// two actions would share.
+    pub fn with(changed: &BTreeMap<String, String>) -> Result<Keymap, String> {
+        let mut map = Keymap::defaults();
+        for (name, key) in changed {
+            let at = ACTIONS
+                .iter()
+                .position(|action| action.name == name)
+                .ok_or_else(|| format!("There's no key called “{name}”."))?;
+            map.0[at] = key
+                .parse()
+                .map_err(|err| format!("The key for {name}: {err}."))?;
+        }
+        for (i, bind) in map.0.iter().enumerate() {
+            if let Some(j) = map.0[..i].iter().position(|other| other == bind) {
+                return Err(format!(
+                    "{bind} can't be both {} and {}.",
+                    ACTIONS[j].name, ACTIONS[i].name
+                ));
+            }
+        }
+        Ok(map)
+    }
+
+    /// What differs from the defaults, as the config keeps it.
+    pub fn changed(&self) -> BTreeMap<String, String> {
+        let defaults = Keymap::defaults();
+        ACTIONS
+            .iter()
+            .zip(&self.0)
+            .zip(&defaults.0)
+            .filter(|((_, bind), default)| bind != default)
+            .map(|((action, bind), _)| (action.name.to_string(), bind.written()))
+            .collect()
+    }
+
+    /// The key of action `at` of [`ACTIONS`].
+    pub fn bind(&self, at: usize) -> Bind {
+        self.0[at]
+    }
+
+    /// The first key that does `op`, as a button shows it.
+    pub fn label(&self, op: Op) -> String {
+        ACTIONS
+            .iter()
+            .zip(&self.0)
+            .find(|(action, _)| action.op == op)
+            .map(|(_, bind)| bind.to_string())
+            .unwrap_or_default()
+    }
+
+    fn lookup(&self, key: &Key, ctrl: bool, alt: bool, shift: bool) -> Option<(Op, When)> {
+        let pressed = match key.as_ref() {
+            Key::Named(named) => Pressed::Named(named),
+            Key::Character(text) => {
+                let mut chars = text.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(' '), None) => Pressed::Named(Named::Space),
+                    (Some(c), None) => Pressed::Char(c.to_lowercase().next().unwrap_or(c)),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let matches = |bind: &Bind, strict: bool| {
+            bind.key == pressed
+                && bind.ctrl == ctrl
+                && bind.alt == alt
+                && if strict {
+                    bind.shift && shift
+                } else {
+                    !bind.shift
+                }
+        };
+        // A key bound with shift wins over the same key bound without.
+        [true, false].into_iter().find_map(|strict| {
+            ACTIONS
+                .iter()
+                .zip(&self.0)
+                .find(|(_, bind)| matches(bind, strict))
+                .map(|(action, _)| (action.op, action.when))
         })
-        .map(|(_, _, op, when)| (*op, *when))
+    }
+}
+
+/// The keys in use: the defaults until [`configure`] says otherwise. One
+/// for the whole app, since the key listener and every label read it.
+static KEYMAP: RwLock<Option<Keymap>> = RwLock::new(None);
+
+fn keymap() -> Keymap {
+    let map = KEYMAP.read().unwrap_or_else(|e| e.into_inner());
+    map.clone().unwrap_or_else(Keymap::defaults)
+}
+
+/// Uses the config's `[keys]`. On an entry that's wrong, says why and
+/// keeps the keys as they were.
+pub fn configure(changed: &BTreeMap<String, String>) -> Result<(), String> {
+    let map = Keymap::with(changed)?;
+    *KEYMAP.write().unwrap_or_else(|e| e.into_inner()) = Some(map);
+    Ok(())
+}
+
+/// The key that does `op`, as a button shows it: "Ctrl+N".
+pub fn label(op: Op) -> String {
+    keymap().label(op)
+}
+
+/// The key of the action called `name` in [`ACTIONS`], as a button shows
+/// it: for an op with two keys, where the second is meant.
+pub fn label_of(name: &str) -> String {
+    ACTIONS
+        .iter()
+        .position(|action| action.name == name)
+        .map(|at| keymap().bind(at).to_string())
+        .unwrap_or_default()
+}
+
+/// "New plan · Ctrl+N": what a button does and its key.
+pub fn with_key(what: &str, op: Op) -> String {
+    format!("{what} · {}", label(op))
 }
 
 /// A key press as a message: an op, or text typed while the search box
@@ -191,7 +532,7 @@ pub fn key_event(
     let used = status == event::Status::Captured;
     let ctrl = modifiers.command();
     let alt = modifiers.alt();
-    if let Some((op, when)) = lookup(&key, ctrl, alt) {
+    if let Some((op, when)) = keymap().lookup(&key, ctrl, alt, modifiers.shift()) {
         if when == When::Unused && used {
             return None;
         }
@@ -305,5 +646,63 @@ mod tests {
         assert_eq!(op_named("Ctrl+B"), Some(Op::Blackout));
         assert_eq!(op_named("ctrl+space"), Some(Op::PlayPause));
         assert_eq!(op_named("b"), None);
+    }
+
+    #[test]
+    fn keys_read_as_written_and_show_as_labels() {
+        let label = |text: &str| text.parse::<Bind>().map(|bind| bind.to_string());
+        assert_eq!(label("ctrl+n").as_deref(), Ok("Ctrl+N"));
+        assert_eq!(label(" Alt+Up ").as_deref(), Ok("Alt+↑"));
+        assert_eq!(label("pagedown").as_deref(), Ok("PgDn"));
+        assert_eq!(label("ctrl+shift+s").as_deref(), Ok("Ctrl+Shift+S"));
+        assert_eq!(label("ctrl+,").as_deref(), Ok("Ctrl+,"));
+        assert_eq!(label("ctrl++").as_deref(), Ok("Ctrl++"));
+        assert_eq!("esc".parse::<Bind>().unwrap().written(), "escape");
+        assert!(label("k").unwrap_err().contains("would type"));
+        assert!(label("ctrl+banana").is_err());
+        assert!(label("hyper+k").is_err());
+        for action in ACTIONS {
+            let bind: Bind = action.key.parse().unwrap();
+            assert_eq!(bind.written(), action.key, "{}", action.name);
+        }
+    }
+
+    #[test]
+    fn the_config_changes_keys_and_says_what_is_wrong() {
+        let with = |pairs: &[(&str, &str)]| {
+            Keymap::with(
+                &pairs
+                    .iter()
+                    .map(|(name, key)| (name.to_string(), key.to_string()))
+                    .collect(),
+            )
+        };
+        assert_eq!(with(&[]).unwrap(), Keymap::defaults());
+        let map = with(&[("new", "ctrl+t"), ("blackout", "f9")]).unwrap();
+        assert_eq!(map.label(Op::New), "Ctrl+T");
+        assert_eq!(map.label(Op::Blackout), "F9");
+        let ctrl = |c: &str| map.lookup(&Key::Character(c.into()), true, false, false);
+        assert_eq!(ctrl("t").map(|(op, _)| op), Some(Op::New));
+        assert_eq!(ctrl("n"), None, "the old key is free");
+        assert_eq!(
+            map.changed(),
+            [("blackout", "f9"), ("new", "ctrl+t")]
+                .into_iter()
+                .map(|(name, key)| (name.to_string(), key.to_string()))
+                .collect()
+        );
+        assert!(
+            with(&[("fly", "ctrl+f")])
+                .unwrap_err()
+                .contains("no key called")
+        );
+        assert!(with(&[("new", "n")]).unwrap_err().contains("would type"));
+        let clash = with(&[("new", "ctrl+s")]).unwrap_err();
+        assert!(clash.contains("save") && clash.contains("new"), "{clash}");
+        // Shift makes a different key of the same letter.
+        let map = with(&[("plans", "ctrl+shift+n")]).unwrap();
+        let n = |shift| map.lookup(&Key::Character("N".into()), true, false, shift);
+        assert_eq!(n(true).map(|(op, _)| op), Some(Op::Open));
+        assert_eq!(n(false).map(|(op, _)| op), Some(Op::New));
     }
 }
