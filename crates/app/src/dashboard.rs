@@ -358,7 +358,7 @@ impl App {
                     .first()
                     .cloned()
                     .unwrap_or_default();
-                crate::backdrop(look, fit::fit_text(first, look))
+                crate::backdrop(look, fit::fit_text(first, look), crate::Over::Text)
             }
             None => match self.thumbs.get(resource) {
                 Some(handle) => container(
@@ -633,7 +633,11 @@ impl App {
             // A slide is a miniature of the stage, edge to edge.
             (Some(body), _) => {
                 let look = &self.look;
-                return framed_with(crate::backdrop(look, fit::fit_text(body, look)), ring, 2);
+                return framed_with(
+                    crate::backdrop(look, fit::fit_text(body, look), crate::Over::Text),
+                    ring,
+                    2,
+                );
             }
             (None, Some(Content::Image(handle))) => thumb(handle),
             (None, Some(Content::Pages(pages))) => thumb(&pages[frame.min(pages.len() - 1)]),

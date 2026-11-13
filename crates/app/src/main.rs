@@ -1347,30 +1347,35 @@ impl App {
     fn stage_view(&self) -> Element<'_, Message> {
         let look = &self.look;
         let Some(scene) = &self.stage.program else {
-            return backdrop(look, Space::new());
+            return backdrop(look, Space::new(), Over::Nothing);
         };
-        let content: Element<'_, Message> = match (&scene.media, self.slides.slide(scene)) {
-            (Media::Failed { .. }, _) => Space::new().into(),
-            (_, Some(body)) => fit::fit_text(body, look).into(),
-            (_, None) => match self.media.content(scene.id) {
-                None => Space::new().into(),
-                Some(Content::Image(handle)) => fit(image(handle.clone())),
-                Some(Content::Pages(pages)) => {
-                    let page = &pages[scene.frame().min(pages.len() - 1)];
-                    fit(image(page.clone()))
-                }
-                Some(Content::Video { player, .. }) => VideoPlayer::new(player)
-                    .width(Fill)
-                    .height(Fill)
-                    .content_fit(ContentFit::Contain)
-                    .on_end_of_stream(Message::Ended(scene.id))
-                    .into(),
-            },
-        };
+        let nothing = || (Space::new().into(), Over::Nothing);
+        let (content, over): (Element<'_, Message>, Over) =
+            match (&scene.media, self.slides.slide(scene)) {
+                (Media::Failed { .. }, _) => nothing(),
+                (_, Some(body)) => (fit::fit_text(body, look).into(), Over::Text),
+                (_, None) => match self.media.content(scene.id) {
+                    None => nothing(),
+                    Some(Content::Image(handle)) => (fit(image(handle.clone())), Over::Nothing),
+                    Some(Content::Pages(pages)) => {
+                        let page = &pages[scene.frame().min(pages.len() - 1)];
+                        (fit(image(page.clone())), Over::Nothing)
+                    }
+                    Some(Content::Video { player, .. }) => (
+                        VideoPlayer::new(player)
+                            .width(Fill)
+                            .height(Fill)
+                            .content_fit(ContentFit::Contain)
+                            .on_end_of_stream(Message::Ended(scene.id))
+                            .into(),
+                        Over::Nothing,
+                    ),
+                },
+            };
         if self.stage.blackout {
-            stack![backdrop(look, content), black(Space::new())].into()
+            stack![backdrop(look, content, over), black(Space::new())].into()
         } else {
-            backdrop(look, content)
+            backdrop(look, content, over)
         }
     }
 
@@ -1471,23 +1476,46 @@ fn set_length(plan: &mut Plan, id: StepId, value: Option<Duration>) {
     }
 }
 
+/// What a backdrop is behind, which decides how much of it shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Over {
+    /// Nothing that needs reading: the image as it is.
+    Nothing,
+    /// Slide text: the image dimmed by the look's `dim`, so it reads.
+    Text,
+}
+
 /// `content` over the look's background: its colour, and its image
-/// covering the stage.
+/// covering the stage, dimmed toward the colour under text.
 pub(crate) fn backdrop<'a>(
     look: &Look,
     content: impl Into<Element<'a, Message>>,
+    over: Over,
 ) -> Element<'a, Message> {
     let colour = fit::color(look.background);
     let content = container(content).center(Fill);
     let layers: Element<'a, Message> = match &look.image {
-        Some(path) => stack![
-            image(image::Handle::from_path(path))
+        Some(path) => {
+            let dimming = match over {
+                Over::Nothing => 0.0,
+                Over::Text => look.dimming(),
+            };
+            let dim = container(Space::new())
                 .width(Fill)
                 .height(Fill)
-                .content_fit(ContentFit::Cover),
-            content,
-        ]
-        .into(),
+                .style(move |_| {
+                    container::Style::default().background(colour.scale_alpha(dimming))
+                });
+            stack![
+                image(image::Handle::from_path(path))
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(ContentFit::Cover),
+                dim,
+                content,
+            ]
+            .into()
+        }
         None => content.into(),
     };
     container(layers)

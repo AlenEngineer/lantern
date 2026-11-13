@@ -27,6 +27,10 @@ pub struct Look {
     pub max_size: u16,
     /// ...and never smaller than this, even when it then overflows.
     pub min_size: u16,
+    /// How far the image is dimmed toward the background colour where text
+    /// is set over it, in percent, so the text reads. 0 leaves it as it is.
+    #[serde(skip_serializing_if = "Look::is_default_dim")]
+    pub dim: u8,
 }
 
 impl Default for Look {
@@ -38,6 +42,7 @@ impl Default for Look {
             font: None,
             max_size: 96,
             min_size: 40,
+            dim: Look::DIM,
         }
     }
 }
@@ -45,6 +50,20 @@ impl Default for Look {
 impl Look {
     /// The height, in lines, that sizes are given for.
     pub const STAGE_HEIGHT: f32 = 1080.0;
+
+    /// How far an image is dimmed under text unless the look says: enough
+    /// for white text to read over a bright picture.
+    pub const DIM: u8 = 60;
+
+    fn is_default_dim(dim: &u8) -> bool {
+        *dim == Look::DIM
+    }
+
+    /// How opaque the background colour is drawn over the image under
+    /// text, from 0.0 to 1.0.
+    pub fn dimming(&self) -> f32 {
+        f32::from(self.dim.min(100)) / 100.0
+    }
 
     /// Whether nothing was changed from the default (black, white text).
     pub fn is_default(&self) -> bool {
@@ -130,6 +149,14 @@ mod tests {
         assert_eq!(look.text, Rgb::WHITE);
         assert_eq!(look.sizes(), (30, 40), "a max below the min swaps");
         assert!(Look::default().is_default());
+        assert_eq!(look.dim, Look::DIM, "an image is dimmed under text");
+        let bright: Look = serde_json::from_str(r#"{"dim": 0}"#).unwrap();
+        assert_eq!(bright.dimming(), 0.0);
+        assert!(
+            serde_json::to_string(&bright)
+                .unwrap()
+                .contains(r#""dim":0"#)
+        );
         let json = serde_json::to_string(&Look::default()).unwrap();
         assert_eq!(
             json,

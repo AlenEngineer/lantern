@@ -24,6 +24,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   save or open; the rest went to the search box.
 - A length or time field takes only digits and a colon; letters stayed in
   it unread.
+- Text over the stage's image was hard to read: the image is now dimmed
+  under text (**Dim image** in Settings, `dim` in `[stage]`, 60% unless
+  set).
 
 ## [0.7.0] - 2026-11-13
 
