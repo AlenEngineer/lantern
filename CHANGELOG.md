@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The plan step on stage shows how far in it is ("slide 2 of 5", "page 1
+  of 3", "1:22 / 4:26") with a thin bar under its row.
 - Path fields in the settings suggest folders (and Bible or colours files)
   as you type, ignoring case and accents; a click or Tab takes one and goes
   inside it.

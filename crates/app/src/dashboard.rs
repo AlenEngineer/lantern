@@ -718,7 +718,7 @@ pub(crate) fn op(op: Op) -> Message {
 }
 
 /// "slide" for text, "page" for documents, "frame" for anything else.
-fn unit(resource: &Resource) -> &'static str {
+pub(crate) fn unit(resource: &Resource) -> &'static str {
     match resource.kind {
         lantern_engine::Kind::Text => "slide",
         lantern_engine::Kind::Document | lantern_engine::Kind::Presentation => "page",

@@ -1,0 +1,14 @@
+# Progress in the plan: the step on stage says how far in it is ("1:22 /
+# 4:26", "page 2 of 3") with a thin bar under its row.
+add fixtures/video.mp4
+add fixtures/pages.pdf
+wait 1500
+press pagedown
+press ctrl+space
+wait 2500
+shot 1-video
+press pagedown
+wait 1200
+press pagedown
+wait 500
+shot 2-pdf-page

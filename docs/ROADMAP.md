@@ -65,7 +65,7 @@ A folder can have its own bang: a hymnal folder answers `!h`.
 
 - **Live slots** carry a search (`!yt`, `!b`, a folder's bang); reaching one
   opens the search ready, and what was shown is kept in the slot. *(done)*
-- **Progress** in each plan row: slide or page of what's on stage.
+- **Progress** in each plan row: slide or page of what's on stage. *(done)*
 - **Ready check** before the service: downloads done, files present, PDFs
   readable, YouTube videos still up.
 - **Templates:** start a plan from a saved order of service.
