@@ -1,0 +1,87 @@
+name: Release PR
+
+# Keeps one pull request, "chore(release): vX.Y.Z", ready to publish what's
+# under the CHANGELOG's Unreleased section. Its version comes from what's
+# there (scripts/next-version.sh): anything added or changed bumps the
+# minor, fixes alone the patch. Merging it tags the version and publishes
+# it (release.yml). Nothing to remember: the PR is always there when
+# something is unreleased, and closes itself when nothing is.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+jobs:
+  # Main moved: open or update the release PR, or tag a merged one.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: release/next
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Tag a merged release PR
+        id: tag
+        env:
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          subject=${SUBJECT%%$'\n'*}
+          if [[ $subject =~ ^chore\(release\):\ (v[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            tag=${BASH_REMATCH[1]}
+            # Tagged by hand with scripts/release.sh, which also published it.
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "$tag is already tagged."
+              exit 0
+            fi
+            git tag -a "$tag" -m "lantern $tag"
+            git push origin "$tag"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the release PR
+        if: steps.tag.outputs.tag == ''
+        run: |
+          next=$(scripts/next-version.sh)
+          open=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z $next ]]; then
+            echo "Nothing unreleased."
+            [[ -n $open ]] && gh pr close "$open" --delete-branch --comment "Nothing left to release."
+            exit 0
+          fi
+          git checkout -B "$BRANCH"
+          scripts/release.sh "$next" --prepare
+          git push --force origin "$BRANCH"
+          title="chore(release): v$next"
+          notes=$(awk -v v="$next" '
+            /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
+            on' CHANGELOG.md)
+          body=$(printf 'Merging this publishes **v%s**: it tags the version and builds the Linux release.\n\nThe version comes from the changelog: anything added or changed bumps the minor, fixes alone the patch. This PR updates itself as more lands on main.\n%s\n' "$next" "$notes")
+          if [[ -n $open ]]; then
+            gh pr edit "$open" --title "$title" --body "$body"
+          else
+            gh pr create --head "$BRANCH" --base main --title "$title" --body "$body"
+          fi
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    permissions:
+      contents: write
