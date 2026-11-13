@@ -362,6 +362,39 @@ impl Plans {
         }
     }
 
+    /// Makes the open plan a copy of itself: saved first if it has a file,
+    /// then given a new name and a file of its own. Returns whether the
+    /// copy was saved.
+    pub fn duplicate(&mut self, engine: &Engine) -> bool {
+        if self.file.is_some() && self.is_dirty(&engine.plan()) && !self.save(engine) {
+            return false;
+        }
+        self.file = None;
+        engine.edit_plan(|plan| {
+            plan.title = format!("{} copy", plan.title);
+            plan.template = false;
+        });
+        self.save(engine)
+    }
+
+    /// Deletes the open plan, file and all, and goes to the list of plans
+    /// with an empty plan open. Returns whether it's gone.
+    pub fn delete(&mut self, engine: &Engine) -> bool {
+        let title = engine.plan().title;
+        if let Some(path) = self.file.clone() {
+            if let Err(err) = std::fs::remove_file(&path) {
+                self.notice = Some(Notice::couldnt("delete", &path, err));
+                return false;
+            }
+            // Nothing to reopen at the next start.
+            let _ = std::fs::remove_file(&self.store.last);
+        }
+        self.load(engine, Switch::New);
+        self.browse();
+        self.notice = Some(Notice::Done(format!("Deleted “{title}”")));
+        true
+    }
+
     /// Asks before `to` replaces a plan that's running: one key mid-service
     /// would otherwise take the plan away.
     pub fn ask_to_leave(&mut self, to: Switch) {
@@ -482,6 +515,35 @@ mod tests {
 
     fn add_step(engine: &Engine) {
         engine.edit_plan(|plan| plan.push("Prayer", Action::Blank));
+    }
+
+    #[test]
+    fn a_plan_is_copied_to_its_own_file_and_deleted_with_it() {
+        let (_data, store, engine) = setup();
+        let mut plans = Plans::start(store.clone(), &engine);
+        plans.load(&engine, Switch::New);
+        rename(&mut plans, &engine, "Domingo");
+        add_step(&engine);
+        assert!(plans.save(&engine));
+        let original = plans.file.clone().unwrap();
+
+        add_step(&engine);
+        assert!(plans.duplicate(&engine));
+        let copy = plans.file.clone().unwrap();
+        assert_ne!(copy, original);
+        assert_eq!(engine.plan().title, "Domingo copy");
+        assert_eq!(
+            Plan::load(&original).unwrap().len(),
+            2,
+            "saved before copying"
+        );
+        assert_eq!(Plan::load(&copy).unwrap().len(), 2);
+
+        assert!(plans.delete(&engine));
+        assert!(!copy.exists() && original.exists());
+        assert!(engine.plan().is_empty());
+        assert!(matches!(plans.mode, Mode::Browsing(_)));
+        assert!(store.last().is_none(), "nothing to reopen");
     }
 
     #[test]

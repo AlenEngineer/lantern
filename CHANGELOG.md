@@ -37,6 +37,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   selected row carries its own small buttons (go on when done, rename, ↑ ↓
   ✕). Enter or Esc is done. The pink line shows only while a search has a
   result to add, across the plan where it would go.
+- **⋯** in the plan's header opens the plan's own settings: its name, its
+  look, making it a template, **Duplicate** and **Delete**. It replaces the
+  Look button and the step count, so the name has the header's room; "3
+  of 7" still shows while the plan runs.
 
 ### Fixed
 

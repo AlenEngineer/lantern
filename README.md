@@ -231,8 +231,10 @@ Where text is set over the image, the image is dimmed toward the background
 colour so the words read; an empty stage shows it as it is.
 
 A plan can have a look of its own, for a Santa Cena or a youth night: the
-**Look** button in the plan's header opens Settings on **This plan**, where
-**Give it its own look** starts from the look for all plans. It's saved in
+**⋯** in the plan's header opens Settings on **This plan**, where
+**Give it its own look** starts from the look for all plans. The same place
+has the plan's name, **Make it a template**, **Duplicate** (saves the plan
+and opens a copy) and **Delete** (press twice). It's saved in
 the plan, so opening the plan anywhere brings its look, and **Use the look
 for all plans** removes it.
 

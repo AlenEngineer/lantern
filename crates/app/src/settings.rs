@@ -815,7 +815,16 @@ impl App {
         ]
         .spacing(6);
         let sections = if draft.scope == Scope::ThisPlan {
-            column![stage, output, folders, bibles, images, colors, keys]
+            column![
+                self.plan_section(),
+                stage,
+                output,
+                folders,
+                bibles,
+                images,
+                colors,
+                keys
+            ]
         } else {
             column![output, folders, bibles, stage, images, colors, keys]
         };
@@ -859,6 +868,87 @@ impl App {
 }
 
 impl App {
+    /// The open plan itself: its name, whether it's a template, a copy of
+    /// it, and deleting it. These act on the plan at once; its Save keeps
+    /// the name and the template mark.
+    fn plan_section<'a>(&self) -> Element<'a, Message> {
+        let p = self.palette;
+        let plan = self.engine.0.plan();
+        let label = |name| text(name).size(BODY).font(MEDIUM).width(LABEL_FIELD);
+        let note = |words: &'static str| text(words).size(META).color(p.on_surface_variant);
+        let name = text_input("Plan name", &plan.title)
+            .on_input(Message::RenamePlan)
+            .size(BODY)
+            .font(MEDIUM)
+            .padding([8, 10])
+            .style(look::input(p));
+        let template = pill(
+            p,
+            if plan.template {
+                "✓ A template"
+            } else {
+                "Make it a template"
+            },
+            if plan.template {
+                Tone::Selected
+            } else {
+                Tone::Plain
+            },
+            look::PILL_SMALL,
+            Some(Message::PlanTemplate(!plan.template)),
+        );
+        let delete = pill(
+            p,
+            if self.deleting_plan {
+                "Delete it for good?"
+            } else {
+                "Delete"
+            },
+            Tone::Danger,
+            look::PILL_SMALL,
+            Some(Message::DeletePlan),
+        );
+        column![
+            section(
+                p,
+                "This plan",
+                "Its name, and what can be done with it. Its look is below."
+            ),
+            row![label("Name"), name]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            row![
+                label("Template"),
+                template,
+                note("A template starts new plans with its order of service.")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                label("Copy"),
+                pill(
+                    p,
+                    "Duplicate",
+                    Tone::Plain,
+                    look::PILL_SMALL,
+                    Some(Message::DuplicatePlan)
+                ),
+                note("Saves this plan, then opens a copy of it.")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                label("Delete"),
+                delete,
+                note("Removes the plan and its file.")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(6)
+        .into()
+    }
+
     /// A small stage with the look as typed, showing a verse, so changes
     /// show before they're saved. Fields that don't read yet keep the
     /// saved look's value.
