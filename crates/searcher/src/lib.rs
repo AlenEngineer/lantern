@@ -10,11 +10,16 @@
 //!   runs *federated* searches: the index answers instantly, and each
 //!   [live source](lantern_resource::Capabilities::search) answers on its
 //!   own thread as soon as it can, through a [`SearchStream`].
+//!
+//! A query can start with a bang, `!b juan 3`, to ask only the sources
+//! whose [bang](lantern_resource::Source::bang) it is. See [`Searcher::parse`].
 
+mod bang;
 mod index;
 mod normalize;
 mod searcher;
 
+pub use bang::{Bang, Parsed, Scope};
 pub use index::Index;
 pub use normalize::{fold, tokens};
 pub use searcher::{

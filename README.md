@@ -61,21 +61,38 @@ cargo run --release -p lantern-app
 ```
 
 Two windows open: the **dashboard** for the operator and the fullscreen
-**stage** for the audience. Type in the search box to find files and Bible
-verses, type a reference like `jn 3 16-17`, or paste a YouTube link. The
-dashboard's bottom line lists the keys. The e2e scripts drive them through
+**stage** for the audience. The dashboard works like a launcher: one search
+box, the results under it, the preview beside them, and what's on stage
+along the bottom. Type to find files and Bible verses, type a reference like
+`jn 3 16-17`, or paste a YouTube link. The dashboard's bottom line lists
+the keys. The e2e scripts drive them through
 the same key table the keyboard uses, but they haven't been tried on a
 physical keyboard yet.
 
 | Key | Does |
 | --- | --- |
 | Enter | preview the top result, press again to take it to the stage |
+| Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
 | A | add the preview to the plan |
 | → / PgDn, ← / PgUp | next / back (stanza, page, or plan step) |
 | Space | play / pause |
 | B | blackout |
 | Esc, / | leave / return to the search box |
+| Ctrl+P | show the plan in the list, or the results again |
+
+### Bangs
+
+Start the search with a bang to ask only one kind of source, like Brave's
+search bangs. An empty box lists them; Tab or Enter completes one.
+
+| Bang | Searches |
+| --- | --- |
+| `!b` | the Bibles: verse text, or a reference like `!b jn 3 16` |
+| `!f` | the media folders |
+
+Every source declares its own bang (`Source::bang`), so a new source brings
+its own.
 
 YouTube videos download ahead of time (720p H.264) into
 `~/.cache/lantern/youtube` as soon as they enter the plan or the preview,
@@ -138,8 +155,9 @@ better fix.
 `scripts/e2e.sh <script> <outdir>` runs the real app on two headless
 Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
 screenshot of both windows at every `shot`. `basic`, `media`, `library`,
-`dashboard`, `plans` and `youtube` (needs the network) cover hymns, images,
-video, PDFs, Bible passages, the dashboard, plan files and YouTube.
+`dashboard`, `launcher`, `plans` and `youtube` (needs the network) cover
+hymns, images, video, PDFs, Bible passages, the dashboard, bangs, plan files
+and YouTube.
 
 ```sh
 scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/lantern/e2e/dashboard
@@ -209,10 +227,13 @@ engine.next();                            // next stanza or next step
 - [ ] Watch local folders for changes (no manual reindex)
 - [x] Configuration file (folders, Bibles)
 - [x] Desktop UI (dashboard + stage window): images, video, PDFs, Bible, YouTube
+- [x] Launcher dashboard with search bangs (`!b`, `!f`)
+- [ ] `!yt` YouTube search, `!gi` Google Images, `!h` hymnal
+- [ ] Stream YouTube when there's no time to download it
 - [ ] Hymnal source (hymns are a built-in sample today)
 - [ ] Web pages on the stage
 - [ ] Choose the stage monitor from the app
-- [ ] Sources: YouTube search, web image search, online Bible API
+- [ ] Sources: online Bible API
 - [ ] Multiple outputs (stage + stage-display/confidence monitor + stream)
 
 ## License

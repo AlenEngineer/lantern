@@ -1,0 +1,25 @@
+# The launcher: the bangs on an empty box, completing one, a search limited
+# to one source, an unknown bang, and the plan in the list.
+wait 1500
+shot 1-empty-offers-bangs
+type !
+wait 300
+press tab
+wait 300
+shot 2-tab-completed
+type !f pa
+wait 800
+shot 3-folders-only
+type !b juan 3:16-17
+wait 800
+select 1
+wait 300
+shot 4-bible-only
+press enter
+wait 500
+type !zz hello
+wait 300
+shot 5-unknown-bang
+press ctrl+p
+wait 300
+shot 6-plan-pane
