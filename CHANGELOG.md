@@ -26,6 +26,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   chip says which mode you're in; Ctrl+P switches.
 - Before the service starts, Ctrl+A adds to the end of the plan instead of
   the start, so a plan built in order keeps it.
+- A typed bang turns into a chip beside the search box instead of staying
+  in it next to its chip; Backspace in the empty box takes the chip away.
 - Typing always goes to the search box. The shortcuts that were letters move
   to Ctrl: Ctrl+B blackout, Ctrl+A add to plan, Ctrl+Space play/pause. ← →
   step only while the search box is empty, and Esc clears it.

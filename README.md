@@ -87,13 +87,17 @@ lists the keys for the mode you're in.
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
 | Esc | clear the search box |
+| Backspace | in an empty box, take the bang chip away |
 | Ctrl+P | switch between live and plan mode |
 | Ctrl+E | edit the plan: names, lengths, budgets, sections |
 
 ### Bangs
 
 Start the search with a bang to ask only one kind of source, like Brave's
-search bangs. An empty box lists them; Tab or Enter completes one.
+search bangs. An empty box lists them; Tab or Enter completes one. Once
+typed with a space after it, the bang turns into a chip beside the box,
+which keeps only what you're looking for; Backspace in the empty box takes
+the chip away again.
 
 | Bang | Searches |
 | --- | --- |
