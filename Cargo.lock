@@ -2242,6 +2242,7 @@ name = "lantern-orchestrator"
 version = "0.3.0"
 dependencies = [
  "lantern-resource",
+ "lantern-showman",
  "serde",
  "serde_json",
  "tempfile",
