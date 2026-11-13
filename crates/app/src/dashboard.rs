@@ -35,6 +35,9 @@ const STAGE_WIDTH: (f32, f32) = (360.0, 280.0);
 /// What the launcher keeps before the side panes start to shrink.
 const LAUNCHER_ROOM: f32 = 400.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
+/// A group of keys on the home screen: its width, and its chips' share.
+const KEY_COLUMN: f32 = 224.0;
+const KEY_CHIPS: f32 = 104.0;
 /// The stage pane's padding, each side.
 const STAGE_PADDING: f32 = 16.0;
 
@@ -227,32 +230,30 @@ impl App {
         let p = self.palette;
         let key = keys::label;
         let arrows = |a: &str, b: &str| format!("{} {}", keys::label_of(a), keys::label_of(b));
+        // Few words each: three columns sit side by side in the room there is.
         let groups: [(&str, Vec<(String, &str)>); 3] = [
             (
                 "Find",
                 vec![
-                    (key(Op::Search), "Search everything, or paste a link"),
-                    (key(Op::Enter), "Look at the top result; again to show it"),
-                    (key(Op::AddToPlan), "Add the result to the plan"),
-                    (key(Op::ClearSearch), "Clear the search, then close it"),
+                    (key(Op::Search), "Search"),
+                    (key(Op::Enter), "Look, then show"),
+                    (key(Op::AddToPlan), "Add to the plan"),
+                    (key(Op::ClearSearch), "Clear, then close"),
                 ],
             ),
             (
                 "Plan",
                 vec![
                     (key(Op::Open), "Your plans"),
-                    (key(Op::New), "New plan; in a plan, a new step"),
-                    (
-                        arrows("pick-prev", "pick-next"),
-                        "Move through the steps, or your plans",
-                    ),
-                    (key(Op::Enter), "Show the step, or open the plan"),
+                    (key(Op::New), "New plan or step"),
+                    (arrows("pick-prev", "pick-next"), "Steps or plans"),
+                    (key(Op::Enter), "Show or open"),
                     (
                         format!("{} {}", key(Op::MoveUp), key(Op::MoveDown)),
                         "Move the step",
                     ),
-                    (key(Op::Rename), "Rename the step"),
-                    (key(Op::RemoveStep), "Remove the step"),
+                    (key(Op::Rename), "Rename"),
+                    (key(Op::RemoveStep), "Remove"),
                     (key(Op::Undo), "Undo"),
                     (key(Op::Save), "Save"),
                 ],
@@ -260,19 +261,60 @@ impl App {
             (
                 "Stage",
                 vec![
-                    (
-                        format!("{} {}", key(Op::Next), key(Op::Prev)),
-                        "Next and back: slide, page or step",
-                    ),
-                    (arrows("prev-arrow", "next-arrow"), "The same"),
+                    (format!("{} {}", key(Op::Next), key(Op::Prev)), "Next, back"),
+                    (arrows("prev-arrow", "next-arrow"), "Next, back"),
                     (key(Op::PlayPause), "Play or pause"),
                     (key(Op::Blackout), "Blackout"),
-                    (key(Op::Settings), "Settings, where keys can be changed"),
+                    (key(Op::Settings), "Settings"),
                 ],
             ),
         ];
-        let mut sheet = column![].spacing(18);
-        for (name, rows) in groups {
+        // What the middle is for, first: a search box to click, saying its
+        // key. It opens the real one.
+        let search = button(
+            row![
+                look::icon(Icon::Search, 18.0, p.on_surface_variant),
+                text("Search everything, or paste a link")
+                    .size(15)
+                    .color(p.on_surface_variant)
+                    .width(Fill)
+                    .wrapping(text::Wrapping::None),
+                container(
+                    text(key(Op::Search))
+                        .size(META)
+                        .font(MEDIUM)
+                        .color(p.on_surface)
+                        .wrapping(text::Wrapping::None)
+                )
+                .padding([3, 8])
+                .style(look::chip(p, Tone::Plain)),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([10, 14])
+        .on_press(op(Op::Search))
+        .style(move |theme, status| {
+            let field = look::input(p)(theme, text_input::Status::Active);
+            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+            button::Style {
+                background: Some(field.background),
+                border: iced::Border {
+                    color: if hovered {
+                        p.primary
+                    } else {
+                        p.outline_variant
+                    },
+                    width: 2.0,
+                    radius: look::ROW_RADIUS.into(),
+                },
+                ..button::Style::default()
+            }
+        });
+        // The groups flow side by side and wrap under each other in a
+        // narrower pane, so nothing scrolls at the usual sizes.
+        let columns = groups.into_iter().map(|(name, rows)| {
             let mut group = column![text(name).size(BODY).font(BOLD).color(p.primary)].spacing(6);
             for (keys, what) in rows {
                 group = group.push(
@@ -288,19 +330,23 @@ impl App {
                             .padding([3, 8])
                             .style(look::chip(p, Tone::Plain))
                         )
-                        .width(150),
-                        text(what).size(BODY).color(p.on_surface_variant),
+                        .width(KEY_CHIPS),
+                        single_line(what).size(BODY).color(p.on_surface_variant),
                     ]
-                    .spacing(12)
+                    .spacing(8)
                     .align_y(Alignment::Center),
                 );
             }
-            sheet = sheet.push(group);
-        }
-        container(scrolling(sheet))
-            .padding([12, 0])
-            .height(Fill)
-            .into()
+            container(group).width(KEY_COLUMN).into()
+        });
+        let sheet = row(columns).spacing(16).wrap().vertical_spacing(20);
+        column![
+            search,
+            scrollable(container(sheet).padding([12, 0])).height(Fill)
+        ]
+        .spacing(12)
+        .height(Fill)
+        .into()
     }
 
     /// The config, the index and the colours, only when something is wrong
