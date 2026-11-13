@@ -22,7 +22,7 @@ use crate::search::{Group, Live, supported};
 use crate::stage;
 use crate::stage::Content;
 use crate::youtube::YoutubeVideo;
-use crate::{App, Message};
+use crate::{App, Clicked, Message};
 
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
@@ -36,7 +36,7 @@ const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
 /// The keys worth knowing, under the results.
-const HINTS: &str = "PgDn next step · Enter look, again to show · Ctrl+A add to the plan · \
+const HINTS: &str = "PgDn next step · Enter look, again to show · double-click shows · Ctrl+A add to the plan · \
                      ← → slides · Ctrl+B blackout · Esc clear";
 
 impl App {
@@ -309,7 +309,7 @@ impl App {
         button(container(line).clip(true))
             .width(Fill)
             .padding([8, 12])
-            .on_press_maybe(ok.then(|| Message::Pick(resource.id.clone())))
+            .on_press_maybe(ok.then(|| Message::Click(Clicked::Result(resource.id.clone()))))
             .style(look::row(p, tone))
             .into()
     }

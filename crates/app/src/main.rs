@@ -156,6 +156,16 @@ impl<T> Hash for Shared<T> {
     }
 }
 
+/// Two clicks on the same thing this close together are a double click.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// What a click lands on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Clicked {
+    Result(ResourceId),
+    Step(StepId),
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     /// The stage as it was when the feed started. Always the feed's first message.
@@ -185,7 +195,10 @@ enum Message {
     Searched(u64, Arc<SearchEvent>),
     /// Every source answered the live search with this ticket.
     SearchDone(u64),
-    /// A result was clicked.
+    /// A result or plan step was clicked: a single click lines it up, a
+    /// double click also shows it.
+    Click(Clicked),
+    /// A result was picked, which previews it.
     Pick(ResourceId),
     /// A bang was clicked: start a query with it.
     Bang(String),
@@ -199,8 +212,8 @@ enum Message {
     Type(String),
     /// Time to see whether the colours file changed.
     CheckPalette,
-    /// A plan step was clicked: it becomes the selection, where new steps
-    /// go, and in the run view it's lined up in the preview.
+    /// A plan step was picked: it becomes the selection, where new steps
+    /// go, and is lined up in the preview.
     Select(StepId),
     Remove(StepId),
     /// Adds a section, live slot, black screen or note after the selection.
@@ -264,6 +277,8 @@ struct App {
     /// The selected plan step: where new steps go, and what Enter puts on
     /// stage while the search box is empty.
     selected: Option<StepId>,
+    /// The last click on a result or step, to tell a double click.
+    last_click: Option<(Clicked, Instant)>,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -318,6 +333,7 @@ impl App {
             stage: StageState::default(),
             search: Search::default(),
             selected: None,
+            last_click: None,
             stepping: false,
             arrived_at: None,
             drafts: HashMap::new(),
@@ -387,8 +403,17 @@ impl App {
                             Task::none()
                         }
                     },
+                    Ui::Click(n) => match self.search.pick_nth(n) {
+                        Some(resource) => {
+                            self.update(Message::Click(Clicked::Result(resource.id.clone())))
+                        }
+                        None => {
+                            log(format!("dashboard: no result {}", n + 1));
+                            Task::none()
+                        }
+                    },
                     Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
-                        Some(step) => self.update(Message::Select(step.id)),
+                        Some(step) => self.update(Message::Click(Clicked::Step(step.id))),
                         None => {
                             log(format!("dashboard: no plan step {}", n + 1));
                             Task::none()
@@ -426,6 +451,23 @@ impl App {
                 self.search.live_event(ticket, &event, &self.engine.0);
             }
             Message::SearchDone(ticket) => self.search.live_done(ticket),
+            Message::Click(target) => {
+                let now = Instant::now();
+                let double = self.last_click.take().is_some_and(|(last, at)| {
+                    last == target && now.duration_since(at) < DOUBLE_CLICK
+                });
+                if !double {
+                    self.last_click = Some((target.clone(), now));
+                }
+                let lined_up = match target {
+                    Clicked::Result(id) => self.update(Message::Pick(id)),
+                    Clicked::Step(step) => self.update(Message::Select(step)),
+                };
+                if double {
+                    return Task::batch([lined_up, self.op(Op::Take)]);
+                }
+                return lined_up;
+            }
             Message::Pick(id) => {
                 if let Some(resource) = self.search.pick(&id) {
                     self.engine.0.preview(resource);

@@ -13,10 +13,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A crash when a slide's text was laid out in a box with no height.
 - YouTube and image search thumbnails, which never showed.
 
 ### Added
 
+- A double click on a result or plan step shows it at once; a single click
+  still only lines it up.
 - Downloaded YouTube videos unused for 30 days are deleted at startup.
 - Thumbnails in the results and the plan: a picture's own image, a PDF's
   first page, a video's still, a YouTube video's still, and a passage or

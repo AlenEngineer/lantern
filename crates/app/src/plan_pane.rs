@@ -23,7 +23,7 @@ use crate::palette::Palette;
 use crate::plan_edit::{NewStep, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
-use crate::{App, Message};
+use crate::{App, Clicked, Message};
 
 const PLAN_WIDTH: f32 = 380.0;
 /// How far a section's steps sit in from its header.
@@ -290,7 +290,7 @@ impl App {
         button(content)
             .width(Fill)
             .padding([10, 10])
-            .on_press(Message::Select(id))
+            .on_press(Message::Click(Clicked::Step(id)))
             .style(look::row(p, tone))
             .into()
     }
@@ -397,7 +397,7 @@ impl App {
         button(content)
             .width(Fill)
             .padding([8, 10])
-            .on_press(Message::Select(step.id))
+            .on_press(Message::Click(Clicked::Step(step.id)))
             .style(look::row(p, tone))
             .into()
     }

@@ -83,7 +83,8 @@ Typing always goes to the search box, so every shortcut is a key that
 doesn't type. Find files and Bible verses, type a reference like
 `jn 3 16-17`, or paste a YouTube link. The lower box of the stage pane shows
 what you're looking at (a result, or a step you clicked), and otherwise the
-plan's next step: Enter shows the first, PgDn the second.
+plan's next step: Enter shows the first, PgDn the second. A single click
+on a result or step only lines it up; a double click shows it at once.
 
 | Key | Does |
 | --- | --- |
@@ -186,8 +187,8 @@ search box opens with it, ready for Enter. Its row says how much was shown
 in it.
 
 Clicking a step selects it and lines it up to look at; Enter (or **Show
-now**) puts it on stage and moves the plan there, so nothing reaches the
-projector from a stray click.
+now**, or a double click) puts it on stage and moves the plan there, so
+nothing reaches the projector from a stray single click.
 
 **Sections and time.** Split the plan into parts with a time budget, such as
 "Alabanza, 15 min" and "Palabra, 30 min": a new section offers **Set a

@@ -261,6 +261,13 @@ where
         if unchanged {
             return layout::Node::new(bounds);
         }
+        // A box with no height (a monitor while the panes settle) would set
+        // text at size 0, which the text shaper rejects with a panic.
+        if !(bounds.width >= 1.0 && bounds.height >= 1.0 && bounds.height.is_finite()) {
+            state.paragraph = None;
+            state.laid_out = None;
+            return layout::Node::new(bounds);
+        }
         let inner = inner(bounds);
         let scale = bounds.height / Look::STAGE_HEIGHT;
         let (min, max) = self.look.sizes();
