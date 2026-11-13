@@ -586,15 +586,9 @@ impl App {
 
     fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
         let p = self.palette;
-        let heading = |title: &'static str, about: String| {
-            container(
-                column![
-                    text(title).size(BODY).font(BOLD).color(p.primary),
-                    single_line(about).size(META).color(p.on_surface_variant),
-                ]
-                .spacing(2),
-            )
-            .padding([4, 8])
+        // A heading is its name: the rows under it say what they are.
+        let heading = |title: &'static str| {
+            container(text(title).size(BODY).font(BOLD).color(p.primary)).padding([4, 8])
         };
         let is_template = |entry: &Entry| entry.summary.as_ref().is_ok_and(|s| s.template);
         let now = SystemTime::now();
@@ -609,7 +603,7 @@ impl App {
             } else {
                 count(steps, "step")
             };
-            list = list.push(heading("Open now", "Click to go back to it".into()));
+            list = list.push(heading("Open now"));
             list = list.push(
                 button(
                     column![
@@ -630,10 +624,7 @@ impl App {
         }
         let templates: Vec<&Entry> = entries.iter().filter(|e| is_template(e)).collect();
         if !templates.is_empty() {
-            list = list.push(heading(
-                "Templates",
-                "Click one to start a new plan from it".into(),
-            ));
+            list = list.push(heading("Templates"));
             for entry in templates {
                 list = list.push(saved_plan(p, entry, when(entry)));
             }
@@ -645,14 +636,7 @@ impl App {
             .iter()
             .filter(|e| !is_template(e) && Some(e.path.as_path()) != self.plans.file())
             .collect();
-        let about = if plans.is_empty() && self.plans.file().is_some() {
-            "No others saved"
-        } else if plans.is_empty() {
-            "None saved yet: start one"
-        } else {
-            "Click one to open it; ☆ makes it a template"
-        };
-        list = list.push(heading("Your plans", about.into()));
+        list = list.push(heading("Your plans"));
         list = list.push(list_action(p, "+", "New plan · Ctrl+N", op(Op::New)));
         for entry in plans {
             list = list.push(saved_plan(p, entry, when(entry)));

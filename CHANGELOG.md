@@ -76,6 +76,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - "Ctrl+A adds the result here" shows only while a search has a result to
   add (the pink line stays), and the line of keys under the results only
   with the search empty before the plan runs.
+- The plans list's headings no longer have a line of instructions under
+  them.
 
 ## [0.7.0] - 2026-11-13
 
