@@ -22,7 +22,7 @@ puts all of that in one place:
   prefixes and forgives typos. Pasted links (YouTube, images, web pages) work
   right away. Online sources (YouTube search, the web, Bible APIs) plug in as
   extensions.
-- **Plans with live slots.** Prepare an ordered list of steps ahead of time,
+- **Plans with live slots.** Build an ordered list of steps ahead of time,
   and leave *live slots* for the parts you can't plan. Showing something
   off-plan never loses your place.
 - **Two windows.** The operator's dashboard and the audience's stage are
@@ -67,38 +67,34 @@ Two windows open: the **dashboard** for the operator and the fullscreen
 left, a launcher in the middle (search box and results), and the stage on
 the right, with what the audience sees above the preview.
 
-The window has two views, switched with **Prepare | Run** at the top or
-Ctrl+R. **Prepare** is for building the plan ahead of time: the plan as a
-document on the left, with every name, length and budget a field, and the
-launcher on the right, where Enter *adds* the result after the selected
-step instead of showing it. **Add here** adds a section, live slot, black
-screen or note; Alt+↑/↓ moves the selected step. Nothing in Prepare reaches
-the projector. **Run** is for the service itself, described below.
+There is one screen, the same before and during the service. The plan is
+edited where it is: click a step and a strip opens under it with its name,
+its length (a section's time, a live slot's search) and ↑ ↓ ✕; Ctrl+A adds
+the result you're looking at right after it, where the pink line says.
+**Section**, **Live slot**, **Black** and **Note** at the bottom add those.
+**Plans** at the top of the plan lists your saved plans to open, or starts
+a new one; **Save** shows while the plan has unsaved changes.
 
 Typing always goes to the search box, so every shortcut is a key that
 doesn't type. Find files and Bible verses, type a reference like
-`jn 3 16-17`, or paste a YouTube link. The launcher's header says which
-mode you're in: **live** while you search and show things on the fly, and
-**plan** while you step through the plan, where the stage pane shows the
-next step instead of the preview. Searching switches to live, stepping
-through the plan to plan, and Ctrl+P switches either way. The bottom line
-lists the keys for the mode you're in.
+`jn 3 16-17`, or paste a YouTube link. The lower box of the stage pane shows
+what you're looking at (a result, or a step you clicked), and otherwise the
+plan's next step: Enter shows the first, PgDn the second.
 
 | Key | Does |
 | --- | --- |
-| Enter | preview the top result, press again to show it on stage |
+| Enter | look at the top result, press again to show it; with the box empty, show the selected step |
 | Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
-| Ctrl+A | add the preview to the plan |
+| Ctrl+A | add the result you're looking at after the selected step |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
 | Esc | clear the search box |
 | Backspace | in an empty box, take the bang chip away |
-| Ctrl+P | switch between live and plan mode |
-| Ctrl+R | switch between Prepare and Run |
-| Alt+↑ ↓ | move the selected step (Prepare) |
+| Alt+↑ ↓ | move the selected step |
+| Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
 ### Bangs
@@ -171,27 +167,28 @@ min_size = 40   # points on a 1080-line screen
 max_size = 96
 ```
 
-**Ready check.** Prepare says by the plan's name whether it's ready
-("ready", "2 not ready yet", "1 problem"), and each step that isn't says
+**Ready check.** While something in the plan isn't ready, a line under its
+name says so ("2 not ready yet", "1 problem"), and each step that isn't says
 why: a file that's missing, something the stage can't show, a YouTube
 download still going (amber) or failed (red), an image link not downloaded
-yet. Run shows the same line under the plan's name while something isn't
-ready.
+yet.
 
 **Live slots** are the parts of a service you'll fill on the spot ("the
-director's song choice"). Give one a search in Prepare (`!yt`, `!b`, or a
+director's song choice"). Give one a search in its strip (`!yt`, `!b`, or a
 whole query like `!b juan 3:16-18`); when the service reaches it, the
 search box opens with it, ready for Enter. Its row says how much was shown
 in it.
 
-In Run, clicking a step selects it and lines it up in the preview; Enter
-(or **Show now**) puts it on stage and moves the plan there, so nothing
-reaches the projector from a stray click.
+Clicking a step selects it and lines it up to look at; Enter (or **Show
+now**) puts it on stage and moves the plan there, so nothing reaches the
+projector from a stray click.
 
 **Sections and time.** Split the plan into parts with a time budget, such as
-"Alabanza, 15 min" and "Palabra, 30 min", in Prepare: type a length (`4` is
-four minutes, `4:30` four and a half) or a section's budget, and each
-section says while you plan whether its steps fit. Once a section starts, its header shows the time
+"Alabanza, 15 min" and "Palabra, 30 min": a new section offers **Set a
+time**, or click it and type its time (`15` is fifteen minutes, `4:30` four
+and a half). Each section header says in words how it's doing, "12 min of
+15 min planned" over a bar while you plan, "6:40 of 15 min · on track"
+while it runs. Once a section starts, its header shows the time
 against its budget, and the launcher's header shows how much is left, or how
 far over it is, plus when the service should end. It warns, it never stops
 you: "on track", "tight" when it should end in the last minute or tenth of

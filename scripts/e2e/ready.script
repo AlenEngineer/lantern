@@ -1,12 +1,8 @@
 # The ready check: a plan with a file that's there, one that's missing and
-# one the stage can't show. Prepare says what's wrong on each row and sums
-# it up by the name; Run says it under the name.
+# one the stage can't show. Each row says what's wrong and the plan sums it
+# up under its name.
 add fixtures/image.png
 add fixtures/missing.mp4
 add fixtures/page.html
-press ctrl+r
 wait 1500
-shot 1-prepare
-press ctrl+r
-wait 500
-shot 2-run
+shot 1-plan

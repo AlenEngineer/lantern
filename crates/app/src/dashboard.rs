@@ -17,7 +17,6 @@ use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
 use crate::plan_pane::section_status;
-use crate::prepare::View;
 use crate::ready::{self, Issue, Level};
 use crate::search::{Group, Live, supported};
 use crate::stage;
@@ -33,65 +32,13 @@ const STAGE_WIDTH: f32 = 360.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
 const MONITOR_HEIGHT: f32 = 184.0;
 
-/// What the operator is doing, shown in the launcher's header. Searching
-/// switches to live, stepping through the plan to plan, and Ctrl+P either way.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Mode {
-    /// Finding things and showing them on the fly: the stage pane shows the
-    /// preview.
-    #[default]
-    Live,
-    /// Following the plan: the stage pane shows the next step.
-    Plan,
-}
-
-impl Mode {
-    pub fn toggled(self) -> Mode {
-        match self {
-            Mode::Live => Mode::Plan,
-            Mode::Plan => Mode::Live,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Mode::Live => "live",
-            Mode::Plan => "plan",
-        }
-    }
-
-    fn tone(self) -> Tone {
-        match self {
-            Mode::Live => Tone::Live,
-            Mode::Plan => Tone::Selected,
-        }
-    }
-
-    /// The keys worth knowing in this mode.
-    fn hints(self) -> &'static str {
-        match self {
-            Mode::Live => {
-                "Enter preview, again to show · ↑↓ pick · Ctrl+A add to plan · Tab bang · \
-                 Esc clear · Ctrl+P plan mode"
-            }
-            Mode::Plan => {
-                "PgDn next step · PgUp back · ← → slides · Ctrl+Space play · Ctrl+B blackout · \
-                 Ctrl+R prepare · Ctrl+P live mode"
-            }
-        }
-    }
-}
+/// The keys worth knowing, under the results.
+const HINTS: &str = "PgDn next step · Enter look, again to show · Ctrl+A add to the plan · \
+                     ← → slides · Ctrl+B blackout · Esc clear";
 
 impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
-        if self.view == View::Prepare {
-            return container(self.prepare_view())
-                .width(Fill)
-                .height(Fill)
-                .style(look::window(p))
-                .into();
-        }
         let seam = || {
             container(Space::new())
                 .width(1)
@@ -155,17 +102,14 @@ impl App {
             return centered(self.settings_view(draft));
         }
         let p = self.palette;
-        // Narrow between the two panes: the icon stands for the name here.
         let mut header = row![
             look::icon(Icon::Lantern, 20.0, p.primary),
-            self.view_switch(),
-            chip(p, self.mode.name(), self.mode.tone()),
+            text("Lantern").size(HEADING).font(BOLD).color(p.primary),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
         .height(36);
-        // The running section and when the service should end; before it
-        // starts, how to switch modes.
+        // The running section and when the service should end.
         match (timing.running(), timing.end) {
             (Some(section), end) => {
                 let (mut status, tone) = section_status(section);
@@ -180,12 +124,7 @@ impl App {
                     .push(chip(p, &status, tone))
                     .push(Space::new().width(Fill));
             }
-            (None, _) => {
-                let aside = format!("Ctrl+P {} mode", self.mode.toggled().name());
-                header = header
-                    .push(Space::new().width(Fill))
-                    .push(text(aside).size(META).color(p.on_surface_variant));
-            }
+            (None, _) => header = header.push(Space::new().width(Fill)),
         }
         let gear = button(look::icon(Icon::Settings, 18.0, p.on_surface_variant))
             .padding(8)
@@ -198,11 +137,7 @@ impl App {
         for problem in self.problems() {
             body = body.push(text(problem).size(META).color(p.error));
         }
-        body = body.push(
-            text(self.mode.hints())
-                .size(META)
-                .color(p.on_surface_variant),
-        );
+        body = body.push(text(HINTS).size(META).color(p.on_surface_variant));
         centered(body)
     }
 
@@ -380,9 +315,12 @@ impl App {
 
     fn stage_pane(&self) -> Element<'_, Message> {
         let p = self.palette;
-        let lower = match self.mode {
-            Mode::Live => self.preview_section(),
-            Mode::Plan => self.next_section(),
+        // What Enter or PgDn would show: the result or step being looked
+        // at, else the plan's next step.
+        let lower = if self.stage.preview.is_some() {
+            self.preview_section()
+        } else {
+            self.next_section()
         };
         column![
             self.on_stage_section(),
@@ -569,11 +507,8 @@ impl App {
     }
 
     /// The selected plan step, ready to show (a section stands for its
-    /// first step). Only in the run view.
+    /// first step).
     pub(crate) fn cued(&self) -> Option<Step> {
-        if self.view != View::Run {
-            return None;
-        }
         let plan = self.engine.0.plan();
         let at = plan.position(self.selected?)?;
         plan.steps()[at..].iter().find(|s| !s.is_section()).cloned()
@@ -916,17 +851,4 @@ pub(crate) fn pill<'a>(
 
 pub(crate) fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
     button.width(Fill)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn modes_toggle_and_say_their_keys() {
-        assert_eq!(Mode::Live.toggled(), Mode::Plan);
-        assert_eq!(Mode::Plan.toggled(), Mode::Live);
-        assert!(Mode::Live.hints().contains("Ctrl+P plan mode"));
-        assert!(Mode::Plan.hints().contains("PgDn next step"));
-    }
 }

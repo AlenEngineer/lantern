@@ -17,9 +17,9 @@ mod library;
 mod look;
 mod palette;
 mod paths;
+mod plan_edit;
 mod plan_pane;
 mod plans;
-mod prepare;
 mod ready;
 mod script;
 mod search;
@@ -44,12 +44,11 @@ use lantern_engine::{
 };
 
 use crate::config::Config;
-use crate::dashboard::{Mode, NAME_BOX, RESULTS, SEARCH_BOX};
+use crate::dashboard::{NAME_BOX, RESULTS, SEARCH_BOX};
 use crate::keys::Op;
 use crate::library::Library;
 use crate::palette::Palette;
 use crate::plans::{Plans, Store, Switch};
-use crate::prepare::View;
 use crate::script::{Script, Ui};
 use crate::search::{Live, Search};
 use crate::stage::{Content, Loaded, Stage};
@@ -196,9 +195,9 @@ enum Message {
     Select(StepId),
     Remove(StepId),
     /// Adds a section, live slot, black screen or note after the selection.
-    AddStep(prepare::NewStep),
-    /// The plan's new name, typed in the prepare view.
-    PlanTitle(String),
+    AddStep(plan_edit::NewStep),
+    /// "Set a time" on a section: select it and focus its time field.
+    SetTime(StepId),
     /// What a live slot searches when the service reaches it ("!yt", "!b").
     SlotSearch(StepId, String),
     /// A step's or section's new name.
@@ -251,11 +250,8 @@ struct App {
     stage: StageState,
     media: Stage,
     search: Search,
-    mode: Mode,
-    /// Run or prepare.
-    view: View,
-    /// The selected plan step: where new steps go, and in the run view
-    /// what Enter puts on stage.
+    /// The selected plan step: where new steps go, and what Enter puts on
+    /// stage while the search box is empty.
     selected: Option<StepId>,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
@@ -309,8 +305,6 @@ impl App {
             stage_window,
             stage: StageState::default(),
             search: Search::default(),
-            mode: Mode::default(),
-            view: View::default(),
             selected: None,
             stepping: false,
             arrived_at: None,
@@ -452,7 +446,7 @@ impl App {
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
                     self.search.unpick();
                     self.engine.0.preview(Arc::new(resource));
-                } else if self.view == View::Run {
+                } else {
                     self.engine.0.clear_preview();
                 }
                 return self.preload();
@@ -466,9 +460,15 @@ impl App {
             }
             Message::AddStep(new) => {
                 let (label, action) = new.step();
-                self.selected = Some(self.engine.0.add(self.selected, label, action));
+                let id = self.engine.0.add(self.selected, label, action);
+                self.selected = Some(id);
+                return operation::focus(plan_edit::name_id(id));
             }
-            Message::PlanTitle(title) => self.engine.0.edit_plan(|plan| plan.title = title),
+            Message::SetTime(section) => {
+                self.selected = Some(section);
+                self.engine.0.clear_preview();
+                return operation::focus(plan_edit::time_id(section));
+            }
             Message::SlotSearch(id, text) => self.engine.0.edit_plan(|plan| {
                 if let Some(Step {
                     action: Action::Live { hint, .. },
@@ -540,13 +540,6 @@ impl App {
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
         self.stepping = false;
-        if !query.trim().is_empty() {
-            self.mode = Mode::Live;
-            // Running, a new search takes over Enter from the selected step.
-            if self.view == View::Run {
-                self.selected = None;
-            }
-        }
         let had_bang = self.search.bang().is_some();
         let edit = self.search.edit(query, &self.engine.0);
         let searched = self.searched(edit);
@@ -580,12 +573,10 @@ impl App {
                 if let Some(stream) = self.search.start_on_enter(&engine) {
                     return live_search(stream);
                 }
-                // Preparing, Enter adds the result to the plan; running, it
-                // shows the plan step lined up in the preview.
-                match self.view {
-                    View::Prepare => return self.op(Op::AddToPlan),
-                    View::Run if self.cued().is_some() => return self.op(Op::Take),
-                    View::Run => {}
+                // With nothing searched, Enter shows the selected plan step;
+                // while searching, the result.
+                if self.search.text().is_empty() && self.cued().is_some() {
+                    return self.op(Op::Take);
                 }
                 if self.search.picked().is_none() {
                     if let Some(first) = self.search.pick_nth(0) {
@@ -609,11 +600,13 @@ impl App {
                     (action, None) => !matches!(action, Action::Show { .. }),
                 });
                 if let Some(step) = cued {
-                    self.mode = Mode::Plan;
                     self.selected = None;
                     if let Err(err) = engine.go_to(step.id) {
                         log(format!("dashboard: {err}"));
                     }
+                    // The step was only lined up to look at: Next goes
+                    // back to the plan's next step.
+                    engine.clear_preview();
                     return Task::batch([self.preload(), self.arrive()]);
                 }
                 if engine.take() {
@@ -622,13 +615,15 @@ impl App {
                 }
             }
             Op::AddToPlan => {
-                let resource = match self.view {
-                    View::Prepare => self
-                        .search
+                // While searching, the result picked or else the first;
+                // otherwise what's in preview.
+                let resource = if self.search.text().is_empty() {
+                    engine.stage().preview.map(|scene| scene.resource.clone())
+                } else {
+                    self.search
                         .picked()
                         .cloned()
-                        .or_else(|| self.search.first()),
-                    View::Run => engine.stage().preview.map(|scene| scene.resource.clone()),
+                        .or_else(|| self.search.first())
                 };
                 if let Some(resource) = resource {
                     self.selected = Some(engine.add_resource(self.selected, &resource));
@@ -636,7 +631,6 @@ impl App {
                 }
             }
             Op::Next | Op::Prev => {
-                self.mode = Mode::Plan;
                 if op == Op::Next {
                     engine.next();
                 } else {
@@ -687,14 +681,8 @@ impl App {
                 let replaced = self.plans.switch(&engine, Switch::New);
                 return self.preload_if(replaced);
             }
-            Op::ToggleMode => self.mode = self.mode.toggled(),
-            Op::ToggleView => {
-                self.view = self.view.toggled();
-                self.drafts.clear();
-                return operation::focus(SEARCH_BOX);
-            }
             Op::MoveUp | Op::MoveDown => {
-                if let (View::Prepare, Some(step)) = (self.view, self.selected) {
+                if let Some(step) = self.selected {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
                     return self.update(Message::Move(step, by));
                 }
@@ -730,7 +718,6 @@ impl App {
             self.stepping = true;
             return Task::none();
         };
-        self.mode = Mode::Live;
         self.search.clear(&self.engine.0);
         let text = hint.map(|query| query.text).unwrap_or_default();
         if text.is_empty() {

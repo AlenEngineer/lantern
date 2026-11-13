@@ -23,3 +23,9 @@ shot 4-open-list
 open Sunday service
 wait 800
 shot 5-opened
+# A new section has no time yet and offers one.
+press ctrl+o
+wait 300
+shot 6-list-again
+press ctrl+o
+wait 300

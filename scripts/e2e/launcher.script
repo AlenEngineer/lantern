@@ -22,6 +22,3 @@ type !zz hello
 wait 300
 shot 5-unknown-bang
 press escape
-press ctrl+p
-wait 300
-shot 6-plan-mode

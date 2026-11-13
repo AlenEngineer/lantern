@@ -63,5 +63,5 @@ broadcast tally, because red is blackout's.
 
 Typing always goes to the search box, so shortcuts are keys that don't
 type (see `crates/app/src/keys.rs`). Each button shows its key in its
-label ("Blackout · Ctrl+B"), and the bottom line lists the keys for the
-current mode.
+label ("Blackout · Ctrl+B"), and the bottom line lists the keys worth
+knowing.
