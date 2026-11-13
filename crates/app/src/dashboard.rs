@@ -393,22 +393,27 @@ impl App {
         } else {
             self.next_section()
         };
-        column![
-            self.on_stage_section(),
+        // One column, so the two monitors are siblings: they share what
+        // height the rest leaves, and shrink together in a short window
+        // instead of pushing the last button off its bottom.
+        let seam = container(
             container(Space::new())
                 .height(1)
                 .width(Fill)
                 .style(look::hairline(p)),
-            lower,
-        ]
-        .spacing(12)
-        .padding(16)
-        .width(STAGE_WIDTH)
-        .height(Fill)
-        .into()
+        )
+        .padding([2, 0]);
+        column(self.on_stage_section())
+            .push(seam)
+            .extend(lower)
+            .spacing(10)
+            .padding(16)
+            .width(STAGE_WIDTH)
+            .height(Fill)
+            .into()
     }
 
-    fn on_stage_section(&self) -> Element<'_, Message> {
+    fn on_stage_section(&self) -> Vec<Element<'_, Message>> {
         let p = self.palette;
         let scene = self.stage.program.as_ref();
         let blackout = self.stage.blackout;
@@ -419,12 +424,12 @@ impl App {
             (None, false) if self.look.image.is_some() => chip(p, "background", Tone::Plain),
             (None, false) => chip(p, "empty", Tone::Plain),
         };
-        let mut section = column![
+        let mut section: Vec<Element<'_, Message>> = vec![
             row![heading(p, "On stage"), Space::new().width(Fill), state]
                 .align_y(Alignment::Center)
-        ]
-        .spacing(10);
-        section = section.push(match scene {
+                .into(),
+        ];
+        section.push(match scene {
             _ if blackout => empty_monitor(p, "The projector is black. Ctrl+B brings it back."),
             Some(scene) => self.monitor(scene, self.media.content(scene.id), Some(p.tertiary)),
             // What the audience sees with nothing on: the look's image.
@@ -436,12 +441,12 @@ impl App {
             None => empty_monitor(p, "Nothing on the projector"),
         });
         if let Some(scene) = scene {
-            section = section.push(self.caption(scene));
+            section.push(self.caption(scene));
             if let Some(strip) = self.slide_strip(scene) {
-                section = section.push(strip);
+                section.push(strip);
             }
             if let Some(timed) = scene.timed() {
-                section = section.push(self.transport(timed));
+                section.push(self.transport(timed));
             }
         }
         let blackout_label = if blackout {
@@ -449,36 +454,36 @@ impl App {
         } else {
             "Blackout · Ctrl+B"
         };
+        section.push(
+            row![
+                wide(pill(
+                    p,
+                    blackout_label,
+                    Tone::Danger,
+                    PILL,
+                    Some(Message::Key {
+                        op: Op::Blackout,
+                        only_if_empty: false,
+                    })
+                )),
+                pill(
+                    p,
+                    "Clear",
+                    Tone::Plain,
+                    PILL,
+                    scene.is_some().then_some(Message::Key {
+                        op: Op::Clear,
+                        only_if_empty: false,
+                    })
+                ),
+            ]
+            .spacing(4)
+            .into(),
+        );
         section
-            .push(
-                row![
-                    wide(pill(
-                        p,
-                        blackout_label,
-                        Tone::Danger,
-                        PILL,
-                        Some(Message::Key {
-                            op: Op::Blackout,
-                            only_if_empty: false,
-                        })
-                    )),
-                    pill(
-                        p,
-                        "Clear",
-                        Tone::Plain,
-                        PILL,
-                        scene.is_some().then_some(Message::Key {
-                            op: Op::Clear,
-                            only_if_empty: false,
-                        })
-                    ),
-                ]
-                .spacing(4),
-            )
-            .into()
     }
 
-    fn preview_section(&self) -> Element<'_, Message> {
+    fn preview_section(&self) -> Vec<Element<'_, Message>> {
         let p = self.palette;
         let scene = self.stage.preview.as_ref();
         // A selected plan step with nothing to preview (a black screen, a
@@ -486,70 +491,66 @@ impl App {
         let cued = self
             .cued()
             .filter(|step| !matches!(step.action, Action::Show { .. }));
-        let mut section = column![heading(p, "Preview")].spacing(10);
+        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Preview")];
         match (scene, &cued) {
             (Some(scene), _) => {
                 let content = self.media.preloaded(&scene.resource.id);
-                section = section
-                    .push(self.monitor(scene, content, Some(p.primary)))
-                    .push(self.caption(scene));
+                section.push(self.monitor(scene, content, Some(p.primary)));
+                section.push(self.caption(scene));
             }
             (None, Some(step)) => {
-                section = section
-                    .push(self.step_picture(step))
-                    .push(text(step.label.clone()).size(BODY).font(BOLD));
+                section.push(self.step_picture(step));
+                section.push(text(step.label.clone()).size(BODY).font(BOLD).into());
             }
-            (None, None) => {
-                section = section.push(empty_monitor(p, "Pick a result to preview it here"))
-            }
+            (None, None) => section.push(empty_monitor(p, "Pick a result to preview it here")),
         }
         let has = scene.is_some() || cued.is_some();
+        section.push(
+            row![
+                wide(pill(
+                    p,
+                    "Show now · Enter",
+                    Tone::Selected,
+                    PILL,
+                    has.then_some(op(Op::Take))
+                )),
+                wide(pill(
+                    p,
+                    "Add · Ctrl+A",
+                    Tone::Plain,
+                    PILL,
+                    has.then_some(op(Op::AddToPlan))
+                )),
+            ]
+            .spacing(4)
+            .into(),
+        );
         section
-            .push(
-                row![
-                    wide(pill(
-                        p,
-                        "Show now · Enter",
-                        Tone::Selected,
-                        PILL,
-                        has.then_some(op(Op::Take))
-                    )),
-                    wide(pill(
-                        p,
-                        "Add · Ctrl+A",
-                        Tone::Plain,
-                        PILL,
-                        has.then_some(op(Op::AddToPlan))
-                    )),
-                ]
-                .spacing(4),
-            )
-            .into()
     }
 
-    fn next_section(&self) -> Element<'_, Message> {
+    fn next_section(&self) -> Vec<Element<'_, Message>> {
         let p = self.palette;
         let next = self.engine.0.up_next();
-        let mut section = column![heading(p, "Up next")].spacing(10);
-        section = section.push(match &next {
+        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Up next")];
+        section.push(match &next {
             Some(step) => self.step_picture(step),
             None => empty_monitor(p, "The end of the plan"),
         });
         if let Some(step) = &next {
-            section = section.push(text(step.label.clone()).size(BODY).font(BOLD));
+            section.push(text(step.label.clone()).size(BODY).font(BOLD).into());
         }
-        section
-            .push(
-                pill(
-                    p,
-                    "Next step · PgDn",
-                    Tone::Selected,
-                    PILL,
-                    next.is_some().then_some(op(Op::Next)),
-                )
-                .width(Fill),
+        section.push(
+            pill(
+                p,
+                "Next step · PgDn",
+                Tone::Selected,
+                PILL,
+                next.is_some().then_some(op(Op::Next)),
             )
-            .into()
+            .width(Fill)
+            .into(),
+        );
+        section
     }
 
     /// A plan step as a monitor: its first slide or picture, or what kind
@@ -973,10 +974,11 @@ fn framed_with<'a>(
     ring: Option<Color>,
     padding: u16,
 ) -> Element<'a, Message> {
+    // As tall as the pane has room for, up to its full height.
     container(content)
         .center_x(Fill)
-        .height(MONITOR_HEIGHT)
-        .center_y(MONITOR_HEIGHT)
+        .center_y(Fill)
+        .max_height(MONITOR_HEIGHT)
         .padding(padding)
         .clip(true)
         .style(look::monitor(ring))
