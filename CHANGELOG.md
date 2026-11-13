@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Settings in the app (Ctrl+,): media folders, Bibles, the Brave key and the
+  colours file. Save writes `config.toml` and applies it without a restart.
 - Plan sections with time budgets. Each section's header shows its time
   against its budget and whether it's on track, tight or over; the launcher
   shows the running section's time left and when the service should end.

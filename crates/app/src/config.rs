@@ -17,48 +17,53 @@
 //!
 //! `~` is the home folder, and a relative path is relative to the config
 //! file's folder. Unknown keys are errors, so a typo doesn't silently drop a
-//! folder.
+//! folder. The settings view writes the file back with [`Config::save`].
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
 use lantern_source_bible::Language;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-/// What the app indexes, with every path absolute or as written.
-#[derive(Debug, Default, PartialEq, Eq, Deserialize)]
+/// What the app indexes, with every path absolute or as written. Settings
+/// come before the tables, which is the order TOML needs them in.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// The Brave Search API key that `!gi` image search needs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brave_api_key: Option<String>,
+    /// A JSON file of Material colour roles to take the dashboard's colours
+    /// from, such as one Matugen writes from the wallpaper.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colors: Option<PathBuf>,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
     pub bibles: Vec<BibleEntry>,
-    /// The Brave Search API key that `!gi` image search needs.
-    pub brave_api_key: Option<String>,
-    /// A JSON file of Material colour roles to take the dashboard's colours
-    /// from, such as one Matugen writes from the wallpaper.
-    pub colors: Option<PathBuf>,
 }
 
 /// A media folder to index.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FolderEntry {
     pub path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
 /// A Bible translation file, `.json` or `.tsv`.
-#[derive(Debug, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BibleEntry {
     pub lang: Lang,
     pub path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
 /// The language of a Bible's book names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Lang {
     Es,
@@ -80,20 +85,59 @@ impl Config {
     pub fn parse(source: &str, dir: &Path, home: Option<&Path>) -> Result<Config, String> {
         let mut config: Config =
             toml::from_str(source).map_err(|err| err.to_string().trim_end().to_string())?;
-        let paths = config
-            .folders
-            .iter_mut()
-            .map(|f| &mut f.path)
-            .chain(config.bibles.iter_mut().map(|b| &mut b.path))
-            .chain(config.colors.as_mut());
-        for path in paths {
+        for path in config.paths_mut() {
             *path = resolve(path, dir, home);
         }
         Ok(config)
     }
 }
 
-fn resolve(path: &Path, dir: &Path, home: Option<&Path>) -> PathBuf {
+impl Config {
+    /// Every path in the config, to rewrite them all one way.
+    fn paths_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
+        self.folders
+            .iter_mut()
+            .map(|f| &mut f.path)
+            .chain(self.bibles.iter_mut().map(|b| &mut b.path))
+            .chain(self.colors.as_mut())
+    }
+
+    /// The file's text, with paths under `home` written as `~/…`.
+    pub fn to_toml(&self, home: Option<&Path>) -> String {
+        let mut written = self.clone();
+        if let Some(home) = home {
+            for path in written.paths_mut() {
+                *path = tilde(path, home);
+            }
+        }
+        let body = toml::to_string(&written).expect("a config always serializes");
+        format!("# Lantern's config, written by its settings (Ctrl+,).\n\n{body}")
+    }
+
+    /// Writes the file, through a temporary one so a crash never leaves
+    /// half a config.
+    pub fn save(&self, path: &Path, home: Option<&Path>) -> Result<(), String> {
+        let fail = |err: std::io::Error| format!("{}: {err}", path.display());
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(fail)?;
+        }
+        let partial = path.with_extension("toml.part");
+        std::fs::write(&partial, self.to_toml(home)).map_err(fail)?;
+        std::fs::rename(&partial, path).map_err(fail)
+    }
+}
+
+/// `path` with `home` written as `~`, the way people type it.
+pub fn tilde(path: &Path, home: &Path) -> PathBuf {
+    match path.strip_prefix(home) {
+        Ok(rest) => Path::new("~").join(rest),
+        Err(_) => path.to_path_buf(),
+    }
+}
+
+/// `path` as the config reads it: `~` is `home`, and relative is relative
+/// to `dir`.
+pub fn resolve(path: &Path, dir: &Path, home: Option<&Path>) -> PathBuf {
     let path = match (path.strip_prefix("~"), home) {
         (Ok(rest), Some(home)) => home.join(rest),
         _ => path.to_path_buf(),
@@ -133,6 +177,13 @@ impl fmt::Display for Status {
 }
 
 impl Status {
+    /// The file, read or not.
+    pub fn path(&self) -> &Path {
+        match self {
+            Status::Read(path) | Status::Missing(path) | Status::Failed { path, .. } => path,
+        }
+    }
+
     /// What the dashboard should say about the config: only a failure.
     pub fn problem(&self) -> Option<String> {
         matches!(self, Status::Failed { .. }).then(|| self.to_string())
@@ -298,5 +349,41 @@ mod tests {
             panic!("{status:?}")
         };
         assert!(error.contains("line 1"), "{error}");
+    }
+
+    #[test]
+    fn a_saved_config_reads_back_the_same_with_home_as_a_tilde() {
+        let home = Path::new("/home/ana");
+        let config = Config {
+            brave_api_key: Some("key".into()),
+            colors: Some("/home/ana/.config/amane/colors.json".into()),
+            folders: vec![FolderEntry {
+                path: "/home/ana/Music".into(),
+                label: Some("Music".into()),
+            }],
+            bibles: vec![BibleEntry {
+                lang: Lang::Es,
+                path: "/srv/bibles/rv1909.tsv".into(),
+                name: None,
+            }],
+        };
+        let text = config.to_toml(Some(home));
+        assert!(text.contains("path = \"~/Music\""), "{text}");
+        assert!(text.contains("/srv/bibles/rv1909.tsv"), "{text}");
+        let settings = text.find("colors").unwrap();
+        assert!(
+            settings < text.find("[[folders]]").unwrap(),
+            "settings first: {text}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lantern/config.toml");
+        config.save(&path, Some(home)).unwrap();
+        let back = Config::parse(
+            &std::fs::read_to_string(&path).unwrap(),
+            dir.path(),
+            Some(home),
+        );
+        assert_eq!(back.unwrap(), config);
     }
 }

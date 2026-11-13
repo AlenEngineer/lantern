@@ -44,6 +44,8 @@ pub enum Op {
     ToggleEditing,
     /// Takes the bang chip off the search, so it asks every source again.
     DropBang,
+    /// Opens or closes the settings.
+    Settings,
 }
 
 enum Bind {
@@ -131,6 +133,7 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
     ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
     ("ctrl+p", Bind::Ctrl('p'), Op::ToggleMode, When::Always),
     ("ctrl+e", Bind::Ctrl('e'), Op::ToggleEditing, When::Always),
+    ("ctrl+,", Bind::Ctrl(','), Op::Settings, When::Always),
 ];
 
 /// The op a script's `press NAME` stands for.
