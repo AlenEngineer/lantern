@@ -6,9 +6,6 @@ on:
   pull_request:
   # The release workflow runs these checks before it builds anything.
   workflow_call:
-  # The release PR's workflow starts this on its branch: a PR opened with
-  # a workflow's token starts no checks of its own, and main requires them.
-  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
