@@ -559,19 +559,22 @@ impl App {
         )]
         .spacing(6);
         for (i, folder) in draft.folders.iter().enumerate() {
+            // The path has a line to itself: beside the label and the bang
+            // it showed about twenty characters of a folder's path.
             folders = folders.push(
                 row![
-                    field(p, "Label", &folder.label, move |t| Edit::FolderLabel(i, t))
-                        .width(LABEL_FIELD),
-                    field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t))
-                        .id(Field::Folder(i).id())
-                        .width(Fill),
+                    field(p, "Label", &folder.label, move |t| Edit::FolderLabel(i, t)).width(Fill),
                     field(p, "!bang", &folder.bang, move |t| Edit::FolderBang(i, t))
                         .width(BANG_FIELD),
                     remove(p, Edit::RemoveFolder(i)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
+            );
+            folders = folders.push(
+                field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t))
+                    .id(Field::Folder(i).id())
+                    .width(Fill),
             );
             folders = folders.push(suggestions(p, draft, Field::Folder(i)));
         }
@@ -600,19 +603,20 @@ impl App {
             };
             bibles = bibles.push(
                 row![
-                    field(p, "Name", &bible.name, move |t| Edit::BibleName(i, t))
-                        .width(LABEL_FIELD),
+                    field(p, "Name", &bible.name, move |t| Edit::BibleName(i, t)).width(Fill),
                     lang("es", Lang::Es),
                     lang("en", Lang::En),
-                    field(p, "~/bibles/rv1909.tsv", &bible.path, move |t| {
-                        Edit::BiblePath(i, t)
-                    })
-                    .id(Field::Bible(i).id())
-                    .width(Fill),
                     remove(p, Edit::RemoveBible(i)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
+            );
+            bibles = bibles.push(
+                field(p, "~/bibles/rv1909.tsv", &bible.path, move |t| {
+                    Edit::BiblePath(i, t)
+                })
+                .id(Field::Bible(i).id())
+                .width(Fill),
             );
             bibles = bibles.push(suggestions(p, draft, Field::Bible(i)));
         }
@@ -944,8 +948,14 @@ fn suggestions<'a>(p: Palette, draft: &Draft, field: Field) -> Element<'a, Messa
                 .style(look::row(p, Tone::Plain)),
         );
     }
+    // Under its field: a folder's or Bible's path starts at the edge, the
+    // stage's image and font after their label.
+    let indent = match field {
+        Field::Folder(_) | Field::Bible(_) => 0.0,
+        _ => LABEL_FIELD + 6.0,
+    };
     iced::widget::container(list)
-        .padding(iced::Padding::default().left(LABEL_FIELD + 6.0))
+        .padding(iced::Padding::default().left(indent))
         .into()
 }
 
