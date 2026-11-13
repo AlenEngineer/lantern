@@ -55,7 +55,7 @@ const FIT_SLACK: f32 = 24.0;
 const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
-/// The keys worth knowing, under the results.
+/// The keys worth knowing, under the empty search before the plan runs.
 const HINTS: &str = "PgDn next step · Enter look, again to show · double-click shows · Ctrl+A add to the plan · \
                      ← → slides · Ctrl+B blackout · Esc clear";
 
@@ -208,7 +208,14 @@ impl App {
         for problem in self.problems() {
             body = body.push(text(problem).size(META).color(p.error));
         }
-        body = body.push(text(HINTS).size(META).color(p.on_surface_variant));
+        // The keys, while nothing else is going on: before the plan runs
+        // and with the search empty. Mid-service they're only noise.
+        let idle = self.search.query.is_empty()
+            && self.search.bang().is_none()
+            && self.engine.0.current_step().is_none();
+        if idle {
+            body = body.push(text(HINTS).size(META).color(p.on_surface_variant));
+        }
         centered(body)
     }
 
