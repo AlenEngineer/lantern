@@ -153,6 +153,19 @@ pub fn chip(p: Palette, tone: Tone) -> impl Fn(&iced::Theme) -> container::Style
     }
 }
 
+/// A tooltip: solid, so it reads over whatever it covers.
+pub fn tip(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface_container_highest)),
+        text_color: Some(p.on_surface),
+        border: Border {
+            radius: PILL_RADIUS.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 /// The window: the `surface` role.
 pub fn window(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {

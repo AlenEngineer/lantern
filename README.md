@@ -204,7 +204,7 @@ Where text is set over the image, the image is dimmed toward the background
 colour so the words read; an empty stage shows it as it is.
 
 A plan can have a look of its own, for a Santa Cena or a youth night: the
-round swatch in the plan's header opens Settings on **This plan**, where
+**Look** button in the plan's header opens Settings on **This plan**, where
 **Give it its own look** starts from the look for all plans. It's saved in
 the plan, so opening the plan anywhere brings its look, and **Use the look
 for all plans** removes it.
