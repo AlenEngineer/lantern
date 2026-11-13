@@ -45,6 +45,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the bang rows no longer draw over themselves.
 - A step's name and a folder's or Bible's path have a line to themselves:
   they showed about twenty characters.
+- The plan's rows no longer move when "Saved…" or the readiness chip comes
+  and goes (they're under the list now), or when a step goes on stage.
 
 ## [0.7.0] - 2026-11-13
 

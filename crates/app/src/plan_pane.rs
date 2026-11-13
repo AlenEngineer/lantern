@@ -46,27 +46,28 @@ impl App {
         let p = self.palette;
         let plan = self.engine.0.plan();
         let issues = self.issues(&plan);
-        // What comes and goes above the steps (the notice, readiness) is
-        // one child with the header, so the steps stay the same child of
-        // the pane. iced keeps a widget's state, like which field has
-        // focus, by its place among its siblings: a line vanishing above
-        // the steps as the first letter was typed took the focus away.
-        let mut top = column![self.plan_header(&plan)].spacing(8);
-        if let Some(notice) = self.plan_notice(&plan) {
-            top = top.push(notice);
-        }
-        // Readiness only when something isn't: "ready" would be noise here.
-        if !issues.is_empty()
-            && let Some(readiness) = self.readiness(&plan, &issues)
-        {
-            top = top.push(container(readiness).padding([0, 8]));
-        }
-        let mut pane = column![top].spacing(8);
+        // What comes and goes (the notice, readiness) sits under the steps,
+        // in one child. Above them it pushed every row down as it came and
+        // up as it went, under the pointer. And the steps must stay the
+        // same child of the pane: iced keeps a widget's state, like which
+        // field has focus, by its place among its siblings.
+        let mut pane = column![self.plan_header(&plan)].spacing(8);
         pane = pane.push(match &self.plans.mode {
             plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
             plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
         });
+        let mut status = row![].spacing(8).align_y(Alignment::Center);
+        // Readiness only when something isn't: "ready" would be noise here.
+        if !issues.is_empty()
+            && let Some(readiness) = self.readiness(&plan, &issues)
+        {
+            status = status.push(readiness);
+        }
+        if let Some(notice) = self.plan_notice(&plan) {
+            status = status.push(notice);
+        }
+        pane = pane.push(container(status).padding([0, 8]));
         let small = |label, message| pill(p, label, Tone::Plain, PILL_SMALL, Some(message));
         let buttons = match &self.plans.mode {
             plans::Mode::Browsing(_) => row![wide(small("New plan · Ctrl+N", op(Op::New)))],
@@ -199,11 +200,7 @@ impl App {
             Notice::Done(_) if self.plans.is_dirty(plan) => return None,
             Notice::Done(what) => (what, p.on_surface_variant),
         };
-        Some(
-            container(text(message.as_str()).size(META).color(color))
-                .padding([0, 8])
-                .into(),
-        )
+        Some(single_line(message.as_str()).size(META).color(color).into())
     }
 
     fn steps(&self, plan: &Plan, timing: &Timing, issues: &[Issue]) -> Element<'_, Message> {
@@ -488,18 +485,23 @@ impl App {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        let content: Element<'_, Message> = match progress {
-            Some((_, done)) => column![line, bar(p, done, p.tertiary, 24.0)]
-                .spacing(6)
-                .into(),
-            None => line.into(),
-        };
-        button(content)
+        let row = button(line)
             .width(Fill)
             .padding([8, 10])
             .on_press(Message::Click(Clicked::Step(step.id)))
-            .style(look::row(p, tone))
-            .into()
+            .style(look::row(p, tone));
+        // The bar lies in the row's bottom padding, so a step going on
+        // stage doesn't make its row taller and move the ones under it.
+        match progress {
+            Some((_, done)) => stack![
+                row,
+                container(bar(p, done, p.tertiary, 24.0))
+                    .align_bottom(Fill)
+                    .padding(iced::Padding::default().left(10.0).right(10.0).bottom(3.0)),
+            ]
+            .into(),
+            None => row.into(),
+        }
     }
 
     /// How long a step takes: `4:00` when known, `~4 min` when guessed,
