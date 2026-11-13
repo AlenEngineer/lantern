@@ -108,11 +108,15 @@ impl App {
                 .padding([6, 10])
                 .style(look::input(p))
                 .into(),
+            // A long name is cut at its edge, not drawn over the count.
             _ => button(
-                single_line(plan.title.clone())
-                    .size(HEADING)
-                    .font(BOLD)
-                    .color(p.primary),
+                container(
+                    single_line(plan.title.clone())
+                        .size(HEADING)
+                        .font(BOLD)
+                        .color(p.primary),
+                )
+                .clip(true),
             )
             .padding([4, 8])
             .on_press(Message::EditPlanName)
@@ -507,31 +511,45 @@ impl App {
     fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
         let p = self.palette;
         let folder = self.plans.store().dir().display().to_string();
-        let mut list = column![
+        let heading = |title: &'static str, about: String| {
             container(
                 column![
-                    text("Your plans").size(BODY).font(BOLD).color(p.primary),
-                    single_line(folder).size(META).color(p.on_surface_variant),
+                    text(title).size(BODY).font(BOLD).color(p.primary),
+                    single_line(about).size(META).color(p.on_surface_variant),
                 ]
-                .spacing(2)
+                .spacing(2),
             )
             .padding([4, 8])
-        ]
-        .spacing(2);
-        if entries.is_empty() {
+        };
+        let is_template = |entry: &Entry| entry.summary.as_ref().is_ok_and(|s| s.template);
+        let now = SystemTime::now();
+        let when = |entry: &Entry| ago(now.duration_since(entry.modified).unwrap_or_default());
+        let mut list = column![].spacing(2);
+        let templates: Vec<&Entry> = entries.iter().filter(|e| is_template(e)).collect();
+        if !templates.is_empty() {
+            list = list.push(heading(
+                "Templates",
+                "Click one to start a new plan from it".into(),
+            ));
+            for entry in templates {
+                list = list.push(saved_plan(p, entry, when(entry)));
+            }
+            list = list.push(Space::new().height(10));
+        }
+        list = list.push(heading("Your plans", folder));
+        let plans: Vec<&Entry> = entries.iter().filter(|e| !is_template(e)).collect();
+        if plans.is_empty() {
             list = list.push(
                 container(
-                    text("No saved plans yet. Save makes one.")
+                    text("No saved plans yet. Save makes one; ☆ makes a saved plan a template.")
                         .size(BODY)
                         .color(p.on_surface_variant),
                 )
                 .padding([4, 8]),
             );
         }
-        let now = SystemTime::now();
-        for entry in entries {
-            let when = now.duration_since(entry.modified).unwrap_or_default();
-            list = list.push(saved_plan(p, entry, ago(when)));
+        for entry in plans {
+            list = list.push(saved_plan(p, entry, when(entry)));
         }
         scrolling(list).into()
     }
@@ -722,20 +740,27 @@ fn pace_tone(pace: Pace) -> Tone {
     }
 }
 
+/// A saved plan in the list. Clicking a plan opens it; clicking a template
+/// starts a new plan from it, and its Edit opens the template itself. The
+/// star makes a plan a template, or not.
 fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
-    let (title, detail, color) = match &entry.summary {
-        Ok((title, steps)) => (
-            title.clone(),
-            format!("{} · {when}", count(*steps, "step")),
+    let (title, detail, color, template) = match &entry.summary {
+        Ok(summary) => (
+            summary.title.clone(),
+            format!("{} · {when}", count(summary.steps, "step")),
             p.on_surface,
+            summary.template,
         ),
         Err(why) => (
             file_name(&entry.path),
             format!("can't read: {why}"),
             p.error,
+            false,
         ),
     };
-    button(
+    let readable = entry.summary.is_ok();
+    let path = entry.path.clone();
+    let main = button(
         column![
             single_line(title).size(BODY).font(MEDIUM).color(color),
             single_line(detail).size(META).color(p.on_surface_variant),
@@ -744,20 +769,54 @@ fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
     )
     .width(Fill)
     .padding([8, 10])
-    .on_press_maybe(
-        entry
-            .summary
-            .is_ok()
-            .then(|| Message::OpenPlan(entry.path.clone())),
-    )
-    .style(look::row(p, Tone::Plain))
-    .into()
+    .on_press_maybe(readable.then(|| {
+        if template {
+            Message::FromTemplate(path.clone())
+        } else {
+            Message::OpenPlan(path.clone())
+        }
+    }))
+    .style(look::row(p, Tone::Plain));
+    let star = tooltip(
+        button(
+            text(if template { "★" } else { "☆" })
+                .size(BODY)
+                .color(p.primary),
+        )
+        .padding([6, 8])
+        .on_press_maybe(readable.then(|| Message::SetTemplate(path.clone(), !template)))
+        .style(look::row(p, Tone::Plain)),
+        container(
+            text(if template {
+                "Make it a plan again"
+            } else {
+                "Make it a template"
+            })
+            .size(META)
+            .color(p.on_surface),
+        )
+        .padding([4, 8])
+        .style(look::chip(p, Tone::Plain)),
+        tooltip::Position::Left,
+    );
+    let mut line = row![main].spacing(4).align_y(Alignment::Center);
+    if template {
+        line = line.push(pill(
+            p,
+            "Edit",
+            Tone::Plain,
+            PILL_SMALL,
+            Some(Message::OpenPlan(entry.path.clone())),
+        ));
+    }
+    line.push(star).into()
 }
 
 fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch) -> Element<'a, Message> {
     let then = match switch {
         Switch::New => "start a new one",
         Switch::Open(_) => "open another",
+        Switch::FromTemplate(_) => "start one from the template",
     };
     column![
         text(format!(

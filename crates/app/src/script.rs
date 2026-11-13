@@ -139,6 +139,11 @@ pub enum Command {
     Output(String),
     /// `slide N`: click slide N (from 1) in the strip of what's on stage.
     Slide(usize),
+    /// `template NAME`: star the saved plan NAME (title or file name), so
+    /// it's a template.
+    Template(String),
+    /// `from-template NAME`: click the template NAME: a new plan from it.
+    FromTemplate(String),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
@@ -265,6 +270,9 @@ impl Command {
                 _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
             },
             "drop" => Command::Drop,
+            "template" if !rest.is_empty() => Command::Template(rest.to_string()),
+            "from-template" if !rest.is_empty() => Command::FromTemplate(rest.to_string()),
+            "template" | "from-template" => return Err(format!("{word} needs a plan's name")),
             "slide" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Slide(n - 1),
                 _ => return Err(format!("slide needs a number from 1, got {rest:?}")),
@@ -333,6 +341,8 @@ impl Command {
                 | Command::PlanLook(_)
                 | Command::Output(_)
                 | Command::Slide(_)
+                | Command::Template(_)
+                | Command::FromTemplate(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -359,6 +369,8 @@ pub enum Ui {
     PlanLook(String),
     Output(String),
     Slide(usize),
+    Template(String),
+    FromTemplate(String),
     Step(usize),
     Path(String),
     Font(String),
@@ -424,6 +436,8 @@ impl Script {
                 Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
                 Command::Drop => ui(Ui::Drop),
                 Command::Slide(n) => ui(Ui::Slide(*n)),
+                Command::Template(name) => ui(Ui::Template(name.clone())),
+                Command::FromTemplate(name) => ui(Ui::FromTemplate(name.clone())),
                 Command::Output(name) => ui(Ui::Output(name.clone())),
                 Command::Length(n, text) => ui(Ui::Length(*n, text.clone())),
                 Command::GoOn(n) => ui(Ui::GoOn(*n)),
@@ -500,6 +514,8 @@ impl Script {
             | Command::PlanLook(_)
             | Command::Output(_)
             | Command::Slide(_)
+            | Command::Template(_)
+            | Command::FromTemplate(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)

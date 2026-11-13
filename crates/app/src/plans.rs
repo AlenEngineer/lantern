@@ -24,8 +24,17 @@ pub struct Store {
 pub struct Entry {
     pub path: PathBuf,
     pub modified: SystemTime,
-    /// The plan's title and step count, or why the file can't be read.
-    pub summary: Result<(String, usize), String>,
+    /// What the plan is, or why the file can't be read.
+    pub summary: Result<Summary, String>,
+}
+
+/// A saved plan, as the list shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Summary {
+    pub title: String,
+    pub steps: usize,
+    /// It's an order of service to start new plans from.
+    pub template: bool,
 }
 
 impl Store {
@@ -54,7 +63,11 @@ impl Store {
                 entries.push(Entry {
                     modified: std::fs::metadata(&path)?.modified()?,
                     summary: Plan::load(&path)
-                        .map(|plan| (plan.title.clone(), plan.len()))
+                        .map(|plan| Summary {
+                            title: plan.title.clone(),
+                            steps: plan.len(),
+                            template: plan.template,
+                        })
                         .map_err(|err| err.to_string()),
                     path,
                 });
@@ -62,6 +75,13 @@ impl Store {
         }
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified));
         Ok(entries)
+    }
+
+    /// Makes the saved plan at `path` a template, or not.
+    pub fn set_template(&self, path: &Path, template: bool) -> io::Result<()> {
+        let mut plan = Plan::load(path).map_err(io::Error::other)?;
+        plan.template = template;
+        self.write(path, &plan)
     }
 
     /// A file for a new plan with this title that no other plan uses:
@@ -97,6 +117,40 @@ impl Store {
     }
 }
 
+/// Today's date, `2026-11-15`, in local time: the system's `date` when it
+/// has one, else UTC.
+fn today() -> String {
+    let local = std::process::Command::new("date")
+        .arg("+%F")
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .map(|day| day.trim().to_string())
+        .filter(|day| day.len() == 10);
+    local.unwrap_or_else(|| {
+        let secs = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let (year, month, day) = civil(i64::try_from(secs / 86_400).unwrap_or(0));
+        format!("{year:04}-{month:02}-{day:02}")
+    })
+}
+
+/// The calendar date `days` after 1970-01-01 (Howard Hinnant's algorithm).
+fn civil(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
+    let month = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
 /// A file name from a title: lowercase letters and digits, dashes between
 /// words. Accented letters stay.
 pub fn slug(title: &str) -> String {
@@ -117,6 +171,8 @@ pub fn slug(title: &str) -> String {
 pub enum Switch {
     New,
     Open(PathBuf),
+    /// A new plan from the template saved at this path.
+    FromTemplate(PathBuf),
 }
 
 /// What the plan panel shows besides the steps.
@@ -204,6 +260,16 @@ impl Plans {
         true
     }
 
+    /// Reads the list of saved plans again, when it's showing.
+    pub fn refresh(&mut self) {
+        if matches!(self.mode, Mode::Browsing(_)) {
+            match self.store.list() {
+                Ok(entries) => self.mode = Mode::Browsing(entries),
+                Err(err) => self.notice = Some(Notice::couldnt("list", &self.store.dir, err)),
+            }
+        }
+    }
+
     /// Shows the list of saved plans, or hides it.
     pub fn browse(&mut self) {
         if matches!(self.mode, Mode::Browsing(_)) {
@@ -232,6 +298,18 @@ impl Plans {
         self.load(engine, to)
     }
 
+    /// The saved plan with this title or file name.
+    pub fn find(&self, name: &str) -> Option<PathBuf> {
+        self.store.list().ok()?.into_iter().find_map(|entry| {
+            let named = entry.path.file_stem().is_some_and(|stem| stem == name)
+                || entry
+                    .summary
+                    .as_ref()
+                    .is_ok_and(|summary| summary.title.eq_ignore_ascii_case(name));
+            named.then_some(entry.path)
+        })
+    }
+
     /// Opens the saved plan with this title or file name.
     pub fn open_named(&mut self, engine: &Engine, name: &str) -> bool {
         let found = self.store.list().ok().and_then(|entries| {
@@ -240,7 +318,7 @@ impl Plans {
                     || entry
                         .summary
                         .as_ref()
-                        .is_ok_and(|(title, _)| title.eq_ignore_ascii_case(name))
+                        .is_ok_and(|summary| summary.title.eq_ignore_ascii_case(name))
             })
         });
         match found {
@@ -288,6 +366,21 @@ impl Plans {
         self.mode = Mode::Steps;
         let (file, plan, notice) = match to {
             Switch::New => (None, Plan::default(), None),
+            // Unsaved, so it shows Save and asks before it's replaced.
+            Switch::FromTemplate(path) => match Plan::load(&path) {
+                Ok(template) => {
+                    let plan = template.from_template(format!("{} {}", template.title, today()));
+                    engine.load_plan(plan);
+                    self.file = None;
+                    self.saved = Plan::default();
+                    self.notice = Some(Notice::Done(format!("New plan from {}", template.title)));
+                    return true;
+                }
+                Err(err) => {
+                    self.notice = Some(Notice::couldnt("open", &path, err));
+                    return false;
+                }
+            },
             Switch::Open(path) => match Plan::load(&path) {
                 Ok(plan) => {
                     let notice = self.remembered(&path, format!("Opened {}", file_name(&path)));
@@ -349,6 +442,44 @@ mod tests {
         assert_eq!(slug("Sunday service, March 3"), "sunday-service-march-3");
         assert_eq!(slug("  Oración del Día "), "oración-del-día");
         assert_eq!(slug("!!!"), "plan");
+    }
+
+    #[test]
+    fn a_template_starts_an_unsaved_plan_dated_today() {
+        let (_data, store, engine) = setup();
+        let mut plans = Plans::start(store.clone(), &engine);
+        rename(&mut plans, &engine, "Domingo");
+        engine.edit_plan(|plan| plan.section("Alabanza", None));
+        add_step(&engine);
+        assert!(plans.save(&engine));
+        let path = plans.file.clone().unwrap();
+
+        store.set_template(&path, true).unwrap();
+        let listed = store.list().unwrap();
+        assert!(listed[0].summary.as_ref().unwrap().template);
+
+        assert!(plans.switch(&engine, Switch::FromTemplate(path.clone())));
+        let plan = engine.plan();
+        assert_eq!(plan.title, format!("Domingo {}", today()));
+        assert!(!plan.template);
+        assert_eq!(plan.len(), 2, "the section and the step");
+        assert!(plans.is_dirty(&plan), "unsaved, so it shows Save");
+        assert_eq!(
+            plans.file, None,
+            "saving makes a new file, never the template"
+        );
+        assert!(
+            Plan::load(&path).unwrap().template,
+            "the template is untouched"
+        );
+        assert_eq!(today().len(), 10);
+    }
+
+    #[test]
+    fn dates_count_from_1970() {
+        assert_eq!(civil(0), (1970, 1, 1));
+        assert_eq!(civil(20_407), (2025, 11, 15));
+        assert_eq!(civil(11_016), (2000, 2, 29));
     }
 
     #[test]
