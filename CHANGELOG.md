@@ -102,6 +102,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   with the search empty before the plan runs.
 - The plans list's headings no longer have a line of instructions under
   them.
+- The home screen (the middle, with the search closed) leads with a search
+  box to click and sets the keys in three columns, where it had one long
+  column and a scrollbar in the middle of the pane.
 
 ## [0.7.0] - 2026-11-13
 
