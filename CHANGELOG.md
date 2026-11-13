@@ -6,18 +6,21 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.7.0] - 2026-11-13
-
 ### Added
 
 - Templates: ☆ makes a saved plan a template; clicking it in the list
   starts a new plan with its order of service, dated today.
-- A slide strip under On stage: a chip per verse (by its number), stanza,
-  page or slide (`17a`, `17b` when one took two); click one to show it.
 
 ### Fixed
 
 - A long plan name is cut at its edge instead of drawn over the step count.
+
+## [0.7.0] - 2026-11-13
+
+### Added
+
+- A slide strip under On stage: a chip per verse (by its number), stanza,
+  page or slide (`17a`, `17b` when one took two); click one to show it.
 
 ## [0.6.0] - 2026-11-13
 
