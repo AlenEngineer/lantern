@@ -249,8 +249,16 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
-    /// Open the settings on the plan's stage look.
-    PlanLook,
+    /// Open the settings on this plan: its name, look, template, copy, delete.
+    PlanSettings,
+    /// The plan's name, as typed in its settings.
+    RenamePlan(String),
+    /// Makes the open plan a template, or a plan again.
+    PlanTemplate(bool),
+    /// Saves the open plan as a copy with its own file, and opens the copy.
+    DuplicatePlan,
+    /// Deletes the open plan; the first press asks, the second does.
+    DeletePlan,
     /// What was typed in a step's length or a section's budget.
     Length(StepId, String),
     /// Moves a step up (-1) or down (1).
@@ -346,6 +354,8 @@ struct App {
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
+    /// Delete was pressed once in the plan's settings: again deletes.
+    pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
     editing: Option<(StepId, plan_edit::Part)>,
     /// The saved plan the arrows are on in the list of plans, for Enter.
@@ -420,6 +430,7 @@ impl App {
             spent: false,
             adding: None,
             search_open: false,
+            deleting_plan: false,
             editing: None,
             list_pick: None,
             undo: Vec::new(),
@@ -574,7 +585,7 @@ impl App {
                         None => Task::none(),
                     },
                     Ui::PlanLook(colour) => Task::batch([
-                        self.update(Message::PlanLook),
+                        self.update(Message::PlanSettings),
                         self.update(Message::Settings(settings::Edit::OwnLook)),
                         self.update(Message::Settings(settings::Edit::Background(colour))),
                     ]),
@@ -794,7 +805,7 @@ impl App {
                     }
                 })
             }
-            Message::PlanLook => {
+            Message::PlanSettings => {
                 let mut draft = self
                     .settings
                     .take()
@@ -802,6 +813,29 @@ impl App {
                 draft.scope = settings::Scope::ThisPlan;
                 self.settings = Some(draft);
                 return operation::snap_to(settings::SCROLL, scrollable::RelativeOffset::START);
+            }
+            Message::RenamePlan(name) => {
+                self.engine.0.edit_plan(|plan| plan.title = name);
+            }
+            Message::PlanTemplate(template) => {
+                self.engine.0.edit_plan(|plan| plan.template = template);
+            }
+            Message::DuplicatePlan => {
+                self.deleting_plan = false;
+                if self.plans.duplicate(&self.engine.0) {
+                    self.settings = None;
+                    return operation::focus(SEARCH_BOX);
+                }
+            }
+            Message::DeletePlan if !self.deleting_plan => self.deleting_plan = true,
+            Message::DeletePlan => {
+                self.deleting_plan = false;
+                if self.plans.delete(&self.engine.0) {
+                    self.settings = None;
+                    self.selected = None;
+                    self.engine.0.clear_preview();
+                    return self.preload_if(true);
+                }
             }
             Message::Rename(id, label) => {
                 self.remember(Some(id));
@@ -1122,6 +1156,7 @@ impl App {
             }
             Op::Save if self.settings.is_some() => self.save_settings(),
             Op::Settings => {
+                self.deleting_plan = false;
                 self.settings = match self.settings {
                     Some(_) => None,
                     None => Some(self.settings_draft()),

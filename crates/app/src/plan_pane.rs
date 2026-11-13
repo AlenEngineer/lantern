@@ -19,7 +19,6 @@ use crate::dashboard::{
     NAME_BOX, STEP_THUMB, level_tone, op, pill, scrolling, single_line, unit, wide,
 };
 use crate::drag::{Drag, Half};
-use crate::fit;
 use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
@@ -124,22 +123,34 @@ impl App {
             .width(Fill)
             .into(),
         };
+        // The name has the header's room. Where the service is ("3 of 7")
+        // shows only once it's running; how many steps there are is plain
+        // from the list.
         let items: Vec<&Step> = plan.steps().iter().filter(|s| !s.is_section()).collect();
         let at = self
             .engine
             .0
             .current_step()
             .and_then(|current| items.iter().position(|s| s.id == current.id));
-        let place = match at {
-            Some(at) => format!("{} of {}", at + 1, items.len()),
-            None => count(items.len(), "step"),
-        };
-        let mut header = row![
-            plans_button,
-            name,
-            text(place).size(META).color(p.on_surface_variant),
-            self.look_button(plan),
-        ];
+        let mut header = row![plans_button, name];
+        if let Some(at) = at {
+            header = header.push(
+                text(format!("{} of {}", at + 1, items.len()))
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+        }
+        // Everything about the plan that isn't its steps.
+        header = header.push(tooltip(
+            button(text("⋯").size(HEADING).color(p.on_surface_variant))
+                .padding([2, 10])
+                .on_press(Message::PlanSettings)
+                .style(look::row(p, Tone::Plain)),
+            container(text("This plan: name, look, template, copy, delete").size(META))
+                .padding([4, 8])
+                .style(look::tip(p)),
+            tooltip::Position::Bottom,
+        ));
         if self.plans.is_dirty(plan) {
             header = header.push(pill(
                 p,
@@ -150,43 +161,6 @@ impl App {
             ));
         }
         header.spacing(6).align_y(Alignment::Center).into()
-    }
-
-    /// A swatch of the stage's look for this plan (its background, ringed
-    /// in its text colour) that opens the settings on this plan's look.
-    fn look_button(&self, plan: &Plan) -> Element<'_, Message> {
-        let p = self.palette;
-        let (background, ink) = (fit::color(self.look.background), fit::color(self.look.text));
-        let swatch =
-            container(Space::new().width(14).height(14)).style(move |_| container::Style {
-                background: Some(background.into()),
-                border: iced::Border {
-                    color: ink,
-                    width: 2.0,
-                    radius: 7.0.into(),
-                },
-                ..container::Style::default()
-            });
-        // The swatch alone was a circle nobody could name: it says "Look".
-        let label = row![swatch, text("Look").size(META).color(p.on_surface_variant)]
-            .spacing(6)
-            .align_y(Alignment::Center);
-        let about = if plan.look.is_some() {
-            "This plan's own stage look"
-        } else {
-            "Stage look (the one for all plans)"
-        };
-        tooltip(
-            button(label)
-                .padding([4, 8])
-                .on_press(Message::PlanLook)
-                .style(look::row(p, Tone::Plain)),
-            container(text(about).size(META))
-                .padding([4, 8])
-                .style(look::tip(p)),
-            tooltip::Position::Bottom,
-        )
-        .into()
     }
 
     /// The last save or open: its error, or that it worked while nothing
