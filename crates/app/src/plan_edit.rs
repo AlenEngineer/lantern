@@ -101,7 +101,7 @@ impl App {
                     .style(look::row(p, Tone::Plain)),
                 container(text(about).size(META).color(p.on_surface))
                     .padding([4, 8])
-                    .style(look::chip(p, Tone::Plain)),
+                    .style(look::tip(p)),
                 tooltip::Position::Top,
             )
         };
@@ -127,7 +127,7 @@ impl App {
                 switch,
                 container(text(when).size(META).color(p.on_surface))
                     .padding([4, 8])
-                    .style(look::chip(p, Tone::Plain)),
+                    .style(look::tip(p)),
                 tooltip::Position::Top,
             ));
         }

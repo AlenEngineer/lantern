@@ -47,6 +47,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   they showed about twenty characters.
 - The plan's rows no longer move when "Saved…" or the readiness chip comes
   and goes (they're under the list now), or when a step goes on stage.
+- The circle in the plan's header says "Look"; tooltips are solid, and
+  the star's no longer covers the Edit button.
 
 ## [0.7.0] - 2026-11-13
 

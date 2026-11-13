@@ -164,28 +164,32 @@ impl App {
         let p = self.palette;
         let (background, ink) = (fit::color(self.look.background), fit::color(self.look.text));
         let swatch =
-            container(Space::new().width(20).height(20)).style(move |_| container::Style {
+            container(Space::new().width(14).height(14)).style(move |_| container::Style {
                 background: Some(background.into()),
                 border: iced::Border {
                     color: ink,
                     width: 2.0,
-                    radius: 10.0.into(),
+                    radius: 7.0.into(),
                 },
                 ..container::Style::default()
             });
+        // The swatch alone was a circle nobody could name: it says "Look".
+        let label = row![swatch, text("Look").size(META).color(p.on_surface_variant)]
+            .spacing(6)
+            .align_y(Alignment::Center);
         let about = if plan.look.is_some() {
             "This plan's own stage look"
         } else {
             "Stage look (the one for all plans)"
         };
         tooltip(
-            button(swatch)
-                .padding(4)
+            button(label)
+                .padding([4, 8])
                 .on_press(Message::PlanLook)
                 .style(look::row(p, Tone::Plain)),
-            container(text(about).size(META).color(p.on_surface))
+            container(text(about).size(META))
                 .padding([4, 8])
-                .style(look::chip(p, Tone::Plain)),
+                .style(look::tip(p)),
             tooltip::Position::Bottom,
         )
         .into()
@@ -803,8 +807,9 @@ fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
             .color(p.on_surface),
         )
         .padding([4, 8])
-        .style(look::chip(p, Tone::Plain)),
-        tooltip::Position::Left,
+        .style(look::tip(p)),
+        // Above the star: to its left it covered the Edit button.
+        tooltip::Position::Top,
     );
     let mut line = row![main].spacing(4).align_y(Alignment::Center);
     if template {
