@@ -27,6 +27,9 @@ const BANG_FIELD: f32 = 80.0;
 /// The settings' scrolling body.
 pub const SCROLL: &str = "settings-body";
 const SAMPLE_WIDTH: f32 = 384.0;
+/// The list of the settings' parts, and the most a part's fields spread.
+const CATEGORIES: f32 = 170.0;
+const PART_WIDTH: f32 = 640.0;
 
 /// The settings as they're being edited.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +49,10 @@ pub struct Draft {
     plan: Option<PlanLook>,
     /// Which look the stage fields edit.
     pub scope: Scope,
+    /// The part of the settings on show.
+    pub category: Category,
+    /// The action of `keys::ACTIONS` waiting for its new key to be pressed.
+    pub recording: Option<usize>,
     /// The font families installed, for the font field to suggest.
     fonts: Vec<String>,
     /// What the last save did.
@@ -55,6 +62,34 @@ pub struct Draft {
     suggesting: Option<(Field, Vec<Suggestion>)>,
     /// The key of each of `keys::ACTIONS`, as typed (`ctrl+n`).
     keys: Vec<String>,
+}
+
+/// A part of the settings: one shows at a time, picked from the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    /// The open plan: its name, template, copy, delete, and its own look.
+    Plan,
+    /// The look for all plans.
+    Stage,
+    Output,
+    /// Media folders, Bibles and image search.
+    Library,
+    /// The dashboard's colours.
+    Appearance,
+    Keys,
+}
+
+impl Category {
+    fn name(self) -> &'static str {
+        match self {
+            Category::Plan => "This plan",
+            Category::Stage => "Stage",
+            Category::Output => "Output",
+            Category::Library => "Library",
+            Category::Appearance => "Appearance",
+            Category::Keys => "Keys",
+        }
+    }
 }
 
 /// Which look the stage section edits.
@@ -201,12 +236,18 @@ pub enum Edit {
     Colors(String),
     /// The key of action N of `keys::ACTIONS`.
     Key(usize, String),
+    /// Shows a part of the settings.
+    Category(Category),
+    /// Waits for action N's new key to be pressed, or stops waiting.
+    Record(usize),
+    /// Stops waiting for a key.
+    StopRecording,
+    /// Action N goes back to its usual key.
+    ResetKey(usize),
     Background(String),
     StageImage(String),
     /// Put the stage on this screen (`None`: wherever the compositor puts it).
     Output(Option<String>),
-    /// Edit the look for all plans, or the open plan's.
-    Scope(Scope),
     /// Give the open plan its own look, starting from the look for all.
     OwnLook,
     /// The open plan goes back to the look for all plans.
@@ -255,6 +296,8 @@ impl Draft {
             stage: Stage::of(&config.stage, &shown),
             plan: None,
             scope: Scope::AllPlans,
+            category: Category::Stage,
+            recording: None,
             fonts: Vec::new(),
             notice: None,
             home: home.map(Path::to_path_buf),
@@ -394,9 +437,32 @@ impl Draft {
                 if let Some(key) = self.keys.get_mut(at) {
                     *key = text;
                 }
+                self.recording = None;
             }
-            Edit::Scope(scope) => self.scope = scope,
-            Edit::Output(output) => self.output = output,
+            // The plan's part edits the plan's own look; the rest, the
+            // look for all plans.
+            Edit::Category(category) => {
+                self.category = category;
+                self.recording = None;
+                self.scope = match category {
+                    Category::Plan => Scope::ThisPlan,
+                    _ => Scope::AllPlans,
+                };
+            }
+            Edit::Record(at) => {
+                self.recording = (self.recording != Some(at)).then_some(at);
+            }
+            Edit::StopRecording => self.recording = None,
+            Edit::ResetKey(at) => {
+                if let (Some(key), Some(action)) = (self.keys.get_mut(at), keys::ACTIONS.get(at)) {
+                    *key = action.key.to_string();
+                }
+                self.recording = None;
+            }
+            Edit::Output(output) => {
+                self.category = Category::Output;
+                self.output = output;
+            }
             Edit::OwnLook => {
                 let all = self.stage.clone();
                 if let Some(plan) = &mut self.plan {
@@ -569,7 +635,6 @@ impl App {
         let header = row![
             look::icon(Icon::Settings, 20.0, p.primary),
             text("Settings").size(HEADING).font(BOLD).color(p.primary),
-            chip(p, &shown_file, Tone::Plain),
             Space::new().width(Fill),
             text(format!("{} closes", keys::label(Op::ClearSearch)))
                 .size(META)
@@ -582,8 +647,7 @@ impl App {
         let mut folders = column![section(
             p,
             "Media folders",
-            "Lantern finds every file it can show in these folders, and in the folders inside them. \
-             Give a folder a bang, like !h, to search only it: !h himno. !f searches every folder."
+            "The folders Lantern indexes, with those inside them. A bang like !h searches only that folder."
         )]
         .spacing(6);
         for (i, folder) in draft.folders.iter().enumerate() {
@@ -611,7 +675,7 @@ impl App {
         let mut bibles = column![section(
             p,
             "Bibles",
-            "One .json or .tsv file per translation; the language is that of its book names."
+            "One .json or .tsv file per translation."
         )]
         .spacing(6);
         for (i, bible) in draft.bibles.iter().enumerate() {
@@ -654,7 +718,7 @@ impl App {
             section(
                 p,
                 "Image search",
-                "!gi needs a Brave Search API key, from brave.com/search/api. It's billed to you, so keep this file private."
+                "!gi needs a Brave Search API key (brave.com/search/api). It's billed to you."
             ),
             field(p, "Brave Search API key", &draft.brave_key, Edit::BraveKey).secure(true),
         ]
@@ -663,10 +727,15 @@ impl App {
             section(
                 p,
                 "Colours",
-                "A Matugen colours file, so Lantern follows your desktop's theme. Empty uses Lantern's own."
+                "A Matugen colours file, to follow your desktop's theme. Empty uses Lantern's own."
             ),
-            field(p, "~/.config/amane/colors.json", &draft.colors, Edit::Colors)
-                .id(Field::Colors.id()),
+            field(
+                p,
+                "~/.config/amane/colors.json",
+                &draft.colors,
+                Edit::Colors
+            )
+            .id(Field::Colors.id()),
             suggestions(p, draft, Field::Colors),
         ]
         .spacing(6);
@@ -680,31 +749,12 @@ impl App {
             |items: iced::widget::Row<'a, Message>| items.spacing(8).align_y(Alignment::Center);
         let mut stage = column![section(
             p,
-            "Stage",
-            "What the audience sees behind the content, and how text is set: as large as fits, between the two sizes (points on a 1080-line stage)."
+            if draft.scope == Scope::ThisPlan { "Its look" } else { "Stage" },
+            "What's behind the content, and how text is set: as large as fits between the two sizes."
         )]
         .spacing(6);
-        // With a plan open, the look for all plans or that plan's own.
-        if let Some(title) = draft.plan_title() {
-            let scope = |name: String, scope: Scope| {
-                let tone = if draft.scope == scope {
-                    Tone::Selected
-                } else {
-                    Tone::Plain
-                };
-                pill(
-                    p,
-                    &name,
-                    tone,
-                    look::PILL_SMALL,
-                    Some(settings(Edit::Scope(scope))),
-                )
-            };
-            stage = stage.push(line(row![
-                label("Look for"),
-                scope("All plans".into(), Scope::AllPlans),
-                scope(format!("This plan: {title}"), Scope::ThisPlan),
-            ]));
+        // The plan's part: the look for all plans, or one of its own.
+        {
             if draft.scope == Scope::ThisPlan {
                 let (about, action, tone, edit) = if draft.plan_has_own() {
                     (
@@ -793,14 +843,42 @@ impl App {
         let mut keys = column![section(
             p,
             "Keys",
-            "What each key does. Write a key like ctrl+n, alt+up, f9 or pagedown; a letter needs ctrl or alt, or it would type. Empty goes back to the usual key."
+            "Click a key, then press the new one. Esc gives up; ↺ puts the usual key back."
         )]
-        .spacing(6);
+        .spacing(4);
         for (at, (action, key)) in keys::ACTIONS.iter().zip(&draft.keys).enumerate() {
+            let recording = draft.recording == Some(at);
+            let shown = if recording {
+                "Press a key…".to_string()
+            } else {
+                keys::shown(key)
+            };
+            let tone = if recording {
+                Tone::Selected
+            } else {
+                Tone::Plain
+            };
+            // Only a changed key has something to put back.
+            let reset: Element<'a, Message> = if key != action.key {
+                button(text("↺").size(BODY).color(p.primary))
+                    .padding([4, 8])
+                    .on_press(settings(Edit::ResetKey(at)))
+                    .style(look::row(p, Tone::Plain))
+                    .into()
+            } else {
+                Space::new().width(28).into()
+            };
             keys = keys.push(line(row![
                 text(action.about).size(BODY).width(Fill),
-                field(p, action.key, key, move |text| Edit::Key(at, text))
-                    .width(SMALL_FIELD + 30.0),
+                reset,
+                pill(
+                    p,
+                    &shown,
+                    tone,
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Record(at)))
+                )
+                .width(SMALL_FIELD + 40.0),
             ]));
         }
 
@@ -809,27 +887,56 @@ impl App {
             section(
                 p,
                 "Output",
-                "The screen the stage goes on: the projector or TV. Picking one moves the stage there now; Save keeps it for next time."
+                "The screen the stage goes on. Picking one moves it there now; Save keeps it."
             ),
             output_row(p, draft),
         ]
         .spacing(6);
-        let sections = if draft.scope == Scope::ThisPlan {
-            column![
-                self.plan_section(),
-                stage,
-                output,
-                folders,
-                bibles,
-                images,
-                colors,
-                keys
-            ]
-        } else {
-            column![output, folders, bibles, stage, images, colors, keys]
+        // One part at a time, picked from the list beside it.
+        let part = match draft.category {
+            Category::Plan => column![self.plan_section(), stage],
+            Category::Stage => column![stage],
+            Category::Output => column![output],
+            Category::Library => column![folders, bibles, images],
+            Category::Appearance => column![colors],
+            Category::Keys => column![keys],
         };
-        let body = scrolling(sections.spacing(24)).id(SCROLL);
-        let mut footer = row![].spacing(8).align_y(Alignment::Center);
+        let mut parts = vec![
+            Category::Stage,
+            Category::Output,
+            Category::Library,
+            Category::Appearance,
+            Category::Keys,
+        ];
+        if draft.plan_title().is_some() {
+            parts.insert(0, Category::Plan);
+        }
+        let list = column(parts.into_iter().map(|category| {
+            let on = draft.category == category;
+            button(
+                text(category.name())
+                    .size(BODY)
+                    .font(if on { BOLD } else { MEDIUM })
+                    .color(if on { p.primary } else { p.on_surface }),
+            )
+            .width(Fill)
+            .padding([8, 12])
+            .on_press(settings(Edit::Category(category)))
+            .style(look::row(p, if on { Tone::Selected } else { Tone::Plain }))
+            .into()
+        }))
+        .spacing(2)
+        .width(CATEGORIES);
+        let body = row![
+            list,
+            scrolling(iced::widget::container(part.spacing(24)).max_width(PART_WIDTH)).id(SCROLL),
+        ]
+        .spacing(24)
+        .height(Fill);
+        // Where it's all kept, for whoever edits the file by hand.
+        let mut footer = row![chip(p, &shown_file, Tone::Plain)]
+            .spacing(8)
+            .align_y(Alignment::Center);
         if let Some(notice) = &draft.notice {
             let (message, color) = match notice {
                 Ok(done) if self.library.0.indexing() => {
@@ -838,7 +945,13 @@ impl App {
                 Ok(done) => (done.clone(), p.on_surface_variant),
                 Err(why) => (why.clone(), p.error),
             };
-            footer = footer.push(text(message).size(META).color(color).width(Fill));
+            footer = footer.push(
+                text(message)
+                    .size(META)
+                    .color(color)
+                    .width(Fill)
+                    .align_x(iced::alignment::Horizontal::Right),
+            );
         } else {
             footer = footer.push(Space::new().width(Fill));
         }
@@ -909,11 +1022,7 @@ impl App {
             Some(Message::DeletePlan),
         );
         column![
-            section(
-                p,
-                "This plan",
-                "Its name, and what can be done with it. Its look is below."
-            ),
+            section(p, "This plan", "Its name, and what can be done with it."),
             row![label("Name"), name]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -1194,7 +1303,7 @@ mod tests {
             Some(None),
             "uses the shared look"
         );
-        draft.edit(Edit::Scope(Scope::ThisPlan));
+        draft.edit(Edit::Category(Category::Plan));
         assert!(
             !draft.editing_a_look(),
             "nothing to edit until it has its own"
@@ -1210,7 +1319,7 @@ mod tests {
             "all plans unchanged"
         );
 
-        draft.edit(Edit::Scope(Scope::AllPlans));
+        draft.edit(Edit::Category(Category::Stage));
         draft.edit(Edit::Background("#000080".into()));
         assert_eq!(
             draft
@@ -1223,7 +1332,7 @@ mod tests {
             "the plan keeps its own"
         );
 
-        draft.edit(Edit::Scope(Scope::ThisPlan));
+        draft.edit(Edit::Category(Category::Plan));
         draft.edit(Edit::Background("not a colour".into()));
         assert!(
             draft

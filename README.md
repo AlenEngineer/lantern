@@ -119,9 +119,10 @@ on a result or step only lines it up; a double click shows it at once.
 
 ### Changing keys
 
-Every key in the table can be another: Settings has a **Keys** section, one
-field per action. Write a key like `ctrl+t`, `alt+up`, `f9` or `pagedown`;
-a letter needs `ctrl` or `alt`, or it would type. Buttons and hints show
+Every key in the table can be another: under **Keys** in Settings, click a
+key and press the new one (Esc gives up, ↺ puts the usual key back). A
+letter needs Ctrl or Alt, or it would type. In the config a key is written
+like `ctrl+t`, `alt+up`, `f9` or `pagedown`. Buttons and hints show
 the keys you chose. In `config.toml` it's the `[keys]` table, holding only
 what differs from the usual:
 

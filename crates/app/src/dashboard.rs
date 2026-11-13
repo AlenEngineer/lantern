@@ -35,6 +35,8 @@ const STAGE_WIDTH: (f32, f32) = (360.0, 280.0);
 /// What the launcher keeps before the side panes start to shrink.
 const LAUNCHER_ROOM: f32 = 400.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
+/// The most the settings spread, with the stage pane's room too.
+const SETTINGS_WIDTH: f32 = 880.0;
 /// A group of keys on the home screen: its width, and its chips' share.
 const KEY_COLUMN: f32 = 224.0;
 const KEY_CHIPS: f32 = 104.0;
@@ -82,11 +84,13 @@ impl App {
     /// Whether the stage pane has anything to show: something on stage or
     /// lined up, a blackout, or a step of the plan to come.
     fn stage_shown(&self) -> bool {
-        self.stage.program.is_some()
-            || self.stage.preview.is_some()
-            || self.stage.blackout
-            || self.engine.0.up_next().is_some()
-            || self.engine.0.current_step().is_some()
+        // The settings take the stage pane's room as well as the middle's.
+        self.settings.is_none()
+            && (self.stage.program.is_some()
+                || self.stage.preview.is_some()
+                || self.stage.blackout
+                || self.engine.0.up_next().is_some()
+                || self.engine.0.current_step().is_some())
     }
 
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
@@ -178,7 +182,11 @@ impl App {
     fn launcher(&self, timing: &Timing) -> Element<'_, Message> {
         // The settings take the launcher's place while they're open.
         if let Some(draft) = &self.settings {
-            return centered(self.settings_view(draft));
+            return container(container(self.settings_view(draft)).max_width(SETTINGS_WIDTH))
+                .center_x(Fill)
+                .height(Fill)
+                .padding([16, 24])
+                .into();
         }
         let p = self.palette;
         let mut header = row![

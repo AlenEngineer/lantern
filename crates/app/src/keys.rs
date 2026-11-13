@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use iced::event;
 use iced::keyboard::{self, Key, key::Named};
@@ -519,6 +520,54 @@ pub fn configure(changed: &BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the next key pressed is being recorded for the settings, not
+/// acted on.
+static RECORDING: AtomicBool = AtomicBool::new(false);
+
+/// Starts or stops recording: while on, a key press becomes
+/// [`Message::KeyRecorded`] with the key as the config writes it, and
+/// Escape alone gives it up.
+pub fn record(on: bool) {
+    RECORDING.store(on, Ordering::Relaxed);
+}
+
+/// A key press as the config writes it (`ctrl+shift+n`), or `None` for a
+/// key that has no name here, such as a modifier on its own.
+fn as_written(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {
+    let key = match key.as_ref() {
+        Key::Named(named) => NAMED.iter().find(|(_, n, _)| *n == named)?.0.to_string(),
+        Key::Character(text) => {
+            let mut chars = text.chars();
+            match (chars.next(), chars.next()) {
+                (Some(' '), None) => "space".to_string(),
+                (Some(c), None) => c.to_lowercase().to_string(),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    let mut parts = Vec::new();
+    if modifiers.command() {
+        parts.push("ctrl");
+    }
+    if modifiers.alt() {
+        parts.push("alt");
+    }
+    if modifiers.shift() {
+        parts.push("shift");
+    }
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
+/// A key as a button shows it, from how the config writes it; as written
+/// when it doesn't read.
+pub fn shown(written: &str) -> String {
+    written
+        .parse::<Bind>()
+        .map_or_else(|_| written.to_string(), |bind| bind.to_string())
+}
+
 /// The key that does `op`, as a button shows it: "Ctrl+N".
 pub fn label(op: Op) -> String {
     keymap().label(op)
@@ -557,6 +606,17 @@ pub fn key_event(
     else {
         return None;
     };
+    if RECORDING.load(Ordering::Relaxed) {
+        if repeat {
+            return None;
+        }
+        let escape = key == Key::Named(Named::Escape) && modifiers.is_empty();
+        return match as_written(&key, modifiers) {
+            _ if escape => Some(Message::KeyRecorded(None)),
+            Some(written) => Some(Message::KeyRecorded(Some(written))),
+            None => None,
+        };
+    }
     let used = status == event::Status::Captured;
     let ctrl = modifiers.command();
     let alt = modifiers.alt();
@@ -674,6 +734,32 @@ mod tests {
         assert_eq!(op_named("Ctrl+B"), Some(Op::Blackout));
         assert_eq!(op_named("ctrl+space"), Some(Op::PlayPause));
         assert_eq!(op_named("b"), None);
+    }
+
+    #[test]
+    fn a_pressed_key_is_written_as_the_config_would() {
+        let shift = keyboard::Modifiers::SHIFT;
+        let written = |key: Key, modifiers| as_written(&key, modifiers);
+        assert_eq!(
+            written(Key::Character("t".into()), CTRL).as_deref(),
+            Some("ctrl+t")
+        );
+        assert_eq!(
+            written(Key::Character("N".into()), CTRL | shift).as_deref(),
+            Some("ctrl+shift+n")
+        );
+        assert_eq!(written(Key::Named(Named::F9), NONE).as_deref(), Some("f9"));
+        assert_eq!(
+            written(Key::Named(Named::Space), CTRL).as_deref(),
+            Some("ctrl+space")
+        );
+        assert_eq!(
+            written(Key::Named(Named::Control), CTRL),
+            None,
+            "a modifier alone"
+        );
+        assert_eq!(shown("ctrl+shift+n"), "Ctrl+Shift+N");
+        assert_eq!(shown("nonsense"), "nonsense");
     }
 
     #[test]

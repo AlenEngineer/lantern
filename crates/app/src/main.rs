@@ -285,6 +285,9 @@ enum Message {
     DiscardPlan,
     /// Yes, replace the plan that's running.
     LeavePlan,
+    /// The key pressed while the settings waited for one, as the config
+    /// writes it; `None` for Escape, which gives up.
+    KeyRecorded(Option<String>),
     /// Opens or closes the plan's "Add step" row.
     ToggleAdd,
     /// Back to the steps from the name editor, the open list or the question.
@@ -597,6 +600,8 @@ impl App {
                         }
                     },
                     Ui::Path(text) => {
+                        let library = settings::Edit::Category(settings::Category::Library);
+                        let _ = self.update(Message::Settings(library));
                         if self.settings.as_ref().is_some_and(|d| d.folder_rows() == 0) {
                             let _ = self.update(Message::Settings(settings::Edit::AddFolder));
                         }
@@ -726,9 +731,35 @@ impl App {
                     move_stage(output);
                 }
                 let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
+                // A key waiting to be pressed takes the next key press.
+                keys::record(
+                    self.settings
+                        .as_ref()
+                        .is_some_and(|d| d.recording.is_some()),
+                );
                 // A chosen path is longer than what was typed: cursor to its end.
                 if let Some(field) = chosen {
                     return operation::move_cursor_to_end(field.id());
+                }
+            }
+            Message::KeyRecorded(pressed) => {
+                let Some(draft) = &mut self.settings else {
+                    keys::record(false);
+                    return Task::none();
+                };
+                match (pressed, draft.recording) {
+                    (Some(written), Some(at)) => match written.parse::<keys::Bind>() {
+                        Ok(_) => {
+                            draft.edit(settings::Edit::Key(at, written));
+                            keys::record(false);
+                        }
+                        // Keeps waiting: a letter alone would type.
+                        Err(why) => draft.notice = Some(Err(format!("{why}."))),
+                    },
+                    _ => {
+                        draft.edit(settings::Edit::StopRecording);
+                        keys::record(false);
+                    }
                 }
             }
             Message::SaveSettings => self.save_settings(),
@@ -810,7 +841,7 @@ impl App {
                     .settings
                     .take()
                     .unwrap_or_else(|| self.settings_draft());
-                draft.scope = settings::Scope::ThisPlan;
+                draft.edit(settings::Edit::Category(settings::Category::Plan));
                 self.settings = Some(draft);
                 return operation::snap_to(settings::SCROLL, scrollable::RelativeOffset::START);
             }
@@ -1156,6 +1187,7 @@ impl App {
             }
             Op::Save if self.settings.is_some() => self.save_settings(),
             Op::Settings => {
+                keys::record(false);
                 self.deleting_plan = false;
                 self.settings = match self.settings {
                     Some(_) => None,
