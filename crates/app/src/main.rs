@@ -10,6 +10,7 @@
 
 mod config;
 mod dashboard;
+mod drag;
 mod fit;
 mod keys;
 mod length;
@@ -46,6 +47,7 @@ use lantern_engine::{
 
 use crate::config::Config;
 use crate::dashboard::{NAME_BOX, RESULTS, SEARCH_BOX};
+use crate::drag::{Drag, Half};
 use crate::keys::Op;
 use crate::library::Library;
 use crate::palette::Palette;
@@ -198,11 +200,18 @@ enum Message {
     /// A result or plan step was clicked: a single click lines it up, a
     /// double click also shows it.
     Click(Clicked),
-    /// The pointer went over a plan row, or off every row.
-    Hover(Option<StepId>),
+    /// The pointer went over half of a plan row, or off it.
+    Hover(Option<(StepId, Half)>),
+    /// The pointer left this plan row. Only clears the hover if it's still
+    /// this row's: entering the next row may come first.
+    Unhover(StepId),
+    /// The pointer left the plan list: a drag let go now goes nowhere.
+    LeftPlan,
     /// The left button went down (`true`) or up in a window; `None` for a
     /// script, which has no window.
     Pointer(Option<window::Id>, bool),
+    /// The pointer moved in a window, while a row is held.
+    Cursor(Option<window::Id>, iced::Point),
     /// A result was picked, which previews it.
     Pick(ResourceId),
     /// A bang was clicked: start a query with it.
@@ -284,11 +293,10 @@ struct App {
     selected: Option<StepId>,
     /// The last click on a result or step, to tell a double click.
     last_click: Option<(Clicked, Instant)>,
-    /// The plan row under the pointer.
-    hovered: Option<StepId>,
-    /// The plan step the button went down on, while it's held: dropping it
-    /// on another row moves it there.
-    drag: Option<StepId>,
+    /// The plan row (and its half) under the pointer.
+    hovered: Option<(StepId, Half)>,
+    /// The plan row the button went down on, while it's held.
+    drag: Option<Drag>,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -424,13 +432,19 @@ impl App {
                             Task::none()
                         }
                     },
-                    Ui::Drag(from, to) => {
+                    Ui::Drag(from, to, half) => {
                         let steps = self.engine.0.plan().steps().to_vec();
                         match (steps.get(from), steps.get(to)) {
                             (Some(from), Some(to)) => {
-                                let _ = self.update(Message::Hover(Some(from.id)));
+                                // Press on the row, move past the slop, then
+                                // over the target's half, as a hand would.
+                                let _ = self.update(Message::Hover(Some((from.id, Half::Upper))));
                                 let _ = self.update(Message::Pointer(None, true));
-                                self.update(Message::Hover(Some(to.id)))
+                                let _ = self
+                                    .update(Message::Cursor(None, iced::Point::new(240.0, 200.0)));
+                                let _ = self
+                                    .update(Message::Cursor(None, iced::Point::new(260.0, 240.0)));
+                                self.update(Message::Hover(Some((to.id, half))))
                             }
                             _ => {
                                 log(format!(
@@ -482,18 +496,38 @@ impl App {
                 self.search.live_event(ticket, &event, &self.engine.0);
             }
             Message::SearchDone(ticket) => self.search.live_done(ticket),
-            Message::Hover(row) => self.hovered = row,
-            Message::Pointer(window, _) if window == Some(self.stage_window) => {}
-            Message::Pointer(_, true) => self.drag = self.hovered,
+            Message::Hover(row) => {
+                self.hovered = row;
+                self.aim();
+            }
+            Message::Unhover(row) => {
+                if self.hovered.is_some_and(|(over, _)| over == row) {
+                    self.hovered = None;
+                }
+            }
+            Message::LeftPlan => {
+                if let Some(drag) = &mut self.drag {
+                    drag.landing = None;
+                }
+            }
+            Message::Pointer(window, _) | Message::Cursor(window, _)
+                if window == Some(self.stage_window) => {}
+            Message::Cursor(_, at) => {
+                if let Some(drag) = &mut self.drag {
+                    drag.to(at);
+                }
+                self.aim();
+            }
+            Message::Pointer(_, true) => {
+                let plan = self.engine.0.plan();
+                self.drag = self.hovered.map(|(step, _)| Drag::new(&plan, step));
+            }
             Message::Pointer(_, false) => {
-                let onto = self.dragged_over();
-                let dropped = self.drag.take().zip(onto);
-                if let Some((step, onto)) = dropped {
-                    self.engine.0.edit_plan(|plan| {
-                        if let Some(at) = plan.position(onto) {
-                            plan.move_to(step, at);
-                        }
-                    });
+                let dropped = self.drag.take().filter(|drag| drag.moving);
+                if let Some((drag, at)) = dropped.and_then(|d| d.landing.map(|at| (d, at))) {
+                    self.engine
+                        .0
+                        .edit_plan(|plan| plan.move_steps(&drag.carried, at));
                     return self.preload();
                 }
             }
@@ -752,6 +786,8 @@ impl App {
                 }
             }
             Op::ClearSearch if self.settings.is_some() => return self.op(Op::Settings),
+            // Esc lets go of a drag without moving anything.
+            Op::ClearSearch if self.drag.is_some() => self.drag = None,
             Op::ClearSearch => {
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
@@ -976,6 +1012,21 @@ impl App {
     /// Preloads what the operator is most likely to take next: the preview
     /// and the plan's next step. Every YouTube video in the plan starts
     /// downloading, since a download takes about as long as the video.
+    /// Points a moving drag at the row half under the pointer. Over the
+    /// gap (no row) it keeps aiming where it was, so the gap stays put.
+    fn aim(&mut self) {
+        let Some(drag) = self.drag.as_mut().filter(|drag| drag.moving) else {
+            return;
+        };
+        let plan = self.engine.0.plan();
+        if let Some(landing) = self
+            .hovered
+            .and_then(|(over, half)| drag.landing(&plan, over, half))
+        {
+            drag.landing = Some(landing);
+        }
+    }
+
     fn preload(&mut self) -> Task<Message> {
         for step in self.engine.0.plan().steps() {
             if let Action::Show { resource } = &step.action
@@ -1044,6 +1095,9 @@ impl App {
             iced::event::listen_with(keys::key_event),
             iced::event::listen_with(pointer_event),
         ];
+        if self.drag.is_some() {
+            subscriptions.push(iced::event::listen_with(cursor_event));
+        }
         if self.colors.is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckPalette));
@@ -1177,6 +1231,16 @@ fn pointer_event(
         }
         iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
             Some(Message::Pointer(Some(window), false))
+        }
+        _ => None,
+    }
+}
+
+/// Where the pointer moved, while a plan row is held.
+fn cursor_event(event: iced::Event, _: iced::event::Status, window: window::Id) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::Cursor(Some(window), position))
         }
         _ => None,
     }
