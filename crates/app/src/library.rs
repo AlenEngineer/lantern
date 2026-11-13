@@ -1,6 +1,8 @@
 //! The sources the config names, registered and indexed on a worker thread
-//! so the windows open at once.
+//! so the windows open at once, and swapped for new ones when the settings
+//! change.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -21,30 +23,60 @@ pub struct Indexed {
     pub result: Result<usize, String>,
 }
 
-/// The index's progress. `None` until indexing finishes.
-#[derive(Debug, Default)]
+/// The configured sources and the index's progress.
 pub struct Library {
+    engine: Arc<Engine>,
+    /// `None` while indexing.
     reports: Mutex<Option<Vec<Indexed>>>,
     done: Condvar,
+    /// The sources the config registered, to take out on the next apply.
+    configured: Mutex<Vec<SourceId>>,
+    /// One apply at a time.
+    applying: Mutex<()>,
+    /// Counts applies, so only the latest one says indexing is done.
+    generation: AtomicU64,
 }
 
 impl Library {
-    /// Registers the sources that need no indexing now (links, and YouTube
-    /// and image search on request), and the configured sources and their
-    /// index on a worker thread.
+    /// Registers the sources the config doesn't change (links, YouTube) now,
+    /// and the configured ones and their index on a worker thread.
     pub fn start(engine: Arc<Engine>, config: Config) -> Arc<Library> {
-        let instant = [
+        let fixed = [
             engine.add_source(LinkSource::new(id("link"))),
             engine.add_source(YoutubeSource::new(id("youtube"))),
-            engine.add_source(BraveImages::new(id("images"), config.brave_api_key.clone())),
         ];
-        for err in instant.into_iter().filter_map(Result::err) {
+        for err in fixed.into_iter().filter_map(Result::err) {
             log(format!("source: {err}"));
         }
-        let library = Arc::new(Library::default());
-        let worker = library.clone();
+        let library = Arc::new(Library {
+            engine,
+            reports: Mutex::new(None),
+            done: Condvar::new(),
+            configured: Mutex::new(Vec::new()),
+            applying: Mutex::new(()),
+            generation: AtomicU64::new(0),
+        });
+        library.apply(config);
+        library
+    }
+
+    /// Swaps the configured sources (folders, Bibles, image search) for
+    /// `config`'s and reindexes, on a worker thread. Searches keep working
+    /// meanwhile; the dashboard says it's indexing until done.
+    pub fn apply(self: &Arc<Self>, config: Config) {
+        *self.lock() = None;
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let library = Arc::clone(self);
         std::thread::spawn(move || {
-            let mut reports = register(&engine, config);
+            let _one_at_a_time = library.applying.lock().unwrap_or_else(|e| e.into_inner());
+            let engine = &library.engine;
+            let old =
+                std::mem::take(&mut *library.configured.lock().unwrap_or_else(|e| e.into_inner()));
+            for source in old {
+                let _ = engine.searcher().unregister(&source);
+            }
+            let (registered, mut reports) = register(engine, config);
+            *library.configured.lock().unwrap_or_else(|e| e.into_inner()) = registered;
             reports.extend(engine.reindex().into_iter().map(|report| Indexed {
                 source: report.source.to_string(),
                 result: report.result.map_err(|err| err.to_string()),
@@ -52,10 +84,11 @@ impl Library {
             for line in summary(Some(&reports)) {
                 log(line);
             }
-            *worker.lock() = Some(reports);
-            worker.done.notify_all();
+            if library.generation.load(Ordering::SeqCst) == generation {
+                *library.lock() = Some(reports);
+                library.done.notify_all();
+            }
         });
-        library
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Vec<Indexed>>> {
@@ -79,20 +112,41 @@ impl Library {
     /// What the dashboard should say about the index: that it's still
     /// indexing, or which sources failed. Nothing once all is well.
     pub fn problems(&self) -> Vec<String> {
-        match self.lock().as_deref() {
-            None => vec!["Indexing your folders and Bibles…".into()],
-            Some(reports) => summary(Some(reports))
-                .into_iter()
-                .skip(1)
-                .map(|line| line.trim().to_string())
-                .collect(),
-        }
+        problems(self.lock().as_deref())
     }
 }
 
-/// Registers one local source for every folder and one source per Bible.
-/// Returns a report for each Bible that couldn't be loaded or registered.
-fn register(engine: &Engine, config: Config) -> Vec<Indexed> {
+fn problems(reports: Option<&[Indexed]>) -> Vec<String> {
+    match reports {
+        None => vec!["Indexing your folders and Bibles…".into()],
+        Some(reports) => summary(Some(reports))
+            .into_iter()
+            .skip(1)
+            .map(|line| line.trim().to_string())
+            .collect(),
+    }
+}
+
+/// Registers one local source for every folder, one source per Bible, and
+/// image search with the config's key. Returns the ids registered, and a
+/// report for each source that couldn't be loaded or registered.
+fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
+    let mut registered = Vec::new();
+    let mut failed = Vec::new();
+    let mut add = |source: String, result: Result<SourceId, String>| match result {
+        Ok(id) => registered.push(id),
+        Err(error) => failed.push(Indexed {
+            source,
+            result: Err(error),
+        }),
+    };
+    add(
+        "images".into(),
+        engine
+            .add_source(BraveImages::new(id("images"), config.brave_api_key))
+            .map(|()| id("images"))
+            .map_err(|err| err.to_string()),
+    );
     let local = config.folders.into_iter().fold(
         LocalSource::new(id("local"), "Local folders"),
         |local, entry| {
@@ -103,13 +157,13 @@ fn register(engine: &Engine, config: Config) -> Vec<Indexed> {
             })
         },
     );
-    let mut failed = Vec::new();
-    if let Err(err) = engine.add_source(local) {
-        failed.push(Indexed {
-            source: "local".into(),
-            result: Err(err.to_string()),
-        });
-    }
+    add(
+        "local".into(),
+        engine
+            .add_source(local)
+            .map(|()| id("local"))
+            .map_err(|err| err.to_string()),
+    );
     for entry in config.bibles {
         let name = bible_name(&entry);
         let source = format!("bible-{}", slug(&name));
@@ -120,17 +174,13 @@ fn register(engine: &Engine, config: Config) -> Vec<Indexed> {
                 let bible = Bible::load(translation, &entry.path)
                     .map_err(|err| format!("{}: {err}", entry.path.display()))?;
                 engine
-                    .add_source(BibleSource::new(id, bible))
+                    .add_source(BibleSource::new(id.clone(), bible))
+                    .map(|()| id)
                     .map_err(|err| err.to_string())
             });
-        if let Err(error) = result {
-            failed.push(Indexed {
-                source,
-                result: Err(error),
-            });
-        }
+        add(source, result);
     }
-    failed
+    (registered, failed)
 }
 
 fn bible_name(entry: &BibleEntry) -> String {
@@ -232,9 +282,44 @@ mod tests {
     #[test]
     fn says_indexing_until_done() {
         assert_eq!(summary(None), ["Index: indexing…"]);
-        let indexing = Library::default();
-        assert_eq!(indexing.problems(), ["Indexing your folders and Bibles…"]);
+        assert_eq!(problems(None), ["Indexing your folders and Bibles…"]);
         let (_, library) = started("");
         assert!(library.problems().is_empty());
+    }
+
+    #[test]
+    fn applying_a_new_config_swaps_the_sources() {
+        let (engine, library) = started(
+            r#"
+            [[folders]]
+            path = "scripts/e2e/fixtures"
+            "#,
+        );
+        assert_eq!(engine.searcher().index().len(), 4);
+        let bible_only = Config::parse(
+            r#"
+            [[bibles]]
+            lang = "es"
+            path = "sources/bible/fixtures/sample.tsv"
+            name = "RV1909"
+            "#,
+            repo(),
+            None,
+        )
+        .unwrap();
+        library.apply(bible_only);
+        assert!(library.settle(Duration::from_secs(30)));
+        assert_eq!(engine.searcher().index().len(), 8, "the verses, no files");
+        let ids: Vec<String> = engine
+            .searcher()
+            .sources()
+            .iter()
+            .map(|s| s.id().to_string())
+            .collect();
+        assert_eq!(
+            ids.iter().filter(|id| *id == "images").count(),
+            1,
+            "{ids:?}"
+        );
     }
 }

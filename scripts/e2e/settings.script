@@ -1,0 +1,13 @@
+# The settings view: open it over the launcher, save what it shows (which
+# writes the config and reindexes), and close it. Run it with
+# LANTERN_CONFIG pointing at a copy: saving rewrites the file.
+wait 1500
+press ctrl+,
+wait 400
+shot 1-settings
+press ctrl+s
+wait 1500
+shot 2-saved
+press escape
+wait 300
+shot 3-closed

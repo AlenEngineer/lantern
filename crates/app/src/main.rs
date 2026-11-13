@@ -19,6 +19,7 @@ mod plan_pane;
 mod plans;
 mod script;
 mod search;
+mod settings;
 mod stage;
 mod youtube;
 
@@ -38,6 +39,7 @@ use lantern_engine::{
     SearchStream, StageEvent, StageFeed, StageState, StepId,
 };
 
+use crate::config::Config;
 use crate::dashboard::{Mode, NAME_BOX, RESULTS, SEARCH_BOX};
 use crate::keys::Op;
 use crate::library::Library;
@@ -68,9 +70,8 @@ fn main() -> ExitCode {
     let (config, config_status) = config::load(config::env);
     log(config_status.to_string());
     let config_status = Arc::new(config_status);
-    let colors = config.colors.clone();
     let engine = Shared(Arc::new(Engine::new()));
-    let library = Shared(Library::start(engine.0.clone(), config));
+    let library = Shared(Library::start(engine.0.clone(), config.clone()));
     let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
     let store = Store::new(&config::xdg_dir(
         config::env,
@@ -83,7 +84,7 @@ fn main() -> ExitCode {
                 engine.clone(),
                 library.clone(),
                 config_status.clone(),
-                colors.clone(),
+                config.clone(),
                 downloads.clone(),
                 store.clone(),
                 script.clone(),
@@ -193,6 +194,10 @@ enum Message {
     Length(StepId, String),
     /// Moves a step up (-1) or down (1).
     Move(StepId, isize),
+    /// A change in the settings view.
+    Settings(settings::Edit),
+    /// Writes the settings to the config file and applies them.
+    SaveSettings,
     /// A saved plan in the open list was clicked.
     OpenPlan(PathBuf),
     /// The operator agreed to lose the unsaved plan.
@@ -213,6 +218,11 @@ struct App {
     library: Shared<Library>,
     /// Which config file was read, or why none was.
     config_status: Arc<config::Status>,
+    /// The config in force, for the settings view to start from.
+    config: Config,
+    /// The settings being edited, while the view is open.
+    settings: Option<settings::Draft>,
+    home: Option<PathBuf>,
     downloads: Shared<Downloads>,
     plans: Plans,
     palette: Palette,
@@ -240,7 +250,7 @@ impl App {
         engine: Shared<Engine>,
         library: Shared<Library>,
         config_status: Arc<config::Status>,
-        colors: Option<PathBuf>,
+        config: Config,
         downloads: Shared<Downloads>,
         store: Store,
         script: Option<Script>,
@@ -265,7 +275,10 @@ impl App {
             library,
             config_status,
             palette: Palette::default(),
-            colors: colors.map(palette::Source::new),
+            colors: config.colors.clone().map(palette::Source::new),
+            config,
+            settings: None,
+            home: config::env("HOME").map(PathBuf::from),
             palette_error: None,
             downloads,
             script,
@@ -371,11 +384,19 @@ impl App {
                     return self.op(op);
                 }
             }
+            // Typing goes to the search box, which settings cover.
+            Message::Type(_) if self.settings.is_some() => {}
             Message::Type(typed) => {
                 let query = format!("{}{typed}", self.search.query);
                 return self.complete(query);
             }
             Message::CheckPalette => self.check_palette(),
+            Message::Settings(edit) => {
+                if let Some(draft) = &mut self.settings {
+                    draft.edit(edit);
+                }
+            }
+            Message::SaveSettings => self.save_settings(),
             Message::GoTo(step) => {
                 self.mode = Mode::Plan;
                 if let Err(err) = self.engine.0.go_to(step) {
@@ -529,9 +550,20 @@ impl App {
                     return self.scroll_to_pick();
                 }
             }
+            Op::ClearSearch if self.settings.is_some() => return self.op(Op::Settings),
             Op::ClearSearch => {
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
+            }
+            Op::Save if self.settings.is_some() => self.save_settings(),
+            Op::Settings => {
+                self.settings = match self.settings {
+                    Some(_) => None,
+                    None => Some(settings::Draft::of(&self.config, self.home.as_deref())),
+                };
+                if self.settings.is_none() {
+                    return operation::focus(SEARCH_BOX);
+                }
             }
             Op::DropBang => {
                 let edit = self.search.drop_bang(&engine);
@@ -557,6 +589,39 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Writes the settings to the config file and applies them: the library
+    /// swaps its sources and the colours follow the new file. What happened
+    /// shows under the settings.
+    fn save_settings(&mut self) {
+        let Some(draft) = &mut self.settings else {
+            return;
+        };
+        let path = self.config_status.path().to_path_buf();
+        let home = self.home.as_deref();
+        let dir = path.parent().unwrap_or(std::path::Path::new("."));
+        let saved = draft
+            .config(dir, home)
+            .and_then(|config| config.save(&path, home).map(|()| config));
+        match saved {
+            Ok(config) => {
+                draft.notice = Some(Ok(settings::saved(&path, home)));
+                log(format!("settings: saved {}", path.display()));
+                self.library.0.apply(config.clone());
+                if config.colors != self.config.colors {
+                    self.colors = config.colors.clone().map(palette::Source::new);
+                    if self.colors.is_none() {
+                        self.palette = Palette::default();
+                        self.palette_error = None;
+                    }
+                    self.check_palette();
+                }
+                self.config = config;
+                self.config_status = Arc::new(config::Status::Read(path));
+            }
+            Err(err) => draft.notice = Some(Err(err)),
+        }
     }
 
     /// Rereads the colours file if it changed. A file that can't be read

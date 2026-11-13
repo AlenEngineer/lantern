@@ -90,6 +90,7 @@ lists the keys for the mode you're in.
 | Backspace | in an empty box, take the bang chip away |
 | Ctrl+P | switch between live and plan mode |
 | Ctrl+E | edit the plan: names, lengths, budgets, sections |
+| Ctrl+, | settings: folders, Bibles, image search key, colours |
 
 ### Bangs
 
@@ -155,6 +156,12 @@ of it exactly.
 
 ### Configuration
 
+**Settings** (Ctrl+, or the gear in the launcher) edits the config from the
+app: media folders, Bibles, the Brave key and the colours file. **Save**
+(Ctrl+S) writes the file and applies it at once: the folders and Bibles are
+reindexed and the colours reload, no restart. It rewrites the file, so
+comments in it are not kept.
+
 The app reads `~/.config/lantern/config.toml`, or the file named by
 `LANTERN_CONFIG`. Relative paths are relative to the config file, and `~`
 works. Unknown keys are errors, so typos show up on the dashboard.
@@ -213,8 +220,9 @@ better fix.
 `scripts/e2e.sh <script> <outdir>` runs the real app on two headless
 Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
 screenshot of both windows at every `shot`. `basic`, `media`, `library`,
-`dashboard`, `launcher`, `plans`, `youtube` and `online` (both need the
-network) cover hymns, images, video, PDFs, Bible passages, the dashboard,
+`dashboard`, `launcher`, `plans`, `timer`, `settings` (run it with
+`LANTERN_CONFIG` pointing at a copy: it saves), `youtube` and `online`
+(both need the network) cover hymns, images, video, PDFs, Bible passages, the dashboard,
 bangs, plan files, YouTube downloads and search, and image links.
 
 ```sh

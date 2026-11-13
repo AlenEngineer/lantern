@@ -119,6 +119,10 @@ impl App {
     }
 
     fn launcher(&self, timing: &Timing) -> Element<'_, Message> {
+        // The settings take the launcher's place while they're open.
+        if let Some(draft) = &self.settings {
+            return centered(self.settings_view(draft));
+        }
         let p = self.palette;
         let mut header = row![
             look::icon(Icon::Lantern, 20.0, p.primary),
@@ -140,9 +144,14 @@ impl App {
             }
             None => format!("Ctrl+P {} mode", self.mode.toggled().name()),
         };
+        let gear = button(look::icon(Icon::Settings, 18.0, p.on_surface_variant))
+            .padding(8)
+            .on_press(op(Op::Settings))
+            .style(look::pill(p, Tone::Plain));
         header = header
             .push(Space::new().width(Fill))
-            .push(text(aside).size(META).color(p.on_surface_variant));
+            .push(text(aside).size(META).color(p.on_surface_variant))
+            .push(gear);
         let mut body = column![header, self.search_box(), self.results()]
             .spacing(12)
             .height(Fill);
@@ -154,11 +163,7 @@ impl App {
                 .size(META)
                 .color(p.on_surface_variant),
         );
-        container(container(body).max_width(LAUNCHER_WIDTH))
-            .center_x(Fill)
-            .height(Fill)
-            .padding([16, 24])
-            .into()
+        centered(body)
     }
 
     /// The config, the index and the colours, only when something is wrong
@@ -634,6 +639,15 @@ impl App {
         .align_y(Alignment::Center)
         .into()
     }
+}
+
+/// The middle pane's content, at the launcher's width.
+fn centered<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(container(content).max_width(LAUNCHER_WIDTH))
+        .center_x(Fill)
+        .height(Fill)
+        .padding([16, 24])
+        .into()
 }
 
 pub(crate) fn op(op: Op) -> Message {
