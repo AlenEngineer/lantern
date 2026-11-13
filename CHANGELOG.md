@@ -19,6 +19,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   asks them, and the dashboard waits for Enter before searching them.
 - The stage shows images from links, downloaded into
   `~/.cache/lantern/images`, falling back to a source's thumbnail.
+- A YouTube video needed before its download is done streams from YouTube's
+  HLS playlist while the download goes on, instead of showing black until
+  the file arrives. Streams can't be scrubbed or replayed.
 
 ### Changed
 

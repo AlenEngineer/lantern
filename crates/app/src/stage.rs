@@ -8,9 +8,10 @@
 //! the plan's next step), so a take of a preloaded video only swaps a player
 //! that is already built.
 //!
-//! A YouTube video loads like a local one, from the download cache. Its
-//! loader waits for the download, so a take before it is ready shows black
-//! until the file arrives. An image at a link is downloaded into the cache
+//! A YouTube video loads like a local one, from the download cache. Until
+//! its download is done, it streams instead: the loader asks `yt-dlp` for
+//! the stream (a few seconds) and the download goes on for next time. If it
+//! can't stream, it waits for the download. An image at a link is downloaded into the cache
 //! first, falling back to its [thumbnail](Resource::THUMBNAIL) when the
 //! site refuses.
 
@@ -37,7 +38,13 @@ pub enum Content {
     /// A decoded still image.
     Image(Handle),
     /// A player, paused and muted until it goes on program.
-    Video(Video),
+    Video {
+        player: Video,
+        /// It plays a YouTube stream, not a file. GStreamer can hang
+        /// seeking a stream, so a stream is never seeked: no scrubbing and
+        /// no replay until the download replaces it.
+        stream: bool,
+    },
     /// Rendered PDF pages, in order. Never empty.
     Pages(Vec<Handle>),
 }
@@ -91,15 +98,48 @@ impl Loader {
             Loader::RemoteImage(urls) => {
                 fetch_image(urls, &cache_dir().join("images")).map(Content::Image)
             }
-            Loader::Video(path) => open_video(existing(path)?).map(Content::Video),
+            Loader::Video(path) => open_file(path),
             Loader::Youtube(video) => {
-                open_video(existing(&downloads.ready(video)?)?).map(Content::Video)
+                if let Some(path) = downloads.file(video) {
+                    return open_file(&path);
+                }
+                crate::log(format!(
+                    "stage: streaming {} until it's downloaded",
+                    video.id
+                ));
+                match crate::youtube::stream_url(video).and_then(|uri| open_video(&uri)) {
+                    Ok(player) => Ok(Content::Video {
+                        player,
+                        stream: true,
+                    }),
+                    Err(err) => {
+                        crate::log(format!(
+                            "stage: can't stream {} ({err}), waiting for the download",
+                            video.id
+                        ));
+                        open_file(&downloads.ready(video)?)
+                    }
+                }
             }
             Loader::Pdf(path) => {
                 render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
             }
         }
     }
+}
+
+/// A player for a video file, at its start.
+fn open_file(path: &Path) -> Result<Content, String> {
+    let uri = url::Url::from_file_path(existing(path)?)
+        .map_err(|()| format!("{}: not an absolute path", path.display()))?;
+    let mut player = open_video(&uri)?;
+    player
+        .seek(Duration::ZERO, true)
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(Content::Video {
+        player,
+        stream: false,
+    })
 }
 
 fn existing(path: &Path) -> Result<&Path, String> {
@@ -203,10 +243,21 @@ impl Stage {
         match &mut self.program {
             Program::Showing {
                 scene,
-                content: Content::Video(video),
-            } => Some((*scene, video)),
+                content: Content::Video { player, .. },
+            } => Some((*scene, player)),
             _ => None,
         }
+    }
+
+    /// Whether the program plays a stream, which must not be seeked.
+    fn streaming(&self) -> bool {
+        matches!(
+            self.program,
+            Program::Showing {
+                content: Content::Video { stream: true, .. },
+                ..
+            }
+        )
     }
 
     /// A new scene is on program (or nothing). Uses a preloaded load when
@@ -301,10 +352,10 @@ impl Stage {
                 let count = NonZeroUsize::new(pages.len()).unwrap_or(NonZeroUsize::MIN);
                 engine.report(scene, MediaReport::Frames(count));
             }
-            Content::Video(video) => {
-                let duration = Some(video.duration()).filter(|d| !d.is_zero());
+            Content::Video { player, .. } => {
+                let duration = Some(player.duration()).filter(|d| !d.is_zero());
                 engine.report(scene, MediaReport::Timeline { duration });
-                video.set_muted(false);
+                player.set_muted(false);
             }
         }
         crate::log(format!("stage: {scene} ready"));
@@ -319,9 +370,14 @@ impl Stage {
 
     /// Plays or pauses the player to match the engine.
     pub fn sync_playback(&mut self, timed: &Timed, engine: &Engine) {
+        let streaming = self.streaming();
         let Some((scene, video)) = self.video() else {
             return;
         };
+        // Playing an ended player restarts it with a seek.
+        if streaming && video.eos() {
+            return;
+        }
         let paused = timed.playback != Playback::Playing;
         if video.paused() != paused {
             video.set_paused(paused);
@@ -333,6 +389,10 @@ impl Stage {
 
     /// Jumps the player and reports where it landed.
     pub fn seek(&mut self, position: Duration, engine: &Engine) {
+        if self.streaming() {
+            crate::log("stage: a stream can't seek until its download is ready");
+            return;
+        }
         let Some((scene, video)) = self.video() else {
             return;
         };
@@ -430,15 +490,31 @@ fn download(url: &str, path: &Path) -> Result<(), String> {
         .map_err(|err| fail(&err))
 }
 
-/// Builds a player, paused at the start and muted, so a preload is silent.
-/// [`Video::new`] would start playing with sound while it prerolls.
-fn open_video(path: &Path) -> Result<Video, String> {
-    let fail = |err: &dyn fmt::Display| format!("{}: {err}", path.display());
-    let uri = url::Url::from_file_path(path).map_err(|()| fail(&"not an absolute path"))?;
+/// Builds a player, paused and muted, so a preload is silent. [`Video::new`]
+/// would start playing with sound while it prerolls. It may have played a
+/// moment: [`open_file`] seeks a file back to its start.
+///
+/// A stream changes resolution as the network allows, but the player keeps
+/// the size of its first frame, so a stream is scaled to one size (with
+/// black bars to keep its shape).
+fn open_video(uri: &url::Url) -> Result<Video, String> {
+    let file = uri.to_file_path().ok();
+    // A stream's link is long and signed: name it, don't print it.
+    let name = file.as_ref().map_or_else(
+        || "the stream".to_string(),
+        |path| path.display().to_string(),
+    );
+    let fail = |err: &dyn fmt::Display| format!("{name}: {err}");
+    let size = if file.is_some() {
+        ""
+    } else {
+        ",width=1920,height=1080"
+    };
     gst::init().map_err(|err| fail(&err))?;
     let pipeline = gst::parse::launch(&format!(
-        "playbin uri=\"{uri}\" mute=true video-sink=\"videoscale ! videoconvert ! \
-         appsink name=sink drop=true caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\""
+        "playbin uri=\"{uri}\" mute=true video-sink=\"videoscale add-borders=true ! \
+         videoconvert ! appsink name=sink drop=true \
+         caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1{size}\""
     ))
     .map_err(|err| fail(&err))?
     .downcast::<gst::Pipeline>()
@@ -452,7 +528,6 @@ fn open_video(path: &Path) -> Result<Video, String> {
         .ok_or_else(|| fail(&"no video sink"))?;
     let mut video = Video::from_gst_pipeline(pipeline, sink, None).map_err(|err| fail(&err))?;
     video.set_paused(true);
-    video.seek(Duration::ZERO, true).map_err(|err| fail(&err))?;
     Ok(video)
 }
 

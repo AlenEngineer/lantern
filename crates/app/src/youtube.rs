@@ -1,15 +1,17 @@
 //! YouTube videos, downloaded ahead of time with `yt-dlp` into a cache
-//! folder and played from there like a local file.
+//! folder and played from there like a local file. A video needed before
+//! its download is done plays from a [stream](stream_url) instead, while the
+//! download goes on for next time.
 //!
 //! [`Downloads`] runs at most one download per video id and is shared by the
 //! dashboard (which shows each video's [`Download`] state), the stage's
-//! loader threads (which block until the file is ready) and the script.
+//! loader threads and the script.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -17,6 +19,10 @@ use lantern_engine::{Location, Resource};
 
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
+
+/// Any HLS rendition: its `manifest_url` is YouTube's HLS master playlist,
+/// which carries H.264 video and AAC audio under one URL.
+const STREAM_FORMAT: &str = "bv*[protocol=m3u8_native]";
 
 /// A YouTube video, as the link source describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +147,15 @@ impl Downloads {
         }
     }
 
+    /// Fetches `video`, and returns its file if the download is done.
+    pub fn file(self: &Arc<Self>, video: &YoutubeVideo) -> Option<PathBuf> {
+        self.fetch(video);
+        match self.lock().get(&video.id) {
+            Some(Download::Ready(path)) => Some(path.clone()),
+            _ => None,
+        }
+    }
+
     /// Fetches `video` and blocks until its file is ready or it failed.
     pub fn ready(self: &Arc<Self>, video: &YoutubeVideo) -> Result<PathBuf, String> {
         self.fetch(video);
@@ -198,6 +213,37 @@ fn partial_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.download.mp4"))
 }
 
+/// Where to stream `video` from: YouTube's HLS master playlist, which
+/// GStreamer plays like a file (seekable, with sound) while picking the
+/// quality the network allows. Asking `yt-dlp` takes a few seconds, and the
+/// link expires after some hours, so it is fetched each time a player is
+/// built.
+pub fn stream_url(video: &YoutubeVideo) -> Result<url::Url, String> {
+    let output = Command::new("yt-dlp")
+        .args(["-f", STREAM_FORMAT, "--print", "%(manifest_url)s"])
+        .args(["--no-playlist", "--no-warnings"])
+        .arg(&video.url)
+        .output()
+        .map_err(|err| format!("can't run yt-dlp: {err}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(failure(stderr.lines(), output.status));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().next().unwrap_or_default().trim();
+    url::Url::parse(line).map_err(|_| format!("yt-dlp gave no stream for {}", video.id))
+}
+
+/// What `yt-dlp` said went wrong: its last `ERROR:` line, or how it exited.
+fn failure<'a>(stderr: impl IntoIterator<Item = &'a str>, status: ExitStatus) -> String {
+    let reason = stderr
+        .into_iter()
+        .filter_map(|line| line.strip_prefix("ERROR: "))
+        .last()
+        .map_or_else(|| status.to_string(), str::to_string);
+    format!("yt-dlp: {reason}")
+}
+
 /// Runs `yt-dlp`, calling `progress` with the overall percent.
 fn download(
     dir: &Path,
@@ -218,14 +264,8 @@ fn download(
         .map_err(|err| format!("can't run yt-dlp: {err}"))?;
     let stderr = child.stderr.take();
     let errors = std::thread::spawn(move || {
-        let mut errors = Vec::new();
-        for line in stderr.into_iter().flat_map(|s| BufReader::new(s).lines()) {
-            let Ok(line) = line else { break };
-            if let Some(error) = line.strip_prefix("ERROR: ") {
-                errors.push(error.to_string());
-            }
-        }
-        errors
+        let lines = stderr.into_iter().flat_map(|s| BufReader::new(s).lines());
+        lines.map_while(Result::ok).collect::<Vec<String>>()
     });
     let mut tracker = Progress::default();
     if let Some(stdout) = child.stdout.take() {
@@ -239,10 +279,7 @@ fn download(
     let status = child.wait().map_err(|err| format!("yt-dlp: {err}"))?;
     let errors = errors.join().unwrap_or_default();
     if !status.success() {
-        let reason = errors
-            .last()
-            .map_or_else(|| status.to_string(), Clone::clone);
-        return Err(format!("yt-dlp: {reason}"));
+        return Err(failure(errors.iter().map(String::as_str), status));
     }
     let done = cache_path(dir, &video.id);
     std::fs::rename(&partial, &done).map_err(|err| format!("{}: {err}", partial.display()))?;
@@ -361,10 +398,22 @@ mod tests {
             url: "unused".into(),
         };
         assert_eq!(
-            downloads.ready(&video),
-            Ok(cache_path(dir.path(), "jNQXAC9IVRw"))
+            downloads.file(&video),
+            Some(cache_path(dir.path(), "jNQXAC9IVRw"))
         );
         assert!(!downloads.busy());
         assert!(downloads.settle(Duration::ZERO));
+    }
+
+    #[test]
+    fn a_failure_is_the_last_error_line() {
+        use std::os::unix::process::ExitStatusExt;
+        let status = ExitStatus::from_raw(1 << 8);
+        let stderr = "WARNING: slow\nERROR: first\nERROR: [youtube] x: Video unavailable\n";
+        assert_eq!(
+            failure(stderr.lines(), status),
+            "yt-dlp: [youtube] x: Video unavailable"
+        );
+        assert_eq!(failure(["no errors"], status), "yt-dlp: exit status: 1");
     }
 }

@@ -573,7 +573,7 @@ impl App {
                     let page = &pages[scene.frame().min(pages.len() - 1)];
                     fit(image(page.clone()))
                 }
-                Some(Content::Video(video)) => VideoPlayer::new(video)
+                Some(Content::Video { player, .. }) => VideoPlayer::new(player)
                     .width(Fill)
                     .height(Fill)
                     .content_fit(ContentFit::Contain)

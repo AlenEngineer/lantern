@@ -105,9 +105,14 @@ Every source declares its own bang (`Source::bang`), so a new source brings
 its own.
 
 YouTube videos download ahead of time (720p H.264) into
-`~/.cache/lantern/youtube` as soon as they enter the plan or the preview,
-so playback never depends on the network. The dashboard shows each video's
-download state.
+`~/.cache/lantern/youtube` as soon as they enter the plan or the preview.
+The dashboard shows each video's download state. A video needed before its
+download is done (searched live, say) streams instead, a few seconds after
+you preview it, while the download goes on; the stage monitor says
+"streaming". A stream can't be scrubbed or replayed, since GStreamer can
+hang seeking one: take it again once it's downloaded. Planned videos
+usually finish downloading long before they're needed, so the service
+doesn't depend on the network.
 
 ### Plans
 
@@ -248,7 +253,7 @@ engine.next();                            // next stanza or next step
 - [x] Launcher dashboard with search bangs (`!b`, `!f`)
 - [x] `!yt` YouTube search, `!gi` image search (Brave), image links on stage
 - [ ] `!h` hymnal
-- [ ] Stream YouTube when there's no time to download it
+- [x] Stream YouTube when there's no time to download it
 - [ ] Hymnal source (hymns are a built-in sample today)
 - [ ] Web pages on the stage
 - [ ] Choose the stage monitor from the app
