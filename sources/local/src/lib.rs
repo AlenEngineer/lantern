@@ -173,6 +173,10 @@ impl Source for LocalSource {
         Capabilities::INDEXED
     }
 
+    fn bang(&self) -> Option<&str> {
+        Some("f")
+    }
+
     /// Lists every recognized file. Folders that don't exist (an unplugged
     /// drive) are skipped; it's only an error if *none* of them exist.
     fn scan(&self) -> Result<Vec<Resource>, SourceError> {

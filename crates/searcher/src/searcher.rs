@@ -6,6 +6,7 @@ use std::thread;
 use lantern_resource::{Hit, Query, Resource, Source, SourceError, SourceId};
 
 use crate::Index;
+use crate::bang::{self, Bang, Parsed, Scope};
 
 /// Errors from managing sources.
 #[derive(Debug, thiserror::Error)]
@@ -261,6 +262,54 @@ impl Searcher {
         SearchStream { ticket, rx }
     }
 
+    /// Reads typed text for a leading bang: `!b juan 3` is a query for
+    /// `juan 3` that only the sources whose bang is `b` answer. Bangs are
+    /// matched without regard to case.
+    pub fn parse(&self, text: &str) -> Parsed {
+        let Some((bang, rest)) = bang::split(text) else {
+            return Parsed {
+                query: Query::new(text.trim()),
+                scope: Scope::Everything,
+            };
+        };
+        let bang = bang.to_lowercase();
+        let mut query = Query::new(rest);
+        let mut names = Vec::new();
+        for source in self.sources() {
+            if source.bang().is_some_and(|b| b.eq_ignore_ascii_case(&bang)) {
+                query = query.with_source(source.id().clone());
+                names.push(source.name().to_string());
+            }
+        }
+        let scope = if names.is_empty() {
+            Scope::Unknown(bang)
+        } else {
+            Scope::Bang(Bang {
+                bang,
+                sources: names,
+            })
+        };
+        Parsed { query, scope }
+    }
+
+    /// Every bang the registered sources answer, in alphabetical order.
+    pub fn bangs(&self) -> Vec<Bang> {
+        let mut bangs: Vec<Bang> = Vec::new();
+        for source in self.sources() {
+            let Some(name) = source.bang() else { continue };
+            let name = name.to_lowercase();
+            match bangs.iter_mut().find(|b| b.bang == name) {
+                Some(bang) => bang.sources.push(source.name().to_string()),
+                None => bangs.push(Bang {
+                    bang: name,
+                    sources: vec![source.name().to_string()],
+                }),
+            }
+        }
+        bangs.sort_by(|a, b| a.bang.cmp(&b.bang));
+        bangs
+    }
+
     /// Ticket of the most recent [`search`](Self::search).
     pub fn latest_ticket(&self) -> u64 {
         self.tickets.load(Ordering::Relaxed)
@@ -300,6 +349,7 @@ mod tests {
     struct Fake {
         id: SourceId,
         caps: Capabilities,
+        bang: Option<&'static str>,
         items: Mutex<Result<Vec<String>, String>>,
     }
 
@@ -308,8 +358,15 @@ mod tests {
             Arc::new(Self {
                 id: SourceId::new(id).unwrap(),
                 caps,
+                bang: None,
                 items: Mutex::new(Ok(titles.iter().map(|t| (*t).to_owned()).collect())),
             })
+        }
+
+        fn banged(id: &str, caps: Capabilities, bang: &'static str, titles: &[&str]) -> Arc<Self> {
+            let mut fake = Arc::into_inner(Self::new(id, caps, titles)).unwrap();
+            fake.bang = Some(bang);
+            Arc::new(fake)
         }
 
         fn fail(&self) {
@@ -346,6 +403,9 @@ mod tests {
         }
         fn capabilities(&self) -> Capabilities {
             self.caps
+        }
+        fn bang(&self) -> Option<&str> {
+            self.bang
         }
         fn scan(&self) -> Result<Vec<Resource>, SourceError> {
             self.items()
@@ -459,5 +519,64 @@ mod tests {
             .unregister(&SourceId::new("local").unwrap())
             .unwrap();
         assert!(searcher.index().is_empty());
+    }
+
+    fn bible_and_folders() -> Searcher {
+        let searcher = Searcher::new();
+        for (id, bang) in [("rv1909", "b"), ("kjv", "B"), ("local", "f")] {
+            let caps = Capabilities::INDEXED;
+            searcher
+                .register(Fake::banged(id, caps, bang, &[&format!("cross {id}")]))
+                .unwrap();
+        }
+        searcher.reindex_all();
+        searcher
+    }
+
+    fn titles(searcher: &Searcher, query: &Query) -> Vec<String> {
+        let mut titles: Vec<String> = searcher
+            .search_index(query)
+            .into_iter()
+            .map(|hit| hit.resource.title.clone())
+            .collect();
+        titles.sort();
+        titles
+    }
+
+    #[test]
+    fn a_bang_limits_the_query_to_its_sources() {
+        let searcher = bible_and_folders();
+        let parsed = searcher.parse("!B cross");
+        assert_eq!(parsed.query.text, "cross");
+        let Scope::Bang(bang) = &parsed.scope else {
+            panic!("{parsed:?}");
+        };
+        assert_eq!((bang.bang.as_str(), bang.sources.len()), ("b", 2));
+        assert_eq!(parsed.query.sources.len(), 2);
+        assert_eq!(
+            titles(&searcher, &parsed.query),
+            ["cross kjv", "cross rv1909"]
+        );
+
+        let everything = searcher.parse(" cross ");
+        assert_eq!(everything.scope, Scope::Everything);
+        assert_eq!(titles(&searcher, &everything.query).len(), 3);
+    }
+
+    #[test]
+    fn an_unknown_bang_asks_no_one() {
+        let searcher = bible_and_folders();
+        let parsed = searcher.parse("!zz cross");
+        assert_eq!(parsed.scope, Scope::Unknown("zz".into()));
+    }
+
+    #[test]
+    fn bangs_are_listed_once_with_every_source() {
+        let listed: Vec<(String, usize)> = bible_and_folders()
+            .bangs()
+            .into_iter()
+            .map(|b| (b.bang, b.sources.len()))
+            .collect();
+        assert_eq!(listed, [("b".to_string(), 2), ("f".to_string(), 1)]);
     }
 }

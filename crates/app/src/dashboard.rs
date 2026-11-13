@@ -1,5 +1,7 @@
-//! The operator's window: search, preview, program, the plan and the
-//! transport, plus the keys that drive them.
+//! The operator's window, laid out like a launcher: one search box, one
+//! list under it (the results, the bangs, or the plan), the preview beside
+//! the list, and a bar along the bottom for what the audience sees. Plus
+//! the keys that drive them.
 
 use std::time::{Duration, SystemTime};
 
@@ -8,7 +10,7 @@ use iced::widget::{
     Space, button, column, container, image, row, scrollable, slider, text, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Font, Length, Theme, event, font};
-use lantern_engine::{Action, Media, Plan, Playback, Resource, Scene, Step, Timed};
+use lantern_engine::{Action, Bang, Media, Plan, Playback, Resource, Scene, Scope, Step, Timed};
 
 use crate::plans::{Entry, Mode, Notice, Switch, file_name};
 use crate::search::{Group, Live, supported};
@@ -19,6 +21,15 @@ use crate::{App, Message};
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
 pub const NAME_BOX: &str = "plan-name";
+
+/// What the list under the search box shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Pane {
+    /// Search results, or the bangs while one is being typed.
+    #[default]
+    Results,
+    Plan,
+}
 
 /// What the operator can do from a key, a button or a script's `press`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,6 +54,10 @@ pub enum Op {
     Open,
     /// Starts an empty plan.
     New,
+    /// Switches the list between the results and the plan.
+    TogglePlan,
+    /// Completes a half-typed bang (`!y` → `!yt `).
+    Complete,
 }
 
 enum Bind {
@@ -57,6 +72,7 @@ enum Bind {
 /// this table then.
 const KEYS: &[(&str, Bind, Op)] = &[
     ("enter", Bind::Named(Named::Enter), Op::Enter),
+    ("tab", Bind::Named(Named::Tab), Op::Complete),
     ("down", Bind::Named(Named::ArrowDown), Op::PickNext),
     ("up", Bind::Named(Named::ArrowUp), Op::PickPrev),
     // Presentation clickers send Page Down and Page Up.
@@ -71,10 +87,12 @@ const KEYS: &[(&str, Bind, Op)] = &[
     ("ctrl+s", Bind::Ctrl('s'), Op::Save),
     ("ctrl+o", Bind::Ctrl('o'), Op::Open),
     ("ctrl+n", Bind::Ctrl('n'), Op::New),
+    ("ctrl+p", Bind::Ctrl('p'), Op::TogglePlan),
 ];
 
-const HELP: &str = "Enter preview, then take · ↑↓ pick · A add to plan · →/PgDn next · ←/PgUp back · \
-                    Space play/pause · B blackout · Esc leaves the search box · / returns to it · \
+const HELP: &str = "Enter preview, then take · ↑↓ pick · Tab completes a bang · A add to plan · \
+                    →/PgDn next · ←/PgUp back · Space play/pause · B blackout · \
+                    Esc leaves the search box · / returns to it · Ctrl+P plan · \
                     Ctrl+S save · Ctrl+O open · Ctrl+N new plan";
 
 /// The op a script's `press NAME` stands for.
@@ -161,19 +179,20 @@ const BOLD: Font = Font {
 impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let top = row![
+            self.scope_tag(),
             self.search_box(),
+            self.plan_button(),
             self.blackout_button(),
-            action("Clear", Message::Op(Op::Clear))
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
-        let monitors = row![self.preview_panel(), self.program_panel()]
-            .spacing(12)
-            .height(Length::FillPortion(5));
-        let right = column![monitors, self.plan_panel().height(Length::FillPortion(4))].spacing(12);
+        let list = match self.pane {
+            Pane::Results => self.results_panel(),
+            Pane::Plan => self.plan_panel(),
+        };
         let body = row![
-            self.results_panel().width(Length::FillPortion(2)),
-            container(right).width(Length::FillPortion(3)),
+            list.width(Length::FillPortion(3)),
+            self.preview_panel().width(Length::FillPortion(2)),
         ]
         .spacing(12)
         .height(Fill);
@@ -184,23 +203,27 @@ impl App {
             text(status.join(" · ")).size(12).color(FAINT),
         ]
         .spacing(2);
-        container(column![top, body, footer].spacing(12).padding(12))
-            .width(Fill)
-            .height(Fill)
-            .style(|_| container::Style::default().background(BG))
-            .into()
+        container(
+            column![top, body, self.program_bar(), footer]
+                .spacing(12)
+                .padding(12),
+        )
+        .width(Fill)
+        .height(Fill)
+        .style(|_| container::Style::default().background(BG))
+        .into()
     }
 
     fn search_box(&self) -> Element<'_, Message> {
         text_input(
-            "Search files and Bibles, or paste a YouTube link",
+            "Search everything, start with ! for one source, or paste a link",
             &self.search.query,
         )
         .id(SEARCH_BOX)
         .on_input(Message::Query)
         .on_submit(Message::Op(Op::Enter))
-        .size(20)
-        .padding(10)
+        .size(22)
+        .padding(12)
         .width(Fill)
         .style(|theme: &Theme, status| text_input::Style {
             background: Background::Color(PANEL),
@@ -216,6 +239,38 @@ impl App {
             ..text_input::default(theme, status)
         })
         .into()
+    }
+
+    /// Which sources the query asks, when a bang limits it.
+    fn scope_tag(&self) -> Element<'_, Message> {
+        match &self.search.scope {
+            Scope::Everything => Space::new().into(),
+            Scope::Bang(bang) => tag_owned(bang.sources.join(", "), BLUE),
+            Scope::Unknown(bang) => tag_owned(format!("!{bang}?"), RED),
+        }
+    }
+
+    /// Opens the plan in the list, with where the plan is: "Plan 3/8".
+    fn plan_button(&self) -> Element<'_, Message> {
+        let plan = self.engine.0.plan();
+        let at = self
+            .engine
+            .0
+            .current_step()
+            .and_then(|current| plan.steps().iter().position(|s| s.id == current.id));
+        let mut label = match at {
+            Some(at) => format!("Plan {}/{}", at + 1, plan.len()),
+            None => format!("Plan · {}", count(plan.len(), "step")),
+        };
+        if self.plans.is_dirty(&plan) {
+            label.push_str(" •");
+        }
+        let showing = self.pane == Pane::Plan;
+        button(text(label).size(15).font(BOLD).center())
+            .padding([10, 16])
+            .on_press(Message::Op(Op::TogglePlan))
+            .style(move |_, status| filled(if showing { BLUE } else { RAISED }, TEXT, status))
+            .into()
     }
 
     fn blackout_button(&self) -> Element<'_, Message> {
@@ -237,55 +292,47 @@ impl App {
 
     fn results_panel(&self) -> container::Container<'_, Message> {
         let search = &self.search;
+        let bangs = search.bangs(&self.engine.0);
         let mut list = column![].spacing(2);
+        let typed = !search.query.trim().is_empty();
+        let offered = bangs.len();
+        if offered > 0 {
+            list = list.push(group_heading("BANGS · search one source", offered));
+            for bang in bangs {
+                list = list.push(bang_row(bang));
+            }
+        }
         for group in search.groups() {
             list = list.push(self.group_view(group));
         }
-        let note = match (
-            search.query.trim().is_empty(),
-            search.groups().is_empty(),
-            search.live,
-        ) {
-            (true, ..) => Some("Type to search. Results appear as you type.".to_string()),
-            (false, _, Live::Waiting(_) | Live::Running(_)) => {
-                Some("Checking links and Bible references…".to_string())
+        let note = if !typed {
+            Some("Type to search everything at once.".to_string())
+        } else if let Some(bang) = search.typing_bang() {
+            (offered == 0).then(|| format!("No source answers !{bang}."))
+        } else {
+            match (&search.scope, search.live) {
+                (Scope::Unknown(bang), _) => Some(format!(
+                    "No source answers !{bang}. Clear the box to see the bangs."
+                )),
+                (_, Live::Waiting(_) | Live::Running(_)) => Some("Still searching…".to_string()),
+                (Scope::Bang(bang), _) if search.text().is_empty() => Some(format!(
+                    "Type what to look for in {}.",
+                    bang.sources.join(", ")
+                )),
+                (_, Live::Idle) if search.groups().is_empty() => {
+                    Some(format!("Nothing found for “{}”.", search.query.trim()))
+                }
+                _ => None,
             }
-            (false, true, Live::Idle) => Some(format!("Nothing found for “{}”.", search.query)),
-            (false, false, Live::Idle) => None,
         };
         if let Some(note) = note {
             list = list.push(container(text(note).size(14).color(MUTED)).padding([6, 8]));
         }
-        panel(
-            column![
-                heading("RESULTS", MUTED),
-                scrollable(list).id(RESULTS).height(Fill),
-            ]
-            .spacing(8),
-            LINE,
-        )
+        panel(scrollable(list).id(RESULTS).height(Fill), LINE)
     }
 
     fn group_view<'a>(&'a self, group: &'a Group) -> Element<'a, Message> {
-        let mut rows = column![
-            container(
-                row![
-                    text(group.name.to_uppercase())
-                        .size(12)
-                        .font(BOLD)
-                        .color(MUTED),
-                    text(group.hits.len().to_string()).size(12).color(FAINT),
-                ]
-                .spacing(6)
-            )
-            .padding(iced::Padding {
-                top: 10.0,
-                right: 8.0,
-                bottom: 4.0,
-                left: 8.0,
-            })
-        ]
-        .spacing(2);
+        let mut rows = column![group_heading(&group.name, group.hits.len())].spacing(2);
         if let Some(error) = &group.error {
             rows = rows.push(text(format!("failed: {error}")).size(13).color(RED));
         }
@@ -348,7 +395,7 @@ impl App {
             .into()
     }
 
-    fn preview_panel(&self) -> Element<'_, Message> {
+    fn preview_panel(&self) -> container::Container<'_, Message> {
         let scene = self.stage.preview.as_ref();
         let has = scene.is_some();
         let mut body = column![heading("PREVIEW", GREEN)].spacing(8);
@@ -378,45 +425,52 @@ impl App {
             .spacing(8),
         );
         panel(body, GREEN.scale_alpha(if has { 0.8 } else { 0.35 }))
-            .width(Fill)
-            .height(Fill)
-            .into()
     }
 
-    fn program_panel(&self) -> Element<'_, Message> {
+    /// What the audience sees: a small monitor, what it is, and the
+    /// transport for a video.
+    fn program_bar(&self) -> Element<'_, Message> {
         let scene = self.stage.program.as_ref();
         let badge = match (scene, self.stage.blackout) {
             (_, true) => tag("BLACKOUT", RED),
             (Some(_), false) => tag("● LIVE", RED),
             (None, false) => tag("EMPTY", FAINT),
         };
-        let mut body = column![
-            row![heading("PROGRAM", RED), Space::new().width(Fill), badge]
-                .align_y(iced::Alignment::Center)
+        let monitor = match scene {
+            Some(_) if self.stage.blackout => empty_monitor("black"),
+            Some(scene) => self.monitor(scene, self.media.content(scene.id)),
+            None => empty_monitor("nothing"),
+        };
+        let mut bar = row![
+            column![heading("ON STAGE", RED), badge].spacing(6),
+            container(monitor).width(160).height(90),
         ]
-        .spacing(8);
-        match scene {
-            Some(scene) => {
-                body = body.push(if self.stage.blackout {
-                    empty_monitor("The projector is black. B brings it back.")
-                } else {
-                    self.monitor(scene, self.media.content(scene.id))
-                });
-                body = body.push(self.describe(scene));
-                if let Some(timed) = scene.timed() {
-                    body = body.push(self.transport(timed));
-                }
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        if let Some(scene) = scene {
+            let mut about = column![self.describe(scene)].spacing(6).width(Fill);
+            if let Some(timed) = scene.timed() {
+                about = about.push(self.transport(timed));
             }
-            None => {
-                body = body.push(empty_monitor("Nothing on the projector"));
-            }
+            bar = bar.push(about);
+        } else {
+            bar = bar.push(
+                text("Nothing on the projector. Enter puts the preview there.")
+                    .size(14)
+                    .color(MUTED)
+                    .width(Fill),
+            );
         }
+        bar = bar.push(action_tinted(
+            "Clear",
+            RAISED,
+            scene.is_some().then_some(Message::Op(Op::Clear)),
+        ));
         panel(
-            body,
+            bar,
             RED.scale_alpha(if scene.is_some() { 0.9 } else { 0.35 }),
         )
-        .width(Fill)
-        .height(Fill)
+        .height(Length::Shrink)
         .into()
     }
 
@@ -821,6 +875,10 @@ fn heading(label: &str, color: Color) -> Element<'_, Message> {
 }
 
 fn tag(label: &str, color: Color) -> Element<'_, Message> {
+    tag_owned(label.to_string(), color)
+}
+
+fn tag_owned(label: String, color: Color) -> Element<'static, Message> {
     container(text(label).size(12).font(BOLD).color(TEXT))
         .padding([2, 8])
         .style(move |_| container::Style {
@@ -831,6 +889,47 @@ fn tag(label: &str, color: Color) -> Element<'_, Message> {
             },
             ..container::Style::default()
         })
+        .into()
+}
+
+/// A source's name over its rows, with how many there are.
+fn group_heading(name: &str, rows: usize) -> Element<'_, Message> {
+    container(
+        row![
+            text(name.to_uppercase()).size(12).font(BOLD).color(MUTED),
+            text(rows.to_string()).size(12).color(FAINT),
+        ]
+        .spacing(6),
+    )
+    .padding(iced::Padding {
+        top: 10.0,
+        right: 8.0,
+        bottom: 4.0,
+        left: 8.0,
+    })
+    .into()
+}
+
+/// `!b   RV1909, KJV`. Clicking it starts the bang in the search box.
+fn bang_row(bang: Bang) -> Element<'static, Message> {
+    let line = row![
+        text(format!("!{}", bang.bang))
+            .size(16)
+            .font(BOLD)
+            .color(BLUE)
+            .width(56),
+        text(bang.sources.join(", "))
+            .size(16)
+            .color(TEXT)
+            .width(Fill),
+    ]
+    .spacing(8)
+    .align_y(iced::Alignment::Center);
+    button(line)
+        .width(Fill)
+        .padding([6, 8])
+        .on_press(Message::Bang(bang.bang))
+        .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
         .into()
 }
 

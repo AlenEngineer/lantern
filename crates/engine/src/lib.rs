@@ -30,7 +30,8 @@ pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
 };
 pub use lantern_searcher::{
-    Origin, Polled, ReindexReport, SearchError, SearchEvent, SearchStream, Searcher,
+    Bang, Origin, Parsed, Polled, ReindexReport, Scope, SearchError, SearchEvent, SearchStream,
+    Searcher,
 };
 use lantern_showman::Showman;
 pub use lantern_showman::{

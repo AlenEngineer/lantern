@@ -32,7 +32,7 @@ use lantern_engine::{
     StageEvent, StageFeed, StageState, StepId,
 };
 
-use crate::dashboard::{NAME_BOX, Op, RESULTS, SEARCH_BOX};
+use crate::dashboard::{NAME_BOX, Op, Pane, RESULTS, SEARCH_BOX};
 use crate::library::Library;
 use crate::plans::{Plans, Store, Switch};
 use crate::script::{Script, Ui};
@@ -160,6 +160,8 @@ enum Message {
     SearchDone(u64),
     /// A result was clicked.
     Pick(ResourceId),
+    /// A bang was clicked: start a query with it.
+    Bang(String),
     Op(Op),
     GoTo(StepId),
     Remove(StepId),
@@ -191,6 +193,7 @@ struct App {
     stage: StageState,
     media: Stage,
     search: Search,
+    pane: Pane,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
 }
@@ -228,6 +231,7 @@ impl App {
             stage_window,
             stage: StageState::default(),
             search: Search::default(),
+            pane: Pane::default(),
             scrub: None,
         };
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
@@ -313,6 +317,7 @@ impl App {
                     self.engine.0.preview(resource);
                 }
             }
+            Message::Bang(bang) => return self.complete(format!("!{bang} ")),
             Message::Op(op) => return self.op(op),
             Message::GoTo(step) => {
                 if let Err(err) = self.engine.0.go_to(step) {
@@ -361,6 +366,7 @@ impl App {
 
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
+        self.pane = Pane::Results;
         let Some(edit) = self.search.edit(query, &self.engine.0) else {
             return Task::none();
         };
@@ -375,6 +381,9 @@ impl App {
         let engine = self.engine.0.clone();
         match op {
             Op::Enter => {
+                if self.search.completion(&engine).is_some() {
+                    return self.op(Op::Complete);
+                }
                 if self.search.picked().is_none()
                     && let Some(first) = self.search.pick_nth(0)
                 {
@@ -422,15 +431,40 @@ impl App {
                 ]);
             }
             Op::Save => {
+                self.pane = Pane::Plan;
                 self.plans.save(&engine);
             }
-            Op::Open => self.plans.browse(),
+            Op::Open => {
+                self.pane = Pane::Plan;
+                self.plans.browse();
+            }
             Op::New => {
+                self.pane = Pane::Plan;
                 let replaced = self.plans.switch(&engine, Switch::New);
                 return self.preload_if(replaced);
             }
+            Op::TogglePlan => {
+                self.pane = match self.pane {
+                    Pane::Results => Pane::Plan,
+                    Pane::Plan => Pane::Results,
+                };
+            }
+            Op::Complete => {
+                if let Some(text) = self.search.completion(&engine) {
+                    return self.complete(text);
+                }
+            }
         }
         Task::none()
+    }
+
+    /// Puts `text` in the search box, with the cursor after it, and searches it.
+    fn complete(&mut self, text: String) -> Task<Message> {
+        Task::batch([
+            self.query(text),
+            operation::focus(SEARCH_BOX),
+            operation::move_cursor_to_end(SEARCH_BOX),
+        ])
     }
 
     /// Preloads for a plan that replaced the last one.

@@ -6,6 +6,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Search bangs: `!b juan 3` asks only the Bibles, `!f` only the media
+  folders. An empty search box lists them, and Tab completes one. Sources
+  declare their bang through `Source::bang`.
+
+### Changed
+
+- The dashboard is a launcher: one search box, one list (results, bangs, or
+  the plan with Ctrl+P), the preview beside it, and what's on stage in a bar
+  along the bottom.
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

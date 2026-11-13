@@ -91,6 +91,10 @@ impl Source for BibleSource {
         }
     }
 
+    fn bang(&self) -> Option<&str> {
+        Some("b")
+    }
+
     fn scan(&self) -> Result<Vec<Resource>, SourceError> {
         Ok(self
             .bible
