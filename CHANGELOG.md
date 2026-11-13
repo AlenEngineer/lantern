@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A ready check: Prepare sums up by the plan's name whether everything can
+  be shown, and each step that can't says why (missing file, a kind the
+  stage can't show, a YouTube download going or failed, an image link not
+  downloaded); Run shows it under the plan's name.
 - The plan step on stage shows how far in it is ("slide 2 of 5", "page 1
   of 3", "1:22 / 4:26") with a thin bar under its row.
 - Path fields in the settings suggest folders (and Bible or colours files)
