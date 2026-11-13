@@ -31,6 +31,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The stage pane shows only once something is on stage, lined up, or coming
   next in the plan.
 - Del removes the selected step.
+- Steps are edited in their own row. Selecting one no longer opens a strip
+  under it: F2 (or the pencil) turns the name into its field, a click on
+  the length or a section's time turns that into its field, and the
+  selected row carries its own small buttons (go on when done, rename, ↑ ↓
+  ✕). Enter or Esc is done. The pink line shows only while a search has a
+  result to add, across the plan where it would go.
 
 ### Fixed
 

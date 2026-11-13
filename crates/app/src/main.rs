@@ -241,7 +241,8 @@ enum Message {
     /// Adds a section, live slot, black screen or note after the selection.
     AddStep(plan_edit::NewStep),
     /// "Set a time" on a section: select it and focus its time field.
-    SetTime(StepId),
+    /// Edits a part of a step in its row, or with `None` is done editing.
+    EditStep(Option<(StepId, plan_edit::Part)>),
     /// What a live slot searches when the service reaches it ("!yt", "!b").
     SlotSearch(StepId, String),
     /// A step's or section's new name.
@@ -345,6 +346,8 @@ struct App {
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
+    /// The part of a step being edited in its row.
+    editing: Option<(StepId, plan_edit::Part)>,
     /// The saved plan the arrows are on in the list of plans, for Enter.
     list_pick: Option<PathBuf>,
     /// The plan before each edit, newest last, for Ctrl+Z.
@@ -417,6 +420,7 @@ impl App {
             spent: false,
             adding: None,
             search_open: false,
+            editing: None,
             list_pick: None,
             undo: Vec::new(),
             typing: None,
@@ -736,6 +740,9 @@ impl App {
                 }
             }
             Message::Select(step) => {
+                if self.editing.is_some_and(|(id, _)| id != step) {
+                    self.editing = None;
+                }
                 self.selected = Some(step);
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
                     self.search.unpick();
@@ -749,6 +756,7 @@ impl App {
                 if self.selected == Some(step) {
                     self.selected = None;
                 }
+                self.editing = None;
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| plan.remove(step));
                 return self.preload();
@@ -758,13 +766,21 @@ impl App {
                 self.adding = None;
                 self.remember(None);
                 let id = self.engine.0.add(self.selected, label, action);
-                self.selected = Some(id);
-                return operation::focus(plan_edit::name_id(id));
+                // A new step opens on its name.
+                return self.update(Message::EditStep(Some((id, plan_edit::Part::Name))));
             }
-            Message::SetTime(section) => {
-                self.selected = Some(section);
-                self.engine.0.clear_preview();
-                return operation::focus(plan_edit::time_id(section));
+            Message::EditStep(None) => self.editing = None,
+            Message::EditStep(Some((id, part))) => {
+                if self.selected != Some(id) {
+                    self.selected = Some(id);
+                    self.engine.0.clear_preview();
+                }
+                self.editing = Some((id, part));
+                let field = plan_edit::part_id(id, part);
+                return Task::batch([
+                    operation::focus(field.clone()),
+                    operation::select_all(field),
+                ]);
             }
             Message::SlotSearch(id, text) => {
                 self.remember(Some(id));
@@ -1099,6 +1115,7 @@ impl App {
                     self.search_open = false;
                 }
                 self.adding = None;
+                self.editing = None;
                 self.list_pick = None;
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
@@ -1128,6 +1145,12 @@ impl App {
                     operation::move_cursor_to_end(SEARCH_BOX),
                 ]);
             }
+            Op::Rename => {
+                let in_plan = !matches!(self.plans.mode, plans::Mode::Browsing(_));
+                if let Some(step) = self.selected.filter(|_| in_plan && !self.searching()) {
+                    return self.update(Message::EditStep(Some((step, plan_edit::Part::Name))));
+                }
+            }
             Op::RemoveStep => {
                 if let Some(step) = self.selected.filter(|_| !self.searching()) {
                     return self.update(Message::Remove(step));
@@ -1135,6 +1158,7 @@ impl App {
             }
             Op::Undo => {
                 if let Some(before) = self.undo.pop() {
+                    self.editing = None;
                     self.typing = None;
                     self.drafts.clear();
                     engine.edit_plan(|plan| *plan = before);
@@ -1354,6 +1378,7 @@ impl App {
     fn preload_if(&mut self, replaced: bool) -> Task<Message> {
         if replaced {
             // Ctrl+Z never reaches back into the plan that was open before.
+            self.editing = None;
             self.undo.clear();
             self.typing = None;
             self.preload()

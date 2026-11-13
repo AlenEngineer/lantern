@@ -251,6 +251,7 @@ impl App {
                         format!("{} {}", key(Op::MoveUp), key(Op::MoveDown)),
                         "Move the step",
                     ),
+                    (key(Op::Rename), "Rename the step"),
                     (key(Op::RemoveStep), "Remove the step"),
                     (key(Op::Undo), "Undo"),
                     (key(Op::Save), "Save"),

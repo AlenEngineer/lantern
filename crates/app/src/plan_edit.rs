@@ -5,16 +5,16 @@
 
 use std::time::Duration;
 
-use iced::widget::{Space, button, column, container, row, text, text_input, tooltip};
+use iced::widget::{Space, button, container, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Fill};
 use lantern_engine::{Action, Kind, Plan, Step, StepId};
 
 use crate::keys::{self, Op};
-use crate::look::{self, BODY, META, Tone};
+use crate::look::{self, BODY, Icon, META, Tone};
 use crate::palette::Palette;
 use crate::{App, Message, length};
 
-const LENGTH_FIELD: f32 = 64.0;
+const LENGTH_FIELD: f32 = 56.0;
 
 /// A step the Add buttons make.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,114 +52,153 @@ impl NewStep {
     }
 }
 
-/// The widget id of a step's name field, to focus it on adding.
-pub fn name_id(id: StepId) -> String {
-    format!("step-name-{id}")
+/// What of a step is being edited, in its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Part {
+    Name,
+    /// A step's length, or a section's time.
+    Length,
+    /// What a live slot searches.
+    Search,
 }
 
-/// The widget id of a section's time field.
-pub fn time_id(id: StepId) -> String {
-    format!("section-time-{id}")
+/// The widget id of the field that edits `part` of step `id`, to focus it.
+pub fn part_id(id: StepId, part: Part) -> String {
+    format!("step-{id}-{part:?}")
 }
 
 impl App {
-    /// The selected step's strip: its name, its length, a section's time or
-    /// a live slot's search, and ↑ ↓ ✕.
-    pub(crate) fn edit_strip(&self, step: &Step) -> Element<'_, Message> {
+    /// Whether `part` of step `id` is being edited.
+    pub(crate) fn editing(&self, id: StepId, part: Part) -> bool {
+        self.editing == Some((id, part))
+    }
+
+    /// A step's name as a field, in place of its title. Enter is done.
+    pub(crate) fn name_field(&self, step: &Step) -> Element<'_, Message> {
+        let id = step.id;
+        text_input("Name", &step.label)
+            .id(part_id(id, Part::Name))
+            .on_input(move |label| Message::Rename(id, label))
+            .on_submit(Message::EditStep(None))
+            .size(BODY)
+            .padding([3, 6])
+            .style(look::input(self.palette))
+            .into()
+    }
+
+    /// What a live slot searches as a field, in place of its second line.
+    pub(crate) fn search_field(&self, step: &Step) -> Element<'_, Message> {
+        let id = step.id;
+        let typed = match &step.action {
+            Action::Live { hint, .. } => hint.as_ref().map(|q| q.text.as_str()),
+            _ => None,
+        };
+        text_input("searches… (!yt, !b)", typed.unwrap_or_default())
+            .id(part_id(id, Part::Search))
+            .on_input(move |text| Message::SlotSearch(id, text))
+            .on_submit(Message::EditStep(None))
+            .size(META)
+            .padding([3, 6])
+            .style(look::input(self.palette))
+            .into()
+    }
+
+    /// A step's length as a field, in place of the length in its row. It
+    /// suggests the length the plan uses, or says what goes in it.
+    pub(crate) fn step_length_field(&self, step: &Step) -> Element<'_, Message> {
+        let estimate = self.estimate(step);
+        let hint = match estimate.basis {
+            lantern_engine::Basis::Guess if estimate.length.is_zero() => "min".into(),
+            _ => length::typed(estimate.length),
+        };
+        self.length_field(step.id, step.estimate, hint)
+    }
+
+    /// A section's time as a field, in place of its time in its row.
+    pub(crate) fn section_time_field(
+        &self,
+        id: StepId,
+        budget: Option<Duration>,
+    ) -> Element<'_, Message> {
+        let p = self.palette;
+        row![self.length_field(id, budget, "15".into()), note(p, "min")]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
+    }
+
+    /// What can be done to the selected step, small, for its row: what a
+    /// live slot searches, going on by itself, rename, move and remove.
+    pub(crate) fn step_actions(&self, step: &Step) -> Element<'_, Message> {
         let p = self.palette;
         let id = step.id;
-        let name = text_input("Name", &step.label)
-            .id(name_id(id))
-            .on_input(move |label| Message::Rename(id, label))
-            .size(BODY)
-            .padding([6, 10])
-            .style(look::input(p));
-        // The name has the strip's first line to itself: beside the length
-        // and the buttons it showed about eighteen characters.
-        let mut line = row![].spacing(6).align_y(Alignment::Center);
-        line = match &step.action {
-            Action::Section { budget } => line
-                .push(note(p, "time"))
-                .push(self.length_field(id, *budget, "15".into(), time_id(id)))
-                .push(note(p, "min")),
-            Action::Live { hint, .. } => {
-                let typed = hint.as_ref().map(|q| q.text.as_str()).unwrap_or_default();
-                line.push(
-                    text_input("searches… (!yt, !b)", typed)
-                        .on_input(move |text| Message::SlotSearch(id, text))
-                        .size(META)
-                        .padding([6, 8])
-                        .width(Fill)
-                        .style(look::input(p)),
-                )
-            }
-            _ => {
-                let estimate = self.estimate(step);
-                // Without a length to suggest, the empty box says what goes in it.
-                let hint = match estimate.basis {
-                    lantern_engine::Basis::Guess if estimate.length.is_zero() => "min".into(),
-                    _ => length::typed(estimate.length),
-                };
-                line.push(self.length_field(id, step.estimate, hint, format!("step-length-{id}")))
-            }
+        let tip = |about: String| {
+            container(text(about).size(META))
+                .padding([4, 8])
+                .style(look::tip(p))
         };
-        let small = |label: &'static str, about: String, message| {
+        let small = |content: Element<'static, Message>, tone, about: String, message| {
             tooltip(
-                button(text(label).size(META).color(p.primary))
-                    .padding([6, 8])
+                button(content)
+                    .padding([2, 6])
                     .on_press(message)
-                    .style(look::row(p, Tone::Plain)),
-                container(text(about).size(META).color(p.on_surface))
-                    .padding([4, 8])
-                    .style(look::tip(p)),
+                    .style(look::row(p, tone)),
+                tip(about),
                 tooltip::Position::Top,
             )
         };
-        // Going on by itself sits beside the length it waits for.
-        if let Some(when) = goes_on_when(step) {
-            let on = step.advance;
-            let switch = button(
-                row![
-                    text(if on { "✓" } else { "○" }).size(META).color(p.primary),
-                    text("Go on when done").size(META).color(if on {
-                        p.primary
-                    } else {
-                        p.on_surface
-                    }),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .padding([6, 10])
-            .on_press(Message::SetAdvance(id, !on))
-            .style(look::row(p, if on { Tone::Selected } else { Tone::Plain }));
-            line = line.push(tooltip(
-                switch,
-                container(text(when).size(META).color(p.on_surface))
-                    .padding([4, 8])
-                    .style(look::tip(p)),
-                tooltip::Position::Top,
+        let sign = |label: &'static str| -> Element<'static, Message> {
+            text(label).size(META).color(p.primary).into()
+        };
+        let mut actions = row![].spacing(2).align_y(Alignment::Center);
+        if matches!(step.action, Action::Live { .. }) {
+            actions = actions.push(small(
+                look::icon(Icon::Search, 13.0, p.primary).into(),
+                Tone::Plain,
+                "What it searches when you get there".into(),
+                Message::EditStep(Some((id, Part::Search))),
             ));
         }
-        // A live slot's search already fills the line.
-        if !matches!(step.action, Action::Live { .. }) {
-            line = line.push(Space::new().width(Fill));
+        if let Some(when) = goes_on_when(step) {
+            let on = step.advance;
+            actions = actions.push(small(
+                text("auto")
+                    .size(META)
+                    .color(if on { p.primary } else { p.on_surface_variant })
+                    .into(),
+                if on { Tone::Selected } else { Tone::Plain },
+                format!(
+                    "Go on when done ({when}): {}",
+                    if on { "on" } else { "off" }
+                ),
+                Message::SetAdvance(id, !on),
+            ));
         }
-        line = line
+        actions
             .push(small(
-                "↑",
+                look::icon(Icon::Pencil, 13.0, p.primary).into(),
+                Tone::Plain,
+                keys::with_key("Rename", Op::Rename),
+                Message::EditStep(Some((id, Part::Name))),
+            ))
+            .push(small(
+                sign("↑"),
+                Tone::Plain,
                 keys::with_key("Move up", Op::MoveUp),
                 Message::Move(id, -1),
             ))
             .push(small(
-                "↓",
+                sign("↓"),
+                Tone::Plain,
                 keys::with_key("Move down", Op::MoveDown),
                 Message::Move(id, 1),
             ))
-            .push(small("✕", "Remove".into(), Message::Remove(id)));
-        let strip = column![name.width(Fill), line].spacing(4);
-        container(strip)
-            .padding(iced::Padding::default().left(24.0).right(4.0).bottom(4.0))
+            .push(small(
+                sign("✕"),
+                Tone::Plain,
+                keys::with_key("Remove", Op::RemoveStep),
+                Message::Remove(id),
+            ))
             .into()
     }
 
@@ -170,7 +209,6 @@ impl App {
         id: StepId,
         value: Option<Duration>,
         hint: String,
-        widget: String,
     ) -> Element<'a, Message> {
         let typed = self
             .drafts
@@ -178,10 +216,11 @@ impl App {
             .cloned()
             .unwrap_or_else(|| value.map(length::typed).unwrap_or_default());
         text_input(&hint, &typed)
-            .id(widget)
+            .id(part_id(id, Part::Length))
             .on_input(move |text| Message::Length(id, text))
+            .on_submit(Message::EditStep(None))
             .size(META)
-            .padding([6, 8])
+            .padding([3, 6])
             .width(LENGTH_FIELD)
             .style(look::input(self.palette))
             .into()
@@ -208,38 +247,29 @@ fn note<'a>(p: Palette, words: &'a str) -> Element<'a, Message> {
     text(words).size(META).color(p.on_surface_variant).into()
 }
 
-/// Where Ctrl+A puts the next step: a short `primary` line, and its
-/// `words` only while there's a result to add, so the plan isn't
-/// captioned through a whole service.
-pub fn insertion_mark(p: Palette, indent: f32, words: bool) -> Element<'static, Message> {
-    let mut mark = row![
+/// Where Ctrl+A puts the result: a `primary` line across the plan, between
+/// its rows. Drawn only while a search has a result to add.
+pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
+    row![
         container(Space::new())
-            .width(16)
+            .width(Fill)
             .height(2)
             .style(move |_| container::Style::default().background(p.primary)),
-    ]
-    .spacing(8)
-    .height(16)
-    .align_y(Alignment::Center);
-    if words {
-        mark = mark.push(
-            text(format!(
-                "{} adds the result here",
-                keys::label(Op::AddToPlan)
-            ))
+        text(format!("{} adds here", keys::label(Op::AddToPlan)))
             .size(META)
             .color(p.primary),
-        );
-    }
-    column![mark]
-        .padding(
-            iced::Padding::default()
-                .left(indent + 10.0)
-                .top(2.0)
-                .bottom(4.0),
-        )
-        .width(Fill)
-        .into()
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .padding(
+        iced::Padding::default()
+            .left(indent + 10.0)
+            .right(10.0)
+            .top(2.0)
+            .bottom(2.0),
+    )
+    .width(Fill)
+    .into()
 }
 
 /// When a step that goes on by itself would: a video when it ends, a still

@@ -57,6 +57,8 @@ pub enum Op {
     Search,
     /// Removes the selected step.
     RemoveStep,
+    /// Edits the selected step's name, in its row.
+    Rename,
     /// Takes back the last edit of the plan.
     Undo,
 }
@@ -380,6 +382,13 @@ pub const ACTIONS: &[Action] = &[
         Op::RemoveStep,
         When::Unused,
         "Remove the selected step",
+    ),
+    action(
+        "rename",
+        "f2",
+        Op::Rename,
+        When::Always,
+        "Rename the selected step",
     ),
 ];
 
