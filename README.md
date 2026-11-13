@@ -134,6 +134,9 @@ frozen frames or no sound. Planned videos
 usually finish downloading long before they're needed, so the service
 doesn't depend on the network.
 
+The cache is plain `.mp4` files, safe to delete. A video unused for 30 days
+(not played, previewed or in the open plan) is deleted when Lantern starts.
+
 ### Plans
 
 The plan pane holds the rundown you build with Ctrl+A. Click its name to

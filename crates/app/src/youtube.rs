@@ -2,6 +2,10 @@
 //! folder and played from there like a local file. A video needed before
 //! its download is done waits for it.
 //!
+//! A video unused for [`KEEP`] is deleted when Lantern starts
+//! ([`forget_unused`]). Using one (in the plan, previewed or played) marks
+//! its file as used, so a video in a plan still in use stays.
+//!
 //! [`Downloads`] runs at most one download per video id and is shared by the
 //! dashboard (which shows each video's [`Download`] state), the stage's
 //! loader threads and the script.
@@ -12,12 +16,48 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use lantern_engine::{Location, Resource};
 
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
+
+/// How long a downloaded video stays without being used.
+pub const KEEP: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Deletes the files in `dir` last used more than `keep` before `now`,
+/// half-finished downloads included, and returns what it deleted. A file's
+/// modification time is its last use: [`Downloads::fetch`] sets it.
+pub fn forget_unused(dir: &Path, keep: Duration, now: SystemTime) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| {
+            entry.metadata().is_ok_and(|meta| {
+                meta.is_file()
+                    && meta
+                        .modified()
+                        .is_ok_and(|used| now.duration_since(used).is_ok_and(|age| age > keep))
+            })
+        })
+        .map(|entry| entry.path())
+        .filter(|path| std::fs::remove_file(path).is_ok())
+        .collect()
+}
+
+/// Marks `path` as used now.
+fn touch(path: &Path) {
+    let marked = std::fs::File::options()
+        .append(true)
+        .open(path)
+        .and_then(|file| file.set_modified(SystemTime::now()));
+    if let Err(err) = marked {
+        crate::log(format!("youtube: {}: {err}", path.display()));
+    }
+}
 
 /// A YouTube video, as the link source describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,6 +152,7 @@ impl Downloads {
         }
         let cached = cache_path(&self.dir, &video.id);
         if cached.is_file() {
+            touch(&cached);
             state.insert(video.id.clone(), Download::Ready(cached));
             self.changed.notify_all();
             return;
@@ -351,6 +392,49 @@ mod tests {
         assert_eq!(video.id, "jNQXAC9IVRw");
         assert_eq!(video.url, url);
         assert_eq!(YoutubeVideo::of(&link("https://example.com/a.mp4")), None);
+    }
+
+    #[test]
+    fn videos_unused_for_a_long_time_are_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let day = Duration::from_secs(24 * 60 * 60);
+        let aged = |name: &str, days: u32| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "").unwrap();
+            let file = std::fs::File::options().append(true).open(&path).unwrap();
+            file.set_modified(now - day * days).unwrap();
+            path
+        };
+        let old = aged("old.mp4", 40);
+        let recent = aged("recent.mp4", 3);
+        let stuck = aged("half.download.mp4", 31);
+        let mut gone = forget_unused(dir.path(), KEEP, now);
+        gone.sort();
+        assert_eq!(gone, [stuck.clone(), old.clone()]);
+        assert!(recent.is_file() && !old.exists() && !stuck.exists());
+        assert!(forget_unused(&dir.path().join("missing"), KEEP, now).is_empty());
+    }
+
+    #[test]
+    fn using_a_cached_video_marks_it_as_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_path(dir.path(), "jNQXAC9IVRw");
+        std::fs::write(&path, "").unwrap();
+        let long_ago = SystemTime::now() - KEEP * 2;
+        std::fs::File::options()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        let video = YoutubeVideo {
+            id: "jNQXAC9IVRw".into(),
+            url: "unused".into(),
+        };
+        Downloads::new(dir.path().to_path_buf()).fetch(&video);
+        assert!(forget_unused(dir.path(), KEEP, SystemTime::now()).is_empty());
+        assert!(path.is_file());
     }
 
     #[test]
