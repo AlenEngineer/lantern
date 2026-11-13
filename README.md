@@ -71,9 +71,12 @@ There is one screen, the same before and during the service. The plan is
 edited where it is: click a step and a strip opens under it with its name,
 its length (a section's time, a live slot's search) and ↑ ↓ ✕; Ctrl+A adds
 the result you're looking at right after it, where the pink line says.
-**Section**, **Live slot**, **Black** and **Note** at the bottom add those.
-**Plans** at the top of the plan lists your saved plans to open, or starts
-a new one; **Save** shows while the plan has unsaved changes.
+**Add step** at the end of the plan adds a **Section**, **Live slot**,
+**Black** or **Note**. The **‹** beside the plan's name (Ctrl+O) goes to
+your plans: the one that's open, your templates, **New plan** and the
+saved ones. A new plan starts on its name, and with no plan to reopen
+Lantern starts on that list. **Save** shows while the plan has unsaved
+changes.
 
 Results and plan steps show a thumbnail: a picture, a PDF's first page or a
 video's still (YouTube too). A passage has a book instead, and its result

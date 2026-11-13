@@ -12,6 +12,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   starts a new plan with its order of service, dated today.
 - Ctrl+Z takes back the last edit of the plan: a removed, added, moved or
   renamed step, a changed length.
+- **Plans is the plan pane's home.** With no plan to reopen, Lantern starts
+  on the list: the plan that's open, templates, **New plan** and your saved
+  plans. A new plan starts on its name. **‹** beside the name goes back to
+  the list, and **Add step** at the end of the plan replaces the four
+  buttons at the bottom.
 
 ### Fixed
 

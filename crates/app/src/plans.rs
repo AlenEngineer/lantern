@@ -221,10 +221,30 @@ impl Plans {
             mode: Mode::Steps,
             notice: None,
         };
-        if let Some(path) = plans.store.last() {
-            plans.load(engine, Switch::Open(path));
+        match plans.store.last() {
+            Some(path) => {
+                plans.load(engine, Switch::Open(path));
+            }
+            // Nothing to reopen: the pane starts on the list of plans.
+            None => plans.browse(),
         }
         plans
+    }
+
+    /// Whether there's a plan to go back to from the list: one with a file,
+    /// or with anything in it.
+    pub fn has_plan(&self, plan: &Plan) -> bool {
+        self.file.is_some() || !plan.is_empty()
+    }
+
+    /// The open plan's file, once it has one.
+    pub fn file(&self) -> Option<&Path> {
+        self.file.as_deref()
+    }
+
+    /// Whether `plan` is a new one nobody has touched: it gets a name first.
+    pub fn is_blank(&self, plan: &Plan) -> bool {
+        self.file.is_none() && *plan == Plan::default()
     }
 
     pub fn store(&self) -> &Store {

@@ -273,6 +273,8 @@ enum Message {
     DiscardPlan,
     /// Yes, replace the plan that's running.
     LeavePlan,
+    /// Opens or closes the plan's "Add step" row.
+    ToggleAdd,
     /// Back to the steps from the name editor, the open list or the question.
     ClosePlanMode,
     EditPlanName,
@@ -334,6 +336,8 @@ struct App {
     /// A search result just went on stage: what's typed next starts a new
     /// search instead of adding to the old one.
     spent: bool,
+    /// The plan's "Add step" row is open, showing the kinds of step.
+    adding: bool,
     /// The plan before each edit, newest last, for Ctrl+Z.
     undo: Vec<Plan>,
     /// The step whose fields are being typed in, so its keystrokes undo as
@@ -402,6 +406,7 @@ impl App {
             drag: None,
             stepping: false,
             spent: false,
+            adding: false,
             undo: Vec::new(),
             typing: None,
             arrived_at: None,
@@ -737,6 +742,7 @@ impl App {
             }
             Message::AddStep(new) => {
                 let (label, action) = new.step();
+                self.adding = false;
                 self.remember(None);
                 let id = self.engine.0.add(self.selected, label, action);
                 self.selected = Some(id);
@@ -813,11 +819,12 @@ impl App {
             Message::OpenPlan(path) => return self.switch_plan(Switch::Open(path)),
             Message::LeavePlan => {
                 let replaced = self.plans.leave(&self.engine.0);
-                return self.preload_if(replaced);
+                return self.switched(replaced);
             }
+            Message::ToggleAdd => self.adding = !self.adding,
             Message::DiscardPlan => {
                 let replaced = self.plans.discard(&self.engine.0);
-                return self.preload_if(replaced);
+                return self.switched(replaced);
             }
             Message::ClosePlanMode => {
                 self.plans.cancel();
@@ -994,6 +1001,11 @@ impl App {
             // Esc lets go of a drag without moving anything.
             Op::ClearSearch if self.drag.is_some() => self.drag = None,
             Op::ClearSearch => {
+                // Esc also lets go of a name being typed, and of Add step.
+                if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
+                    self.plans.cancel();
+                }
+                self.adding = false;
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
             }
@@ -1195,7 +1207,22 @@ impl App {
             return Task::none();
         }
         let replaced = self.plans.switch(&self.engine.0, to);
-        self.preload_if(replaced)
+        self.switched(replaced)
+    }
+
+    /// After a plan may have replaced the last one: preloads for it, and a
+    /// brand new plan opens on its name, so it isn't left "Untitled".
+    fn switched(&mut self, replaced: bool) -> Task<Message> {
+        let preload = self.preload_if(replaced);
+        if replaced && self.plans.is_blank(&self.engine.0.plan()) {
+            self.plans.edit_name(&self.engine.0);
+            return Task::batch([
+                preload,
+                operation::focus(NAME_BOX),
+                operation::select_all(NAME_BOX),
+            ]);
+        }
+        preload
     }
 
     /// Preloads for a plan that replaced the last one.

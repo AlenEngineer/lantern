@@ -69,22 +69,7 @@ impl App {
             status = status.push(notice);
         }
         pane = pane.push(container(status).padding([0, 8]));
-        let small = |label, message| pill(p, label, Tone::Plain, PILL_SMALL, Some(message));
-        let buttons = match &self.plans.mode {
-            plans::Mode::Browsing(_) => row![wide(small("New plan · Ctrl+N", op(Op::New)))],
-            _ => {
-                let add = |label, new| small(label, Message::AddStep(new));
-                row![
-                    add("Section", NewStep::Section),
-                    add("Live slot", NewStep::LiveSlot),
-                    add("Black", NewStep::BlackScreen),
-                    add("Note", NewStep::Note),
-                ]
-                .align_y(Alignment::Center)
-            }
-        };
-        pane.push(buttons.spacing(4))
-            .padding([16, 12])
+        pane.padding([16, 12])
             .width(self.plan_width())
             .height(Fill)
             .into()
@@ -94,17 +79,25 @@ impl App {
     /// service is: "3 of 7".
     fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
         let p = self.palette;
-        let browsing = matches!(self.plans.mode, plans::Mode::Browsing(_));
-        let plans_button = pill(
-            p,
-            if browsing { "‹ Back" } else { "Plans" },
-            if browsing {
-                Tone::Selected
-            } else {
-                Tone::Plain
-            },
-            PILL_SMALL,
-            Some(op(Op::Open)),
+        // The list of plans is the pane's home: its header is its own, not
+        // the open plan's name and count over a list of other plans.
+        if matches!(self.plans.mode, plans::Mode::Browsing(_)) {
+            return container(text("Plans").size(HEADING).font(BOLD).color(p.primary))
+                .padding([4, 8])
+                .height(PILL_SMALL)
+                .align_y(Alignment::Center)
+                .into();
+        }
+        // The way back to the list.
+        let plans_button = tooltip(
+            button(text("‹").size(HEADING).color(p.on_surface_variant))
+                .padding([2, 10])
+                .on_press(op(Op::Open))
+                .style(look::row(p, Tone::Plain)),
+            container(text("All plans · Ctrl+O").size(META))
+                .padding([4, 8])
+                .style(look::tip(p)),
+            tooltip::Position::Bottom,
         );
         let name: Element<'_, Message> = match &self.plans.mode {
             plans::Mode::Renaming(draft) => text_input("Plan name", draft)
@@ -286,6 +279,39 @@ impl App {
                 )
                 .padding([4, 8]),
             );
+        }
+        // The last row adds a step that isn't a search result; it opens
+        // on the kinds there are.
+        if moving.is_none() {
+            rows = rows.push(list_action(
+                p,
+                if self.adding { "−" } else { "+" },
+                "Add step",
+                Message::ToggleAdd,
+            ));
+            if self.adding {
+                let add = |label, new| {
+                    pill(
+                        p,
+                        label,
+                        Tone::Plain,
+                        PILL_SMALL,
+                        Some(Message::AddStep(new)),
+                    )
+                };
+                rows = rows.push(
+                    container(
+                        row![
+                            add("Section", NewStep::Section),
+                            add("Live slot", NewStep::LiveSlot),
+                            add("Black", NewStep::BlackScreen),
+                            add("Note", NewStep::Note),
+                        ]
+                        .spacing(4),
+                    )
+                    .padding(iced::Padding::default().left(34.0)),
+                );
+            }
         }
         // Leaving the list means letting go would move nothing.
         mouse_area(scrolling(rows))
@@ -569,6 +595,34 @@ impl App {
         let now = SystemTime::now();
         let when = |entry: &Entry| ago(now.duration_since(entry.modified).unwrap_or_default());
         let mut list = column![].spacing(2);
+        // The plan that's open, first: the way back to it.
+        let open = self.engine.0.plan();
+        if self.plans.has_plan(&open) {
+            let steps = open.steps().iter().filter(|s| !s.is_section()).count();
+            let detail = if self.plans.is_dirty(&open) {
+                format!("{} · unsaved changes", count(steps, "step"))
+            } else {
+                count(steps, "step")
+            };
+            list = list.push(heading("Open now", "Click to go back to it".into()));
+            list = list.push(
+                button(
+                    column![
+                        single_line(open.title.clone())
+                            .size(BODY)
+                            .font(BOLD)
+                            .color(p.primary),
+                        single_line(detail).size(META).color(p.on_surface_variant),
+                    ]
+                    .spacing(2),
+                )
+                .width(Fill)
+                .padding([8, 10])
+                .on_press(Message::ClosePlanMode)
+                .style(look::row(p, Tone::Selected)),
+            );
+            list = list.push(Space::new().height(10));
+        }
         let templates: Vec<&Entry> = entries.iter().filter(|e| is_template(e)).collect();
         if !templates.is_empty() {
             list = list.push(heading(
@@ -581,23 +635,52 @@ impl App {
             list = list.push(Space::new().height(10));
         }
         // Where the files are is in the README, for whoever goes looking.
-        list = list.push(heading("Your plans", "Click one to open it".into()));
-        let plans: Vec<&Entry> = entries.iter().filter(|e| !is_template(e)).collect();
-        if plans.is_empty() {
-            list = list.push(
-                container(
-                    text("No saved plans yet. Save makes one; ☆ makes a saved plan a template.")
-                        .size(BODY)
-                        .color(p.on_surface_variant),
-                )
-                .padding([4, 8]),
-            );
-        }
+        // The open plan is already at the top, under "Open now".
+        let plans: Vec<&Entry> = entries
+            .iter()
+            .filter(|e| !is_template(e) && Some(e.path.as_path()) != self.plans.file())
+            .collect();
+        let about = if plans.is_empty() && self.plans.file().is_some() {
+            "No others saved"
+        } else if plans.is_empty() {
+            "None saved yet: start one"
+        } else {
+            "Click one to open it; ☆ makes it a template"
+        };
+        list = list.push(heading("Your plans", about.into()));
+        list = list.push(list_action(p, "+", "New plan · Ctrl+N", op(Op::New)));
         for entry in plans {
             list = list.push(saved_plan(p, entry, when(entry)));
         }
         scrolling(list).into()
     }
+}
+
+/// A row that does something to its list, at its end or its head: "+ New
+/// plan", "+ Add step".
+fn list_action<'a>(
+    p: Palette,
+    sign: &'a str,
+    label: &'a str,
+    message: Message,
+) -> Element<'a, Message> {
+    button(
+        row![
+            text(sign)
+                .size(HEADING)
+                .color(p.on_surface_variant)
+                .width(16)
+                .align_x(iced::alignment::Horizontal::Center),
+            text(label).size(BODY).color(p.on_surface_variant),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .padding([8, 10])
+    .on_press(message)
+    .style(look::row(p, Tone::Plain))
+    .into()
 }
 
 /// What a section's header says about its time.
