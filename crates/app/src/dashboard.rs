@@ -579,6 +579,22 @@ impl App {
             (None, None) => section.push(empty_monitor(p, "Pick a result to preview it here")),
         }
         let has = scene.is_some() || cued.is_some();
+        // Looking at a step of the plan (not a search result): adding it
+        // would add it a second time, so the button says so.
+        let in_plan = self.search.picked().is_none()
+            && match (scene, self.cued()) {
+                (Some(scene), Some(step)) => matches!(
+                    &step.action,
+                    Action::Show { resource } if resource.id == scene.resource.id
+                ),
+                (None, Some(_)) => true,
+                _ => false,
+            };
+        let add = if in_plan {
+            "Add again · Ctrl+A"
+        } else {
+            "Add · Ctrl+A"
+        };
         section.push(
             row![
                 wide(pill(
@@ -590,7 +606,7 @@ impl App {
                 )),
                 wide(pill(
                     p,
-                    "Add · Ctrl+A",
+                    add,
                     Tone::Plain,
                     PILL,
                     has.then_some(op(Op::AddToPlan))

@@ -51,6 +51,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the star's no longer covers the Edit button.
 - The plans list counted section headings as steps, so it said "6 steps"
   for a plan whose header says "4 steps".
+- PgDn lets go of the selected step, so while the plan runs only the step
+  on stage is lit; the pink line then shows where Ctrl+A adds (after the
+  current step). Looking at a step of the plan, the button says "Add again".
 
 ## [0.7.0] - 2026-11-13
 
