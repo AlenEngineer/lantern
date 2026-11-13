@@ -357,8 +357,31 @@ impl Engine {
     /// Takes only the stage lock, so a renderer never waits on the plan
     /// (`save_plan` writes a file under the session lock). A report can't
     /// change which scene is on program, so there is nothing to log.
+    ///
+    /// When the current step's video ends and the step goes on by itself
+    /// ([`Step::advance`]), the plan moves to its next step.
     pub fn report(&self, scene: SceneId, report: MediaReport) -> bool {
-        lock(&self.stage).report(scene, report)
+        let ended = report == MediaReport::Ended;
+        let applied = lock(&self.stage).report(scene, report);
+        if applied && ended && self.goes_on_after(scene) {
+            self.next();
+        }
+        applied
+    }
+
+    /// Whether `scene` is on program for the current step, and that step
+    /// goes on by itself.
+    fn goes_on_after(&self, scene: SceneId) -> bool {
+        let Some(step) = self.current_step().filter(|step| step.advance) else {
+            return false;
+        };
+        let Action::Show { resource } = &step.action else {
+            return false;
+        };
+        let stage = lock(&self.stage);
+        stage
+            .program()
+            .is_some_and(|program| program.id == scene && program.resource.id == resource.id)
     }
 
     // ----- The one door --------------------------------------------------

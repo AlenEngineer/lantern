@@ -75,6 +75,10 @@ pub struct Step {
     /// How long the operator says the step takes, over any guess.
     #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
     pub estimate: Option<Duration>,
+    /// Go on to the next step by itself when done: a video when it ends,
+    /// anything else after its length. Off, the operator moves on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub advance: bool,
 }
 
 impl Step {
@@ -156,6 +160,7 @@ impl Plan {
             notes: None,
             action,
             estimate: None,
+            advance: false,
         };
         self.steps.insert(index.min(self.steps.len()), step);
         id

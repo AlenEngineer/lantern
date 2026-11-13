@@ -6,18 +6,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Removed
-
-- YouTube streaming: a video not downloaded yet waits for its download,
-  since a stream started frozen or silent.
-
-### Fixed
-
-- A crash when a slide's text was laid out in a box with no height.
-- YouTube and image search thumbnails, which never showed.
-
 ### Added
 
+- **Go on when done**, per step: a video moves the plan when it ends, an
+  image, PDF, passage or black screen after its length (shared among its
+  slides), with a countdown on its row. Off by default.
 - Plan steps can be dragged to move them: the list opens a gap where they'll
   land and a card follows the pointer. A section brings its steps and lands
   only between sections. Esc lets go without moving anything.
@@ -48,6 +41,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A video starts playing as it goes on stage, instead of waiting paused.
 - One screen instead of Prepare/Run and the live/plan modes. The plan is
   edited in place (click a step for its strip; Ctrl+A adds after it), the
   lower stage box shows what you're looking at or else the next step, and
@@ -55,6 +49,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Section headers say their time in words over a bar ("12 min of 15 min
   planned", "6:40 of 15 min · on track"), and a section without one offers
   **Set a time**. New sections start without a time.
+
+### Removed
+
+- YouTube streaming: a video not downloaded yet waits for its download,
+  since a stream started frozen or silent.
+
+### Fixed
+
+- A crash when a slide's text was laid out in a box with no height.
+- YouTube and image search thumbnails, which never showed.
 
 ## [0.3.0] - 2026-11-13
 

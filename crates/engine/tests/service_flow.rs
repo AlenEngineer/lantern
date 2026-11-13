@@ -249,13 +249,24 @@ fn the_stage_reports_how_a_video_plays() {
     let engine = Engine::new();
     engine.show_now(Arc::new(video("Welcome")));
     let welcome = engine.stage().program.unwrap().id;
-    assert_eq!(playback(&engine), Some(Playback::Paused));
+    assert_eq!(
+        playback(&engine),
+        Some(Playback::Playing),
+        "going on stage is the cue to play"
+    );
     engine.report(
         welcome,
         MediaReport::Timeline {
             duration: Some(secs(30)),
         },
     );
+    assert_eq!(
+        playback(&engine),
+        Some(Playback::Playing),
+        "a report doesn't pause it"
+    );
+    assert!(engine.pause());
+    assert_eq!(playback(&engine), Some(Playback::Paused));
     assert!(engine.play());
     engine.report(welcome, MediaReport::Position(secs(29)));
     engine.report(welcome, MediaReport::Ended);
@@ -404,4 +415,32 @@ fn a_window_opened_mid_service_converges() {
         }
         assert_eq!(state, end);
     }
+}
+
+#[test]
+fn a_video_that_goes_on_by_itself_moves_the_plan_when_it_ends() {
+    let engine = Engine::new();
+    let mut plan = Plan::new("Sunday");
+    let intro = plan.show(video("Intro"));
+    let welcome = plan.show(image("Welcome"));
+    let outro = plan.show(video("Outro"));
+    plan.get_mut(intro).unwrap().advance = true;
+    engine.load_plan(plan);
+
+    engine.next();
+    let scene = engine.stage().program.unwrap().id;
+    assert_eq!(playback(&engine), Some(Playback::Playing));
+    engine.report(scene, MediaReport::Ended);
+    assert_eq!(
+        engine.current_step().map(|s| s.id),
+        Some(welcome),
+        "it went on"
+    );
+
+    // Without the switch, an ended video waits for the operator.
+    engine.next();
+    let scene = engine.stage().program.unwrap().id;
+    engine.report(scene, MediaReport::Ended);
+    assert_eq!(engine.current_step().map(|s| s.id), Some(outro));
+    assert_eq!(playback(&engine), Some(Playback::Ended));
 }

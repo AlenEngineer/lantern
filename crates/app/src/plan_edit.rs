@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iced::widget::{Space, button, column, container, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Fill};
-use lantern_engine::{Action, Plan, Step, StepId};
+use lantern_engine::{Action, Kind, Plan, Step, StepId};
 
 use crate::look::{self, BODY, META, Tone};
 use crate::palette::Palette;
@@ -107,7 +107,31 @@ impl App {
             .push(small("↑", "Move up · Alt+↑", Message::Move(id, -1)))
             .push(small("↓", "Move down · Alt+↓", Message::Move(id, 1)))
             .push(small("✕", "Remove", Message::Remove(id)));
-        container(line)
+        let mut strip = column![line].spacing(4);
+        if let Some(when) = goes_on_when(step) {
+            let on = step.advance;
+            let switch = button(
+                row![
+                    text(if on { "✓" } else { "○" }).size(META).color(p.primary),
+                    text("Go on when done").size(META).color(if on {
+                        p.primary
+                    } else {
+                        p.on_surface
+                    }),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 10])
+            .on_press(Message::SetAdvance(id, !on))
+            .style(look::row(p, if on { Tone::Selected } else { Tone::Plain }));
+            strip = strip.push(
+                row![switch, text(when).size(META).color(p.on_surface_variant)]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            );
+        }
+        container(strip)
             .padding(iced::Padding::default().left(24.0).right(4.0).bottom(4.0))
             .into()
     }
@@ -180,4 +204,17 @@ pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
     )
     .width(Fill)
     .into()
+}
+
+/// When a step that goes on by itself would: a video when it ends, a still
+/// after its length. `None` for steps that can't (sections, live slots,
+/// notes), which wait for the operator.
+fn goes_on_when(step: &Step) -> Option<&'static str> {
+    match &step.action {
+        Action::Show { resource } if matches!(resource.kind, Kind::Video | Kind::Audio) => {
+            Some("when it ends")
+        }
+        Action::Show { .. } | Action::Blank => Some("after its length"),
+        Action::Section { .. } | Action::Live { .. } | Action::Note => None,
+    }
 }

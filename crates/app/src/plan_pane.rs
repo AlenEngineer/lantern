@@ -416,6 +416,15 @@ impl App {
                 p.on_surface_variant,
             ),
         };
+        // A step that goes on by itself says so, and counts down once up.
+        let detail = match (step.advance, place) {
+            (false, _) => detail,
+            (true, Place::Current) => match self.goes_on_in() {
+                Some(left) => Some(join(detail, format!("goes on in {}", seconds_left(left)))),
+                None => Some(join(detail, "goes on when it ends".into())),
+            },
+            (true, _) => Some(join(detail, "goes on".into())),
+        };
         if let Some(detail) = detail {
             label = label.push(single_line(detail).size(META).color(detail_color));
         }
@@ -787,6 +796,24 @@ fn drop_gap<'a>(p: Palette, label: String) -> Element<'a, Message> {
             ..container::Style::default()
         })
         .into()
+}
+
+/// `detail · more`, or just `more`.
+fn join(detail: Option<String>, more: String) -> String {
+    match detail {
+        Some(detail) => format!("{detail} · {more}"),
+        None => more,
+    }
+}
+
+/// "12 s", "1:05": a countdown, rounded up so it never shows 0 early.
+fn seconds_left(left: Duration) -> String {
+    let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+    if secs < 60 {
+        format!("{secs} s")
+    } else {
+        format!("{}:{:02}", secs / 60, secs % 60)
+    }
 }
 
 #[cfg(test)]

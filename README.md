@@ -102,6 +102,17 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+S, Ctrl+O, Ctrl+N | save the plan, list your plans, start a new one |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
+### Running a plan
+
+The plan moves when you move it: PgDn (or a clicker) goes to the next
+slide, then the next step. Sections are headings; their times only report.
+A video starts playing as it goes on stage, and Ctrl+Space pauses it.
+
+A step can go on by itself: select it and turn on **Go on when done**. A
+video then moves the plan when it ends; an image, PDF, passage or black
+screen after its length (shared among its pages or slides), and its row
+counts down. Sections, live slots and notes always wait for you.
+
 ### Bangs
 
 Start the search with a bang to ask only one kind of source, like Brave's

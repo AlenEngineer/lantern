@@ -238,6 +238,8 @@ enum Message {
     SlotSearch(StepId, String),
     /// A step's or section's new name.
     Rename(StepId, String),
+    /// Turn a step's "go on when done" on or off.
+    SetAdvance(StepId, bool),
     /// What was typed in a step's length or a section's budget.
     Length(StepId, String),
     /// Moves a step up (-1) or down (1).
@@ -302,6 +304,9 @@ struct App {
     stepping: bool,
     /// The plan step the service was at, to notice arriving at a new one.
     arrived_at: Option<StepId>,
+    /// What's on stage (scene and frame) and since when, to move a still
+    /// step that goes on by itself after its length.
+    shown_since: Option<(Option<SceneId>, usize, Instant)>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
     /// Where the timeline is being dragged, until it is let go.
@@ -356,6 +361,7 @@ impl App {
             drag: None,
             stepping: false,
             arrived_at: None,
+            shown_since: None,
             drafts: HashMap::new(),
             scrub: None,
         };
@@ -388,10 +394,17 @@ impl App {
                 self.stage = state;
                 return self.program_changed();
             }
-            Message::Stage(event) => return self.stage_event(&event),
+            Message::Stage(event) => {
+                let task = self.stage_event(&event);
+                // A new scene or slide starts its time the moment it's up.
+                self.mark_shown();
+                return task;
+            }
             Message::Loaded(loaded) => self.media.loaded(&loaded, &self.stage, &self.engine.0),
             Message::Ended(scene) => {
                 self.engine.0.report(scene, MediaReport::Ended);
+                // A step that goes on by itself has moved the plan.
+                return Task::batch([self.preload(), self.arrive()]);
             }
             Message::Tick => {
                 if let Some((scene, video)) = self.media.video() {
@@ -399,7 +412,7 @@ impl App {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
             }
-            Message::Progress => {}
+            Message::Progress => return self.go_on(),
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
@@ -457,6 +470,14 @@ impl App {
                         }
                     }
                     Ui::Drop => self.update(Message::Pointer(None, false)),
+                    Ui::Length(n, text) => match self.engine.0.plan().steps().get(n) {
+                        Some(step) => self.update(Message::Length(step.id, text)),
+                        None => Task::none(),
+                    },
+                    Ui::GoOn(n) => match self.engine.0.plan().steps().get(n) {
+                        Some(step) => self.update(Message::SetAdvance(step.id, true)),
+                        None => Task::none(),
+                    },
                     Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
                         Some(step) => self.update(Message::Click(Clicked::Step(step.id))),
                         None => {
@@ -615,6 +636,11 @@ impl App {
             Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
                 if let Some(step) = plan.get_mut(id) {
                     step.label = label;
+                }
+            }),
+            Message::SetAdvance(id, on) => self.engine.0.edit_plan(|plan| {
+                if let Some(step) = plan.get_mut(id) {
+                    step.advance = on;
                 }
             }),
             Message::Length(id, typed) => {
@@ -1012,6 +1038,56 @@ impl App {
     /// Preloads what the operator is most likely to take next: the preview
     /// and the plan's next step. Every YouTube video in the plan starts
     /// downloading, since a download takes about as long as the video.
+    /// How long until the current step goes on by itself, for a still
+    /// step (an image, page, slide or black) that does: its length, shared
+    /// among its slides, counted from when the current slide went up. A
+    /// video goes on when it ends, which the engine does.
+    pub(crate) fn goes_on_in(&self) -> Option<Duration> {
+        let step = self.engine.0.current_step().filter(|step| step.advance)?;
+        if !matches!(step.action, Action::Show { .. } | Action::Blank) {
+            return None;
+        }
+        let program = self.engine.0.stage().program;
+        if program
+            .as_ref()
+            .is_some_and(|scene| scene.timed().is_some())
+        {
+            return None;
+        }
+        let (scene, frame, frames) = match &program {
+            Some(scene) => (Some(scene.id), scene.frame(), frame_count(scene)),
+            None => (None, 0, 1),
+        };
+        let since = match self.shown_since {
+            Some((s, f, since)) if (s, f) == (scene, frame) => since,
+            _ => Instant::now(),
+        };
+        let each = self.estimate(&step).length / u32::try_from(frames).unwrap_or(1).max(1);
+        Some(each.saturating_sub(since.elapsed()))
+    }
+
+    /// Notes when what's on stage (scene or slide) changed.
+    fn mark_shown(&mut self) {
+        let program = self.engine.0.stage().program;
+        let shown = (
+            program.as_ref().map(|s| s.id),
+            program.as_ref().map_or(0, |s| s.frame()),
+        );
+        if self.shown_since.is_none_or(|(s, f, _)| (s, f) != shown) {
+            self.shown_since = Some((shown.0, shown.1, Instant::now()));
+        }
+    }
+
+    /// On each tick of a running service: moves a still step that goes on
+    /// by itself once its time is up.
+    fn go_on(&mut self) -> Task<Message> {
+        self.mark_shown();
+        if self.goes_on_in().is_some_and(|left| left.is_zero()) {
+            return self.op(Op::Next);
+        }
+        Task::none()
+    }
+
     /// Points a moving drag at the row half under the pointer. Over the
     /// gap (no row) it keeps aiming where it was, so the gap stays put.
     fn aim(&mut self) {
@@ -1116,6 +1192,11 @@ impl App {
         if self.engine.0.current_step().is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+        }
+        // A step counting down to going on checks often, so it's on time.
+        if self.goes_on_in().is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
         }
         if self.downloads.0.busy() || self.library.0.indexing() || self.thumbs.busy() {
             subscriptions
@@ -1314,4 +1395,14 @@ fn live_search(stream: SearchStream) -> Task<Message> {
         let _ = send.unbounded_send(Message::SearchDone(ticket));
     });
     Task::run(events, |message| message)
+}
+
+/// How many frames a scene shows: its pages or slides, 1 when not known.
+fn frame_count(scene: &lantern_engine::Scene) -> usize {
+    match &scene.media {
+        Media::Frames {
+            count: Some(count), ..
+        } => count.get(),
+        _ => 1,
+    }
 }
