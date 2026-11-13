@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Text too long for one slide at the smallest size is split into more
+  slides (at lines, then sentences, then words, about even in length), and
+  stepping goes through them.
 - A stage look (Settings → Stage, or `[stage]` in the config): background
   colour and image, text colour, font (with installed fonts suggested), and
   text set as large as fits between a smallest and largest size. The

@@ -28,7 +28,14 @@ if (( available_mb < 3072 )); then
     echo "only ${available_mb} MB of memory available, need 3 GB to build" >&2
     exit 1
 fi
-cargo build --manifest-path "$repo/Cargo.toml" -p lantern-app -j 4
+# E2E_RELEASE=1 runs an optimized build, to check timings as users see them.
+if [[ -n ${E2E_RELEASE:-} ]]; then
+    profile=release
+    cargo build --release --manifest-path "$repo/Cargo.toml" -p lantern-app -j 4
+else
+    profile=debug
+    cargo build --manifest-path "$repo/Cargo.toml" -p lantern-app -j 4
+fi
 
 rm -f "$out"/*.png "$out/app.log" "$out/windows.log"
 if [[ -n ${E2E_DATA:-} ]]; then
@@ -55,7 +62,7 @@ hyprctl eval "hl.monitor({ output = \"$E2E_DASHBOARD_OUTPUT\", mode = \"1920x108
 
 LANTERN_CONFIG=${LANTERN_CONFIG:-$repo/scripts/e2e/config.toml} \
     LANTERN_SCRIPT=$script LANTERN_SHOT="$repo/scripts/e2e/shot.sh" XDG_DATA_HOME=$data \
-    timeout 600 "$repo/target/debug/lantern" 2>"$out/app.log" &
+    timeout 600 "$repo/target/$profile/lantern" 2>"$out/app.log" &
 app=$!
 status=0
 wait "$app" || status=$?

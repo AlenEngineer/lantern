@@ -578,14 +578,17 @@ mod tests {
     }
 
     #[test]
-    fn inline_text_ignores_frame_reports() {
+    fn inline_text_takes_the_slide_count_the_stage_needed_but_never_plays() {
         let mut stage = Showman::new();
         stage.show(hymn());
         let id = program_id(&stage);
-        assert!(!stage.report(id, pages(1)));
         assert!(!stage.report(id, MediaReport::Timeline { duration: None }));
-        assert!(stage.next_frame());
-        assert!(stage.next_frame());
+        // The stage split the text into more slides than its stanzas.
+        assert!(stage.report(id, pages(5)));
+        for _ in 0..4 {
+            assert!(stage.next_frame());
+        }
+        assert!(!stage.next_frame());
     }
 
     #[test]

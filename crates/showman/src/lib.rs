@@ -27,5 +27,5 @@ mod scene;
 mod showman;
 
 pub use look::{Look, Rgb};
-pub use scene::{Media, MediaReport, Playback, Scene, SceneId, Timed, text_frames};
+pub use scene::{Media, MediaReport, Playback, Scene, SceneId, Timed, fit_frames, text_frames};
 pub use showman::{Showman, StageEvent, StageFeed, StageState};
