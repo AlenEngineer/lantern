@@ -106,6 +106,8 @@ pub enum Scope {
 struct PlanLook {
     title: String,
     own: Option<Stage>,
+    /// The folders only this plan uses, as typed.
+    folders: Vec<String>,
 }
 
 /// The stage's look, as typed.
@@ -174,6 +176,8 @@ impl Stage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Folder(usize),
+    /// A folder of the open plan's own.
+    PlanFolder(usize),
     Bible(usize),
     Colors,
     StageImage,
@@ -184,7 +188,7 @@ impl Field {
     /// What a path field takes; `None` for the font.
     fn want(self) -> Option<Want> {
         Some(match self {
-            Field::Folder(_) => Want::Folders,
+            Field::Folder(_) | Field::PlanFolder(_) => Want::Folders,
             Field::Bible(_) => Want::Files(&["json", "tsv"]),
             Field::Colors => Want::Files(&["json"]),
             Field::StageImage => Want::Files(&["png", "jpg", "jpeg", "webp"]),
@@ -196,6 +200,7 @@ impl Field {
     pub fn id(self) -> String {
         match self {
             Field::Folder(i) => format!("settings-folder-{i}"),
+            Field::PlanFolder(i) => format!("settings-plan-folder-{i}"),
             Field::Bible(i) => format!("settings-bible-{i}"),
             Field::Colors => "settings-colors".into(),
             Field::StageImage => "settings-stage-image".into(),
@@ -234,6 +239,10 @@ pub enum Edit {
     RemoveBible(usize),
     BraveKey(String),
     Colors(String),
+    /// The path of the open plan's own folder N, a new one, or one less.
+    PlanFolderPath(usize, String),
+    AddPlanFolder,
+    RemovePlanFolder(usize),
     /// The key of action N of `keys::ACTIONS`.
     Key(usize, String),
     /// Shows a part of the settings.
@@ -323,6 +332,7 @@ impl Draft {
         self.notice = None;
         let typed = match &edit {
             Edit::FolderPath(i, _) => Some(Field::Folder(*i)),
+            Edit::PlanFolderPath(i, _) => Some(Field::PlanFolder(*i)),
             Edit::BiblePath(i, _) => Some(Field::Bible(*i)),
             Edit::Colors(_) => Some(Field::Colors),
             Edit::StageImage(_) => Some(Field::StageImage),
@@ -382,6 +392,7 @@ impl Draft {
     fn path(&self, field: Field) -> &str {
         match field {
             Field::Folder(i) => self.folders.get(i).map_or("", |f| f.path.as_str()),
+            Field::PlanFolder(i) => self.plan_folder_rows().get(i).map_or("", String::as_str),
             Field::Bible(i) => self.bibles.get(i).map_or("", |b| b.path.as_str()),
             Field::Colors => &self.colors,
             Field::StageImage => &self.stage().image,
@@ -392,10 +403,17 @@ impl Draft {
     fn set_path(&mut self, field: Field, path: String) {
         match field {
             Field::Folder(i) => self.folder(i, |f| f.path = path),
+            Field::PlanFolder(i) => self.plan_folder(i, path),
             Field::Bible(i) => self.bible(i, |b| b.path = path),
             Field::Colors => self.colors = path,
             Field::StageImage => self.stage_mut().image = path,
             Field::Font => self.stage_mut().font = path,
+        }
+    }
+
+    fn plan_folder(&mut self, i: usize, path: String) {
+        if let Some(folder) = self.plan.as_mut().and_then(|plan| plan.folders.get_mut(i)) {
+            *folder = path;
         }
     }
 
@@ -413,6 +431,19 @@ impl Draft {
             Edit::FolderBang(i, text) => self.folder(i, |f| f.bang = text),
             Edit::FolderPath(i, text) => self.folder(i, |f| f.path = text),
             Edit::AddFolder => self.folders.push(Folder::default()),
+            Edit::PlanFolderPath(i, text) => self.plan_folder(i, text),
+            Edit::AddPlanFolder => {
+                if let Some(plan) = &mut self.plan {
+                    plan.folders.push(String::new());
+                }
+            }
+            Edit::RemovePlanFolder(i) => {
+                if let Some(plan) = &mut self.plan
+                    && i < plan.folders.len()
+                {
+                    plan.folders.remove(i);
+                }
+            }
             Edit::RemoveFolder(i) => {
                 if i < self.folders.len() {
                     self.folders.remove(i);
@@ -552,7 +583,7 @@ impl Draft {
 
     /// Also edits `title`'s look: `look` is its own, `None` when it uses
     /// the look for all plans.
-    pub fn with_plan(mut self, title: &str, look: Option<&Look>) -> Draft {
+    pub fn with_plan(mut self, title: &str, look: Option<&Look>, folders: &[PathBuf]) -> Draft {
         let home = self.home.clone();
         let shown = |path: &Path| match &home {
             Some(home) => config::tilde(path, home).display().to_string(),
@@ -561,8 +592,38 @@ impl Draft {
         self.plan = Some(PlanLook {
             title: title.to_string(),
             own: look.map(|look| Stage::of(look, &shown)),
+            folders: folders.iter().map(|f| f.display().to_string()).collect(),
         });
         self
+    }
+
+    /// The open plan's own folders as typed, without the empty rows;
+    /// `None` when no plan is being edited. Kept as typed (`~/…`), so the
+    /// plan reads the same on another machine.
+    pub fn plan_folders(&self) -> Option<Vec<PathBuf>> {
+        let plan = self.plan.as_ref()?;
+        Some(
+            plan.folders
+                .iter()
+                .map(|folder| folder.trim())
+                .filter(|folder| !folder.is_empty())
+                .map(PathBuf::from)
+                .collect(),
+        )
+    }
+
+    /// The field of the plan's last folder row, to type in once it's added.
+    pub fn last_plan_folder(&self) -> Option<Field> {
+        self.plan_folder_rows()
+            .len()
+            .checked_sub(1)
+            .map(Field::PlanFolder)
+    }
+
+    fn plan_folder_rows(&self) -> &[String] {
+        self.plan
+            .as_ref()
+            .map_or(&[], |plan| plan.folders.as_slice())
     }
 
     /// Lists the connected screens, for the output row.
@@ -892,9 +953,33 @@ impl App {
             output_row(p, draft),
         ]
         .spacing(6);
+        // Media only this plan needs: indexed while it's open.
+        let mut plan_folders = column![section(
+            p,
+            "Its folders",
+            "Media only this plan needs. Searched while the plan is open, and not after."
+        )]
+        .spacing(6);
+        for (i, folder) in draft.plan_folder_rows().iter().enumerate() {
+            plan_folders = plan_folders.push(
+                row![
+                    field(p, "~/Church/Campaña", folder, move |t| {
+                        Edit::PlanFolderPath(i, t)
+                    })
+                    .id(Field::PlanFolder(i).id())
+                    .width(Fill),
+                    remove(p, Edit::RemovePlanFolder(i)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            );
+            plan_folders = plan_folders.push(suggestions(p, draft, Field::PlanFolder(i)));
+        }
+        plan_folders = plan_folders.push(add(p, "Add folder", Edit::AddPlanFolder));
+
         // One part at a time, picked from the list beside it.
         let part = match draft.category {
-            Category::Plan => column![self.plan_section(), stage],
+            Category::Plan => column![self.plan_section(), plan_folders, stage],
             Category::Stage => column![stage],
             Category::Output => column![output],
             Category::Library => column![folders, bibles, images],
@@ -1192,7 +1277,7 @@ fn suggestions<'a>(p: Palette, draft: &Draft, field: Field) -> Element<'a, Messa
     // Under its field: a folder's or Bible's path starts at the edge, the
     // stage's image and font after their label.
     let indent = match field {
-        Field::Folder(_) | Field::Bible(_) => 0.0,
+        Field::Folder(_) | Field::PlanFolder(_) | Field::Bible(_) => 0.0,
         _ => LABEL_FIELD + 6.0,
     };
     iced::widget::container(list)
@@ -1297,7 +1382,7 @@ mod tests {
     #[test]
     fn a_plan_gets_its_own_look_without_touching_the_one_for_all() {
         let dir = Path::new("/home/ana/.config/lantern");
-        let mut draft = Draft::of(&sample(), home()).with_plan("Santa Cena", None);
+        let mut draft = Draft::of(&sample(), home()).with_plan("Santa Cena", None, &[]);
         assert_eq!(
             draft.plan_look(dir, home()).unwrap(),
             Some(None),

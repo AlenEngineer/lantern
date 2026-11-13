@@ -360,6 +360,9 @@ struct App {
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
+    /// The open plan's own folders the library was last given, to notice
+    /// when another plan (or an edit) brings different ones.
+    plan_folders: Vec<PathBuf>,
     /// The side panes' widths as dragged; `None` sizes one for the window.
     pub(crate) plan_dragged: Option<f32>,
     pub(crate) stage_dragged: Option<f32>,
@@ -444,6 +447,7 @@ impl App {
             spent: false,
             adding: None,
             search_open: false,
+            plan_folders: Vec::new(),
             plan_dragged: layout.0,
             stage_dragged: layout.1,
             resizing: None,
@@ -459,6 +463,8 @@ impl App {
             scrub: None,
         };
         app.check_palette();
+        // The plan reopened at start may bring folders of its own.
+        app.sync_library();
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
         // window back to tiled when another window maps on its workspace.
         // Then the keyboard goes back to the dashboard, into the search box.
@@ -775,7 +781,14 @@ impl App {
                 if let settings::Edit::Output(Some(output)) = &edit {
                     move_stage(output);
                 }
+                // A folder row just added is the one to type in.
+                let added = matches!(edit, settings::Edit::AddPlanFolder);
                 let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
+                if added
+                    && let Some(field) = self.settings.as_ref().and_then(|d| d.last_plan_folder())
+                {
+                    return operation::focus(field.id());
+                }
                 // A key waiting to be pressed takes the next key press.
                 keys::record(
                     self.settings
@@ -1365,7 +1378,7 @@ impl App {
     fn settings_draft(&self) -> settings::Draft {
         let plan = self.engine.0.plan();
         settings::Draft::of(&self.config, self.home.as_deref())
-            .with_plan(&plan.title, plan.look.as_ref())
+            .with_plan(&plan.title, plan.look.as_ref(), &plan.folders)
             .with_outputs(outputs::list())
             .with_fonts(fit::families())
     }
@@ -1378,6 +1391,7 @@ impl App {
         let home = self.home.as_deref();
         let dir = path.parent().unwrap_or(std::path::Path::new("."));
         // Both looks must read before anything is written.
+        let plan_folders = draft.plan_folders();
         let saved = draft.plan_look(dir, home).and_then(|plan_look| {
             draft
                 .config(dir, home)
@@ -1396,11 +1410,25 @@ impl App {
                         self.plans.save(&self.engine.0);
                     }
                 }
+                // So do its own folders.
+                if let Some(folders) = plan_folders
+                    && self.engine.0.plan().folders != folders
+                {
+                    self.engine.0.edit_plan(|plan| plan.folders = folders);
+                    if self.plans.has_file() {
+                        self.plans.save(&self.engine.0);
+                    }
+                }
                 log(format!("settings: saved {}", path.display()));
                 // Read fine when the draft became this config.
                 let _ = keys::configure(&config.keys);
-                self.library.0.apply(config.clone());
-                if config.colors != self.config.colors {
+                let colors_changed = config.colors != self.config.colors;
+                self.config = config.clone();
+                self.plan_folders = self.engine.0.plan().folders;
+                self.library
+                    .0
+                    .apply(self.library_config(&self.plan_folders.clone()));
+                if colors_changed {
                     self.colors = config.colors.clone().map(palette::Source::new);
                     if self.colors.is_none() {
                         self.palette = Palette::default();
@@ -1646,7 +1674,43 @@ impl App {
         }
     }
 
+    /// The config with the open plan's own folders after its own: what
+    /// the library indexes.
+    fn library_config(&self, plan_folders: &[PathBuf]) -> Config {
+        let mut config = self.config.clone();
+        let file = self.config_status.path();
+        let dir = file.parent().unwrap_or(std::path::Path::new("."));
+        config.folders.extend(plan_folders.iter().map(|folder| {
+            let path = config::resolve(folder, dir, self.home.as_deref());
+            config::FolderEntry {
+                label: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                path,
+                bang: None,
+            }
+        }));
+        config
+    }
+
+    /// Gives the library the open plan's own folders when they aren't the
+    /// ones it has: another plan was opened, or its folders were edited.
+    /// The index is built again, so only on a change.
+    fn sync_library(&mut self) {
+        let folders = self.engine.0.edit_plan(|plan| plan.folders.clone());
+        if folders != self.plan_folders {
+            log(format!(
+                "library: {} of the plan's own folders",
+                folders.len()
+            ));
+            self.library.0.apply(self.library_config(&folders));
+            self.plan_folders = folders;
+        }
+    }
+
     fn preload(&mut self) -> Task<Message> {
+        // Every change of plan comes through here.
+        self.sync_library();
         for step in self.engine.0.plan().steps() {
             if let Action::Show { resource } = &step.action
                 && let Some(video) = YoutubeVideo::of(resource)

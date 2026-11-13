@@ -48,6 +48,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The plan and stage panes can be resized: drag the line between two
   panes, or double-click it to let the pane size itself again. The widths
   are remembered. The list of the settings' parts is narrower.
+- A plan can have folders of its own (**Its folders** in the plan's
+  settings): media only that plan needs, searched while it's open and
+  not after. They're saved in the plan.
 
 ### Fixed
 
