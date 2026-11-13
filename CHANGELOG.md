@@ -49,6 +49,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   and goes (they're under the list now), or when a step goes on stage.
 - The circle in the plan's header says "Look"; tooltips are solid, and
   the star's no longer covers the Edit button.
+- The plans list counted section headings as steps, so it said "6 steps"
+  for a plan whose header says "4 steps".
 
 ## [0.7.0] - 2026-11-13
 
