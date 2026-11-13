@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A plan can have its own stage look, saved with it: the swatch in the
+  plan's header opens Settings on **This plan**.
 - **Go on when done**, per step: a video moves the plan when it ends, an
   image, PDF, passage or black screen after its length (shared among its
   slides), with a countdown on its row. Off by default.

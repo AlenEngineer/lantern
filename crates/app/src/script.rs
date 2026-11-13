@@ -130,6 +130,10 @@ pub enum Command {
     Length(usize, String),
     /// `go-on N`: turn on "Go on when done" for plan entry N.
     GoOn(usize),
+    /// `plan-look COLOUR`: open the settings on the plan's look (the
+    /// header's swatch), give it its own and type COLOUR as its
+    /// background. `press ctrl+s` saves it.
+    PlanLook(String),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
@@ -273,6 +277,8 @@ impl Command {
                 Ok(n) if n > 0 => Command::GoOn(n - 1),
                 _ => return Err(format!("go-on needs a number from 1, got {rest:?}")),
             },
+            "plan-look" if !rest.is_empty() => Command::PlanLook(rest.to_string()),
+            "plan-look" => return Err("plan-look needs a colour".into()),
             "click" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Click(n - 1),
                 _ => return Err(format!("click needs a number from 1, got {rest:?}")),
@@ -313,6 +319,7 @@ impl Command {
                 | Command::Drag(..)
                 | Command::Length(..)
                 | Command::GoOn(_)
+                | Command::PlanLook(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -336,6 +343,7 @@ pub enum Ui {
     Drop,
     Length(usize, String),
     GoOn(usize),
+    PlanLook(String),
     Step(usize),
     Path(String),
     Font(String),
@@ -402,6 +410,7 @@ impl Script {
                 Command::Drop => ui(Ui::Drop),
                 Command::Length(n, text) => ui(Ui::Length(*n, text.clone())),
                 Command::GoOn(n) => ui(Ui::GoOn(*n)),
+                Command::PlanLook(colour) => ui(Ui::PlanLook(colour.clone())),
                 Command::Step(n) => ui(Ui::Step(*n)),
                 Command::Path(text) => ui(Ui::Path(text.clone())),
                 Command::Font(text) => ui(Ui::Font(text.clone())),
@@ -471,6 +480,7 @@ impl Script {
             | Command::Drop
             | Command::Length(..)
             | Command::GoOn(_)
+            | Command::PlanLook(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)

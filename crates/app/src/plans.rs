@@ -180,6 +180,11 @@ impl Plans {
         *plan != self.saved
     }
 
+    /// Whether the plan was saved to or opened from a file.
+    pub fn has_file(&self) -> bool {
+        self.file.is_some()
+    }
+
     /// Saves to the plan's file, or to a new one named after its title.
     /// A name being edited is applied first. Returns whether it saved.
     pub fn save(&mut self, engine: &Engine) -> bool {

@@ -240,6 +240,8 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// Open the settings on the plan's stage look.
+    PlanLook,
     /// What was typed in a step's length or a section's budget.
     Length(StepId, String),
     /// Moves a step up (-1) or down (1).
@@ -278,6 +280,8 @@ struct App {
     palette: Palette,
     /// How slide text is split to fit the stage.
     slides: fit::Splitter,
+    /// The stage's look now: the open plan's own, or else the default.
+    look: Look,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
     /// The roles file the palette follows, if the config names one.
@@ -345,6 +349,7 @@ impl App {
             palette: Palette::default(),
             colors: config.colors.clone().map(palette::Source::new),
             slides: fit::Splitter::new(&config.stage),
+            look: config.stage.clone(),
             thumbs: thumbs::Thumbs::start(),
             config,
             settings: None,
@@ -389,6 +394,30 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        self.sync_look();
+        task
+    }
+
+    /// Follows the look to the open plan's (or the default when it has
+    /// none), whatever changed it: opening a plan, editing its look, saving
+    /// the settings. Text is split again only when the look changed.
+    fn sync_look(&mut self) {
+        let look = self
+            .engine
+            .0
+            .plan()
+            .look
+            .unwrap_or_else(|| self.config.stage.clone());
+        if look != self.look {
+            self.look = look;
+            if self.slides.set_look(&self.look) {
+                self.report_slides();
+            }
+        }
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Feed(state) => {
                 self.stage = state;
@@ -478,6 +507,11 @@ impl App {
                         Some(step) => self.update(Message::SetAdvance(step.id, true)),
                         None => Task::none(),
                     },
+                    Ui::PlanLook(colour) => Task::batch([
+                        self.update(Message::PlanLook),
+                        self.update(Message::Settings(settings::Edit::OwnLook)),
+                        self.update(Message::Settings(settings::Edit::Background(colour))),
+                    ]),
                     Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
                         Some(step) => self.update(Message::Click(Clicked::Step(step.id))),
                         None => {
@@ -633,6 +667,15 @@ impl App {
                     *hint = Some(text).filter(|t| !t.trim().is_empty()).map(Query::new);
                 }
             }),
+            Message::PlanLook => {
+                let mut draft = self
+                    .settings
+                    .take()
+                    .unwrap_or_else(|| self.settings_draft());
+                draft.scope = settings::Scope::ThisPlan;
+                self.settings = Some(draft);
+                return operation::snap_to(settings::SCROLL, scrollable::RelativeOffset::START);
+            }
             Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
                 if let Some(step) = plan.get_mut(id) {
                     step.label = label;
@@ -822,10 +865,7 @@ impl App {
             Op::Settings => {
                 self.settings = match self.settings {
                     Some(_) => None,
-                    None => Some(
-                        settings::Draft::of(&self.config, self.home.as_deref())
-                            .with_fonts(fit::families()),
-                    ),
+                    None => Some(self.settings_draft()),
                 };
                 if self.settings.is_none() {
                     return operation::focus(SEARCH_BOX);
@@ -897,6 +937,14 @@ impl App {
     /// Writes the settings to the config file and applies them: the library
     /// swaps its sources and the colours follow the new file. What happened
     /// shows under the settings.
+    /// The settings as saved, with the open plan's look too.
+    fn settings_draft(&self) -> settings::Draft {
+        let plan = self.engine.0.plan();
+        settings::Draft::of(&self.config, self.home.as_deref())
+            .with_plan(&plan.title, plan.look.as_ref())
+            .with_fonts(fit::families())
+    }
+
     fn save_settings(&mut self) {
         let Some(draft) = &mut self.settings else {
             return;
@@ -904,12 +952,25 @@ impl App {
         let path = self.config_status.path().to_path_buf();
         let home = self.home.as_deref();
         let dir = path.parent().unwrap_or(std::path::Path::new("."));
-        let saved = draft
-            .config(dir, home)
-            .and_then(|config| config.save(&path, home).map(|()| config));
+        // Both looks must read before anything is written.
+        let saved = draft.plan_look(dir, home).and_then(|plan_look| {
+            draft
+                .config(dir, home)
+                .and_then(|config| config.save(&path, home).map(|()| (config, plan_look)))
+        });
         match saved {
-            Ok(config) => {
+            Ok((config, plan_look)) => {
                 draft.notice = Some(Ok(settings::saved(&path, home)));
+                // The plan's own look goes into the plan, saved with it when
+                // it has a file (an untitled plan shows Save instead).
+                if let Some(look) = plan_look
+                    && self.engine.0.plan().look != look
+                {
+                    self.engine.0.edit_plan(|plan| plan.look = look);
+                    if self.plans.has_file() {
+                        self.plans.save(&self.engine.0);
+                    }
+                }
                 log(format!("settings: saved {}", path.display()));
                 self.library.0.apply(config.clone());
                 if config.colors != self.config.colors {
@@ -920,12 +981,8 @@ impl App {
                     }
                     self.check_palette();
                 }
-                let restyled = self.slides.set_look(&config.stage);
                 self.config = config;
                 self.config_status = Arc::new(config::Status::Read(path));
-                if restyled {
-                    self.report_slides();
-                }
             }
             Err(err) => draft.notice = Some(Err(err)),
         }
@@ -1134,7 +1191,7 @@ impl App {
     /// keeps playing and still reports its end; it's black whatever the
     /// look.
     fn stage_view(&self) -> Element<'_, Message> {
-        let look = &self.config.stage;
+        let look = &self.look;
         let Some(scene) = &self.stage.program else {
             return backdrop(look, Space::new());
         };

@@ -349,7 +349,7 @@ impl App {
     pub(crate) fn thumbnail<'a>(&self, resource: &Resource, width: f32) -> Element<'a, Message> {
         let p = self.palette;
         let height = width * 9.0 / 16.0;
-        let look = &self.config.stage;
+        let look = &self.look;
         let picture: Element<'a, Message> = match resource.location.as_text() {
             Some(body) => {
                 let first = self
@@ -629,7 +629,7 @@ impl App {
         let picture: Element<'a, Message> = match (slide, content) {
             // A slide is a miniature of the stage, edge to edge.
             (Some(body), _) => {
-                let look = &self.config.stage;
+                let look = &self.look;
                 return framed_with(crate::backdrop(look, fit::fit_text(body, look)), ring, 2);
             }
             (None, Some(Content::Image(handle))) => thumb(handle),

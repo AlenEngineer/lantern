@@ -191,6 +191,12 @@ min_size = 40   # points on a 1080-line screen
 max_size = 96
 ```
 
+A plan can have a look of its own, for a Santa Cena or a youth night: the
+round swatch in the plan's header opens Settings on **This plan**, where
+**Give it its own look** starts from the look for all plans. It's saved in
+the plan, so opening the plan anywhere brings its look, and **Use the look
+for all plans** removes it.
+
 **Ready check.** While something in the plan isn't ready, a line under its
 name says so ("2 not ready yet", "1 problem"), and each step that isn't says
 why: a file that's missing, something the stage can't show, a YouTube

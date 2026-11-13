@@ -33,7 +33,12 @@ pub struct Draft {
     bibles: Vec<Bible>,
     brave_key: String,
     colors: String,
+    /// The look for all plans.
     stage: Stage,
+    /// The open plan's look, when the settings were opened with a plan.
+    plan: Option<PlanLook>,
+    /// Which look the stage fields edit.
+    pub scope: Scope,
     /// The font families installed, for the font field to suggest.
     fonts: Vec<String>,
     /// What the last save did.
@@ -41,6 +46,22 @@ pub struct Draft {
     home: Option<PathBuf>,
     /// The path field being typed in, and what it could become.
     suggesting: Option<(Field, Vec<Suggestion>)>,
+}
+
+/// Which look the stage section edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The look every plan uses unless it has its own.
+    AllPlans,
+    /// The open plan's own look.
+    ThisPlan,
+}
+
+/// The open plan's look: its title, and its own look if it has one.
+#[derive(Debug, Clone, PartialEq)]
+struct PlanLook {
+    title: String,
+    own: Option<Stage>,
 }
 
 /// The stage's look, as typed.
@@ -52,6 +73,43 @@ struct Stage {
     font: String,
     max_size: String,
     min_size: String,
+}
+
+impl Stage {
+    fn of(look: &Look, shown: &dyn Fn(&Path) -> String) -> Stage {
+        Stage {
+            background: look.background.to_string(),
+            image: look.image.as_deref().map(shown).unwrap_or_default(),
+            text: look.text.to_string(),
+            font: look.font.clone().unwrap_or_default(),
+            max_size: look.max_size.to_string(),
+            min_size: look.min_size.to_string(),
+        }
+    }
+
+    /// The look these fields say, or why they don't read.
+    fn look(&self, path: &dyn Fn(&str) -> PathBuf) -> Result<Look, String> {
+        let optional = |text: &str| Some(text.trim().to_string()).filter(|t| !t.is_empty());
+        let colour = |text: &str, what: &str| -> Result<Rgb, String> {
+            text.parse()
+                .map_err(|_| format!("The {what} “{}” isn't a colour like #1a2b3c.", text.trim()))
+        };
+        let size = |text: &str, what: &str| -> Result<u16, String> {
+            text.trim()
+                .parse()
+                .ok()
+                .filter(|size| (1..=400).contains(size))
+                .ok_or_else(|| format!("The {what} “{}” isn't a size from 1 to 400.", text.trim()))
+        };
+        Ok(Look {
+            background: colour(&self.background, "background")?,
+            image: optional(&self.image).map(|i| path(&i)),
+            text: colour(&self.text, "text colour")?,
+            font: optional(&self.font),
+            max_size: size(&self.max_size, "largest size")?,
+            min_size: size(&self.min_size, "smallest size")?,
+        })
+    }
 }
 
 /// A field that suggestions fill: a path, or the stage's font.
@@ -120,6 +178,12 @@ pub enum Edit {
     Colors(String),
     Background(String),
     StageImage(String),
+    /// Edit the look for all plans, or the open plan's.
+    Scope(Scope),
+    /// Give the open plan its own look, starting from the look for all.
+    OwnLook,
+    /// The open plan goes back to the look for all plans.
+    SharedLook,
     TextColor(String),
     Font(String),
     MaxSize(String),
@@ -158,14 +222,9 @@ impl Draft {
                 .collect(),
             brave_key: config.brave_api_key.clone().unwrap_or_default(),
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
-            stage: Stage {
-                background: config.stage.background.to_string(),
-                image: config.stage.image.as_deref().map(shown).unwrap_or_default(),
-                text: config.stage.text.to_string(),
-                font: config.stage.font.clone().unwrap_or_default(),
-                max_size: config.stage.max_size.to_string(),
-                min_size: config.stage.min_size.to_string(),
-            },
+            stage: Stage::of(&config.stage, &shown),
+            plan: None,
+            scope: Scope::AllPlans,
             fonts: Vec::new(),
             notice: None,
             home: home.map(Path::to_path_buf),
@@ -245,8 +304,8 @@ impl Draft {
             Field::Folder(i) => self.folders.get(i).map_or("", |f| f.path.as_str()),
             Field::Bible(i) => self.bibles.get(i).map_or("", |b| b.path.as_str()),
             Field::Colors => &self.colors,
-            Field::StageImage => &self.stage.image,
-            Field::Font => &self.stage.font,
+            Field::StageImage => &self.stage().image,
+            Field::Font => &self.stage().font,
         }
     }
 
@@ -255,8 +314,8 @@ impl Draft {
             Field::Folder(i) => self.folder(i, |f| f.path = path),
             Field::Bible(i) => self.bible(i, |b| b.path = path),
             Field::Colors => self.colors = path,
-            Field::StageImage => self.stage.image = path,
-            Field::Font => self.stage.font = path,
+            Field::StageImage => self.stage_mut().image = path,
+            Field::Font => self.stage_mut().font = path,
         }
     }
 
@@ -294,12 +353,24 @@ impl Draft {
             }
             Edit::BraveKey(text) => self.brave_key = text,
             Edit::Colors(text) => self.colors = text,
-            Edit::Background(text) => self.stage.background = text,
-            Edit::StageImage(text) => self.stage.image = text,
-            Edit::TextColor(text) => self.stage.text = text,
-            Edit::Font(text) => self.stage.font = text,
-            Edit::MaxSize(text) => self.stage.max_size = text,
-            Edit::MinSize(text) => self.stage.min_size = text,
+            Edit::Scope(scope) => self.scope = scope,
+            Edit::OwnLook => {
+                let all = self.stage.clone();
+                if let Some(plan) = &mut self.plan {
+                    plan.own.get_or_insert(all);
+                }
+            }
+            Edit::SharedLook => {
+                if let Some(plan) = &mut self.plan {
+                    plan.own = None;
+                }
+            }
+            Edit::Background(text) => self.stage_mut().background = text,
+            Edit::StageImage(text) => self.stage_mut().image = text,
+            Edit::TextColor(text) => self.stage_mut().text = text,
+            Edit::Font(text) => self.stage_mut().font = text,
+            Edit::MaxSize(text) => self.stage_mut().max_size = text,
+            Edit::MinSize(text) => self.stage_mut().min_size = text,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -349,25 +420,7 @@ impl Draft {
                 (None, None) => {}
             }
         }
-        let colour = |text: &str, what: &str| -> Result<Rgb, String> {
-            text.parse()
-                .map_err(|_| format!("The {what} “{}” isn't a colour like #1a2b3c.", text.trim()))
-        };
-        let size = |text: &str, what: &str| -> Result<u16, String> {
-            text.trim()
-                .parse()
-                .ok()
-                .filter(|size| (1..=400).contains(size))
-                .ok_or_else(|| format!("The {what} “{}” isn't a size from 1 to 400.", text.trim()))
-        };
-        let stage = Look {
-            background: colour(&self.stage.background, "background")?,
-            image: optional(&self.stage.image).map(|i| path(&i)),
-            text: colour(&self.stage.text, "text colour")?,
-            font: optional(&self.stage.font),
-            max_size: size(&self.stage.max_size, "largest size")?,
-            min_size: size(&self.stage.min_size, "smallest size")?,
-        };
+        let stage = self.stage.look(&|text: &str| path(text))?;
         Ok(Config {
             brave_api_key: optional(&self.brave_key),
             colors: optional(&self.colors).map(|c| path(&c)),
@@ -375,6 +428,73 @@ impl Draft {
             bibles,
             stage,
         })
+    }
+
+    /// Also edits `title`'s look: `look` is its own, `None` when it uses
+    /// the look for all plans.
+    pub fn with_plan(mut self, title: &str, look: Option<&Look>) -> Draft {
+        let home = self.home.clone();
+        let shown = |path: &Path| match &home {
+            Some(home) => config::tilde(path, home).display().to_string(),
+            None => path.display().to_string(),
+        };
+        self.plan = Some(PlanLook {
+            title: title.to_string(),
+            own: look.map(|look| Stage::of(look, &shown)),
+        });
+        self
+    }
+
+    /// The open plan's title, when the settings edit its look too.
+    pub fn plan_title(&self) -> Option<&str> {
+        self.plan.as_ref().map(|plan| plan.title.as_str())
+    }
+
+    /// Whether the open plan has a look of its own.
+    pub fn plan_has_own(&self) -> bool {
+        self.plan.as_ref().is_some_and(|plan| plan.own.is_some())
+    }
+
+    /// The look fields being edited: the plan's own in its scope, else the
+    /// look for all plans.
+    fn stage(&self) -> &Stage {
+        match (self.scope, &self.plan) {
+            (Scope::ThisPlan, Some(PlanLook { own: Some(own), .. })) => own,
+            _ => &self.stage,
+        }
+    }
+
+    fn stage_mut(&mut self) -> &mut Stage {
+        match (self.scope, &mut self.plan) {
+            (Scope::ThisPlan, Some(PlanLook { own: Some(own), .. })) => own,
+            _ => &mut self.stage,
+        }
+    }
+
+    /// Whether the fields shown edit a look: not in a plan's scope while
+    /// it uses the look for all plans.
+    pub fn editing_a_look(&self) -> bool {
+        self.scope == Scope::AllPlans || self.plan_has_own()
+    }
+
+    /// The open plan's look as the fields say: `Some(None)` for the look for
+    /// all plans; `None` when no plan is being edited.
+    pub fn plan_look(
+        &self,
+        dir: &Path,
+        home: Option<&Path>,
+    ) -> Result<Option<Option<Look>>, String> {
+        let Some(plan) = &self.plan else {
+            return Ok(None);
+        };
+        let path = |text: &str| config::resolve(Path::new(text.trim()), dir, home);
+        match &plan.own {
+            None => Ok(Some(None)),
+            Some(own) => own
+                .look(&path)
+                .map(|look| Some(Some(look)))
+                .map_err(|err| format!("This plan's look: {err}")),
+        }
     }
 }
 
@@ -492,49 +612,119 @@ impl App {
         let label = |name| text(name).size(BODY).font(MEDIUM).width(LABEL_FIELD);
         let line =
             |items: iced::widget::Row<'a, Message>| items.spacing(8).align_y(Alignment::Center);
-        let stage = column![
-            section(
-                p,
-                "Stage",
-                "What the audience sees behind the content, and how text is set: as large as fits, between the two sizes."
-            ),
-            line(row![
-                label("Colours"),
-                note("background"),
-                small("#000000", &draft.stage.background, Edit::Background),
-                swatch(&draft.stage.background),
-                Space::new().width(12),
-                note("text"),
-                small("#ffffff", &draft.stage.text, Edit::TextColor),
-                swatch(&draft.stage.text),
-            ]),
-            line(row![
-                label("Text size"),
-                small("40", &draft.stage.min_size, Edit::MinSize),
-                note("to"),
-                small("96", &draft.stage.max_size, Edit::MaxSize),
-                note("points on a 1080-line screen"),
-            ]),
-            line(row![
-                label("Image"),
-                field(p, "none: ~/Pictures/cross.jpg", &draft.stage.image, Edit::StageImage)
+        let mut stage = column![section(
+            p,
+            "Stage",
+            "What the audience sees behind the content, and how text is set: as large as fits, between the two sizes (points on a 1080-line stage)."
+        )]
+        .spacing(6);
+        // With a plan open, the look for all plans or that plan's own.
+        if let Some(title) = draft.plan_title() {
+            let scope = |name: String, scope: Scope| {
+                let tone = if draft.scope == scope {
+                    Tone::Selected
+                } else {
+                    Tone::Plain
+                };
+                pill(
+                    p,
+                    &name,
+                    tone,
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Scope(scope))),
+                )
+            };
+            stage = stage.push(line(row![
+                label("Look for"),
+                scope("All plans".into(), Scope::AllPlans),
+                scope(format!("This plan: {title}"), Scope::ThisPlan),
+            ]));
+            if draft.scope == Scope::ThisPlan {
+                let (about, action, tone, edit) = if draft.plan_has_own() {
+                    (
+                        "This plan has its own look, saved with it.",
+                        "Use the look for all plans",
+                        Tone::Plain,
+                        Edit::SharedLook,
+                    )
+                } else {
+                    (
+                        "This plan uses the look for all plans.",
+                        "Give it its own look",
+                        Tone::Selected,
+                        Edit::OwnLook,
+                    )
+                };
+                stage = stage.push(row![
+                    Space::new().width(LABEL_FIELD),
+                    column![
+                        note(about),
+                        pill(p, action, tone, look::PILL_SMALL, Some(settings(edit))),
+                    ]
+                    .spacing(6),
+                ]);
+            }
+        }
+        if draft.editing_a_look() {
+            stage = stage.extend([
+                line(row![
+                    label("Background"),
+                    small("#000000", &draft.stage().background, Edit::Background),
+                    swatch(&draft.stage().background),
+                ])
+                .into(),
+                line(row![
+                    label("Text colour"),
+                    small("#ffffff", &draft.stage().text, Edit::TextColor),
+                    swatch(&draft.stage().text),
+                ])
+                .into(),
+                line(row![
+                    label("Text size"),
+                    small("40", &draft.stage().min_size, Edit::MinSize),
+                    note("to"),
+                    small("96", &draft.stage().max_size, Edit::MaxSize),
+                    note("pt"),
+                ])
+                .into(),
+                line(row![
+                    label("Image"),
+                    field(
+                        p,
+                        "none: ~/Pictures/cross.jpg",
+                        &draft.stage().image,
+                        Edit::StageImage
+                    )
                     .id(Field::StageImage.id())
                     .width(Fill),
-            ]),
-            suggestions(p, draft, Field::StageImage),
-            line(row![
-                label("Font"),
-                field(p, "the system's own: type to find one", &draft.stage.font, Edit::Font)
+                ])
+                .into(),
+                suggestions(p, draft, Field::StageImage),
+                line(row![
+                    label("Font"),
+                    field(
+                        p,
+                        "the system's own: type to find one",
+                        &draft.stage().font,
+                        Edit::Font
+                    )
                     .id(Field::Font.id())
                     .width(Fill),
-            ]),
-            suggestions(p, draft, Field::Font),
-            row![Space::new().width(LABEL_FIELD), self.stage_sample(draft)].spacing(8),
-        ]
-        .spacing(6);
+                ])
+                .into(),
+                suggestions(p, draft, Field::Font),
+            ]);
+        }
+        stage =
+            stage.push(row![Space::new().width(LABEL_FIELD), self.stage_sample(draft)].spacing(8));
 
-        let body =
-            scrolling(column![folders, bibles, stage, images, colors].spacing(24)).id(SCROLL);
+        // Opened for a plan's look, the stage comes first.
+        let sections = if draft.scope == Scope::ThisPlan {
+            column![stage, folders, bibles, images, colors]
+        } else {
+            column![folders, bibles, stage, images, colors]
+        };
+        let body = scrolling(sections.spacing(24)).id(SCROLL);
         let mut footer = row![].spacing(8).align_y(Alignment::Center);
         if let Some(notice) = &draft.notice {
             let (message, color) = match notice {
@@ -580,16 +770,16 @@ impl App {
     fn stage_sample<'a>(&self, draft: &Draft) -> Element<'a, Message> {
         let saved = &self.config.stage;
         let look = Look {
-            background: draft.stage.background.parse().unwrap_or(saved.background),
-            text: draft.stage.text.parse().unwrap_or(saved.text),
-            image: Some(draft.stage.image.trim())
+            background: draft.stage().background.parse().unwrap_or(saved.background),
+            text: draft.stage().text.parse().unwrap_or(saved.text),
+            image: Some(draft.stage().image.trim())
                 .filter(|i| !i.is_empty())
                 .and_then(|i| {
                     let home = self.home.as_deref();
                     let dir = self.config_status.path().parent()?;
                     Some(config::resolve(Path::new(i), dir, home))
                 }),
-            font: Some(draft.stage.font.trim().to_string()).filter(|f| !f.is_empty()),
+            font: Some(draft.stage().font.trim().to_string()).filter(|f| !f.is_empty()),
             max_size: draft
                 .stage
                 .max_size
@@ -758,6 +948,61 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_gets_its_own_look_without_touching_the_one_for_all() {
+        let dir = Path::new("/home/ana/.config/lantern");
+        let mut draft = Draft::of(&sample(), home()).with_plan("Santa Cena", None);
+        assert_eq!(
+            draft.plan_look(dir, home()).unwrap(),
+            Some(None),
+            "uses the shared look"
+        );
+        draft.edit(Edit::Scope(Scope::ThisPlan));
+        assert!(
+            !draft.editing_a_look(),
+            "nothing to edit until it has its own"
+        );
+
+        draft.edit(Edit::OwnLook);
+        draft.edit(Edit::Background("#301010".into()));
+        let own = draft.plan_look(dir, home()).unwrap().unwrap().unwrap();
+        assert_eq!(own.background, Rgb([0x30, 0x10, 0x10]));
+        assert_eq!(
+            draft.config(dir, home()).unwrap().stage,
+            sample().stage,
+            "all plans unchanged"
+        );
+
+        draft.edit(Edit::Scope(Scope::AllPlans));
+        draft.edit(Edit::Background("#000080".into()));
+        assert_eq!(
+            draft
+                .plan_look(dir, home())
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .background,
+            Rgb([0x30, 0x10, 0x10]),
+            "the plan keeps its own"
+        );
+
+        draft.edit(Edit::Scope(Scope::ThisPlan));
+        draft.edit(Edit::Background("not a colour".into()));
+        assert!(
+            draft
+                .plan_look(dir, home())
+                .unwrap_err()
+                .starts_with("This plan's look:")
+        );
+        draft.edit(Edit::SharedLook);
+        assert_eq!(draft.plan_look(dir, home()).unwrap(), Some(None));
+        assert_eq!(
+            Draft::of(&sample(), home()).plan_look(dir, home()).unwrap(),
+            None,
+            "no plan"
+        );
+    }
+
+    #[test]
     fn the_fields_show_home_as_a_tilde_and_read_back_the_same() {
         let draft = Draft::of(&sample(), home());
         assert_eq!(draft.folders[0].path, "~/Music");
@@ -845,7 +1090,7 @@ mod tests {
             .collect();
         assert_eq!(found, ["DejaVu Serif"]);
         assert_eq!(draft.edit(Edit::ChooseFirst), Some(Field::Font));
-        assert_eq!(draft.stage.font, "DejaVu Serif");
+        assert_eq!(draft.stage().font, "DejaVu Serif");
         assert!(
             draft.suggestions(Field::Font).is_empty(),
             "a chosen font ends it"

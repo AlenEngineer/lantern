@@ -7,7 +7,9 @@
 
 use std::time::{Duration, SystemTime};
 
-use iced::widget::{Space, button, column, container, mouse_area, row, stack, text, text_input};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, stack, text, text_input, tooltip,
+};
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
     Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId, Timing,
@@ -17,6 +19,7 @@ use crate::dashboard::{
     NAME_BOX, STEP_THUMB, level_tone, op, pill, scrolling, single_line, unit, wide,
 };
 use crate::drag::{Drag, Half};
+use crate::fit;
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
@@ -130,7 +133,8 @@ impl App {
         let mut header = row![
             plans_button,
             name,
-            text(place).size(META).color(p.on_surface_variant)
+            text(place).size(META).color(p.on_surface_variant),
+            self.look_button(plan),
         ];
         if self.plans.is_dirty(plan) {
             header = header.push(pill(
@@ -142,6 +146,39 @@ impl App {
             ));
         }
         header.spacing(6).align_y(Alignment::Center).into()
+    }
+
+    /// A swatch of the stage's look for this plan (its background, ringed
+    /// in its text colour) that opens the settings on this plan's look.
+    fn look_button(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
+        let (background, ink) = (fit::color(self.look.background), fit::color(self.look.text));
+        let swatch =
+            container(Space::new().width(20).height(20)).style(move |_| container::Style {
+                background: Some(background.into()),
+                border: iced::Border {
+                    color: ink,
+                    width: 2.0,
+                    radius: 10.0.into(),
+                },
+                ..container::Style::default()
+            });
+        let about = if plan.look.is_some() {
+            "This plan's own stage look"
+        } else {
+            "Stage look (the one for all plans)"
+        };
+        tooltip(
+            button(swatch)
+                .padding(4)
+                .on_press(Message::PlanLook)
+                .style(look::row(p, Tone::Plain)),
+            container(text(about).size(META).color(p.on_surface))
+                .padding([4, 8])
+                .style(look::chip(p, Tone::Plain)),
+            tooltip::Position::Bottom,
+        )
+        .into()
     }
 
     /// The last save or open: its error, or that it worked while nothing
