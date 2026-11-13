@@ -23,6 +23,7 @@ iced_video_player.workspace = true
 gstreamer.workspace = true
 gstreamer-app.workspace = true
 image.workspace = true
+notify.workspace = true
 url.workspace = true
 serde.workspace = true
 serde_json.workspace = true

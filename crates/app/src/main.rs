@@ -28,6 +28,7 @@ mod search;
 mod settings;
 mod stage;
 mod thumbs;
+mod watch;
 mod youtube;
 
 use std::collections::HashMap;
@@ -251,6 +252,8 @@ enum Message {
     Settings(settings::Edit),
     /// Time to see whether the stage should move to its screen.
     CheckOutputs,
+    /// Time to see whether a watched folder changed the index.
+    CheckIndex,
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
@@ -287,6 +290,8 @@ struct App {
     look: Look,
     /// What the stage's screen was last seen as, to move it only on change.
     output_watch: outputs::Watch,
+    /// The library's change count the search last followed.
+    index_changes: u64,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
     /// The roles file the palette follows, if the config names one.
@@ -356,6 +361,7 @@ impl App {
             slides: fit::Splitter::new(&config.stage),
             look: config.stage.clone(),
             output_watch: outputs::Watch::default(),
+            index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
             config,
             settings: None,
@@ -645,6 +651,13 @@ impl App {
             }
             Message::SaveSettings => self.save_settings(),
             Message::CheckOutputs => self.check_outputs(),
+            Message::CheckIndex => {
+                let changes = self.library.0.changes();
+                if changes != self.index_changes {
+                    self.index_changes = changes;
+                    self.search.refresh_index(&self.engine.0);
+                }
+            }
             Message::Select(step) => {
                 self.selected = Some(step);
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
@@ -1262,6 +1275,11 @@ impl App {
         ];
         if self.drag.is_some() {
             subscriptions.push(iced::event::listen_with(cursor_event));
+        }
+        // A search on screen follows files added to or removed from a folder.
+        if !self.search.query.is_empty() {
+            subscriptions
+                .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::CheckIndex));
         }
         // The stage's screen, when one is asked for: at startup, and when
         // it's plugged in later.

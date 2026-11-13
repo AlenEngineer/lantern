@@ -14,7 +14,7 @@ use lantern_source_local::{Folder, LocalSource};
 use lantern_source_youtube::YoutubeSource;
 
 use crate::config::{self, BibleEntry, Config, FolderEntry};
-use crate::log;
+use crate::{log, watch};
 
 /// How one source fared: its indexed item count, or why it has none.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +33,10 @@ pub struct Library {
     configured: Mutex<Vec<SourceId>>,
     /// One apply at a time.
     applying: Mutex<()>,
+    /// Watches the folders while it lives, so new files show up.
+    watch: Mutex<Option<watch::Watch>>,
+    /// Counts the scans the watch made, so a search on screen can follow.
+    changes: Arc<AtomicU64>,
     /// Counts applies, so only the latest one says indexing is done.
     generation: AtomicU64,
 }
@@ -54,6 +58,8 @@ impl Library {
             done: Condvar::new(),
             configured: Mutex::new(Vec::new()),
             applying: Mutex::new(()),
+            watch: Mutex::new(None),
+            changes: Arc::default(),
             generation: AtomicU64::new(0),
         });
         library.apply(config);
@@ -75,6 +81,11 @@ impl Library {
             for source in old {
                 let _ = engine.searcher().unregister(&source);
             }
+            let folders: Vec<_> = config
+                .folders
+                .iter()
+                .map(|entry| (entry.path.clone(), folder_source(entry)))
+                .collect();
             let (registered, mut reports) = register(engine, config);
             *library.configured.lock().unwrap_or_else(|e| e.into_inner()) = registered;
             reports.extend(engine.reindex().into_iter().map(|report| Indexed {
@@ -84,6 +95,9 @@ impl Library {
             for line in summary(Some(&reports)) {
                 log(line);
             }
+            // Watch the folders from now on: a change scans its source again.
+            let watching = watch::start(folders, Arc::clone(engine), Arc::clone(&library.changes));
+            *library.watch.lock().unwrap_or_else(|e| e.into_inner()) = watching;
             if library.generation.load(Ordering::SeqCst) == generation {
                 *library.lock() = Some(reports);
                 library.done.notify_all();
@@ -93,6 +107,11 @@ impl Library {
 
     fn lock(&self) -> MutexGuard<'_, Option<Vec<Indexed>>> {
         self.reports.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many times a watched folder changed the index so far.
+    pub fn changes(&self) -> u64 {
+        self.changes.load(Ordering::SeqCst)
     }
 
     pub fn indexing(&self) -> bool {
@@ -185,6 +204,15 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
 /// the folders without a bang (left out when every folder has one), then `local-h` for
 /// the folders with `!h`, in the order their bang first appears. A bang
 /// that can't be one is reported with `bad` and the folder goes in `local`.
+/// The source a folder belongs to: `local-h` for a folder with `!h`,
+/// `local` without a bang or with one that can't be.
+fn folder_source(entry: &FolderEntry) -> SourceId {
+    match entry.bang.as_deref().map(config::folder_bang) {
+        Some(Ok(bang)) => id(&format!("local-{bang}")),
+        _ => id("local"),
+    }
+}
+
 fn folder_sources(
     folders: Vec<FolderEntry>,
     bad: &mut dyn FnMut(String, String),
@@ -369,6 +397,57 @@ mod tests {
         let problems = library.problems();
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(problems[0].contains("!b is taken"), "{problems:?}");
+    }
+
+    /// Waits up to five seconds for `found` to hold.
+    fn eventually(found: impl Fn() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if found() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        found()
+    }
+
+    #[test]
+    fn a_file_added_to_a_watched_folder_shows_up_and_leaves() {
+        let plain = tempfile::tempdir().unwrap();
+        let hymns = tempfile::tempdir().unwrap();
+        let config = format!(
+            "[[folders]]\npath = {:?}\n[[folders]]\npath = {:?}\nbang = \"h\"\n",
+            plain.path(),
+            hymns.path()
+        );
+        let (engine, _library) = started(&config);
+        let titles = |text: &str| -> Vec<String> {
+            let query = engine.searcher().parse(text).query;
+            engine
+                .searcher()
+                .search_index(&query)
+                .into_iter()
+                .map(|hit| hit.resource.title.clone())
+                .collect()
+        };
+        assert!(titles("cordero").is_empty());
+
+        let image = repo().join("scripts/e2e/fixtures/image.png");
+        std::fs::copy(&image, hymns.path().join("cordero.png")).unwrap();
+        assert!(
+            eventually(|| titles("!h cordero") == ["cordero"]),
+            "found under !h"
+        );
+        std::fs::copy(&image, plain.path().join("cordero de dios.png")).unwrap();
+        assert!(
+            eventually(|| titles("!f cordero").len() == 2),
+            "{:?}",
+            titles("!f cordero")
+        );
+
+        std::fs::remove_file(hymns.path().join("cordero.png")).unwrap();
+        assert!(eventually(|| titles("!h cordero").is_empty()), "gone");
+        assert_eq!(titles("!f cordero"), ["cordero de dios"]);
     }
 
     #[test]

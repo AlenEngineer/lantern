@@ -127,6 +127,42 @@ impl Search {
         Some(self.edits)
     }
 
+    /// The index changed under the search (a watched folder changed): its
+    /// index results again, keeping the live ones and the pick while it's
+    /// still there. Nothing for a search that shows no index results.
+    pub fn refresh_index(&mut self, engine: &Engine) {
+        let on_request = matches!(&self.scope, Scope::Bang(bang) if bang.on_request);
+        if self.asked.text.is_empty()
+            || self.typing_bang.is_some()
+            || on_request
+            || matches!(self.scope, Scope::Unknown(_))
+        {
+            return;
+        }
+        let indexed: Vec<String> = engine
+            .searcher()
+            .sources()
+            .iter()
+            .filter(|s| s.capabilities().scan)
+            .map(|s| s.id().to_string())
+            .collect();
+        let live: Vec<Group> = std::mem::take(&mut self.groups)
+            .into_iter()
+            .filter(|group| !indexed.contains(&group.source))
+            .collect();
+        let names = source_names(engine);
+        for hit in engine.search_index(&self.asked) {
+            let source = hit.resource.id.source().to_string();
+            self.group(&source, &names).hits.push(hit.resource);
+        }
+        self.groups.extend(live);
+        if let Some(picked) = &self.picked
+            && !self.results().any(|r| &r.id == picked)
+        {
+            self.picked = None;
+        }
+    }
+
     /// The bangs to offer: every one while the box is empty, the matching
     /// ones while a bang is typed, none otherwise.
     pub fn bangs(&self, engine: &Engine) -> Vec<Bang> {
