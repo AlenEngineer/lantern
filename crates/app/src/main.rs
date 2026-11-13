@@ -11,15 +11,18 @@
 mod config;
 mod dashboard;
 mod keys;
+mod length;
 mod library;
 mod look;
 mod palette;
+mod plan_pane;
 mod plans;
 mod script;
 mod search;
 mod stage;
 mod youtube;
 
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -31,8 +34,8 @@ use iced::widget::{Space, container, image, operation, scrollable, stack, text};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use iced_video_player::VideoPlayer;
 use lantern_engine::{
-    Action, Engine, Media, MediaReport, Playback, ResourceId, SceneId, SearchEvent, SearchStream,
-    StageEvent, StageFeed, StageState, StepId,
+    Action, Engine, Media, MediaReport, Plan, Playback, ResourceId, SceneId, SearchEvent,
+    SearchStream, StageEvent, StageFeed, StageState, StepId,
 };
 
 use crate::dashboard::{Mode, NAME_BOX, RESULTS, SEARCH_BOX};
@@ -182,6 +185,14 @@ enum Message {
     CheckPalette,
     GoTo(StepId),
     Remove(StepId),
+    /// Adds a section after the current step, or at the end.
+    AddSection,
+    /// A step's or section's new name.
+    Rename(StepId, String),
+    /// What was typed in a step's length or a section's budget.
+    Length(StepId, String),
+    /// Moves a step up (-1) or down (1).
+    Move(StepId, isize),
     /// A saved plan in the open list was clicked.
     OpenPlan(PathBuf),
     /// The operator agreed to lose the unsaved plan.
@@ -216,6 +227,10 @@ struct App {
     media: Stage,
     search: Search,
     mode: Mode,
+    /// Edit mode, in the plan pane.
+    editing: bool,
+    /// Lengths being typed that don't read as one yet ("4:"), by step.
+    drafts: HashMap<StepId, String>,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
 }
@@ -258,6 +273,8 @@ impl App {
             stage: StageState::default(),
             search: Search::default(),
             mode: Mode::default(),
+            editing: false,
+            drafts: HashMap::new(),
             scrub: None,
         };
         app.check_palette();
@@ -364,6 +381,30 @@ impl App {
             }
             Message::Remove(step) => {
                 self.engine.0.edit_plan(|plan| plan.remove(step));
+                return self.preload();
+            }
+            Message::AddSection => {
+                self.engine
+                    .0
+                    .add_section("New section", Some(Duration::from_secs(15 * 60)));
+            }
+            Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
+                if let Some(step) = plan.get_mut(id) {
+                    step.label = label;
+                }
+            }),
+            Message::Length(id, typed) => {
+                if let Some(value) = length::parse(&typed) {
+                    self.engine.0.edit_plan(|plan| set_length(plan, id, value));
+                }
+                self.drafts.insert(id, typed);
+            }
+            Message::Move(id, by) => {
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(at) = plan.position(id) {
+                        plan.move_to(id, at.saturating_add_signed(by));
+                    }
+                });
                 return self.preload();
             }
             Message::OpenPlan(path) => {
@@ -481,6 +522,10 @@ impl App {
                 return self.preload_if(replaced);
             }
             Op::ToggleMode => self.mode = self.mode.toggled(),
+            Op::ToggleEditing => {
+                self.editing = !self.editing;
+                self.drafts.clear();
+            }
             Op::Complete => {
                 if let Some(text) = self.search.completion(&engine) {
                     return self.complete(text);
@@ -651,6 +696,11 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
         }
+        // Section clocks tick while the service runs.
+        if self.engine.0.current_step().is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+        }
         if self.downloads.0.busy() || self.library.0.indexing() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
@@ -667,6 +717,15 @@ impl App {
             ));
         }
         Subscription::batch(subscriptions)
+    }
+}
+
+/// Sets a section's budget or a step's length.
+fn set_length(plan: &mut Plan, id: StepId, value: Option<Duration>) {
+    let Some(step) = plan.get_mut(id) else { return };
+    match &mut step.action {
+        Action::Section { budget } => *budget = value,
+        _ => step.estimate = value,
     }
 }
 

@@ -38,6 +38,11 @@ impl Resource {
     /// fetched, and the dashboard can use it as a preview.
     pub const THUMBNAIL: &'static str = "thumbnail";
 
+    /// Meta key for how long the resource takes to present, in whole
+    /// seconds: a video's length, or a hymn's from its score. Plans use it
+    /// to time their sections.
+    pub const DURATION: &'static str = "duration_seconds";
+
     /// A resource with the required fields; use the `with_*` methods for the rest.
     pub fn new(id: ResourceId, title: impl Into<String>, kind: Kind, location: Location) -> Self {
         Self {

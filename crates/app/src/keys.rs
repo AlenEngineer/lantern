@@ -40,6 +40,8 @@ pub enum Op {
     ToggleMode,
     /// Completes a half-typed bang (`!y` → `!yt `).
     Complete,
+    /// Edit mode on or off: clicks in the plan edit it instead of running it.
+    ToggleEditing,
 }
 
 enum Bind {
@@ -120,6 +122,7 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
     ("ctrl+o", Bind::Ctrl('o'), Op::Open, When::Always),
     ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
     ("ctrl+p", Bind::Ctrl('p'), Op::ToggleMode, When::Always),
+    ("ctrl+e", Bind::Ctrl('e'), Op::ToggleEditing, When::Always),
 ];
 
 /// The op a script's `press NAME` stands for.

@@ -208,6 +208,8 @@ pub struct Stage {
     loading: HashSet<ResourceId>,
     /// What the last [`preload`](Stage::preload) asked for.
     upcoming: HashSet<ResourceId>,
+    /// The real length of every video loaded so far, for timing the plan.
+    lengths: HashMap<ResourceId, Duration>,
     downloads: Arc<Downloads>,
 }
 
@@ -219,6 +221,7 @@ impl Stage {
             ready: HashMap::new(),
             loading: HashSet::new(),
             upcoming: HashSet::new(),
+            lengths: HashMap::new(),
         }
     }
 
@@ -231,6 +234,11 @@ impl Stage {
             } if *shown == scene => Some(content),
             _ => None,
         }
+    }
+
+    /// A video's real length, once it has loaded.
+    pub fn length(&self, id: &ResourceId) -> Option<Duration> {
+        self.lengths.get(id).copied()
     }
 
     /// What a preload has finished loading for `id`.
@@ -315,6 +323,12 @@ impl Stage {
         let Some(result) = loaded.result.lock().ok().and_then(|mut slot| slot.take()) else {
             return;
         };
+        if let Ok(Content::Video { player, .. }) = &result
+            && !player.duration().is_zero()
+        {
+            self.lengths
+                .insert(loaded.resource.clone(), player.duration());
+        }
         match &self.program {
             Program::Loading { scene, resource } if *resource == loaded.resource => {
                 let scene = *scene;

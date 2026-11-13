@@ -80,6 +80,9 @@ pub enum Command {
     Preview(Target),
     /// `add PATH|URL`: add a file or link to the plan after the current step.
     Add(Target),
+    /// `section BUDGET TITLE`: add a section with a budget (`15`, `0:20`)
+    /// after the current step.
+    Section(Duration, String),
     /// `wait-ready SECS`: wait until no YouTube download is queued or running.
     WaitReady(Duration),
     /// `take`: put the preview on stage.
@@ -156,6 +159,12 @@ impl Command {
             "show" => Command::Show(Target::parse(rest, dir)?),
             "preview" => Command::Preview(Target::parse(rest, dir)?),
             "add" => Command::Add(Target::parse(rest, dir)?),
+            "section" => {
+                let usage = || format!("section needs a budget and a title, got {rest:?}");
+                let (budget, title) = rest.split_once(' ').ok_or_else(usage)?;
+                let budget = crate::length::parse(budget).flatten().ok_or_else(usage)?;
+                Command::Section(budget, title.trim().to_string())
+            }
             "wait-ready" => {
                 let secs = rest
                     .parse()
@@ -215,6 +224,7 @@ impl Command {
                 | Command::Show(_)
                 | Command::Preview(_)
                 | Command::Add(_)
+                | Command::Section(..)
                 | Command::Seek(_)
                 | Command::Frame(_)
                 | Command::Search(_)
@@ -326,6 +336,9 @@ impl Script {
             Command::Preview(target) => engine.preview(Arc::new(target.resource(downloads))),
             Command::Add(target) => {
                 engine.add_after_current(&target.resource(downloads));
+            }
+            Command::Section(budget, title) => {
+                engine.add_section(title.clone(), Some(*budget));
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
             Command::Play => log(format!("script: play -> {}", engine.play())),

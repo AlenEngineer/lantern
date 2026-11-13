@@ -1,0 +1,19 @@
+# Sections with budgets: a short worship section (20 s) with a 6 s video
+# and an image (guessed at 30 s, so it runs over), then the word (1 min).
+section 0:20 Alabanza
+add fixtures/video.mp4
+add fixtures/image.png
+section 1:00 Palabra
+add fixtures/pages.pdf
+wait 1500
+shot 1-planned
+press pagedown
+press ctrl+space
+wait 3000
+shot 2-running-on-track
+press pagedown
+wait 1500
+shot 3-over
+press ctrl+e
+wait 300
+shot 4-editing

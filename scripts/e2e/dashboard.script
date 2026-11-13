@@ -3,7 +3,14 @@
 type pa
 wait 800
 shot 1-results
-# Build a plan from searches. With no current step, each add goes first.
+# Build a plan from searches. Before the service starts, each add goes last.
+type video
+wait 800
+select 1
+wait 300
+press ctrl+a
+type pa
+wait 800
 select 1
 wait 300
 press ctrl+a
@@ -13,11 +20,6 @@ wait 800
 select 1
 wait 300
 shot 2-bible-preview
-press ctrl+a
-type video
-wait 800
-select 1
-wait 300
 press ctrl+a
 # Start the plan: the video goes on program and plays.
 press pagedown
