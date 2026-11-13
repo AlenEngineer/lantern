@@ -79,6 +79,7 @@ struct Stage {
     font: String,
     max_size: String,
     min_size: String,
+    dim: String,
 }
 
 impl Stage {
@@ -90,6 +91,7 @@ impl Stage {
             font: look.font.clone().unwrap_or_default(),
             max_size: look.max_size.to_string(),
             min_size: look.min_size.to_string(),
+            dim: look.dim.to_string(),
         }
     }
 
@@ -114,6 +116,18 @@ impl Stage {
             font: optional(&self.font),
             max_size: size(&self.max_size, "largest size")?,
             min_size: size(&self.min_size, "smallest size")?,
+            dim: self
+                .dim
+                .trim()
+                .parse()
+                .ok()
+                .filter(|dim| *dim <= 100)
+                .ok_or_else(|| {
+                    format!(
+                        "The dimming “{}” isn't a percentage from 0 to 100.",
+                        self.dim.trim()
+                    )
+                })?,
         })
     }
 }
@@ -196,6 +210,7 @@ pub enum Edit {
     Font(String),
     MaxSize(String),
     MinSize(String),
+    Dim(String),
     /// A suggestion was chosen for a path field.
     Choose(Field, String),
     /// Tab: the first suggestion for the field being typed in.
@@ -382,6 +397,7 @@ impl Draft {
             Edit::Font(text) => self.stage_mut().font = text,
             Edit::MaxSize(text) => self.stage_mut().max_size = text,
             Edit::MinSize(text) => self.stage_mut().min_size = text,
+            Edit::Dim(text) => self.stage_mut().dim = text,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -719,6 +735,12 @@ impl App {
                 .into(),
                 suggestions(p, draft, Field::StageImage),
                 line(row![
+                    label("Dim image"),
+                    small("60", &draft.stage().dim, Edit::Dim),
+                    note("% under text, so it reads"),
+                ])
+                .into(),
+                line(row![
                     label("Font"),
                     field(
                         p,
@@ -819,6 +841,14 @@ impl App {
                 .trim()
                 .parse()
                 .unwrap_or(saved.min_size),
+            dim: draft
+                .stage()
+                .dim
+                .trim()
+                .parse()
+                .ok()
+                .filter(|dim| *dim <= 100)
+                .unwrap_or(saved.dim),
         };
         let sample = crate::backdrop(
             &look,
@@ -826,6 +856,7 @@ impl App {
                 "Porque de tal manera amó Dios al mundo,\nque ha dado á su Hijo unigénito",
                 &look,
             ),
+            crate::Over::Text,
         );
         iced::widget::container(sample)
             .width(SAMPLE_WIDTH)
@@ -1186,5 +1217,11 @@ mod tests {
         draft.edit(Edit::MinSize("0".into()));
         let err = draft.config(dir, home()).unwrap_err();
         assert_eq!(err, "The smallest size “0” isn't a size from 1 to 400.");
+        draft.edit(Edit::MinSize("40".into()));
+        draft.edit(Edit::Dim("150".into()));
+        let err = draft.config(dir, home()).unwrap_err();
+        assert_eq!(err, "The dimming “150” isn't a percentage from 0 to 100.");
+        draft.edit(Edit::Dim("35".into()));
+        assert_eq!(draft.config(dir, home()).unwrap().stage.dim, 35);
     }
 }

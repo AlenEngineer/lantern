@@ -197,7 +197,11 @@ text = "#fff4d6"
 font = "DejaVu Serif"
 min_size = 40   # points on a 1080-line screen
 max_size = 96
+dim = 60        # % the image is dimmed under text; 0 leaves it as it is
 ```
+
+Where text is set over the image, the image is dimmed toward the background
+colour so the words read; an empty stage shows it as it is.
 
 A plan can have a look of its own, for a Santa Cena or a youth night: the
 round swatch in the plan's header opens Settings on **This plan**, where
