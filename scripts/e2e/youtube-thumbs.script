@@ -1,0 +1,6 @@
+# YouTube results show the video's still, fetched from i.ytimg.com and
+# cached without an extension. Needs the network.
+type !yt himno 436
+press enter
+wait 12000
+shot 1-stills
