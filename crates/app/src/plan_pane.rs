@@ -13,12 +13,13 @@ use lantern_engine::{
     Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
 };
 
-use crate::dashboard::{NAME_BOX, chip, op, pill, scrolling, single_line, unit, wide};
+use crate::dashboard::{NAME_BOX, chip, level_tone, op, pill, scrolling, single_line, unit, wide};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
 use crate::plans::{self, Entry, Notice, Switch, file_name};
+use crate::ready::Issue;
 use crate::{App, Message};
 
 const PLAN_WIDTH: f32 = 280.0;
@@ -38,12 +39,19 @@ impl App {
     pub(crate) fn plan_pane(&self, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
         let plan = self.engine.0.plan();
+        let issues = self.issues(&plan);
         let mut pane = column![self.plan_header(&plan)].spacing(8);
         if let Some(notice) = self.plan_notice(&plan) {
             pane = pane.push(notice);
         }
+        // Readiness only when something isn't: "ready" would be noise here.
+        if !issues.is_empty()
+            && let Some(readiness) = self.readiness(&plan, &issues)
+        {
+            pane = pane.push(container(readiness).padding([0, 8]));
+        }
         pane = pane.push(match &self.plans.mode {
-            plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing),
+            plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
             plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
         });
@@ -122,7 +130,7 @@ impl App {
         )
     }
 
-    fn steps(&self, plan: &Plan, timing: &Timing) -> Element<'_, Message> {
+    fn steps(&self, plan: &Plan, timing: &Timing, issues: &[Issue]) -> Element<'_, Message> {
         let p = self.palette;
         let current = self.engine.0.current_step().map(|step| step.id);
         let next = self.engine.0.up_next().map(|step| step.id);
@@ -147,7 +155,8 @@ impl App {
             } else {
                 Place::Later
             };
-            let row = self.step_row(number, step, place);
+            let issue = issues.iter().find(|i| i.step == step.id);
+            let row = self.step_row(number, step, place, issue);
             rows = rows.push(if in_section {
                 container(row).padding(iced::Padding::default().left(INDENT))
             } else {
@@ -196,7 +205,13 @@ impl App {
             .into()
     }
 
-    fn step_row(&self, number: usize, step: &Step, place: Place) -> Element<'_, Message> {
+    fn step_row(
+        &self,
+        number: usize,
+        step: &Step,
+        place: Place,
+        issue: Option<&Issue>,
+    ) -> Element<'_, Message> {
         let p = self.palette;
         // The current step is on stage unless something off the plan was
         // shown since.
@@ -248,15 +263,26 @@ impl App {
                 .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
                 .color(label_color)
         ];
-        let detail = note.or_else(|| match &step.action {
-            Action::Show { resource } => self.download_state(resource),
-            Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
-            Action::Blank => Some("black screen".into()),
-            Action::Note => Some("note".into()),
-            Action::Section { .. } => None,
-        });
+        // What's wrong with a step comes before anything else about it.
+        let (detail, detail_color) = match (note, issue) {
+            (Some(note), _) => (Some(note), p.on_surface_variant),
+            (None, Some(issue)) => (
+                Some(issue.what.clone()),
+                level_tone(Some(issue.level)).text(p),
+            ),
+            (None, None) => (
+                match &step.action {
+                    Action::Show { resource } => self.download_state(resource),
+                    Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
+                    Action::Blank => Some("black screen".into()),
+                    Action::Note => Some("note".into()),
+                    Action::Section { .. } => None,
+                },
+                p.on_surface_variant,
+            ),
+        };
         if let Some(detail) = detail {
-            label = label.push(single_line(detail).size(META).color(p.on_surface_variant));
+            label = label.push(single_line(detail).size(META).color(detail_color));
         }
         let line = row![
             text(marker).size(META).color(label_color).width(16),

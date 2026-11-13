@@ -150,6 +150,13 @@ last plan you opened or saved, and says why if it can't.
 Before the service starts, Ctrl+A adds to the end of the plan; once it has
 started, right after the current step.
 
+**Ready check.** Prepare says by the plan's name whether it's ready
+("ready", "2 not ready yet", "1 problem"), and each step that isn't says
+why: a file that's missing, something the stage can't show, a YouTube
+download still going (amber) or failed (red), an image link not downloaded
+yet. Run shows the same line under the plan's name while something isn't
+ready.
+
 **Live slots** are the parts of a service you'll fill on the spot ("the
 director's song choice"). Give one a search in Prepare (`!yt`, `!b`, or a
 whole query like `!b juan 3:16-18`); when the service reaches it, the

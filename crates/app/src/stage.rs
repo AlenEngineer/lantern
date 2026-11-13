@@ -60,6 +60,43 @@ enum Loader {
     Youtube(YoutubeVideo),
 }
 
+/// What the stage needs to show a resource, for checking a plan before
+/// the service. Decided by the same rules the loader uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Needs {
+    /// Inline text: nothing outside the plan.
+    Nothing,
+    /// A file on disk.
+    File(PathBuf),
+    /// A YouTube video's download (or the network, to stream it).
+    Youtube(YoutubeVideo),
+    /// One of these image links, downloaded or downloadable.
+    Images(Vec<String>),
+}
+
+/// What showing `resource` takes, or why the stage can't show it.
+pub fn needs(resource: &Resource) -> Result<Needs, String> {
+    Ok(match Loader::for_resource(resource)? {
+        None => Needs::Nothing,
+        Some(Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path)) => Needs::File(path),
+        Some(Loader::Youtube(video)) => Needs::Youtube(video),
+        Some(Loader::RemoteImage(urls)) => Needs::Images(urls),
+    })
+}
+
+/// Whether an image link is already in the cache, so showing it needs no
+/// network.
+pub fn image_cached(url: &str) -> bool {
+    image_path(url, &cache_dir().join("images")).is_file()
+}
+
+/// Where an image link is cached: a file in `dir` named by the link.
+fn image_path(url: &str, dir: &Path) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    dir.join(format!("{:016x}", hasher.finish()))
+}
+
 impl Loader {
     /// `Ok(None)` for inline text, which the stage draws from the scene.
     /// `Err` says why the stage can't show the resource.
@@ -464,9 +501,7 @@ const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
 fn fetch_image(urls: &[String], dir: &Path) -> Result<Handle, String> {
     let mut failures = Vec::new();
     for url in urls {
-        let mut hasher = DefaultHasher::new();
-        url.hash(&mut hasher);
-        let path = dir.join(format!("{:016x}", hasher.finish()));
+        let path = image_path(url, dir);
         let fetched = if path.is_file() {
             Ok(())
         } else {

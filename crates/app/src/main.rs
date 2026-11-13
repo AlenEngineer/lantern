@@ -19,6 +19,7 @@ mod paths;
 mod plan_pane;
 mod plans;
 mod prepare;
+mod ready;
 mod script;
 mod search;
 mod settings;

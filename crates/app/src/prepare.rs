@@ -11,12 +11,13 @@ use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 use lantern_engine::{Action, Basis, Pace, Plan, Step, StepId};
 
-use crate::dashboard::{chip, op, pill, scrolling, single_line};
+use crate::dashboard::{chip, level_tone, op, pill, scrolling, single_line};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, Icon, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
 use crate::plan_pane::count;
+use crate::ready::Issue;
 use crate::{App, Message};
 
 const SEARCH_WIDTH: f32 = 560.0;
@@ -172,12 +173,13 @@ impl App {
             .font(BOLD)
             .padding([4, 0])
             .style(bare(p, p.primary));
+        let issues = self.issues(&plan);
         let mut rows = column![].spacing(2);
         for step in plan.steps() {
             rows = rows.push(if step.is_section() {
                 self.section_line(&plan, step)
             } else {
-                self.step_line(step)
+                self.step_line(step, issues.iter().find(|i| i.step == step.id))
             });
             if self.selected == Some(step.id) {
                 rows = rows.push(insertion_mark(p));
@@ -208,21 +210,21 @@ impl App {
         ]
         .spacing(6)
         .align_y(Alignment::Center);
-        column![
-            row![
-                title.width(Fill),
-                text(summary).size(META).color(p.on_surface_variant)
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-            scrolling(rows),
-            adds,
+        let mut heading = row![
+            title.width(Fill),
+            text(summary).size(META).color(p.on_surface_variant)
         ]
-        .spacing(10)
-        .padding([20, 28])
-        .width(Fill)
-        .height(Fill)
-        .into()
+        .spacing(12)
+        .align_y(Alignment::Center);
+        if let Some(readiness) = self.readiness(&plan, &issues) {
+            heading = heading.push(readiness);
+        }
+        column![heading, scrolling(rows), adds,]
+            .spacing(10)
+            .padding([20, 28])
+            .width(Fill)
+            .height(Fill)
+            .into()
     }
 
     /// A section's header: its name and budget as fields, and what its steps
@@ -272,7 +274,9 @@ impl App {
     }
 
     /// A step: its kind, name, what it is, and its length.
-    fn step_line(&self, step: &Step) -> Element<'_, Message> {
+    /// A step: its kind, name, what it is (or what's wrong with it), and
+    /// its length.
+    fn step_line(&self, step: &Step, issue: Option<&Issue>) -> Element<'_, Message> {
         let p = self.palette;
         let id = step.id;
         let selected = self.selected == Some(id);
@@ -316,10 +320,16 @@ impl App {
                     .style(look::input(p))
                     .into()
             }
-            _ => container(single_line(about).size(META).color(p.on_surface_variant))
-                .max_width(220)
-                .clip(true)
-                .into(),
+            _ => {
+                let (about, color) = match issue {
+                    Some(issue) => (issue.what.clone(), level_tone(Some(issue.level)).text(p)),
+                    None => (about, p.on_surface_variant),
+                };
+                container(single_line(about).size(META).color(color))
+                    .max_width(220)
+                    .clip(true)
+                    .into()
+            }
         };
         let line = row![
             disc(p, icon, tone),

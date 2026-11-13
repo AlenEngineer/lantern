@@ -17,7 +17,9 @@ use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
 use crate::plan_pane::section_status;
 use crate::prepare::View;
+use crate::ready::{self, Issue, Level};
 use crate::search::{Group, Live, supported};
+use crate::stage;
 use crate::stage::Content;
 use crate::youtube::YoutubeVideo;
 use crate::{App, Message};
@@ -116,6 +118,26 @@ impl App {
     /// The plan's timing now, with the lengths of the videos loaded so far.
     fn timing(&self) -> Timing {
         self.engine.0.timing(&|step| self.loaded_length(step))
+    }
+
+    /// What in `plan` isn't ready to show (see [`ready`](crate::ready)).
+    pub(crate) fn issues(&self, plan: &lantern_engine::Plan) -> Vec<Issue> {
+        ready::check(
+            plan,
+            |video| self.downloads.0.state(&video.id),
+            stage::image_cached,
+        )
+    }
+
+    /// The plan's readiness as a chip ("ready", "1 problem"), coloured by
+    /// how bad it is; `None` for a plan that shows nothing.
+    pub(crate) fn readiness<'a>(
+        &self,
+        plan: &lantern_engine::Plan,
+        issues: &[Issue],
+    ) -> Option<Element<'a, Message>> {
+        let (text, level) = ready::summary(plan, issues)?;
+        Some(chip(self.palette, &text, level_tone(level)))
     }
 
     /// A step's media length, once the stage has loaded it.
@@ -718,6 +740,16 @@ pub(crate) fn op(op: Op) -> Message {
 }
 
 /// "slide" for text, "page" for documents, "frame" for anything else.
+/// The tint for an issue: amber for what may sort itself out, red for what
+/// won't, plain when ready.
+pub(crate) fn level_tone(level: Option<Level>) -> Tone {
+    match level {
+        None => Tone::Plain,
+        Some(Level::Waiting) => Tone::Live,
+        Some(Level::Problem) => Tone::Danger,
+    }
+}
+
 pub(crate) fn unit(resource: &Resource) -> &'static str {
     match resource.kind {
         lantern_engine::Kind::Text => "slide",
