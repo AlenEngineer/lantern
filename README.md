@@ -246,6 +246,7 @@ works. Unknown keys are errors, so typos show up on the dashboard.
 # them as part of that table.
 brave_api_key = "…"       # optional, for !gi image search
 colors = "~/.config/amane/colors.json"  # optional, see below
+stage_output = "HDMI-A-1"  # optional: the stage's screen, see below
 
 [[folders]]
 path = "~/Videos"
@@ -278,18 +279,16 @@ palette. [docs/DESIGN.md](docs/DESIGN.md) says which role goes where.
 
 ### Putting the stage on the projector
 
-The stage window has the app id `lantern-stage`, and the dashboard
-`lantern-dashboard`. The app can't pick a monitor itself, so ask the
-compositor. On Hyprland (0.57, Lua config), move the stage to the
-projector's workspace once it is open:
+Settings → **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`).
+Picking one moves the stage there at once; Save keeps it as
+`stage_output` in the config. Lantern then puts the stage there when it
+starts, and when that screen is plugged in later. It doesn't fight you
+otherwise: a stage moved by hand stays where it was put.
 
-```sh
-hyprctl dispatch 'hl.dsp.window.move({ workspace = N, window = "class:lantern-stage" })'
-```
-
-The e2e harness uses this command. It has not been tried with a real
-projector yet, and a permanent window rule for your compositor is the
-better fix.
+This needs Hyprland for now: iced can't list monitors or fullscreen on a
+chosen one, and on Wayland only the compositor places windows, so Lantern
+asks Hyprland (`hyprctl`). Elsewhere, move the window yourself: the stage's
+app id is `lantern-stage`, the dashboard's `lantern-dashboard`.
 
 ### End-to-end screenshots
 
@@ -383,11 +382,10 @@ hand with `scripts/release.sh X.Y.Z`.
 - [x] Desktop UI (dashboard + stage window): images, video, PDFs, Bible, YouTube
 - [x] Launcher dashboard with search bangs (`!b`, `!f`)
 - [x] `!yt` YouTube search, `!gi` image search (Brave), image links on stage
-- [ ] `!h` hymnal
-- [x] Stream YouTube when there's no time to download it
+- [x] Per-folder bangs (`!h` for a hymns folder)
 - [ ] Hymnal source (hymns are a built-in sample today)
 - [ ] Web pages on the stage
-- [ ] Choose the stage monitor from the app
+- [x] Choose the stage's output from the app (Hyprland)
 - [ ] Sources: online Bible API
 - [ ] Multiple outputs (stage + stage-display/confidence monitor + stream)
 

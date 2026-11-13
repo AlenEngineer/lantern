@@ -1,0 +1,14 @@
+# The output picker: Settings lists the screens; picking one moves the
+# stage there (the log reads back where it is); a screen that isn't
+# connected says so. Run with LANTERN_CONFIG on a copy of the e2e config.
+wait 2500
+press ctrl+,
+wait 500
+shot 1-outputs-listed
+output CQ-E2E-DASH
+wait 800
+output CQ-E2E-STAGE
+wait 800
+output HDMI-A-9
+wait 400
+shot 2-not-connected

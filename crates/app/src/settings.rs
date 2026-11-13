@@ -15,6 +15,7 @@ use crate::dashboard::{chip, pill, scrolling, wide};
 use crate::fit;
 use crate::keys::Op;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
+use crate::outputs::Output;
 use crate::palette::Palette;
 use crate::paths::{self, Suggestion, Want};
 use crate::{App, Message};
@@ -33,6 +34,11 @@ pub struct Draft {
     bibles: Vec<Bible>,
     brave_key: String,
     colors: String,
+    /// The screen for the stage; `None` leaves it to the compositor.
+    pub output: Option<String>,
+    /// The screens connected when the settings opened, or why they can't
+    /// be listed.
+    outputs: Result<Vec<Output>, String>,
     /// The look for all plans.
     stage: Stage,
     /// The open plan's look, when the settings were opened with a plan.
@@ -178,6 +184,8 @@ pub enum Edit {
     Colors(String),
     Background(String),
     StageImage(String),
+    /// Put the stage on this screen (`None`: wherever the compositor puts it).
+    Output(Option<String>),
     /// Edit the look for all plans, or the open plan's.
     Scope(Scope),
     /// Give the open plan its own look, starting from the look for all.
@@ -222,6 +230,8 @@ impl Draft {
                 .collect(),
             brave_key: config.brave_api_key.clone().unwrap_or_default(),
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
+            output: config.stage_output.clone(),
+            outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
             plan: None,
             scope: Scope::AllPlans,
@@ -354,6 +364,7 @@ impl Draft {
             Edit::BraveKey(text) => self.brave_key = text,
             Edit::Colors(text) => self.colors = text,
             Edit::Scope(scope) => self.scope = scope,
+            Edit::Output(output) => self.output = output,
             Edit::OwnLook => {
                 let all = self.stage.clone();
                 if let Some(plan) = &mut self.plan {
@@ -424,6 +435,7 @@ impl Draft {
         Ok(Config {
             brave_api_key: optional(&self.brave_key),
             colors: optional(&self.colors).map(|c| path(&c)),
+            stage_output: self.output.clone(),
             folders,
             bibles,
             stage,
@@ -442,6 +454,12 @@ impl Draft {
             title: title.to_string(),
             own: look.map(|look| Stage::of(look, &shown)),
         });
+        self
+    }
+
+    /// Lists the connected screens, for the output row.
+    pub fn with_outputs(mut self, outputs: Result<Vec<Output>, String>) -> Draft {
+        self.outputs = outputs;
         self
     }
 
@@ -719,10 +737,19 @@ impl App {
             stage.push(row![Space::new().width(LABEL_FIELD), self.stage_sample(draft)].spacing(8));
 
         // Opened for a plan's look, the stage comes first.
+        let output = column![
+            section(
+                p,
+                "Output",
+                "The screen the stage goes on: the projector or TV. Picking one moves the stage there now; Save keeps it for next time."
+            ),
+            output_row(p, draft),
+        ]
+        .spacing(6);
         let sections = if draft.scope == Scope::ThisPlan {
-            column![stage, folders, bibles, images, colors]
+            column![stage, output, folders, bibles, images, colors]
         } else {
-            column![folders, bibles, stage, images, colors]
+            column![output, folders, bibles, stage, images, colors]
         };
         let body = scrolling(sections.spacing(24)).id(SCROLL);
         let mut footer = row![].spacing(8).align_y(Alignment::Center);
@@ -889,6 +916,44 @@ fn suggestions<'a>(p: Palette, draft: &Draft, field: Field) -> Element<'a, Messa
     iced::widget::container(list)
         .padding(iced::Padding::default().left(LABEL_FIELD + 6.0))
         .into()
+}
+
+/// The screens to put the stage on: Automatic, then each connected one,
+/// and a line when the one asked for isn't connected.
+fn output_row<'a>(p: Palette, draft: &Draft) -> Element<'a, Message> {
+    let note = |line: String| text(line).size(META).color(p.on_surface_variant);
+    let choices: Element<'a, Message> = match &draft.outputs {
+        Err(why) => note(why.clone()).into(),
+        Ok(outputs) => {
+            let choice = |label: String, output: Option<String>| {
+                let tone = if draft.output == output {
+                    Tone::Selected
+                } else {
+                    Tone::Plain
+                };
+                pill(
+                    p,
+                    &label,
+                    tone,
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Output(output))),
+                )
+            };
+            let mut list = column![choice("Automatic".into(), None)].spacing(6);
+            for output in outputs {
+                list = list.push(choice(output.label(), Some(output.name.clone())));
+            }
+            if let Some(wanted) = &draft.output
+                && !outputs.iter().any(|o| &o.name == wanted)
+            {
+                list = list.push(note(format!(
+                    "{wanted} isn't connected: the stage moves there when it is."
+                )));
+            }
+            list.into()
+        }
+    };
+    choices
 }
 
 fn remove(p: Palette, edit: Edit) -> Element<'static, Message> {

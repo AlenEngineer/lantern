@@ -16,6 +16,7 @@ mod keys;
 mod length;
 mod library;
 mod look;
+mod outputs;
 mod palette;
 mod paths;
 mod plan_edit;
@@ -248,6 +249,8 @@ enum Message {
     Move(StepId, isize),
     /// A change in the settings view.
     Settings(settings::Edit),
+    /// Time to see whether the stage should move to its screen.
+    CheckOutputs,
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
@@ -282,6 +285,8 @@ struct App {
     slides: fit::Splitter,
     /// The stage's look now: the open plan's own, or else the default.
     look: Look,
+    /// What the stage's screen was last seen as, to move it only on change.
+    output_watch: outputs::Watch,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
     /// The roles file the palette follows, if the config names one.
@@ -350,6 +355,7 @@ impl App {
             colors: config.colors.clone().map(palette::Source::new),
             slides: fit::Splitter::new(&config.stage),
             look: config.stage.clone(),
+            output_watch: outputs::Watch::default(),
             thumbs: thumbs::Thumbs::start(),
             config,
             settings: None,
@@ -499,6 +505,10 @@ impl App {
                         }
                     }
                     Ui::Drop => self.update(Message::Pointer(None, false)),
+                    Ui::Output(name) => {
+                        let output = (name != "automatic").then_some(name);
+                        self.update(Message::Settings(settings::Edit::Output(output)))
+                    }
                     Ui::Length(n, text) => match self.engine.0.plan().steps().get(n) {
                         Some(step) => self.update(Message::Length(step.id, text)),
                         None => Task::none(),
@@ -623,6 +633,10 @@ impl App {
             }
             Message::CheckPalette => self.check_palette(),
             Message::Settings(edit) => {
+                // Picking a screen moves the stage there at once.
+                if let settings::Edit::Output(Some(output)) = &edit {
+                    move_stage(output);
+                }
                 let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
                 // A chosen path is longer than what was typed: cursor to its end.
                 if let Some(field) = chosen {
@@ -630,6 +644,7 @@ impl App {
                 }
             }
             Message::SaveSettings => self.save_settings(),
+            Message::CheckOutputs => self.check_outputs(),
             Message::Select(step) => {
                 self.selected = Some(step);
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
@@ -937,11 +952,28 @@ impl App {
     /// Writes the settings to the config file and applies them: the library
     /// swaps its sources and the colours follow the new file. What happened
     /// shows under the settings.
+    /// Moves the stage to its screen when it first appears, when the
+    /// screen asked for changes, or when that screen is plugged in.
+    fn check_outputs(&mut self) {
+        let wanted = self.config.stage_output.as_deref();
+        let (Ok(connected), Ok(stage)) = (outputs::list(), outputs::stage_on()) else {
+            return;
+        };
+        let names = connected.into_iter().map(|o| o.name);
+        if self.output_watch.check(names, wanted, stage.is_some())
+            && let Some(output) = wanted
+            && stage.as_deref() != Some(output)
+        {
+            move_stage(output);
+        }
+    }
+
     /// The settings as saved, with the open plan's look too.
     fn settings_draft(&self) -> settings::Draft {
         let plan = self.engine.0.plan();
         settings::Draft::of(&self.config, self.home.as_deref())
             .with_plan(&plan.title, plan.look.as_ref())
+            .with_outputs(outputs::list())
             .with_fonts(fit::families())
     }
 
@@ -1231,6 +1263,12 @@ impl App {
         if self.drag.is_some() {
             subscriptions.push(iced::event::listen_with(cursor_event));
         }
+        // The stage's screen, when one is asked for: at startup, and when
+        // it's plugged in later.
+        if self.config.stage_output.is_some() && outputs::supported() {
+            subscriptions
+                .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckOutputs));
+        }
         if self.colors.is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckPalette));
@@ -1461,5 +1499,17 @@ fn frame_count(scene: &lantern_engine::Scene) -> usize {
             count: Some(count), ..
         } => count.get(),
         _ => 1,
+    }
+}
+
+/// Puts the stage on `output` and logs where it ended up, read back from
+/// the compositor.
+fn move_stage(output: &str) {
+    match outputs::put_stage_on(output).and_then(|()| outputs::stage_on()) {
+        Ok(on) => log(format!(
+            "outputs: asked for {output}, the stage is on {}",
+            on.as_deref().unwrap_or("no screen yet")
+        )),
+        Err(why) => log(format!("outputs: can't put the stage on {output}: {why}")),
     }
 }
