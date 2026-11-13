@@ -36,6 +36,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   box that says "video".
 - Passages in the results all had the same unreadable thumbnail; each now
   has a book and says how it starts.
+- "Next step · PgDn" was cut off at the bottom of a 720-line window with a
+  video on stage: the monitors now shrink to leave the buttons room.
 
 ## [0.7.0] - 2026-11-13
 
