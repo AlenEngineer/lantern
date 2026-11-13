@@ -32,6 +32,8 @@ pub struct Entry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Summary {
     pub title: String,
+    /// Its steps, not counting section headings: what the plan's header
+    /// counts once it's open.
     pub steps: usize,
     /// It's an order of service to start new plans from.
     pub template: bool,
@@ -65,7 +67,7 @@ impl Store {
                     summary: Plan::load(&path)
                         .map(|plan| Summary {
                             title: plan.title.clone(),
-                            steps: plan.len(),
+                            steps: plan.steps().iter().filter(|s| !s.is_section()).count(),
                             template: plan.template,
                         })
                         .map_err(|err| err.to_string()),
@@ -457,6 +459,11 @@ mod tests {
         store.set_template(&path, true).unwrap();
         let listed = store.list().unwrap();
         assert!(listed[0].summary.as_ref().unwrap().template);
+        assert_eq!(
+            listed[0].summary.as_ref().unwrap().steps,
+            1,
+            "a section heading isn't a step, as in the plan's header"
+        );
 
         assert!(plans.switch(&engine, Switch::FromTemplate(path.clone())));
         let plan = engine.plan();
