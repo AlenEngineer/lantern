@@ -551,7 +551,6 @@ impl App {
 
     fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
         let p = self.palette;
-        let folder = self.plans.store().dir().display().to_string();
         let heading = |title: &'static str, about: String| {
             container(
                 column![
@@ -577,7 +576,8 @@ impl App {
             }
             list = list.push(Space::new().height(10));
         }
-        list = list.push(heading("Your plans", folder));
+        // Where the files are is in the README, for whoever goes looking.
+        list = list.push(heading("Your plans", "Click one to open it".into()));
         let plans: Vec<&Entry> = entries.iter().filter(|e| !is_template(e)).collect();
         if plans.is_empty() {
             list = list.push(

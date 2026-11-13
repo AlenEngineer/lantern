@@ -256,7 +256,8 @@ impl Plans {
             self.notice = Some(Notice::couldnt("save", &path, err));
             return false;
         }
-        self.notice = Some(self.remembered(&path, format!("Saved {}", file_name(&path))));
+        // The plan's name, not its file's: errors are where a path helps.
+        self.notice = Some(self.remembered(&path, format!("Saved “{}”", plan.title)));
         self.file = Some(path);
         self.saved = plan;
         true
@@ -385,7 +386,7 @@ impl Plans {
             },
             Switch::Open(path) => match Plan::load(&path) {
                 Ok(plan) => {
-                    let notice = self.remembered(&path, format!("Opened {}", file_name(&path)));
+                    let notice = self.remembered(&path, format!("Opened “{}”", plan.title));
                     (Some(path), plan, Some(notice))
                 }
                 Err(err) => {
