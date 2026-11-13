@@ -1347,6 +1347,10 @@ impl App {
     fn stage_view(&self) -> Element<'_, Message> {
         let look = &self.look;
         let Some(scene) = &self.stage.program else {
+            // Blackout is black even with nothing on: not the look's image.
+            if self.stage.blackout {
+                return black(Space::new());
+            }
             return backdrop(look, Space::new(), Over::Nothing);
         };
         let nothing = || (Space::new().into(), Over::Nothing);

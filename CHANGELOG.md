@@ -29,6 +29,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   set).
 - A video, picture or PDF page that doesn't fill the screen has plain bars
   in the background colour beside it, not strips of the stage's image.
+- With nothing on stage, On stage shows the stage's image as the projector
+  does, instead of "Nothing on the projector"; and blackout is black then
+  too, where it showed the image.
 
 ## [0.7.0] - 2026-11-13
 
