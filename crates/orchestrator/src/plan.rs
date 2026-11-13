@@ -1,5 +1,5 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lantern_resource::{Query, Resource};
@@ -104,6 +104,10 @@ pub struct Plan {
     /// An order of service to start new plans from, such as "Domingo".
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub template: bool,
+    /// Folders of media only this plan needs, as typed (`~/Church/Campaña`).
+    /// An app indexes them while the plan is open, beside its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<PathBuf>,
 }
 
 impl Default for Plan {
@@ -122,6 +126,7 @@ impl Plan {
             next_id: 0,
             look: None,
             template: false,
+            folders: Vec::new(),
         }
     }
 
@@ -421,6 +426,12 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert!(!Plan::new("Plain").to_json().contains("template"));
+        // Its own folders are saved with it, and go with a plan from it.
+        assert!(!Plan::new("Plain").to_json().contains("folders"));
+        template.folders = vec!["~/Church/Campaña".into()];
+        let back = Plan::from_json(&template.to_json()).unwrap();
+        assert_eq!(back.folders, template.folders);
+        assert_eq!(template.from_template("Next").folders, template.folders);
     }
 
     #[test]

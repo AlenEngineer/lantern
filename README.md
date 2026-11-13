@@ -237,7 +237,12 @@ A plan can have a look of its own, for a Santa Cena or a youth night: the
 **⋯** in the plan's header opens Settings on **This plan**, where
 **Give it its own look** starts from the look for all plans. The same place
 has the plan's name, **Make it a template**, **Duplicate** (saves the plan
-and opens a copy) and **Delete** (press twice). It's saved in
+and opens a copy) and **Delete** (press twice).
+
+**Its folders**, in the same place, lists folders of media only that plan
+needs, such as a campaign's. They're searched like your media folders
+while the plan is open, and no longer once another plan is. They're saved
+in the plan, written as you typed them (`~/Church/Campaña`). It's saved in
 the plan, so opening the plan anywhere brings its look, and **Use the look
 for all plans** removes it.
 
