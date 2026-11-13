@@ -35,11 +35,26 @@ const STAGE_WIDTH: (f32, f32) = (360.0, 280.0);
 /// What the launcher keeps before the side panes start to shrink.
 const LAUNCHER_ROOM: f32 = 400.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
+/// A side pane dragged to a width stays between these, and leaves the
+/// middle at least its own.
+const PANE_LEAST: f32 = 220.0;
+const PANE_MOST: f32 = 560.0;
+const MIDDLE_LEAST: f32 = 320.0;
+/// How wide the line between panes is to the pointer.
+const SEAM_GRIP: f32 = 7.0;
+
+/// A side pane, by the edge that sizes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Plan,
+    Stage,
+}
+
 /// The most the settings spread, with the stage pane's room too.
 const SETTINGS_WIDTH: f32 = 880.0;
 /// A group of keys on the home screen: its width, and its chips' share.
-const KEY_COLUMN: f32 = 224.0;
-const KEY_CHIPS: f32 = 104.0;
+const KEY_COLUMN: f32 = 212.0;
+const KEY_CHIPS: f32 = 100.0;
 /// The stage pane's padding, each side.
 const STAGE_PADDING: f32 = 16.0;
 
@@ -61,12 +76,37 @@ const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
 impl App {
+    /// The side panes' widths: as dragged, else as they come for the
+    /// window, and never so wide that the middle loses its room.
+    fn side_widths(&self) -> (f32, f32) {
+        let window = self.dashboard_size.width;
+        let (plan, stage) = pane_widths(window);
+        let most = |other: f32| (window - other - MIDDLE_LEAST).max(PANE_LEAST);
+        let plan = self
+            .plan_dragged
+            .map_or(plan, |w| w.clamp(PANE_LEAST, PANE_MOST));
+        let stage = self
+            .stage_dragged
+            .map_or(stage, |w| w.clamp(PANE_LEAST, PANE_MOST));
+        let shown = if self.stage_shown() { stage } else { 0.0 };
+        (plan.min(most(shown)), stage.min(most(plan)))
+    }
+
     pub(crate) fn plan_width(&self) -> f32 {
-        pane_widths(self.dashboard_size.width).0
+        self.side_widths().0
     }
 
     fn stage_width(&self) -> f32 {
-        pane_widths(self.dashboard_size.width).1
+        self.side_widths().1
+    }
+
+    /// Where the pointer has dragged the edge of a side pane to.
+    pub(crate) fn dragged_to(&self, side: Side, x: f32) -> f32 {
+        let width = match side {
+            Side::Plan => x,
+            Side::Stage => self.dashboard_size.width - x,
+        };
+        width.clamp(PANE_LEAST, PANE_MOST)
     }
 
     /// A monitor at its full height: 16:9 of the stage pane's width.
@@ -76,7 +116,7 @@ impl App {
 
     /// What's left for the launcher, between the panes and their seams.
     fn launcher_width(&self) -> f32 {
-        let (plan, stage) = pane_widths(self.dashboard_size.width);
+        let (plan, stage) = self.side_widths();
         let stage = if self.stage_shown() { stage + 1.0 } else { 0.0 };
         self.dashboard_size.width - plan - stage - 1.0
     }
@@ -95,17 +135,34 @@ impl App {
 
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
-        let seam = || {
-            container(Space::new())
-                .width(1)
+        // The line between two panes is a handle: drag it to size the side
+        // pane it bounds, double-click it to let the pane size itself again.
+        // It's lit while it's held.
+        let seam = |side: Side| {
+            let held = self.resizing == Some(side);
+            let line = container(Space::new())
+                .width(if held { 2 } else { 1 })
                 .height(Fill)
-                .style(look::hairline(p))
+                .style(move |theme| {
+                    if held {
+                        container::Style::default().background(p.primary)
+                    } else {
+                        look::hairline(p)(theme)
+                    }
+                });
+            iced::widget::mouse_area(container(line).center_x(SEAM_GRIP).height(Fill))
+                .on_press(Message::ResizePane(side))
+                .interaction(iced::mouse::Interaction::ResizingHorizontally)
         };
         let timing = self.timing();
-        let mut panes = row![self.plan_pane(&timing), seam(), self.launcher(&timing)];
+        let mut panes = row![
+            self.plan_pane(&timing),
+            seam(Side::Plan),
+            self.launcher(&timing)
+        ];
         // The stage pane is there once it has something to show.
         if self.stage_shown() {
-            panes = panes.push(seam()).push(self.stage_pane());
+            panes = panes.push(seam(Side::Stage)).push(self.stage_pane());
         }
         let panes = panes.height(Fill);
         let window = container(panes)
@@ -253,7 +310,7 @@ impl App {
                 "Plan",
                 vec![
                     (key(Op::Open), "Your plans"),
-                    (key(Op::New), "New plan or step"),
+                    (key(Op::New), "New plan / step"),
                     (arrows("pick-prev", "pick-next"), "Steps or plans"),
                     (key(Op::Enter), "Show or open"),
                     (

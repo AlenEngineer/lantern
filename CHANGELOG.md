@@ -45,6 +45,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Output, Library, Appearance, Keys), and take the stage pane's room as
   well as the middle's. A key is changed by clicking it and pressing the
   new one; ↺ puts the usual key back.
+- The plan and stage panes can be resized: drag the line between two
+  panes, or double-click it to let the pane size itself again. The widths
+  are remembered. The list of the settings' parts is narrower.
 
 ### Fixed
 

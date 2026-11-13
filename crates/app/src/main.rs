@@ -285,6 +285,9 @@ enum Message {
     DiscardPlan,
     /// Yes, replace the plan that's running.
     LeavePlan,
+    /// The line between two panes was pressed: drag sizes the side pane,
+    /// a double click lets it size itself.
+    ResizePane(dashboard::Side),
     /// The key pressed while the settings waited for one, as the config
     /// writes it; `None` for Escape, which gives up.
     KeyRecorded(Option<String>),
@@ -357,6 +360,13 @@ struct App {
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
+    /// The side panes' widths as dragged; `None` sizes one for the window.
+    pub(crate) plan_dragged: Option<f32>,
+    pub(crate) stage_dragged: Option<f32>,
+    /// The side pane whose edge is held, and when it was last pressed, to
+    /// tell a double click.
+    pub(crate) resizing: Option<dashboard::Side>,
+    seam_pressed: Option<(dashboard::Side, Instant)>,
     /// Delete was pressed once in the plan's settings: again deletes.
     pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
@@ -401,6 +411,7 @@ impl App {
             ..window::Settings::default()
         });
         // The stage feed's first message preloads the reopened plan.
+        let layout = store.layout();
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
@@ -433,6 +444,10 @@ impl App {
             spent: false,
             adding: None,
             search_open: false,
+            plan_dragged: layout.0,
+            stage_dragged: layout.1,
+            resizing: None,
+            seam_pressed: None,
             deleting_plan: false,
             editing: None,
             list_pick: None,
@@ -663,6 +678,36 @@ impl App {
             }
             Message::Pointer(window, _) | Message::Cursor(window, _)
                 if window == Some(self.stage_window) => {}
+            Message::ResizePane(side) => {
+                let now = Instant::now();
+                let double = self.seam_pressed.take().is_some_and(|(last, at)| {
+                    last == side && now.duration_since(at) < DOUBLE_CLICK
+                });
+                if double {
+                    // Back to sizing itself for the window.
+                    match side {
+                        dashboard::Side::Plan => self.plan_dragged = None,
+                        dashboard::Side::Stage => self.stage_dragged = None,
+                    }
+                    self.keep_layout();
+                } else {
+                    self.seam_pressed = Some((side, now));
+                    self.resizing = Some(side);
+                }
+            }
+            Message::Cursor(_, at) if self.resizing.is_some() => {
+                let side = self.resizing.expect("checked above");
+                let width = Some(self.dragged_to(side, at.x));
+                match side {
+                    dashboard::Side::Plan => self.plan_dragged = width,
+                    dashboard::Side::Stage => self.stage_dragged = width,
+                }
+            }
+            Message::Pointer(_, false) if self.resizing.is_some() => {
+                self.resizing = None;
+                self.drag = None;
+                self.keep_layout();
+            }
             Message::Cursor(_, at) => {
                 if let Some(drag) = &mut self.drag {
                     drag.to(at);
@@ -1435,6 +1480,17 @@ impl App {
         preload
     }
 
+    /// Keeps the side panes' widths for the next start.
+    fn keep_layout(&self) {
+        let kept = self
+            .plans
+            .store()
+            .set_layout(self.plan_dragged, self.stage_dragged);
+        if let Err(err) = kept {
+            log(format!("layout: {err}"));
+        }
+    }
+
     /// Whether a search is under way: the arrows and Enter are its, and
     /// otherwise the plan pane's.
     pub(crate) fn searching(&self) -> bool {
@@ -1667,7 +1723,8 @@ impl App {
             iced::event::listen_with(keys::key_event),
             iced::event::listen_with(pointer_event),
         ];
-        if self.drag.is_some() {
+        // The pointer is followed only while it holds a row or a pane's edge.
+        if self.drag.is_some() || self.resizing.is_some() {
             subscriptions.push(iced::event::listen_with(cursor_event));
         }
         // A search on screen follows files added to or removed from a folder.
@@ -1873,7 +1930,7 @@ fn pointer_event(
     }
 }
 
-/// Where the pointer moved, while a plan row is held.
+/// Where the pointer moved, while a plan row or a pane's edge is held.
 fn cursor_event(event: iced::Event, _: iced::event::Status, window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
