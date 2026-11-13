@@ -296,15 +296,53 @@ impl Timed {
 ///
 /// `fits` must say yes to every piece of something it says yes to.
 pub fn fit_frames(body: &str, fits: impl Fn(&str) -> bool) -> Vec<String> {
-    let mut slides = Vec::new();
-    for stanza in text_frames(body) {
-        if fits(&stanza) {
-            slides.push(stanza);
+    fit_stanzas(body, fits).into_iter().flatten().collect()
+}
+
+/// [`fit_frames`], kept per stanza: each stanza's slides, so a slide can
+/// be named after the verse or stanza it came from.
+pub fn fit_stanzas(body: &str, fits: impl Fn(&str) -> bool) -> Vec<Vec<String>> {
+    text_frames(body)
+        .into_iter()
+        .map(|stanza| {
+            if fits(&stanza) {
+                vec![stanza]
+            } else {
+                pack(&stanza, Cut::Lines, &fits)
+            }
+        })
+        .collect()
+}
+
+/// A name for each slide, given how many slides each stanza became and
+/// the stanzas' own names (a passage's verse numbers; numbered from 1 when
+/// there are none, or too few): `16`, or `16a`, `16b` for a verse that took
+/// two slides.
+pub fn slide_labels(pieces: &[usize], names: &[String]) -> Vec<String> {
+    let mut labels = Vec::new();
+    for (stanza, &count) in pieces.iter().enumerate() {
+        let name = names
+            .get(stanza)
+            .filter(|_| names.len() == pieces.len())
+            .cloned()
+            .unwrap_or_else(|| (stanza + 1).to_string());
+        if count == 1 {
+            labels.push(name);
         } else {
-            slides.extend(pack(&stanza, Cut::Lines, &fits));
+            labels.extend((0..count).map(|part| format!("{name}{}", letter(part))));
         }
     }
-    slides
+    labels
+}
+
+/// `a`, `b`, … `z`, then `aa`, `ab`, … for a stanza split very finely.
+fn letter(part: usize) -> String {
+    let alphabet = |n: usize| char::from(b'a' + u8::try_from(n % 26).unwrap_or(0));
+    if part < 26 {
+        alphabet(part).to_string()
+    } else {
+        format!("{}{}", alphabet(part / 26 - 1), alphabet(part))
+    }
 }
 
 /// How a text that doesn't fit is cut, coarsest first.
@@ -509,6 +547,43 @@ pub(crate) mod millis_opt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slides_are_named_after_their_verses() {
+        let verses = |list: &[&str]| list.iter().map(|v| (*v).to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            slide_labels(&[1, 1, 1], &verses(&["16", "17", "18"])),
+            ["16", "17", "18"]
+        );
+        assert_eq!(
+            slide_labels(&[1, 2, 1], &verses(&["16", "17", "18"])),
+            ["16", "17a", "17b", "18"]
+        );
+        assert_eq!(slide_labels(&[1, 1], &[]), ["1", "2"], "a hymn's stanzas");
+        assert_eq!(
+            slide_labels(&[2], &verses(&["1", "2"])),
+            ["1a", "1b"],
+            "names that don't match"
+        );
+        let long = slide_labels(&[28], &[]);
+        assert_eq!(
+            (long[25].as_str(), long[26].as_str(), long[27].as_str()),
+            ("1z", "1aa", "1ab")
+        );
+    }
+
+    #[test]
+    fn fit_stanzas_keeps_each_stanzas_slides_together() {
+        let fits = |piece: &str| piece.len() <= 12;
+        let stanzas = fit_stanzas("short\n\na rather long line here", fits);
+        assert_eq!(stanzas.len(), 2);
+        assert_eq!(stanzas[0], ["short"]);
+        assert!(stanzas[1].len() > 1);
+        assert_eq!(
+            fit_frames("short\n\na rather long line here", fits),
+            stanzas.concat()
+        );
+    }
 
     #[test]
     fn splits_on_blank_lines() {

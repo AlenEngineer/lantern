@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A slide strip under On stage: a chip per verse (by its number), stanza,
+  page or slide (`17a`, `17b` when one took two); click one to show it.
+
+### Added
+
 - The media folders are watched: files added, removed or renamed show up in
   search a second later, even in a search already on screen.
 

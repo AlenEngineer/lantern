@@ -1,0 +1,21 @@
+# The slide strip under On stage: a passage's verses by number, a PDF's
+# pages, a long stanza's slides as 1a, 1b. Clicking one shows it.
+wait 2500
+type !b juan 3 16-17
+wait 800
+press enter
+press enter
+wait 600
+shot 1-verses
+slide 2
+wait 400
+shot 2-verse-17-clicked
+press escape
+show fixtures/pages.pdf
+wait 1500
+slide 2
+wait 500
+shot 3-pdf-page-2
+text "Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. Con gratitud canción alzad al Hacedor que el ser os dio; al Dios excelso venerad, que como Padre os amó. Su pueblo somos: salvará a los que busquen al Señor; ninguno de ellos dejará; él los ampara con su amor. Cantad alegres al Señor, mortales todos por doquier; servidle siempre con fervor, obedecedle con placer. \n\nAleluya"
+wait 1200
+shot 4-split-stanza
