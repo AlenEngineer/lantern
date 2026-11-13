@@ -188,10 +188,12 @@ impl Showman {
         }
     }
 
-    /// Puts a resource on stage as a new scene.
+    /// Puts a resource on stage as a new scene. A video or audio starts
+    /// playing: going on stage is the cue for it.
     pub fn show(&mut self, resource: Arc<Resource>) {
         let scene = Scene::new(self.next_id(), resource);
         self.emit(StageEvent::Program { scene: Some(scene) });
+        self.start_timed();
     }
 
     /// Lines a resource up in preview as a new scene.
@@ -216,7 +218,18 @@ impl Showman {
         self.emit(StageEvent::Program {
             scene: Some(Scene { id, ..scene }),
         });
+        self.start_timed();
         true
+    }
+
+    /// Plays the program if it's a paused video or audio that just went on.
+    fn start_timed(&mut self) {
+        if self
+            .program_timed()
+            .is_some_and(|timed| timed.playback == Playback::Paused)
+        {
+            self.play();
+        }
     }
 
     /// Empties the stage.
@@ -480,11 +493,34 @@ mod tests {
         assert!(!stage.play());
         assert!(!stage.seek(secs(1)));
         stage.show(video());
+        assert_eq!(
+            timed(&stage).playback,
+            Playback::Playing,
+            "it starts on its own"
+        );
+        assert!(stage.toggle_playback());
         assert_eq!(timed(&stage).playback, Playback::Paused);
         assert!(stage.play());
         assert_eq!(timed(&stage).playback, Playback::Playing);
-        assert!(stage.toggle_playback());
-        assert_eq!(timed(&stage).playback, Playback::Paused);
+    }
+
+    #[test]
+    fn a_video_taken_from_preview_starts_too() {
+        let mut stage = Showman::new();
+        stage.preview(video());
+        assert_eq!(
+            stage
+                .state()
+                .preview
+                .as_ref()
+                .and_then(Scene::timed)
+                .unwrap()
+                .playback,
+            Playback::Paused,
+            "a preview stays still"
+        );
+        assert!(stage.take());
+        assert_eq!(timed(&stage).playback, Playback::Playing);
     }
 
     #[test]

@@ -126,6 +126,10 @@ pub enum Command {
     /// upper or lower half of entry M, as the mouse would, counted from 1.
     /// `drop` lets go.
     Drag(usize, usize, Half),
+    /// `length N TEXT`: type TEXT in plan entry N's length field (`0:03`).
+    Length(usize, String),
+    /// `go-on N`: turn on "Go on when done" for plan entry N.
+    GoOn(usize),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
@@ -252,6 +256,23 @@ impl Command {
                 _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
             },
             "drop" => Command::Drop,
+            "length" => match rest
+                .split_once(' ')
+                .map(|(n, t)| (n.parse::<usize>(), t.trim()))
+            {
+                Some((Ok(n), text)) if n > 0 && !text.is_empty() => {
+                    Command::Length(n - 1, text.into())
+                }
+                _ => {
+                    return Err(format!(
+                        "length needs an entry from 1 and a length, got {rest:?}"
+                    ));
+                }
+            },
+            "go-on" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::GoOn(n - 1),
+                _ => return Err(format!("go-on needs a number from 1, got {rest:?}")),
+            },
             "click" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Click(n - 1),
                 _ => return Err(format!("click needs a number from 1, got {rest:?}")),
@@ -290,6 +311,8 @@ impl Command {
                 | Command::Select(_)
                 | Command::Click(_)
                 | Command::Drag(..)
+                | Command::Length(..)
+                | Command::GoOn(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -311,6 +334,8 @@ pub enum Ui {
     Click(usize),
     Drag(usize, usize, Half),
     Drop,
+    Length(usize, String),
+    GoOn(usize),
     Step(usize),
     Path(String),
     Font(String),
@@ -375,6 +400,8 @@ impl Script {
                 Command::Click(n) => ui(Ui::Click(*n)),
                 Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
                 Command::Drop => ui(Ui::Drop),
+                Command::Length(n, text) => ui(Ui::Length(*n, text.clone())),
+                Command::GoOn(n) => ui(Ui::GoOn(*n)),
                 Command::Step(n) => ui(Ui::Step(*n)),
                 Command::Path(text) => ui(Ui::Path(text.clone())),
                 Command::Font(text) => ui(Ui::Font(text.clone())),
@@ -442,6 +469,8 @@ impl Script {
             | Command::Click(_)
             | Command::Drag(..)
             | Command::Drop
+            | Command::Length(..)
+            | Command::GoOn(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)

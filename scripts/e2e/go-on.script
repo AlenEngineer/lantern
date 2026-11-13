@@ -1,0 +1,27 @@
+# Steps that go on by themselves. Image (3 s) → pdf (4 s over its pages)
+# → video (starts on its own, goes on when it ends) → image, which waits.
+wait 2500
+add fixtures/image.png
+add fixtures/pages.pdf
+add fixtures/video.mp4
+add fixtures/image.png
+length 1 0:03
+length 2 0:04
+go-on 1
+go-on 2
+go-on 3
+step 1
+wait 300
+shot 0-strip
+press escape
+next
+wait 1000
+shot 1-image-counting-down
+wait 3000
+shot 2-pdf
+wait 4500
+shot 3-video-playing
+wait 7000
+shot 4-last-image-waits
+wait 4000
+shot 5-still-waiting
