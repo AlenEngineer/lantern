@@ -6,6 +6,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-13
+
 ### Added
 
 - Templates: ☆ makes a saved plan a template; clicking it in the list
