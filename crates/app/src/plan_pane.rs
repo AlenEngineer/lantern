@@ -47,16 +47,22 @@ impl App {
         let p = self.palette;
         let plan = self.engine.0.plan();
         let issues = self.issues(&plan);
-        let mut pane = column![self.plan_header(&plan)].spacing(8);
+        // What comes and goes above the steps (the notice, readiness) is
+        // one child with the header, so the steps stay the same child of
+        // the pane. iced keeps a widget's state, like which field has
+        // focus, by its place among its siblings: a line vanishing above
+        // the steps as the first letter was typed took the focus away.
+        let mut top = column![self.plan_header(&plan)].spacing(8);
         if let Some(notice) = self.plan_notice(&plan) {
-            pane = pane.push(notice);
+            top = top.push(notice);
         }
         // Readiness only when something isn't: "ready" would be noise here.
         if !issues.is_empty()
             && let Some(readiness) = self.readiness(&plan, &issues)
         {
-            pane = pane.push(container(readiness).padding([0, 8]));
+            top = top.push(container(readiness).padding([0, 8]));
         }
+        let mut pane = column![top].spacing(8);
         pane = pane.push(match &self.plans.mode {
             plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
