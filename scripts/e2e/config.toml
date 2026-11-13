@@ -1,4 +1,7 @@
 # The config every e2e run uses. Relative paths are relative to this file.
+# The colours are a copy of a Matugen palette, so screenshots show roles.
+colors = "fixtures/colors.json"
+
 [[folders]]
 path = "fixtures"
 label = "Fixtures"

@@ -1,5 +1,5 @@
 # The launcher: the bangs on an empty box, completing one, a search limited
-# to one source, an unknown bang, and the plan in the list.
+# to one source, an unknown bang, and plan mode.
 wait 1500
 shot 1-empty-offers-bangs
 type !
@@ -15,11 +15,13 @@ wait 800
 select 1
 wait 300
 shot 4-bible-only
+press ctrl+a
 press enter
 wait 500
 type !zz hello
 wait 300
 shot 5-unknown-bang
+press escape
 press ctrl+p
 wait 300
-shot 6-plan-pane
+shot 6-plan-mode

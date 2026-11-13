@@ -76,9 +76,17 @@ impl Library {
         reports.is_some()
     }
 
-    /// The dashboard's lines about the index.
-    pub fn lines(&self) -> Vec<String> {
-        summary(self.lock().as_deref())
+    /// What the dashboard should say about the index: that it's still
+    /// indexing, or which sources failed. Nothing once all is well.
+    pub fn problems(&self) -> Vec<String> {
+        match self.lock().as_deref() {
+            None => vec!["Indexing your folders and Bibles…".into()],
+            Some(reports) => summary(Some(reports))
+                .into_iter()
+                .skip(1)
+                .map(|line| line.trim().to_string())
+                .collect(),
+        }
     }
 }
 
@@ -202,11 +210,12 @@ mod tests {
             path = "missing/kjv.json"
             "#,
         );
-        let lines = library.lines();
-        assert_eq!(lines[0], "Index: 12 items (local 4, bible-rv1909 8)");
+        assert_eq!(engine.searcher().index().len(), 12, "4 files and 8 verses");
+        let problems = library.problems();
+        assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(
-            lines[1].starts_with("  bible-kjv failed: ") && lines[1].contains("kjv.json"),
-            "{lines:?}"
+            problems[0].starts_with("bible-kjv failed: ") && problems[0].contains("kjv.json"),
+            "{problems:?}"
         );
 
         let titles: Vec<String> = engine
@@ -223,7 +232,9 @@ mod tests {
     #[test]
     fn says_indexing_until_done() {
         assert_eq!(summary(None), ["Index: indexing…"]);
+        let indexing = Library::default();
+        assert_eq!(indexing.problems(), ["Indexing your folders and Bibles…"]);
         let (_, library) = started("");
-        assert_eq!(library.lines(), ["Index: 0 items (local 0)"]);
+        assert!(library.problems().is_empty());
     }
 }

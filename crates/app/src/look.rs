@@ -1,0 +1,313 @@
+//! How the dashboard looks: fonts, icons, and one style function per kind
+//! of control, all from [`Palette`] roles. `docs/DESIGN.md` explains the
+//! rules these follow.
+
+use iced::widget::{button, container, slider, svg, text_input};
+use iced::{Background, Border, Color, Font, font};
+
+use crate::palette::Palette;
+
+pub const UI: Font = Font::with_name("Inter");
+pub const MEDIUM: Font = Font {
+    weight: font::Weight::Medium,
+    ..UI
+};
+pub const BOLD: Font = Font {
+    weight: font::Weight::Bold,
+    ..UI
+};
+
+/// Text sizes, by purpose.
+pub const HEADING: f32 = 16.0;
+pub const BODY: f32 = 13.0;
+pub const META: f32 = 12.0;
+
+/// Row and panel corners.
+pub const ROW_RADIUS: f32 = 12.0;
+/// Buttons and chips are pills: iced caps a radius at half the height.
+const PILL_RADIUS: f32 = 999.0;
+/// Standard and compact pill heights.
+pub const PILL: f32 = 36.0;
+pub const PILL_SMALL: f32 = 30.0;
+
+/// The hover veil: `on_surface` at 12% over whatever is under it.
+const VEIL: f32 = 0.12;
+/// A selected or current item: its role at 22%.
+const SELECTED: f32 = 0.22;
+
+/// What a row or button stands for, which decides its colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Routine: no fill until hovered (rows), `on_surface` at 8% (buttons).
+    Plain,
+    /// Selected or the next thing to happen: the `primary` tint.
+    Selected,
+    /// On stage now: the `tertiary` tint.
+    Live,
+    /// Blackout and other actions that take something away: `error` at 14%.
+    Danger,
+    /// The one solid control, play/pause: `primary` with `on_primary`.
+    Solid,
+}
+
+impl Tone {
+    /// (fill, text) at rest.
+    fn colors(self, p: Palette) -> (Color, Color) {
+        match self {
+            Tone::Plain => (Palette::tint(p.on_surface, 0.08), p.on_surface),
+            Tone::Selected => (Palette::tint(p.primary, SELECTED), p.primary),
+            Tone::Live => (Palette::tint(p.tertiary, SELECTED), p.tertiary),
+            Tone::Danger => (Palette::tint(p.error, 0.14), p.error),
+            Tone::Solid => (p.primary, p.on_primary),
+        }
+    }
+
+    /// The text colour, for labels inside a row of this tone.
+    pub fn text(self, p: Palette) -> Color {
+        self.colors(p).1
+    }
+}
+
+/// A pill button of `tone`.
+pub fn pill(p: Palette, tone: Tone) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let (fill, text) = tone.colors(p);
+        styled(p, fill, text, PILL_RADIUS, status)
+    }
+}
+
+/// A list row: flat until hovered, tinted when it is `tone`.
+pub fn row(p: Palette, tone: Tone) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_, status| {
+        let fill = match tone {
+            Tone::Plain => Color::TRANSPARENT,
+            tone => tone.colors(p).0,
+        };
+        styled(p, fill, p.on_surface, ROW_RADIUS, status)
+    }
+}
+
+fn styled(
+    p: Palette,
+    fill: Color,
+    text: Color,
+    radius: f32,
+    status: button::Status,
+) -> button::Style {
+    let (background, text) = match status {
+        button::Status::Hovered | button::Status::Pressed => (veil(fill, p), text),
+        button::Status::Disabled => (Palette::tint(fill, fill.a * 0.5), Palette::tint(text, 0.38)),
+        button::Status::Active => (fill, text),
+    };
+    button::Style {
+        background: Some(Background::Color(background)),
+        text_color: text,
+        border: Border {
+            radius: radius.into(),
+            ..Border::default()
+        },
+        ..button::Style::default()
+    }
+}
+
+/// `on_surface` at 12% laid over `under`.
+fn veil(under: Color, p: Palette) -> Color {
+    let mix = |a: f32, b: f32| a * (1.0 - VEIL) + b * VEIL;
+    let over = p.on_surface;
+    if under.a == 0.0 {
+        return Palette::tint(over, VEIL);
+    }
+    Color {
+        r: mix(under.r, over.r),
+        g: mix(under.g, over.g),
+        b: mix(under.b, over.b),
+        a: under.a + VEIL * (1.0 - under.a),
+    }
+}
+
+/// A small pill label (a mode, a scope, a state) in `tone`.
+pub fn chip(p: Palette, tone: Tone) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| {
+        let (fill, text) = tone.colors(p);
+        container::Style {
+            background: Some(Background::Color(fill)),
+            text_color: Some(text),
+            border: Border {
+                radius: PILL_RADIUS.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        }
+    }
+}
+
+/// The window: the `surface` role.
+pub fn window(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(p.surface)),
+        text_color: Some(p.on_surface),
+        ..container::Style::default()
+    }
+}
+
+/// A 1px `outline_variant` seam between panes, or a divider.
+pub fn hairline(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style::default().background(p.outline_variant)
+}
+
+/// A picture of the stage: black, ringed in `ring` (none for an empty one).
+pub fn monitor(ring: Option<Color>) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(Color::BLACK)),
+        border: Border {
+            color: ring.unwrap_or(Color::TRANSPARENT),
+            width: if ring.is_some() { 2.0 } else { 0.0 },
+            radius: ROW_RADIUS.into(),
+        },
+        ..container::Style::default()
+    }
+}
+
+/// The search field: `surface_container`, ringed in `primary` while focused.
+pub fn input(p: Palette) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
+    move |_, status| {
+        let focused = matches!(status, text_input::Status::Focused { .. });
+        text_input::Style {
+            background: Background::Color(p.surface_container),
+            border: Border {
+                color: if focused {
+                    p.primary
+                } else {
+                    Color::TRANSPARENT
+                },
+                width: 2.0,
+                radius: ROW_RADIUS.into(),
+            },
+            icon: p.on_surface_variant,
+            placeholder: p.on_surface_variant,
+            value: p.on_surface,
+            selection: Palette::tint(p.primary, 0.4),
+        }
+    }
+}
+
+/// The timeline: a `surface_container_highest` track filled with `primary`.
+pub fn timeline(p: Palette) -> impl Fn(&iced::Theme, slider::Status) -> slider::Style {
+    move |_, _| slider::Style {
+        rail: slider::Rail {
+            backgrounds: (
+                Background::Color(p.primary),
+                Background::Color(p.surface_container_highest),
+            ),
+            width: 4.0,
+            border: Border {
+                radius: 2.0.into(),
+                ..Border::default()
+            },
+        },
+        handle: slider::Handle {
+            shape: slider::HandleShape::Circle { radius: 7.0 },
+            background: Background::Color(p.primary),
+            border_width: 0.0,
+            border_color: Color::TRANSPARENT,
+        },
+    }
+}
+
+/// An icon in `color`.
+pub fn icon(icon: Icon, size: f32, color: Color) -> svg::Svg<'static> {
+    svg(svg::Handle::from_memory(icon.svg()))
+        .width(size)
+        .height(size)
+        .style(move |_, _| svg::Style { color: Some(color) })
+}
+
+/// The icons the dashboard uses, from Material Design Icons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Icon {
+    Lantern,
+    Search,
+    Play,
+    Pause,
+    Replay,
+    Video,
+    Image,
+    Music,
+    Document,
+    Book,
+    Link,
+}
+
+impl Icon {
+    fn svg(self) -> &'static [u8] {
+        macro_rules! mdi {
+            ($path:literal) => {
+                concat!(
+                    r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d=""#,
+                    $path,
+                    r#""/></svg>"#
+                )
+                .as_bytes()
+            };
+        }
+        match self {
+            Icon::Lantern => mdi!(
+                "M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z"
+            ),
+            Icon::Search => mdi!(
+                "M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"
+            ),
+            Icon::Play => mdi!("M8,5.14V19.14L19,12.14L8,5.14Z"),
+            Icon::Pause => mdi!("M14,19H18V5H14M6,19H10V5H6V19Z"),
+            Icon::Replay => mdi!(
+                "M12,5V1L7,6L12,11V7A6,6 0 0,1 18,13A6,6 0 0,1 12,19A6,6 0 0,1 6,13H4A8,8 0 0,0 12,21A8,8 0 0,0 20,13A8,8 0 0,0 12,5Z"
+            ),
+            Icon::Video => mdi!(
+                "M17,10.5V7A1,1 0 0,0 16,6H4A1,1 0 0,0 3,7V17A1,1 0 0,0 4,18H16A1,1 0 0,0 17,17V13.5L21,17.5V6.5L17,10.5Z"
+            ),
+            Icon::Image => mdi!(
+                "M8.5,13.5L11,16.5L14.5,12L19,18H5M21,19V5C21,3.89 20.1,3 19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19Z"
+            ),
+            Icon::Music => mdi!(
+                "M21,3V15.5A3.5,3.5 0 0,1 17.5,19A3.5,3.5 0 0,1 14,15.5A3.5,3.5 0 0,1 17.5,12C18.04,12 18.55,12.12 19,12.34V6.47L9,8.6V17.5A3.5,3.5 0 0,1 5.5,21A3.5,3.5 0 0,1 2,17.5A3.5,3.5 0 0,1 5.5,14C6.04,14 6.55,14.12 7,14.34V6L21,3Z"
+            ),
+            Icon::Document => mdi!(
+                "M13,9H18.5L13,3.5V9M6,2H14L20,8V20A2,2 0 0,1 18,22H6C4.89,22 4,21.1 4,20V4C4,2.89 4.89,2 6,2M15,18V16H6V18H15M18,14V12H6V14H18Z"
+            ),
+            Icon::Book => mdi!(
+                "M18,22A2,2 0 0,0 20,20V4C20,2.89 19.1,2 18,2H12V9L9.5,7.5L7,9V2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18Z"
+            ),
+            Icon::Link => mdi!(
+                "M3.9,12C3.9,10.29 5.29,8.9 7,8.9H11V7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H11V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H13V8.9H17C18.71,8.9 20.1,10.29 20.1,12C20.1,13.71 18.71,15.1 17,15.1H13V17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7Z"
+            ),
+        }
+    }
+
+    /// The icon for a kind of resource.
+    pub fn of(kind: &lantern_engine::Kind) -> Icon {
+        use lantern_engine::Kind;
+        match kind {
+            Kind::Video => Icon::Video,
+            Kind::Image => Icon::Image,
+            Kind::Audio => Icon::Music,
+            Kind::Text => Icon::Book,
+            Kind::Web => Icon::Link,
+            _ => Icon::Document,
+        }
+    }
+}
+
+/// The iced theme, so built-in widgets (scrollbars) match.
+pub fn theme(p: Palette) -> iced::Theme {
+    iced::Theme::custom(
+        "lantern",
+        iced::theme::Palette {
+            background: p.surface,
+            text: p.on_surface,
+            primary: p.primary,
+            success: p.tertiary,
+            warning: p.tertiary,
+            danger: p.error,
+        },
+    )
+}

@@ -6,6 +6,22 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `colors` in the config names a Matugen-style JSON file of colour roles;
+  the dashboard follows it and recolours when it changes.
+
+### Changed
+
+- The dashboard has three panes: the plan, a launcher (search and results),
+  and the stage with the preview or the plan's next step. A "live" or "plan"
+  chip says which mode you're in; Ctrl+P switches.
+- Typing always goes to the search box. The shortcuts that were letters move
+  to Ctrl: Ctrl+B blackout, Ctrl+A add to plan, Ctrl+Space play/pause. ← →
+  step only while the search box is empty, and Esc clears it.
+- The look follows Material colour roles, with Inter type and Material
+  Design Icons. See docs/DESIGN.md.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

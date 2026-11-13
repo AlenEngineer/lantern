@@ -1,344 +1,258 @@
-//! The operator's window, laid out like a launcher: one search box, one
-//! list under it (the results, the bangs, or the plan), the preview beside
-//! the list, and a bar along the bottom for what the audience sees. Plus
-//! the keys that drive them.
+//! The operator's window: three panes joined by hairlines. The plan on the
+//! left, the launcher (search box and results) in the middle, and the stage
+//! on the right: what the audience sees, and below it the preview (live
+//! mode) or the plan's next step (plan mode).
 
 use std::time::{Duration, SystemTime};
 
-use iced::keyboard::{self, Key, key::Named};
 use iced::widget::{
     Space, button, column, container, image, row, scrollable, slider, text, text_input,
 };
-use iced::{Background, Border, Color, Element, Fill, Font, Length, Theme, event, font};
+use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{Action, Bang, Media, Plan, Playback, Resource, Scene, Scope, Step, Timed};
 
-use crate::plans::{Entry, Mode, Notice, Switch, file_name};
+use crate::keys::Op;
+use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, PILL_SMALL, Tone};
+use crate::palette::Palette;
+use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::search::{Group, Live, supported};
 use crate::stage::Content;
-use crate::youtube::{Download, YoutubeVideo};
+use crate::youtube::YoutubeVideo;
 use crate::{App, Message};
 
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
 pub const NAME_BOX: &str = "plan-name";
 
-/// What the list under the search box shows.
+const PLAN_WIDTH: f32 = 280.0;
+const STAGE_WIDTH: f32 = 360.0;
+const LAUNCHER_WIDTH: f32 = 720.0;
+const MONITOR_HEIGHT: f32 = 184.0;
+
+/// What the operator is doing, shown in the launcher's header. Searching
+/// switches to live, stepping through the plan to plan, and Ctrl+P either way.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Pane {
-    /// Search results, or the bangs while one is being typed.
+pub enum Mode {
+    /// Finding things and showing them on the fly: the stage pane shows the
+    /// preview.
     #[default]
-    Results,
+    Live,
+    /// Following the plan: the stage pane shows the next step.
     Plan,
 }
 
-/// What the operator can do from a key, a button or a script's `press`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Op {
-    /// Enter: previews the first result if none is picked, otherwise takes.
-    Enter,
-    /// Puts the preview on program.
-    Take,
-    /// Adds the preview to the plan after the current step.
-    AddToPlan,
-    Next,
-    Prev,
-    PlayPause,
-    Blackout,
-    Clear,
-    PickNext,
-    PickPrev,
-    FocusSearch,
-    /// Saves the plan to its file, or a new one named after it.
-    Save,
-    /// Shows or hides the list of saved plans.
-    Open,
-    /// Starts an empty plan.
-    New,
-    /// Switches the list between the results and the plan.
-    TogglePlan,
-    /// Completes a half-typed bang (`!y` → `!yt `).
-    Complete,
-}
-
-enum Bind {
-    Named(Named),
-    Char(char),
-    Ctrl(char),
-}
-
-/// Every key, by the name a script's `press` uses. While a text box has
-/// focus it keeps the keys it uses for typing, so only the Ctrl keys, Enter,
-/// Escape (which leaves the box), Up, Down, Page Up and Page Down reach
-/// this table then.
-const KEYS: &[(&str, Bind, Op)] = &[
-    ("enter", Bind::Named(Named::Enter), Op::Enter),
-    ("tab", Bind::Named(Named::Tab), Op::Complete),
-    ("down", Bind::Named(Named::ArrowDown), Op::PickNext),
-    ("up", Bind::Named(Named::ArrowUp), Op::PickPrev),
-    // Presentation clickers send Page Down and Page Up.
-    ("pagedown", Bind::Named(Named::PageDown), Op::Next),
-    ("pageup", Bind::Named(Named::PageUp), Op::Prev),
-    ("right", Bind::Named(Named::ArrowRight), Op::Next),
-    ("left", Bind::Named(Named::ArrowLeft), Op::Prev),
-    ("space", Bind::Named(Named::Space), Op::PlayPause),
-    ("b", Bind::Char('b'), Op::Blackout),
-    ("a", Bind::Char('a'), Op::AddToPlan),
-    ("/", Bind::Char('/'), Op::FocusSearch),
-    ("ctrl+s", Bind::Ctrl('s'), Op::Save),
-    ("ctrl+o", Bind::Ctrl('o'), Op::Open),
-    ("ctrl+n", Bind::Ctrl('n'), Op::New),
-    ("ctrl+p", Bind::Ctrl('p'), Op::TogglePlan),
-];
-
-const HELP: &str = "Enter preview, then take · ↑↓ pick · Tab completes a bang · A add to plan · \
-                    →/PgDn next · ←/PgUp back · Space play/pause · B blackout · \
-                    Esc leaves the search box · / returns to it · Ctrl+P plan · \
-                    Ctrl+S save · Ctrl+O open · Ctrl+N new plan";
-
-/// The op a script's `press NAME` stands for.
-pub fn op_named(name: &str) -> Option<Op> {
-    KEYS.iter()
-        .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
-        .map(|(_, _, op)| *op)
-}
-
-fn op_for(key: &Key, ctrl: bool) -> Option<Op> {
-    let is = |pressed: &str, c: char| pressed.to_lowercase().chars().eq(std::iter::once(c));
-    KEYS.iter()
-        .find(|(_, bind, _)| match (bind, key.as_ref()) {
-            (Bind::Ctrl(c), Key::Character(pressed)) => ctrl && is(pressed, *c),
-            _ if ctrl => false,
-            (Bind::Named(named), Key::Named(pressed)) => *named == pressed,
-            (Bind::Named(Named::Space), Key::Character(" ")) => true,
-            (Bind::Char(c), Key::Character(pressed)) => is(pressed, *c),
-            _ => false,
-        })
-        .map(|(_, _, op)| *op)
-}
-
-/// Ctrl keys, and keys the focused text box didn't use. Held keys don't
-/// repeat, so holding B can't flicker the projector.
-pub fn key_event(
-    event: iced::Event,
-    status: event::Status,
-    _: iced::window::Id,
-) -> Option<Message> {
-    let iced::Event::Keyboard(keyboard::Event::KeyPressed {
-        key,
-        modifiers,
-        repeat,
-        ..
-    }) = event
-    else {
-        return None;
-    };
-    let ctrl = modifiers.command();
-    if modifiers.alt() || (status == event::Status::Captured && !ctrl) {
-        return None;
+impl Mode {
+    pub fn toggled(self) -> Mode {
+        match self {
+            Mode::Live => Mode::Plan,
+            Mode::Plan => Mode::Live,
+        }
     }
-    let op = op_for(&key, ctrl)?;
-    let repeats = matches!(op, Op::PickNext | Op::PickPrev);
-    (repeats || !repeat).then_some(Message::Op(op))
+
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Live => "live",
+            Mode::Plan => "plan",
+        }
+    }
+
+    fn tone(self) -> Tone {
+        match self {
+            Mode::Live => Tone::Live,
+            Mode::Plan => Tone::Selected,
+        }
+    }
+
+    /// The keys worth knowing in this mode.
+    fn hints(self) -> &'static str {
+        match self {
+            Mode::Live => {
+                "Enter preview, again to show · ↑↓ pick · Ctrl+A add to plan · Tab bang · \
+                 Esc clear · Ctrl+P plan mode"
+            }
+            Mode::Plan => {
+                "PgDn next step · PgUp back · ← → slides · Ctrl+Space play · Ctrl+B blackout · \
+                 Ctrl+P live mode"
+            }
+        }
+    }
 }
-
-pub fn theme() -> Theme {
-    Theme::custom(
-        "lantern",
-        iced::theme::Palette {
-            background: BG,
-            text: TEXT,
-            primary: BLUE,
-            success: GREEN,
-            warning: AMBER,
-            danger: RED,
-        },
-    )
-}
-
-const BG: Color = rgb(0x0e, 0x10, 0x14);
-const PANEL: Color = rgb(0x17, 0x1a, 0x20);
-const RAISED: Color = rgb(0x22, 0x26, 0x2e);
-const LINE: Color = rgb(0x2c, 0x31, 0x3a);
-const TEXT: Color = rgb(0xe8, 0xea, 0xed);
-const MUTED: Color = rgb(0x8b, 0x92, 0x9c);
-const FAINT: Color = rgb(0x5a, 0x60, 0x6a);
-const RED: Color = rgb(0xe5, 0x48, 0x4d);
-const GREEN: Color = rgb(0x30, 0xa4, 0x6c);
-const BLUE: Color = rgb(0x3e, 0x7b, 0xfa);
-const AMBER: Color = rgb(0xf5, 0xa5, 0x24);
-
-const fn rgb(r: u8, g: u8, b: u8) -> Color {
-    Color::from_rgb8(r, g, b)
-}
-
-const BOLD: Font = Font {
-    weight: font::Weight::Bold,
-    ..Font::DEFAULT
-};
 
 impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
-        let top = row![
-            self.scope_tag(),
-            self.search_box(),
-            self.plan_button(),
-            self.blackout_button(),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        let list = match self.pane {
-            Pane::Results => self.results_panel(),
-            Pane::Plan => self.plan_panel(),
+        let p = self.palette;
+        let seam = || {
+            container(Space::new())
+                .width(1)
+                .height(Fill)
+                .style(look::hairline(p))
         };
-        let body = row![
-            list.width(Length::FillPortion(3)),
-            self.preview_panel().width(Length::FillPortion(2)),
+        let panes = row![
+            self.plan_pane(),
+            seam(),
+            self.launcher(),
+            seam(),
+            self.stage_pane(),
         ]
-        .spacing(12)
         .height(Fill);
-        let mut status = vec![self.config_status.as_str().to_string()];
-        status.extend(self.library.0.lines());
-        let footer = column![
-            text(HELP).size(13).color(MUTED),
-            text(status.join(" · ")).size(12).color(FAINT),
+        container(panes)
+            .width(Fill)
+            .height(Fill)
+            .style(look::window(p))
+            .into()
+    }
+
+    // The launcher
+
+    fn launcher(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let other = self.mode.toggled().name();
+        let header = row![
+            look::icon(Icon::Lantern, 20.0, p.primary),
+            text("Lantern").size(HEADING).font(BOLD).color(p.primary),
+            chip(p, self.mode.name(), self.mode.tone()),
+            Space::new().width(Fill),
+            text(format!("Ctrl+P {other} mode"))
+                .size(META)
+                .color(p.on_surface_variant),
         ]
-        .spacing(2);
-        container(
-            column![top, body, self.program_bar(), footer]
-                .spacing(12)
-                .padding(12),
-        )
-        .width(Fill)
-        .height(Fill)
-        .style(|_| container::Style::default().background(BG))
-        .into()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .height(36);
+        let mut body = column![header, self.search_box(), self.results()]
+            .spacing(12)
+            .height(Fill);
+        for problem in self.problems() {
+            body = body.push(text(problem).size(META).color(p.error));
+        }
+        body = body.push(
+            text(self.mode.hints())
+                .size(META)
+                .color(p.on_surface_variant),
+        );
+        container(container(body).max_width(LAUNCHER_WIDTH))
+            .center_x(Fill)
+            .height(Fill)
+            .padding([16, 24])
+            .into()
+    }
+
+    /// The config, the index and the colours, only when something is wrong
+    /// or still loading.
+    fn problems(&self) -> Vec<String> {
+        let mut problems: Vec<String> = self.config_status.problem().into_iter().collect();
+        problems.extend(self.library.0.problems());
+        problems.extend(self.palette_error.clone());
+        problems
     }
 
     fn search_box(&self) -> Element<'_, Message> {
-        text_input(
-            "Search everything, start with ! for one source, or paste a link",
+        let p = self.palette;
+        let scope: Element<'_, Message> = match &self.search.scope {
+            Scope::Everything => Space::new().into(),
+            Scope::Bang(bang) => chip(p, &bang.sources.join(", "), Tone::Plain),
+            Scope::Unknown(bang) => chip(p, &format!("!{bang}?"), Tone::Danger),
+        };
+        let input = text_input(
+            "Search everything, ! for one source, or paste a link",
             &self.search.query,
         )
         .id(SEARCH_BOX)
         .on_input(Message::Query)
-        .on_submit(Message::Op(Op::Enter))
-        .size(22)
-        .padding(12)
-        .width(Fill)
-        .style(|theme: &Theme, status| text_input::Style {
-            background: Background::Color(PANEL),
-            border: Border {
-                color: if matches!(status, text_input::Status::Focused { .. }) {
-                    BLUE
-                } else {
-                    LINE
-                },
-                width: 1.5,
-                radius: 8.0.into(),
+        .on_submit(Message::Key {
+            op: Op::Enter,
+            only_if_empty: false,
+        })
+        .size(15)
+        .padding([10, 0])
+        .style(move |theme, status| text_input::Style {
+            background: Color::TRANSPARENT.into(),
+            border: iced::Border::default(),
+            ..look::input(p)(theme, status)
+        });
+        // The box keeps the focus, so its ring stays on.
+        container(
+            row![
+                look::icon(Icon::Search, 18.0, p.on_surface_variant),
+                scope,
+                input
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .padding([0, 14])
+        .style(move |theme| container::Style {
+            border: iced::Border {
+                color: p.primary,
+                width: 2.0,
+                radius: look::ROW_RADIUS.into(),
             },
-            ..text_input::default(theme, status)
+            ..container::Style::default()
+                .background(look::input(p)(theme, text_input::Status::Active).background)
         })
         .into()
     }
 
-    /// Which sources the query asks, when a bang limits it.
-    fn scope_tag(&self) -> Element<'_, Message> {
-        match &self.search.scope {
-            Scope::Everything => Space::new().into(),
-            Scope::Bang(bang) => tag_owned(bang.sources.join(", "), BLUE),
-            Scope::Unknown(bang) => tag_owned(format!("!{bang}?"), RED),
-        }
-    }
-
-    /// Opens the plan in the list, with where the plan is: "Plan 3/8".
-    fn plan_button(&self) -> Element<'_, Message> {
-        let plan = self.engine.0.plan();
-        let at = self
-            .engine
-            .0
-            .current_step()
-            .and_then(|current| plan.steps().iter().position(|s| s.id == current.id));
-        let mut label = match at {
-            Some(at) => format!("Plan {}/{}", at + 1, plan.len()),
-            None => format!("Plan · {}", count(plan.len(), "step")),
-        };
-        if self.plans.is_dirty(&plan) {
-            label.push_str(" •");
-        }
-        let showing = self.pane == Pane::Plan;
-        button(text(label).size(15).font(BOLD).center())
-            .padding([10, 16])
-            .on_press(Message::Op(Op::TogglePlan))
-            .style(move |_, status| filled(if showing { BLUE } else { RAISED }, TEXT, status))
-            .into()
-    }
-
-    fn blackout_button(&self) -> Element<'_, Message> {
-        let on = self.stage.blackout;
-        let label = if on { "BLACKOUT ON" } else { "Blackout" };
-        button(text(label).size(15).font(BOLD).center())
-            .width(150)
-            .padding([10, 16])
-            .on_press(Message::Op(Op::Blackout))
-            .style(move |_, status| {
-                if on {
-                    filled(RED, TEXT, status)
-                } else {
-                    filled(RAISED, TEXT, status)
-                }
-            })
-            .into()
-    }
-
-    fn results_panel(&self) -> container::Container<'_, Message> {
+    fn results(&self) -> Element<'_, Message> {
+        let p = self.palette;
         let search = &self.search;
         let bangs = search.bangs(&self.engine.0);
-        let mut list = column![].spacing(2);
-        let typed = !search.query.trim().is_empty();
         let offered = bangs.len();
+        let mut list = column![].spacing(2);
         if offered > 0 {
-            list = list.push(group_heading("BANGS · search one source", offered));
+            list = list.push(group_heading(p, "Search one source", offered));
             for bang in bangs {
-                list = list.push(bang_row(bang));
+                list = list.push(bang_row(p, bang));
             }
         }
         for group in search.groups() {
-            list = list.push(self.group_view(group));
+            list = list.push(self.group(group));
         }
-        let note = if !typed {
-            Some("Type to search everything at once.".to_string())
-        } else if let Some(bang) = search.typing_bang() {
-            (offered == 0).then(|| format!("No source answers !{bang}."))
-        } else {
-            match (&search.scope, search.live) {
-                (Scope::Unknown(bang), _) => Some(format!(
-                    "No source answers !{bang}. Clear the box to see the bangs."
-                )),
-                (Scope::Bang(bang), Live::OnEnter) => Some(format!(
-                    "Press Enter to search {}.",
-                    bang.sources.join(", ")
-                )),
-                (_, Live::Waiting(_) | Live::Running(_)) => Some("Still searching…".to_string()),
-                (Scope::Bang(bang), _) if search.text().is_empty() => Some(format!(
-                    "Type what to look for in {}.",
-                    bang.sources.join(", ")
-                )),
-                (_, Live::Idle) if search.groups().is_empty() => {
-                    Some(format!("Nothing found for “{}”.", search.query.trim()))
-                }
-                _ => None,
-            }
-        };
-        if let Some(note) = note {
-            list = list.push(container(text(note).size(14).color(MUTED)).padding([6, 8]));
+        if let Some(note) = self.results_note(offered) {
+            list = list.push(
+                container(text(note).size(BODY).color(p.on_surface_variant)).padding([8, 12]),
+            );
         }
-        panel(scrolling(list).id(RESULTS), LINE)
+        scrolling(list).id(RESULTS).into()
     }
 
-    fn group_view<'a>(&'a self, group: &'a Group) -> Element<'a, Message> {
-        let mut rows = column![group_heading(&group.name, group.hits.len())].spacing(2);
+    /// What to say when there are no results to show, or not yet.
+    fn results_note(&self, bangs_offered: usize) -> Option<String> {
+        let search = &self.search;
+        if search.query.trim().is_empty() {
+            return Some("Type to search everything at once.".into());
+        }
+        if let Some(bang) = search.typing_bang() {
+            return (bangs_offered == 0).then(|| format!("No source answers !{bang}."));
+        }
+        match (&search.scope, search.live) {
+            (Scope::Unknown(bang), _) => Some(format!(
+                "No source answers !{bang}. Clear the box to see the bangs."
+            )),
+            (Scope::Bang(bang), Live::OnEnter) => Some(format!(
+                "Press Enter to search {}.",
+                bang.sources.join(", ")
+            )),
+            (_, Live::Waiting(_) | Live::Running(_)) => Some("Still searching…".into()),
+            (Scope::Bang(bang), _) if search.text().is_empty() => Some(format!(
+                "Type what to look for in {}.",
+                bang.sources.join(", ")
+            )),
+            (_, Live::Idle) if search.groups().is_empty() => {
+                Some(format!("Nothing found for “{}”.", search.query.trim()))
+            }
+            _ => None,
+        }
+    }
+
+    fn group<'a>(&'a self, group: &'a Group) -> Element<'a, Message> {
+        let p = self.palette;
+        let mut rows = column![group_heading(p, &group.name, group.hits.len())].spacing(2);
         if let Some(error) = &group.error {
-            rows = rows.push(text(format!("failed: {error}")).size(13).color(RED));
+            rows = rows.push(
+                container(text(format!("Failed: {error}")).size(BODY).color(p.error))
+                    .padding([4, 12]),
+            );
         }
         for resource in &group.hits {
             rows = rows.push(self.result_row(resource));
@@ -347,240 +261,328 @@ impl App {
     }
 
     fn result_row<'a>(&'a self, resource: &'a Resource) -> Element<'a, Message> {
+        let p = self.palette;
         let ok = supported(resource);
-        let picked = self.search.is_picked(resource);
-        let kind = if ok {
-            resource.kind.to_string()
+        let tone = if self.search.is_picked(resource) {
+            Tone::Selected
         } else {
-            format!("{} · not supported", resource.kind)
+            Tone::Plain
         };
-        let mut line = column![
-            row![
-                text(&resource.title)
-                    .size(16)
-                    .color(if ok { TEXT } else { FAINT })
-                    .width(Fill),
-                text(format!("{kind}{}", self.download_note(resource)))
-                    .size(12)
-                    .color(if ok { MUTED } else { FAINT }),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center)
-        ];
-        if let Some(subtitle) = &resource.subtitle {
-            line = line.push(
-                text(subtitle)
-                    .size(13)
-                    .color(if ok { MUTED } else { FAINT }),
-            );
+        let mut meta: Vec<String> = resource.subtitle.iter().cloned().collect();
+        meta.extend(self.download_state(resource));
+        if !ok {
+            meta.push("can't be shown yet".into());
         }
-        button(line)
+        let title_color = match (ok, tone) {
+            (false, _) => p.outline,
+            (true, Tone::Selected) => p.primary,
+            (true, _) => p.on_surface,
+        };
+        let line = row![
+            icon_disc(p, Icon::of(&resource.kind), tone),
+            column![
+                single_line(&resource.title)
+                    .size(BODY)
+                    .font(if tone == Tone::Selected { BOLD } else { MEDIUM })
+                    .color(title_color),
+                single_line(meta.join(" · "))
+                    .size(META)
+                    .color(p.on_surface_variant),
+            ]
+            .spacing(2),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Center);
+        button(container(line).clip(true))
             .width(Fill)
-            .padding([6, 8])
+            .padding([8, 12])
             .on_press_maybe(ok.then(|| Message::Pick(resource.id.clone())))
-            .style(move |_, status| {
-                let base = if picked {
-                    GREEN.scale_alpha(0.22)
-                } else {
-                    Color::TRANSPARENT
-                };
-                let hover = matches!(status, button::Status::Hovered) && !picked;
-                button::Style {
-                    background: Some(Background::Color(if hover { RAISED } else { base })),
-                    text_color: TEXT,
-                    border: Border {
-                        color: if picked { GREEN } else { Color::TRANSPARENT },
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..button::Style::default()
-                }
-            })
+            .style(look::row(p, tone))
             .into()
     }
 
-    fn preview_panel(&self) -> container::Container<'_, Message> {
-        let scene = self.stage.preview.as_ref();
-        let has = scene.is_some();
-        let mut body = column![heading("PREVIEW", GREEN)].spacing(8);
-        match scene {
-            Some(scene) => {
-                let content = self.media.preloaded(&scene.resource.id);
-                body = body.push(self.monitor(scene, content));
-                body = body.push(self.describe(scene));
-            }
-            None => {
-                body = body.push(empty_monitor("Pick a result to preview it here"));
-            }
-        }
-        body = body.push(
-            row![
-                wide(action_tinted(
-                    "Take  ⏎",
-                    GREEN,
-                    has.then_some(Message::Op(Op::Take))
-                )),
-                wide(action_tinted(
-                    "Add to plan  A",
-                    RAISED,
-                    has.then_some(Message::Op(Op::AddToPlan))
-                )),
-            ]
-            .spacing(8),
-        );
-        panel(body, GREEN.scale_alpha(if has { 0.8 } else { 0.35 }))
-    }
+    // The stage pane
 
-    /// What the audience sees: a small monitor, what it is, and the
-    /// transport for a video.
-    fn program_bar(&self) -> Element<'_, Message> {
-        let scene = self.stage.program.as_ref();
-        let badge = match (scene, self.stage.blackout) {
-            (_, true) => tag("BLACKOUT", RED),
-            (Some(_), false) => tag("● LIVE", RED),
-            (None, false) => tag("EMPTY", FAINT),
+    fn stage_pane(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let lower = match self.mode {
+            Mode::Live => self.preview_section(),
+            Mode::Plan => self.next_section(),
         };
-        let monitor = match scene {
-            Some(_) if self.stage.blackout => empty_monitor("black"),
-            Some(scene) => self.monitor(scene, self.media.content(scene.id)),
-            None => empty_monitor("nothing"),
-        };
-        let mut bar = row![
-            column![heading("ON STAGE", RED), badge].spacing(6),
-            container(monitor).width(160).height(90),
+        column![
+            self.on_stage_section(),
+            container(Space::new())
+                .height(1)
+                .width(Fill)
+                .style(look::hairline(p)),
+            lower,
         ]
         .spacing(12)
-        .align_y(iced::Alignment::Center);
-        if let Some(scene) = scene {
-            let mut about = column![self.describe(scene)].spacing(6).width(Fill);
-            if let Some(timed) = scene.timed() {
-                about = about.push(self.transport(timed));
-            }
-            bar = bar.push(about);
-        } else {
-            bar = bar.push(
-                text("Nothing on the projector. Enter puts the preview there.")
-                    .size(14)
-                    .color(MUTED)
-                    .width(Fill),
-            );
-        }
-        bar = bar.push(action_tinted(
-            "Clear",
-            RAISED,
-            scene.is_some().then_some(Message::Op(Op::Clear)),
-        ));
-        panel(
-            bar,
-            RED.scale_alpha(if scene.is_some() { 0.9 } else { 0.35 }),
-        )
-        .height(Length::Shrink)
+        .padding(16)
+        .width(STAGE_WIDTH)
+        .height(Fill)
         .into()
     }
 
-    /// A small picture of a scene: the image or page, the current stanza, or a label.
+    fn on_stage_section(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let scene = self.stage.program.as_ref();
+        let blackout = self.stage.blackout;
+        let state = match (scene, blackout) {
+            (_, true) => chip(p, "blackout", Tone::Danger),
+            (Some(_), false) => chip(p, "● live", Tone::Live),
+            (None, false) => chip(p, "empty", Tone::Plain),
+        };
+        let mut section = column![
+            row![heading(p, "On stage"), Space::new().width(Fill), state]
+                .align_y(Alignment::Center)
+        ]
+        .spacing(10);
+        section = section.push(match scene {
+            Some(_) if blackout => {
+                empty_monitor(p, "The projector is black. Ctrl+B brings it back.")
+            }
+            Some(scene) => self.monitor(scene, self.media.content(scene.id), Some(p.tertiary)),
+            None => empty_monitor(p, "Nothing on the projector"),
+        });
+        if let Some(scene) = scene {
+            section = section.push(self.caption(scene));
+            if let Some(timed) = scene.timed() {
+                section = section.push(self.transport(timed));
+            }
+        }
+        let blackout_label = if blackout {
+            "Blackout on · Ctrl+B"
+        } else {
+            "Blackout · Ctrl+B"
+        };
+        section
+            .push(
+                row![
+                    wide(pill(
+                        p,
+                        blackout_label,
+                        Tone::Danger,
+                        PILL,
+                        Some(Message::Key {
+                            op: Op::Blackout,
+                            only_if_empty: false,
+                        })
+                    )),
+                    pill(
+                        p,
+                        "Clear",
+                        Tone::Plain,
+                        PILL,
+                        scene.is_some().then_some(Message::Key {
+                            op: Op::Clear,
+                            only_if_empty: false,
+                        })
+                    ),
+                ]
+                .spacing(4),
+            )
+            .into()
+    }
+
+    fn preview_section(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let scene = self.stage.preview.as_ref();
+        let mut section = column![heading(p, "Preview")].spacing(10);
+        match scene {
+            Some(scene) => {
+                let content = self.media.preloaded(&scene.resource.id);
+                section = section
+                    .push(self.monitor(scene, content, Some(p.primary)))
+                    .push(self.caption(scene));
+            }
+            None => section = section.push(empty_monitor(p, "Pick a result to preview it here")),
+        }
+        let has = scene.is_some();
+        section
+            .push(
+                row![
+                    wide(pill(
+                        p,
+                        "Show now · Enter",
+                        Tone::Selected,
+                        PILL,
+                        has.then_some(op(Op::Take))
+                    )),
+                    wide(pill(
+                        p,
+                        "Add · Ctrl+A",
+                        Tone::Plain,
+                        PILL,
+                        has.then_some(op(Op::AddToPlan))
+                    )),
+                ]
+                .spacing(4),
+            )
+            .into()
+    }
+
+    fn next_section(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let next = self.engine.0.up_next();
+        let mut section = column![heading(p, "Up next")].spacing(10);
+        section = section.push(match next.as_ref().map(|step| &step.action) {
+            Some(Action::Show { resource }) => self.picture(
+                resource
+                    .location
+                    .as_text()
+                    .and_then(|body| body.split("\n\n").next())
+                    .map(str::to_string),
+                0,
+                self.media.preloaded(&resource.id),
+                self.loading_note(resource),
+                Some(p.primary),
+            ),
+            Some(Action::Live { .. }) => empty_monitor(p, "A live slot: search when you get there"),
+            Some(Action::Blank) => empty_monitor(p, "A black screen"),
+            Some(Action::Note) => empty_monitor(p, "A note for you, nothing on stage"),
+            None => empty_monitor(p, "The end of the plan"),
+        });
+        if let Some(step) = &next {
+            section = section.push(text(step.label.clone()).size(BODY).font(BOLD));
+        }
+        section
+            .push(
+                pill(
+                    p,
+                    "Next step · PgDn",
+                    Tone::Selected,
+                    PILL,
+                    next.is_some().then_some(op(Op::Next)),
+                )
+                .width(Fill),
+            )
+            .into()
+    }
+
+    /// A picture of a scene: its image or page, its current slide, or a label.
     fn monitor<'a>(
         &'a self,
         scene: &'a Scene,
         content: Option<&'a Content>,
+        ring: Option<Color>,
     ) -> Element<'a, Message> {
-        let picture: Element<'a, Message> = match (&scene.media, scene.text(), content) {
-            (Media::Failed { reason }, ..) => text(format!("Can't show this: {reason}"))
-                .size(14)
-                .color(RED)
-                .into(),
-            (_, Some(body), _) => text(body)
-                .size(14)
-                .color(TEXT)
+        if let Media::Failed { reason } = &scene.media {
+            return framed(
+                text(format!("Can't show this: {reason}"))
+                    .size(BODY)
+                    .color(self.palette.error),
+                ring,
+            );
+        }
+        let loading = self.loading_note(&scene.resource);
+        self.picture(scene.text(), scene.frame(), content, loading, ring)
+    }
+
+    /// What a monitor shows: the slide's text, the loaded image or page,
+    /// that a video is ready, or `loading` until something has loaded.
+    fn picture<'a>(
+        &'a self,
+        slide: Option<String>,
+        frame: usize,
+        content: Option<&'a Content>,
+        loading: String,
+        ring: Option<Color>,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let picture: Element<'a, Message> = match (slide, content) {
+            (Some(body), _) => text(body)
+                .size(BODY)
+                .color(Color::WHITE)
                 .align_x(iced::alignment::Horizontal::Center)
                 .into(),
-            (_, None, Some(Content::Image(handle))) => thumb(handle),
-            (_, None, Some(Content::Pages(pages))) => {
-                thumb(&pages[scene.frame().min(pages.len() - 1)])
-            }
-            (_, None, Some(Content::Video { stream, .. })) => {
-                let label = if *stream {
-                    "▶ streaming"
-                } else {
-                    "▶ video"
-                };
-                text(label).size(16).color(MUTED).into()
-            }
-            (_, None, None) => text(self.loading_note(&scene.resource))
-                .size(14)
-                .color(MUTED)
-                .into(),
+            (None, Some(Content::Image(handle))) => thumb(handle),
+            (None, Some(Content::Pages(pages))) => thumb(&pages[frame.min(pages.len() - 1)]),
+            (None, Some(Content::Video { stream, .. })) => row![
+                look::icon(Icon::Play, 18.0, p.on_surface_variant),
+                text(if *stream { "streaming" } else { "video" })
+                    .size(BODY)
+                    .color(p.on_surface_variant),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+            (None, None) => text(loading).size(BODY).color(p.on_surface_variant).into(),
         };
-        container(picture)
-            .center_x(Fill)
-            .center_y(Fill)
-            .padding(6)
-            .clip(true)
-            .style(|_| container::Style {
-                background: Some(Background::Color(Color::BLACK)),
-                border: Border {
-                    radius: 6.0.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            })
-            .into()
+        framed(picture, ring)
     }
 
     fn loading_note(&self, resource: &Resource) -> String {
-        match YoutubeVideo::of(resource).and_then(|v| self.downloads.0.state(&v.id)) {
-            Some(download) => download.to_string(),
-            None => "loading…".into(),
-        }
+        self.download_state(resource)
+            .unwrap_or_else(|| "loading…".into())
     }
 
-    /// Title, kind and where in it the scene is: "frame 2 of 3".
-    fn describe<'a>(&self, scene: &'a Scene) -> Element<'a, Message> {
+    /// A YouTube video's download state ("downloading 42%"), or `None`.
+    fn download_state(&self, resource: &Resource) -> Option<String> {
+        let video = YoutubeVideo::of(resource)?;
+        self.downloads
+            .0
+            .state(&video.id)
+            .map(|state| state.to_string())
+    }
+
+    /// The scene's title, and one line of what it is and where in it the
+    /// stage is: "Juan 3:16-17 / RV1909 · slide 1 of 2".
+    fn caption<'a>(&self, scene: &'a Scene) -> Element<'a, Message> {
+        let p = self.palette;
         let resource = &scene.resource;
-        let mut facts = vec![resource.kind.to_string()];
+        let mut facts: Vec<String> = resource.subtitle.iter().cloned().collect();
         match &scene.media {
             Media::Frames { frame, count } => facts.extend(match count {
                 Some(count) if count.get() == 1 => None,
-                Some(count) => Some(format!("frame {} of {count}", frame + 1)),
-                None => Some(format!("frame {}", frame + 1)),
+                Some(count) => Some(format!("{} {} of {count}", unit(resource), frame + 1)),
+                None => Some(format!("{} {}", unit(resource), frame + 1)),
             }),
-            Media::Timed(timed) => {
-                if let Some(duration) = timed.duration {
-                    facts.push(clock(duration));
-                }
-            }
+            Media::Timed(_) => {}
             Media::Failed { .. } => facts.push("failed".into()),
         }
-        let mut info = column![text(&resource.title).size(20).font(BOLD).color(TEXT)].spacing(2);
-        if let Some(subtitle) = &resource.subtitle {
-            info = info.push(text(subtitle).size(13).color(MUTED));
+        let stream = matches!(
+            self.media.content(scene.id),
+            Some(Content::Video { stream: true, .. })
+        );
+        if stream {
+            facts.push("streaming".into());
+        } else if let Some(download) = self.download_state(resource) {
+            facts.push(download);
         }
-        info = info.push(text(facts.join(" · ")).size(14).color(MUTED));
-        if let Some(download) =
-            YoutubeVideo::of(resource).and_then(|v| self.downloads.0.state(&v.id))
-        {
-            info = info.push(download_tag(&download));
-        }
-        info.into()
+        column![
+            single_line(&resource.title).size(BODY).font(BOLD),
+            single_line(facts.join(" · "))
+                .size(META)
+                .color(p.on_surface_variant),
+        ]
+        .spacing(2)
+        .into()
     }
 
     fn transport(&self, timed: &Timed) -> Element<'_, Message> {
-        let (icon, state) = match timed.playback {
-            Playback::Playing => ("❚❚", tag("PLAYING", GREEN)),
-            Playback::Paused => ("▶", tag("PAUSED", MUTED)),
-            Playback::Ended => ("↻", tag("ENDED", AMBER)),
+        let p = self.palette;
+        let icon = match timed.playback {
+            Playback::Playing => Icon::Pause,
+            Playback::Paused => Icon::Play,
+            Playback::Ended => Icon::Replay,
         };
-        let play = button(text(icon).size(16).font(BOLD).center())
-            .width(44)
-            .padding([6, 0])
-            .on_press(Message::Op(Op::PlayPause))
-            .style(|_, status| filled(RAISED, TEXT, status));
+        let play = button(
+            container(look::icon(icon, 18.0, p.on_primary))
+                .center_x(Fill)
+                .center_y(Fill),
+        )
+        .width(PILL)
+        .height(PILL)
+        .on_press(op(Op::PlayPause))
+        .style(look::pill(p, Tone::Solid));
         let position = self.scrub.unwrap_or(timed.position.as_secs_f64());
         let timeline: Element<'_, Message> = match timed.duration {
             Some(duration) if !duration.is_zero() => {
                 slider(0.0..=duration.as_secs_f64(), position, Message::Scrub)
                     .step(0.1)
                     .on_release(Message::Scrubbed)
+                    .style(look::timeline(p))
                     .width(Fill)
                     .into()
             }
@@ -591,231 +593,299 @@ impl App {
             clock(Duration::from_secs_f64(position)),
             timed.duration.map_or("?".into(), clock)
         );
-        row![play, timeline, text(times).size(14).color(TEXT), state]
-            .spacing(10)
-            .align_y(iced::Alignment::Center)
+        row![
+            play,
+            timeline,
+            text(times).size(META).color(p.on_surface_variant)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    // The plan pane
+
+    fn plan_pane(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let plan = self.engine.0.plan();
+        let mut pane = column![self.plan_header(&plan)].spacing(8);
+        if let Some(notice) = self.plan_notice(&plan) {
+            pane = pane.push(notice);
+        }
+        pane = pane.push(match &self.plans.mode {
+            plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan),
+            plans::Mode::Browsing(entries) => self.saved_plans(entries),
+            plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
+        });
+        let close = matches!(self.plans.mode, plans::Mode::Browsing(_));
+        let buttons = if close {
+            row![wide(pill(
+                p,
+                "Cancel",
+                Tone::Plain,
+                PILL_SMALL,
+                Some(Message::ClosePlanMode)
+            ))]
+        } else {
+            row![
+                wide(pill(p, "Open", Tone::Plain, PILL_SMALL, Some(op(Op::Open)))),
+                wide(pill(p, "Save", Tone::Plain, PILL_SMALL, Some(op(Op::Save)))),
+                wide(pill(p, "New", Tone::Plain, PILL_SMALL, Some(op(Op::New)))),
+            ]
+        };
+        pane.push(buttons.spacing(4))
+            .padding([16, 12])
+            .width(PLAN_WIDTH)
+            .height(Fill)
             .into()
     }
 
-    fn plan_panel(&self) -> container::Container<'_, Message> {
-        let plan = self.engine.0.plan();
-        let mut body = column![self.plan_header(&plan)].spacing(8);
-        if let Some(notice) = self.plan_notice(&plan) {
-            body = body.push(notice);
-        }
-        let below = match &self.plans.mode {
-            Mode::Steps | Mode::Renaming(_) => self.steps(&plan),
-            Mode::Browsing(entries) => self.plan_list(entries),
-            Mode::Confirm(switch) => confirm(&plan, switch),
-        };
-        panel(body.push(below), LINE)
-    }
-
+    /// The plan's name (click to rename), an unsaved marker, and where the
+    /// service is: "3 of 7".
     fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
         let name: Element<'_, Message> = match &self.plans.mode {
-            Mode::Renaming(draft) => row![
-                text_input("Plan name", draft)
-                    .id(NAME_BOX)
-                    .on_input(Message::PlanName)
-                    .on_submit(Message::SubmitPlanName)
-                    .size(14)
-                    .padding([4, 8])
-                    .width(240),
-                small_button("✕", Message::ClosePlanMode),
-            ]
-            .spacing(4)
-            .align_y(iced::Alignment::Center)
-            .into(),
-            _ => button(text(plan.title.clone()).size(14).color(TEXT))
-                .padding([4, 8])
-                .on_press(Message::EditPlanName)
-                .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
+            plans::Mode::Renaming(draft) => text_input("Plan name", draft)
+                .id(NAME_BOX)
+                .on_input(Message::PlanName)
+                .on_submit(Message::SubmitPlanName)
+                .size(BODY)
+                .padding([6, 10])
+                .style(look::input(p))
                 .into(),
-        };
-        let unsaved = self.plans.is_dirty(plan).then_some("•");
-        row![
-            heading("PLAN", MUTED),
-            name,
-            text(unsaved.unwrap_or_default())
-                .size(18)
-                .font(BOLD)
-                .color(AMBER),
-            // The buttons wrap onto more lines, right-aligned, when the
-            // window is too narrow for one.
-            container(
-                row![
-                    action("New", Message::Op(Op::New)),
-                    action("Open", Message::Op(Op::Open)),
-                    action("Save", Message::Op(Op::Save)),
-                    action("◀ Back", Message::Op(Op::Prev)),
-                    action("Next ▶", Message::Op(Op::Next)),
-                ]
-                .spacing(8)
-                .wrap()
-                .align_x(iced::alignment::Horizontal::Right),
+            _ => button(
+                single_line(plan.title.clone())
+                    .size(HEADING)
+                    .font(BOLD)
+                    .color(p.primary),
             )
+            .padding([4, 8])
+            .on_press(Message::EditPlanName)
+            .style(look::row(p, Tone::Plain))
             .width(Fill)
-            .align_right(Fill),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
-        .into()
+            .into(),
+        };
+        let at = self
+            .engine
+            .0
+            .current_step()
+            .and_then(|current| plan.steps().iter().position(|s| s.id == current.id));
+        let mut place = match at {
+            Some(at) => format!("{} of {}", at + 1, plan.len()),
+            None => count(plan.len(), "step"),
+        };
+        if self.plans.is_dirty(plan) {
+            place.push_str(" · unsaved");
+        }
+        row![name, text(place).size(META).color(p.on_surface_variant)]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into()
     }
 
     /// The last save or open: its error, or that it worked while nothing
     /// has changed since.
     fn plan_notice(&self, plan: &Plan) -> Option<Element<'_, Message>> {
+        let p = self.palette;
         let (message, color) = match self.plans.notice.as_ref()? {
-            Notice::Failed(why) => (why, RED),
+            Notice::Failed(why) => (why, p.error),
             Notice::Done(_) if self.plans.is_dirty(plan) => return None,
-            Notice::Done(what) => (what, GREEN),
+            Notice::Done(what) => (what, p.on_surface_variant),
         };
-        Some(text(message.as_str()).size(13).color(color).into())
+        Some(
+            container(text(message.as_str()).size(META).color(color))
+                .padding([0, 8])
+                .into(),
+        )
     }
 
     fn steps(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
         let current = self.engine.0.current_step().map(|step| step.id);
+        let next = self.engine.0.up_next().map(|step| step.id);
+        let at = current.and_then(|id| plan.steps().iter().position(|s| s.id == id));
         let mut steps = column![].spacing(2);
         for (index, step) in plan.steps().iter().enumerate() {
-            steps = steps.push(self.step_row(index, step, Some(step.id) == current));
+            let place = if Some(step.id) == current {
+                Place::Current
+            } else if Some(step.id) == next {
+                Place::Next
+            } else if at.is_some_and(|at| index < at) {
+                Place::Done
+            } else {
+                Place::Later
+            };
+            steps = steps.push(self.step_row(index, step, place));
         }
         if plan.is_empty() {
             steps = steps.push(
-                text("The plan is empty. Preview something and press A to add it.")
-                    .size(14)
-                    .color(MUTED),
+                container(
+                    text("The plan is empty. Preview something and press Ctrl+A to add it.")
+                        .size(BODY)
+                        .color(p.on_surface_variant),
+                )
+                .padding([4, 8]),
             );
         }
         scrolling(steps).into()
     }
 
-    fn plan_list<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
+    fn step_row(&self, index: usize, step: &Step, place: Place) -> Element<'_, Message> {
+        let p = self.palette;
+        // The current step is on stage unless something off the plan was
+        // shown since.
+        let shown = match &step.action {
+            Action::Show { resource } => self
+                .stage
+                .program
+                .as_ref()
+                .is_some_and(|scene| scene.resource.id == resource.id),
+            _ => false,
+        };
+        let tone = match (place, self.mode) {
+            (Place::Current, _) if shown => Tone::Live,
+            (Place::Next, Mode::Plan) => Tone::Selected,
+            _ => Tone::Plain,
+        };
+        let (marker, note) = match place {
+            Place::Current if shown => ("●".to_string(), Some("on stage".to_string())),
+            Place::Current => ("●".to_string(), Some("current step".to_string())),
+            Place::Next => ("○".to_string(), Some("next, PgDn".to_string())),
+            Place::Done | Place::Later => ((index + 1).to_string(), None),
+        };
+        let label_color = match (place, tone) {
+            (Place::Done, _) => p.outline,
+            (_, Tone::Plain) => p.on_surface,
+            (_, tone) => tone.text(p),
+        };
+        let mut label = column![
+            single_line(step.label.clone())
+                .size(BODY)
+                .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
+                .color(label_color)
+        ];
+        let detail = note.or_else(|| match &step.action {
+            Action::Show { resource } => self.download_state(resource),
+            Action::Live { .. } => Some("live search".into()),
+            Action::Blank => Some("black screen".into()),
+            Action::Note => Some("note".into()),
+        });
+        if let Some(detail) = detail {
+            label = label.push(single_line(detail).size(META).color(p.on_surface_variant));
+        }
+        let remove = button(text("✕").size(META).color(p.on_surface_variant))
+            .padding([2, 8])
+            .on_press(Message::Remove(step.id))
+            .style(look::row(p, Tone::Plain));
+        let line = row![
+            text(marker).size(META).color(label_color).width(16),
+            container(label).width(Fill).clip(true),
+            remove,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        button(line)
+            .width(Fill)
+            .padding([8, 10])
+            .on_press(Message::GoTo(step.id))
+            .style(look::row(p, tone))
+            .into()
+    }
+
+    fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
+        let p = self.palette;
         let folder = self.plans.store().dir().display().to_string();
         let mut list = column![
-            row![
-                heading("OPEN A SAVED PLAN", BLUE),
-                text(folder).size(12).color(FAINT).width(Fill),
-                small_button("Cancel", Message::ClosePlanMode),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center)
+            container(
+                column![
+                    text("Open a saved plan")
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.primary),
+                    single_line(folder).size(META).color(p.on_surface_variant),
+                ]
+                .spacing(2)
+            )
+            .padding([4, 8])
         ]
         .spacing(2);
         if entries.is_empty() {
             list = list.push(
-                text("No saved plans yet. Save makes one.")
-                    .size(14)
-                    .color(MUTED),
+                container(
+                    text("No saved plans yet. Save makes one.")
+                        .size(BODY)
+                        .color(p.on_surface_variant),
+                )
+                .padding([4, 8]),
             );
         }
         let now = SystemTime::now();
         for entry in entries {
             let when = now.duration_since(entry.modified).unwrap_or_default();
-            list = list.push(plan_entry(entry, ago(when)));
+            list = list.push(saved_plan(p, entry, ago(when)));
         }
         scrolling(list).into()
     }
+}
 
-    fn step_row(&self, index: usize, step: &Step, current: bool) -> Element<'_, Message> {
-        let detail = match &step.action {
-            Action::Show { resource } => {
-                format!("{}{}", resource.kind, self.download_note(resource))
-            }
-            Action::Live { .. } => "live slot".into(),
-            Action::Blank => "blank".into(),
-            Action::Note => "note".into(),
-        };
-        let marker = if current { "▶" } else { "" };
-        let content = row![
-            text(marker).size(14).color(RED).width(16),
-            text(format!("{}", index + 1))
-                .size(14)
-                .color(MUTED)
-                .width(24),
-            text(step.label.clone())
-                .size(16)
-                .font(if current { BOLD } else { Font::DEFAULT })
-                .color(TEXT)
-                .width(Fill),
-            text(detail).size(12).color(MUTED),
-            small_button("✕", Message::Remove(step.id)),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-        button(content)
-            .width(Fill)
-            .padding([6, 8])
-            .on_press(Message::GoTo(step.id))
-            .style(move |_, status| {
-                let hover = matches!(status, button::Status::Hovered);
-                button::Style {
-                    background: Some(Background::Color(match (current, hover) {
-                        (true, _) => RED.scale_alpha(0.25),
-                        (false, true) => RAISED,
-                        (false, false) => Color::TRANSPARENT,
-                    })),
-                    text_color: TEXT,
-                    border: Border {
-                        color: if current { RED } else { Color::TRANSPARENT },
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..button::Style::default()
-                }
-            })
-            .into()
-    }
+/// Where a step is in the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Place {
+    Done,
+    Current,
+    Next,
+    Later,
+}
 
-    /// A YouTube video's download state, e.g. " · downloading 42%", or
-    /// nothing for anything else.
-    fn download_note(&self, resource: &Resource) -> String {
-        YoutubeVideo::of(resource)
-            .and_then(|video| self.downloads.0.state(&video.id))
-            .map_or_else(String::new, |download| format!(" · {download}"))
+fn op(op: Op) -> Message {
+    Message::Key {
+        op,
+        only_if_empty: false,
     }
 }
 
-fn download_tag(download: &Download) -> Element<'static, Message> {
-    let color = match download {
-        Download::Queued | Download::Running(_) => AMBER,
-        Download::Ready(_) => GREEN,
-        Download::Failed(_) => RED,
-    };
-    text(format!("YouTube: {download}"))
-        .size(13)
-        .color(color)
-        .into()
+/// "slide" for text, "page" for documents, "frame" for anything else.
+fn unit(resource: &Resource) -> &'static str {
+    match resource.kind {
+        lantern_engine::Kind::Text => "slide",
+        lantern_engine::Kind::Document | lantern_engine::Kind::Presentation => "page",
+        _ => "frame",
+    }
 }
 
-fn plan_entry(entry: &Entry, when: String) -> Element<'_, Message> {
+fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
     let (title, detail, color) = match &entry.summary {
         Ok((title, steps)) => (
             title.clone(),
             format!("{} · {when}", count(*steps, "step")),
-            TEXT,
+            p.on_surface,
         ),
-        Err(why) => (file_name(&entry.path), format!("can't read: {why}"), RED),
+        Err(why) => (
+            file_name(&entry.path),
+            format!("can't read: {why}"),
+            p.error,
+        ),
     };
-    let line = row![
-        text(title).size(16).color(color).width(Fill),
-        text(detail).size(12).color(MUTED),
-    ]
-    .spacing(8)
-    .align_y(iced::Alignment::Center);
-    button(line)
-        .width(Fill)
-        .padding([6, 8])
-        .on_press_maybe(
-            entry
-                .summary
-                .is_ok()
-                .then(|| Message::OpenPlan(entry.path.clone())),
-        )
-        .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
-        .into()
+    button(
+        column![
+            single_line(title).size(BODY).font(MEDIUM).color(color),
+            single_line(detail).size(META).color(p.on_surface_variant),
+        ]
+        .spacing(2),
+    )
+    .width(Fill)
+    .padding([8, 10])
+    .on_press_maybe(
+        entry
+            .summary
+            .is_ok()
+            .then(|| Message::OpenPlan(entry.path.clone())),
+    )
+    .style(look::row(p, Tone::Plain))
+    .into()
 }
 
-fn confirm<'a>(plan: &Plan, switch: &Switch) -> Element<'a, Message> {
+fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch) -> Element<'a, Message> {
     let then = match switch {
         Switch::New => "start a new one",
         Switch::Open(_) => "open another",
@@ -825,17 +895,31 @@ fn confirm<'a>(plan: &Plan, switch: &Switch) -> Element<'a, Message> {
             "“{}” was never saved. Discard it and {then}?",
             plan.title
         ))
-        .size(16)
-        .color(TEXT),
-        text("Ctrl+S saves it instead.").size(13).color(MUTED),
+        .size(BODY),
+        text("Ctrl+S saves it instead.")
+            .size(META)
+            .color(p.on_surface_variant),
         row![
-            action_tinted("Discard", RED, Some(Message::DiscardPlan)),
-            action("Keep it", Message::ClosePlanMode),
+            wide(pill(
+                p,
+                "Discard",
+                Tone::Danger,
+                PILL_SMALL,
+                Some(Message::DiscardPlan)
+            )),
+            wide(pill(
+                p,
+                "Keep it",
+                Tone::Plain,
+                PILL_SMALL,
+                Some(Message::ClosePlanMode)
+            )),
         ]
-        .spacing(8),
+        .spacing(4),
     ]
     .spacing(10)
-    .padding(8)
+    .padding([4, 8])
+    .height(Fill)
     .into()
 }
 
@@ -863,107 +947,116 @@ fn clock(d: Duration) -> String {
     format!("{}:{:02}", d.as_secs() / 60, d.as_secs() % 60)
 }
 
-fn panel<'a>(
-    content: impl Into<Element<'a, Message>>,
-    edge: Color,
-) -> container::Container<'a, Message> {
-    container(content)
-        .padding(12)
-        .height(Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(PANEL)),
-            border: Border {
-                color: edge,
-                width: 1.5,
-                radius: 10.0.into(),
-            },
-            ..container::Style::default()
-        })
-}
-
-/// A list that scrolls, with its scrollbar beside the rows instead of over
-/// their right edge.
+/// A list that scrolls, with its scrollbar beside the rows instead of over them.
 fn scrolling<'a>(content: impl Into<Element<'a, Message>>) -> scrollable::Scrollable<'a, Message> {
     scrollable(content).spacing(6).height(Fill)
 }
 
-fn heading(label: &str, color: Color) -> Element<'_, Message> {
-    text(label).size(13).font(BOLD).color(color).into()
+/// One line of text; what doesn't fit is cut at the row's edge.
+fn single_line<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+    text(content).wrapping(text::Wrapping::None)
 }
 
-fn tag(label: &str, color: Color) -> Element<'_, Message> {
-    tag_owned(label.to_string(), color)
+/// A section heading: bold `primary`.
+fn heading(p: Palette, label: &str) -> Element<'_, Message> {
+    text(label).size(HEADING).font(BOLD).color(p.primary).into()
 }
 
-fn tag_owned(label: String, color: Color) -> Element<'static, Message> {
-    container(text(label).size(12).font(BOLD).color(TEXT))
-        .padding([2, 8])
-        .style(move |_| container::Style {
-            background: Some(Background::Color(color)),
-            border: Border {
-                radius: 4.0.into(),
-                ..Border::default()
+fn chip(p: Palette, label: &str, tone: Tone) -> Element<'static, Message> {
+    container(text(label.to_string()).size(META).font(BOLD))
+        .padding([3, 10])
+        .style(look::chip(p, tone))
+        .into()
+}
+
+/// A kind's icon in a small disc, tinted like its row.
+fn icon_disc(p: Palette, icon: Icon, tone: Tone) -> Element<'static, Message> {
+    let color = match tone {
+        Tone::Plain => p.on_surface_variant,
+        tone => tone.text(p),
+    };
+    container(look::icon(icon, 16.0, color))
+        .width(32)
+        .height(32)
+        .center_x(32)
+        .center_y(32)
+        .style(look::chip(
+            p,
+            if tone == Tone::Plain {
+                Tone::Plain
+            } else {
+                tone
             },
-            ..container::Style::default()
-        })
+        ))
         .into()
 }
 
 /// A source's name over its rows, with how many there are.
-fn group_heading(name: &str, rows: usize) -> Element<'_, Message> {
+fn group_heading(p: Palette, name: &str, rows: usize) -> Element<'static, Message> {
     container(
-        row![
-            text(name.to_uppercase()).size(12).font(BOLD).color(MUTED),
-            text(rows.to_string()).size(12).color(FAINT),
-        ]
-        .spacing(6),
+        text(format!("{name} · {rows}"))
+            .size(META)
+            .color(p.on_surface_variant),
     )
     .padding(iced::Padding {
         top: 10.0,
-        right: 8.0,
+        right: 12.0,
         bottom: 4.0,
-        left: 8.0,
+        left: 12.0,
     })
     .into()
 }
 
 /// `!b   RV1909, KJV`. Clicking it starts the bang in the search box.
-fn bang_row(bang: Bang) -> Element<'static, Message> {
-    let line = row![
+fn bang_row(p: Palette, bang: Bang) -> Element<'static, Message> {
+    let mut line = row![
         text(format!("!{}", bang.bang))
-            .size(16)
+            .size(BODY)
             .font(BOLD)
-            .color(BLUE)
-            .width(56),
-        text(bang.sources.join(", "))
-            .size(16)
-            .color(TEXT)
-            .width(Fill),
+            .color(p.primary)
+            .width(48),
+        text(bang.sources.join(", ")).size(BODY).width(Fill),
     ]
     .spacing(8)
-    .align_y(iced::Alignment::Center);
+    .align_y(Alignment::Center);
+    if bang.on_request {
+        line = line.push(
+            text("Enter to search")
+                .size(META)
+                .color(p.on_surface_variant),
+        );
+    }
     button(line)
         .width(Fill)
-        .padding([6, 8])
+        .padding([12, 12])
         .on_press(Message::Bang(bang.bang))
-        .style(|_, status| filled(Color::TRANSPARENT, TEXT, status))
+        .style(look::row(p, Tone::Plain))
         .into()
 }
 
-fn empty_monitor(note: &str) -> Element<'_, Message> {
-    container(text(note).size(14).color(FAINT))
+/// A black 16:9-ish monitor with `content` centred, ringed in `ring`.
+fn framed<'a>(
+    content: impl Into<Element<'a, Message>>,
+    ring: Option<Color>,
+) -> Element<'a, Message> {
+    container(content)
         .center_x(Fill)
-        .center_y(Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Color(Color::BLACK.scale_alpha(0.4))),
-            border: Border {
-                color: LINE,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..container::Style::default()
-        })
+        .height(MONITOR_HEIGHT)
+        .center_y(MONITOR_HEIGHT)
+        .padding(12)
+        .clip(true)
+        .style(look::monitor(ring))
         .into()
+}
+
+fn empty_monitor(p: Palette, note: &str) -> Element<'static, Message> {
+    framed(
+        text(note.to_string())
+            .size(META)
+            .color(p.outline)
+            .align_x(iced::alignment::Horizontal::Center),
+        None,
+    )
 }
 
 fn thumb(handle: &image::Handle) -> Element<'static, Message> {
@@ -974,143 +1067,32 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .into()
 }
 
-fn small_button(label: &str, message: Message) -> Element<'_, Message> {
-    button(text(label).size(13).color(MUTED))
-        .padding([2, 8])
-        .on_press(message)
-        .style(|_, status| filled(Color::TRANSPARENT, MUTED, status))
-        .into()
-}
-
-fn action(label: &str, message: Message) -> button::Button<'_, Message> {
-    action_tinted(label, RAISED, Some(message))
-}
-
-fn action_tinted(
+fn pill<'a>(
+    p: Palette,
     label: &str,
-    color: Color,
+    tone: Tone,
+    height: f32,
     message: Option<Message>,
-) -> button::Button<'_, Message> {
-    button(text(label).size(15).font(BOLD).center())
-        .padding([10, 14])
-        .on_press_maybe(message)
-        .style(move |_, status| filled(color, TEXT, status))
+) -> button::Button<'a, Message> {
+    let weight = if tone == Tone::Plain { MEDIUM } else { BOLD };
+    button(
+        container(text(label.to_string()).size(BODY).font(weight))
+            .center_x(Length::Shrink)
+            .center_y(Fill),
+    )
+    .height(height)
+    .padding([0, 16])
+    .on_press_maybe(message)
+    .style(look::pill(p, tone))
 }
 
 fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
     button.width(Fill)
 }
 
-fn filled(color: Color, text_color: Color, status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Hovered => lighten(color),
-        button::Status::Disabled => color.scale_alpha(0.3),
-        _ => color,
-    };
-    button::Style {
-        background: Some(Background::Color(background)),
-        text_color: if status == button::Status::Disabled {
-            text_color.scale_alpha(0.4)
-        } else {
-            text_color
-        },
-        border: Border {
-            radius: 8.0.into(),
-            ..Border::default()
-        },
-        ..button::Style::default()
-    }
-}
-
-fn lighten(color: Color) -> Color {
-    Color {
-        r: (color.r + 0.06).min(1.0),
-        g: (color.g + 0.06).min(1.0),
-        b: (color.b + 0.06).min(1.0),
-        a: color.a.max(0.3),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn pressed(key: Key, status: event::Status) -> Option<Message> {
-        pressed_with(key, keyboard::Modifiers::default(), status)
-    }
-
-    fn pressed_with(
-        key: Key,
-        modifiers: keyboard::Modifiers,
-        status: event::Status,
-    ) -> Option<Message> {
-        let event = iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            key: key.clone(),
-            modified_key: key,
-            physical_key: keyboard::key::Physical::Unidentified(
-                keyboard::key::NativeCode::Unidentified,
-            ),
-            location: keyboard::Location::Standard,
-            modifiers,
-            text: None,
-            repeat: false,
-        });
-        key_event(event, status, iced::window::Id::unique())
-    }
-
-    fn op(message: Option<Message>) -> Option<Op> {
-        match message {
-            Some(Message::Op(op)) => Some(op),
-            _ => None,
-        }
-    }
-
-    #[test]
-    fn keys_map_to_ops_unless_the_search_box_used_them() {
-        let free = event::Status::Ignored;
-        assert_eq!(
-            op(pressed(Key::Character("b".into()), free)),
-            Some(Op::Blackout)
-        );
-        assert_eq!(
-            op(pressed(Key::Character("B".into()), free)),
-            Some(Op::Blackout)
-        );
-        assert_eq!(
-            op(pressed(Key::Named(Named::Space), free)),
-            Some(Op::PlayPause)
-        );
-        assert_eq!(
-            op(pressed(Key::Named(Named::PageDown), free)),
-            Some(Op::Next)
-        );
-        assert_eq!(
-            op(pressed(Key::Named(Named::ArrowLeft), free)),
-            Some(Op::Prev)
-        );
-        assert_eq!(op(pressed(Key::Character("q".into()), free)), None);
-        let typing = event::Status::Captured;
-        assert_eq!(op(pressed(Key::Character("b".into()), typing)), None);
-    }
-
-    #[test]
-    fn ctrl_keys_work_while_typing_and_ctrl_blocks_the_plain_keys() {
-        let ctrl = |c: &str, status| {
-            op(pressed_with(
-                Key::Character(c.into()),
-                keyboard::Modifiers::CTRL,
-                status,
-            ))
-        };
-        assert_eq!(ctrl("s", event::Status::Captured), Some(Op::Save));
-        assert_eq!(ctrl("o", event::Status::Ignored), Some(Op::Open));
-        assert_eq!(ctrl("n", event::Status::Captured), Some(Op::New));
-        assert_eq!(ctrl("b", event::Status::Ignored), None);
-        assert_eq!(
-            op(pressed(Key::Character("s".into()), event::Status::Ignored)),
-            None
-        );
-    }
 
     #[test]
     fn ages_are_rough() {
@@ -1123,11 +1105,10 @@ mod tests {
     }
 
     #[test]
-    fn script_key_names_match_the_table() {
-        assert_eq!(op_named("Enter"), Some(Op::Enter));
-        assert_eq!(op_named("pagedown"), Some(Op::Next));
-        assert_eq!(op_named("b"), Some(Op::Blackout));
-        assert_eq!(op_named("Ctrl+S"), Some(Op::Save));
-        assert_eq!(op_named("f13"), None);
+    fn modes_toggle_and_say_their_keys() {
+        assert_eq!(Mode::Live.toggled(), Mode::Plan);
+        assert_eq!(Mode::Plan.toggled(), Mode::Live);
+        assert!(Mode::Live.hints().contains("Ctrl+P plan mode"));
+        assert!(Mode::Plan.hints().contains("PgDn next step"));
     }
 }

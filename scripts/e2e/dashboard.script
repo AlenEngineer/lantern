@@ -6,23 +6,23 @@ shot 1-results
 # Build a plan from searches. With no current step, each add goes first.
 select 1
 wait 300
-press a
+press ctrl+a
 # A Bible reference: the live source's passage tops its group.
 type juan 3:16-17
 wait 800
 select 1
 wait 300
 shot 2-bible-preview
-press a
+press ctrl+a
 type video
 wait 800
 select 1
 wait 300
-press a
+press ctrl+a
 # Start the plan: the video goes on program and plays.
 press pagedown
 wait 1000
-press space
+press ctrl+space
 type image
 wait 800
 select 1
@@ -31,10 +31,10 @@ shot 3-plan-preview-program
 seek 5
 wait 2500
 shot 4-video-ended
-press b
+press ctrl+b
 wait 300
 shot 5-blackout
-press b
+press ctrl+b
 press enter
 wait 800
 shot 6-took-preview

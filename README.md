@@ -63,25 +63,31 @@ cargo run --release -p lantern-app
 ```
 
 Two windows open: the **dashboard** for the operator and the fullscreen
-**stage** for the audience. The dashboard works like a launcher: one search
-box, the results under it, the preview beside them, and what's on stage
-along the bottom. Type to find files and Bible verses, type a reference like
-`jn 3 16-17`, or paste a YouTube link. The dashboard's bottom line lists
-the keys. The e2e scripts drive them through
-the same key table the keyboard uses, but they haven't been tried on a
-physical keyboard yet.
+**stage** for the audience. The dashboard has three panes: the plan on the
+left, a launcher in the middle (search box and results), and the stage on
+the right, with what the audience sees above the preview.
+
+Typing always goes to the search box, so every shortcut is a key that
+doesn't type. Find files and Bible verses, type a reference like
+`jn 3 16-17`, or paste a YouTube link. The launcher's header says which
+mode you're in: **live** while you search and show things on the fly, and
+**plan** while you step through the plan, where the stage pane shows the
+next step instead of the preview. Searching switches to live, stepping
+through the plan to plan, and Ctrl+P switches either way. The bottom line
+lists the keys for the mode you're in.
 
 | Key | Does |
 | --- | --- |
-| Enter | preview the top result, press again to take it to the stage |
+| Enter | preview the top result, press again to show it on stage |
 | Tab | complete a half-typed bang |
 | ↑ ↓ | pick a result (previews it) |
-| A | add the preview to the plan |
-| → / PgDn, ← / PgUp | next / back (stanza, page, or plan step) |
-| Space | play / pause |
-| B | blackout |
-| Esc, / | leave / return to the search box |
-| Ctrl+P | show the plan in the list, or the results again |
+| PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
+| → ← | the same, while the search box is empty |
+| Ctrl+A | add the preview to the plan |
+| Ctrl+Space, play key | play / pause |
+| Ctrl+B | blackout |
+| Esc | clear the search box |
+| Ctrl+P | switch between live and plan mode |
 
 ### Bangs
 
@@ -116,16 +122,15 @@ doesn't depend on the network.
 
 ### Plans
 
-The PLAN panel holds the rundown you build with A. Click its name to rename
-it. **Save** (Ctrl+S) writes it to
+The plan pane holds the rundown you build with Ctrl+A. Click its name to
+rename it. **Save** (Ctrl+S) writes it to
 `~/.local/share/lantern/plans/<name>.json` (or under `$XDG_DATA_HOME`); a
 plan that already has a file saves over it, and a new plan never replaces
-another one with the same name (`sunday-service-2.json`). A dot after the
-name means unsaved changes. **Open** (Ctrl+O) lists the saved plans, newest
+another one with the same name (`sunday-service-2.json`). "unsaved" next
+to the name means it has changes since. **Open** (Ctrl+O) lists the saved plans, newest
 first. **New** (Ctrl+N) starts an empty one. Leaving a plan saves it first if
 it has a file, and otherwise asks before discarding it. The app reopens the
-last plan you opened or saved, and says why if it can't. The Ctrl keys work
-while typing in the search box.
+last plan you opened or saved, and says why if it can't.
 
 ### Configuration
 
@@ -134,6 +139,11 @@ The app reads `~/.config/lantern/config.toml`, or the file named by
 works. Unknown keys are errors, so typos show up on the dashboard.
 
 ```toml
+# Settings go before the first [[folders]] or [[bibles]], or TOML reads
+# them as part of that table.
+brave_api_key = "…"       # optional, for !gi image search
+colors = "~/.config/amane/colors.json"  # optional, see below
+
 [[folders]]
 path = "~/Videos"
 label = "Videos"          # optional
@@ -145,8 +155,6 @@ path = "/media/church/Music"
 lang = "es"               # "es" or "en": which reference names to accept
 path = "~/bibles/rv1909.json"
 name = "RV1909"           # optional
-
-brave_api_key = "…"       # optional, for !gi image search
 ```
 
 `!gi` needs a Brave Search API key: sign up at
@@ -155,7 +163,14 @@ monthly credit, and paste the key into the config. Keep the config file
 private, since the key is billed to you.
 
 Folders and Bibles are indexed in the background at startup. The dashboard
-shows the item count, or the error for a source that failed to load.
+says so while it indexes, and names any source that failed to load.
+
+The dashboard's colours are Material colour roles (`primary`, `surface`,
+`on_surface_variant`…). `colors` names a JSON file of them in the format
+[Matugen](https://github.com/InioX/matugen) templates write, so a desktop
+themed from its wallpaper can theme Lantern too; the file is read again
+whenever it changes. Without it, Lantern uses Material's baseline dark
+palette. [docs/DESIGN.md](docs/DESIGN.md) says which role goes where.
 
 ### Putting the stage on the projector
 

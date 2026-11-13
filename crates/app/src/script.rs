@@ -14,7 +14,7 @@ use lantern_engine::{
 };
 use lantern_source_link::LinkSource;
 
-use crate::dashboard::{self, Op};
+use crate::keys::{self, Op};
 use crate::library::Library;
 use crate::log;
 use crate::youtube::{Downloads, YoutubeVideo};
@@ -103,8 +103,8 @@ pub enum Command {
     /// `select N`: pick result N in the dashboard, counted from 1, which
     /// previews it. Web pages are skipped, as on screen.
     Select(usize),
-    /// `press KEY`: a dashboard key, as if pressed outside the search box
-    /// (see [`dashboard::op_named`] for the names). `press ctrl+s` saves
+    /// `press KEY`: a dashboard key, as if pressed with the search box empty
+    /// (see [`keys::op_named`] for the names). `press ctrl+s` saves
     /// the plan, `ctrl+o` lists saved plans, `ctrl+n` starts a new one.
     Press(String),
     /// `open NAME`: open the saved plan with this title or file name, as if
@@ -193,7 +193,7 @@ impl Command {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
             },
-            "press" if dashboard::op_named(rest).is_some() => Command::Press(rest.to_lowercase()),
+            "press" if keys::op_named(rest).is_some() => Command::Press(rest.to_lowercase()),
             "press" => return Err(format!("press needs a key name, got {rest:?}")),
             "next" => Command::Next,
             "prev" => Command::Prev,
@@ -297,7 +297,7 @@ impl Script {
                 }
                 Command::Select(n) => ui(Ui::Select(*n)),
                 Command::Press(key) => ui(Ui::Press(
-                    dashboard::op_named(key).expect("checked by Command::parse"),
+                    keys::op_named(key).expect("checked by Command::parse"),
                 )),
                 Command::Open(name) => ui(Ui::Open(name.clone())),
                 Command::Rename(name) => ui(Ui::Rename(name.clone())),

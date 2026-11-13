@@ -10,7 +10,10 @@
 
 mod config;
 mod dashboard;
+mod keys;
 mod library;
+mod look;
+mod palette;
 mod plans;
 mod script;
 mod search;
@@ -32,8 +35,10 @@ use lantern_engine::{
     StageEvent, StageFeed, StageState, StepId,
 };
 
-use crate::dashboard::{NAME_BOX, Op, Pane, RESULTS, SEARCH_BOX};
+use crate::dashboard::{Mode, NAME_BOX, RESULTS, SEARCH_BOX};
+use crate::keys::Op;
 use crate::library::Library;
+use crate::palette::Palette;
 use crate::plans::{Plans, Store, Switch};
 use crate::script::{Script, Ui};
 use crate::search::{Live, Search};
@@ -59,7 +64,8 @@ fn main() -> ExitCode {
     };
     let (config, config_status) = config::load(config::env);
     log(config_status.to_string());
-    let config_status = Arc::new(config_status.to_string());
+    let config_status = Arc::new(config_status);
+    let colors = config.colors.clone();
     let engine = Shared(Arc::new(Engine::new()));
     let library = Shared(Library::start(engine.0.clone(), config));
     let downloads = Shared(Downloads::new(stage::cache_dir().join("youtube")));
@@ -74,6 +80,7 @@ fn main() -> ExitCode {
                 engine.clone(),
                 library.clone(),
                 config_status.clone(),
+                colors.clone(),
                 downloads.clone(),
                 store.clone(),
                 script.clone(),
@@ -83,7 +90,8 @@ fn main() -> ExitCode {
         App::view,
     )
     .title(App::title)
-    .theme(|_: &App, _| dashboard::theme())
+    .theme(|app: &App, _| look::theme(app.palette))
+    .default_font(look::UI)
     .subscription(App::subscription)
     .run();
     match result {
@@ -162,7 +170,16 @@ enum Message {
     Pick(ResourceId),
     /// A bang was clicked: start a query with it.
     Bang(String),
-    Op(Op),
+    /// A key, button or script press. `only_if_empty`: it only counts while
+    /// the search box is empty (the arrows, which otherwise move the cursor).
+    Key {
+        op: Op,
+        only_if_empty: bool,
+    },
+    /// Text typed while the search box didn't have focus: it goes there.
+    Type(String),
+    /// Time to see whether the colours file changed.
+    CheckPalette,
     GoTo(StepId),
     Remove(StepId),
     /// A saved plan in the open list was clicked.
@@ -184,16 +201,21 @@ struct App {
     engine: Shared<Engine>,
     library: Shared<Library>,
     /// Which config file was read, or why none was.
-    config_status: Arc<String>,
+    config_status: Arc<config::Status>,
     downloads: Shared<Downloads>,
     plans: Plans,
+    palette: Palette,
+    /// The roles file the palette follows, if the config names one.
+    colors: Option<palette::Source>,
+    /// Why the roles file couldn't be read, while it can't.
+    palette_error: Option<String>,
     script: Option<Script>,
     stage_window: window::Id,
     /// The stage window's mirror, built only from the engine's feed.
     stage: StageState,
     media: Stage,
     search: Search,
-    pane: Pane,
+    mode: Mode,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
 }
@@ -202,7 +224,8 @@ impl App {
     fn boot(
         engine: Shared<Engine>,
         library: Shared<Library>,
-        config_status: Arc<String>,
+        config_status: Arc<config::Status>,
+        colors: Option<PathBuf>,
         downloads: Shared<Downloads>,
         store: Store,
         script: Option<Script>,
@@ -220,20 +243,24 @@ impl App {
         });
         // The stage feed's first message preloads the reopened plan.
         let plans = Plans::start(store, &engine.0);
-        let app = App {
+        let mut app = App {
             media: Stage::new(downloads.0.clone()),
             plans,
             engine,
             library,
             config_status,
+            palette: Palette::default(),
+            colors: colors.map(palette::Source::new),
+            palette_error: None,
             downloads,
             script,
             stage_window,
             stage: StageState::default(),
             search: Search::default(),
-            pane: Pane::default(),
+            mode: Mode::default(),
             scrub: None,
         };
+        app.check_palette();
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
         // window back to tiled when another window maps on its workspace.
         // Then the keyboard goes back to the dashboard, into the search box.
@@ -318,8 +345,18 @@ impl App {
                 }
             }
             Message::Bang(bang) => return self.complete(format!("!{bang} ")),
-            Message::Op(op) => return self.op(op),
+            Message::Key { op, only_if_empty } => {
+                if !(only_if_empty && !self.search.query.is_empty()) {
+                    return self.op(op);
+                }
+            }
+            Message::Type(typed) => {
+                let query = format!("{}{typed}", self.search.query);
+                return self.complete(query);
+            }
+            Message::CheckPalette => self.check_palette(),
             Message::GoTo(step) => {
+                self.mode = Mode::Plan;
                 if let Err(err) = self.engine.0.go_to(step) {
                     log(format!("dashboard: {err}"));
                 }
@@ -339,7 +376,7 @@ impl App {
             }
             Message::ClosePlanMode => {
                 self.plans.cancel();
-                return self.op(Op::FocusSearch);
+                return operation::focus(SEARCH_BOX);
             }
             Message::EditPlanName => {
                 self.plans.edit_name(&self.engine.0);
@@ -348,7 +385,7 @@ impl App {
             Message::PlanName(text) => self.plans.type_name(text),
             Message::SubmitPlanName => {
                 self.plans.submit_name(&self.engine.0);
-                return self.op(Op::FocusSearch);
+                return operation::focus(SEARCH_BOX);
             }
             Message::Scrub(seconds) => self.scrub = Some(seconds),
             Message::Scrubbed => {
@@ -366,7 +403,9 @@ impl App {
 
     /// Index results now, the live sources once typing pauses.
     fn query(&mut self, query: String) -> Task<Message> {
-        self.pane = Pane::Results;
+        if !query.trim().is_empty() {
+            self.mode = Mode::Live;
+        }
         let Some(edit) = self.search.edit(query, &self.engine.0) else {
             return Task::none();
         };
@@ -410,12 +449,13 @@ impl App {
                     return self.preload();
                 }
             }
-            Op::Next => {
-                engine.next();
-                return self.preload();
-            }
-            Op::Prev => {
-                engine.prev();
+            Op::Next | Op::Prev => {
+                self.mode = Mode::Plan;
+                if op == Op::Next {
+                    engine.next();
+                } else {
+                    engine.prev();
+                }
                 return self.preload();
             }
             Op::PlayPause => {
@@ -431,31 +471,16 @@ impl App {
                     return self.scroll_to_pick();
                 }
             }
-            Op::FocusSearch => {
-                return Task::batch([
-                    operation::focus(SEARCH_BOX),
-                    operation::select_all(SEARCH_BOX),
-                ]);
-            }
+            Op::ClearSearch => return self.complete(String::new()),
             Op::Save => {
-                self.pane = Pane::Plan;
                 self.plans.save(&engine);
             }
-            Op::Open => {
-                self.pane = Pane::Plan;
-                self.plans.browse();
-            }
+            Op::Open => self.plans.browse(),
             Op::New => {
-                self.pane = Pane::Plan;
                 let replaced = self.plans.switch(&engine, Switch::New);
                 return self.preload_if(replaced);
             }
-            Op::TogglePlan => {
-                self.pane = match self.pane {
-                    Pane::Results => Pane::Plan,
-                    Pane::Plan => Pane::Results,
-                };
-            }
+            Op::ToggleMode => self.mode = self.mode.toggled(),
             Op::Complete => {
                 if let Some(text) = self.search.completion(&engine) {
                     return self.complete(text);
@@ -463,6 +488,24 @@ impl App {
             }
         }
         Task::none()
+    }
+
+    /// Rereads the colours file if it changed. A file that can't be read
+    /// keeps the colours the app has, and says why.
+    fn check_palette(&mut self) {
+        let Some(changed) = self.colors.as_mut().and_then(palette::Source::changed) else {
+            return;
+        };
+        match changed {
+            Ok(palette) => {
+                self.palette = palette;
+                self.palette_error = None;
+            }
+            Err(err) => {
+                log(format!("colors: {err}"));
+                self.palette_error = Some(format!("Colours: {err}"));
+            }
+        }
     }
 
     /// Puts `text` in the search box, with the cursor after it, and searches it.
@@ -592,8 +635,12 @@ impl App {
         let mut subscriptions = vec![
             Subscription::run_with(self.engine.clone(), stage_feed),
             window::close_events().map(Message::Closed),
-            iced::event::listen_with(dashboard::key_event),
+            iced::event::listen_with(keys::key_event),
         ];
+        if self.colors.is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckPalette));
+        }
         let playing = self
             .stage
             .program
