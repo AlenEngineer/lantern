@@ -168,6 +168,12 @@ first. **New** (Ctrl+N) starts an empty one. Leaving a plan saves it first if
 it has a file, and otherwise asks before discarding it. The app reopens the
 last plan you opened or saved, and says why if it can't.
 
+**Templates.** The ☆ beside a saved plan makes it a template, such as
+"Domingo" with its sections, times, live slots and notes. Templates sit at
+the top of the list; clicking one starts a new, unsaved plan from it, titled
+with today's date ("Domingo 2026-11-15"), with everything but what its live
+slots showed last time. **Edit** opens the template itself.
+
 Before the service starts, Ctrl+A adds to the end of the plan; once it has
 started, right after the current step.
 

@@ -101,6 +101,9 @@ pub struct Plan {
     /// default look. Saved with the plan, so it looks the same anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<Look>,
+    /// An order of service to start new plans from, such as "Domingo".
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub template: bool,
 }
 
 impl Default for Plan {
@@ -118,6 +121,7 @@ impl Plan {
             steps: Vec::new(),
             next_id: 0,
             look: None,
+            template: false,
         }
     }
 
@@ -239,6 +243,22 @@ impl Plan {
         rest.splice(at..at, moving);
         self.steps = rest;
         moved
+    }
+
+    /// A new plan titled `title` from this one as a template: its sections,
+    /// steps, notes, live slots and their searches, lengths and look, with
+    /// nothing a service left in it (what the live slots showed). Not a
+    /// template itself.
+    pub fn from_template(&self, title: impl Into<String>) -> Plan {
+        let mut plan = self.clone();
+        plan.title = title.into();
+        plan.template = false;
+        for step in &mut plan.steps {
+            if let Action::Live { shown, .. } = &mut step.action {
+                shown.clear();
+            }
+        }
+        plan
     }
 
     /// Serializes to pretty JSON.
@@ -372,6 +392,35 @@ mod tests {
         assert_eq!(back.look, plan.look);
         let old = Plan::from_json(r#"{"title": "Old", "steps": []}"#).unwrap();
         assert_eq!(old.look, None);
+    }
+
+    #[test]
+    fn a_template_starts_a_plan_with_its_order_but_not_its_service() {
+        let mut template = Plan::new("Domingo");
+        template.template = true;
+        template.section("Alabanza", Some(Duration::from_secs(15 * 60)));
+        let slot = template.live("Himnos", Some(Query::new("!h")));
+        let welcome = template.show(resource("Bienvenida"));
+        template.get_mut(welcome).unwrap().advance = true;
+        if let Action::Live { shown, .. } = &mut template.get_mut(slot).unwrap().action {
+            shown.push(resource("Himno 436"));
+        }
+        let json = template.to_json();
+        assert!(json.contains("\"template\": true"), "{json}");
+
+        let sunday = template.from_template("Domingo 2026-11-15");
+        assert_eq!(sunday.title, "Domingo 2026-11-15");
+        assert!(!sunday.template);
+        assert_eq!(labels(&sunday), labels(&template));
+        assert!(sunday.get(welcome).unwrap().advance, "settings come along");
+        match &sunday.get(slot).unwrap().action {
+            Action::Live { hint, shown } => {
+                assert_eq!(hint.as_ref().map(|q| q.text.as_str()), Some("!h"));
+                assert!(shown.is_empty(), "last service's shows stay behind");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!Plan::new("Plain").to_json().contains("template"));
     }
 
     #[test]

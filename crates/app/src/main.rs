@@ -259,6 +259,10 @@ enum Message {
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
+    /// Start a new plan from the template saved here.
+    FromTemplate(std::path::PathBuf),
+    /// Make the saved plan here a template, or a plan again.
+    SetTemplate(std::path::PathBuf, bool),
     OpenPlan(PathBuf),
     /// The operator agreed to lose the unsaved plan.
     DiscardPlan,
@@ -549,6 +553,20 @@ impl App {
                         operation::snap_to_end(settings::SCROLL),
                     ]),
                     Ui::Press(op) => self.op(op),
+                    Ui::Template(name) | Ui::FromTemplate(name)
+                        if self.plans.find(&name).is_none() =>
+                    {
+                        log(format!("dashboard: no saved plan named {name}"));
+                        Task::none()
+                    }
+                    Ui::Template(name) => {
+                        let path = self.plans.find(&name).expect("checked above");
+                        self.update(Message::SetTemplate(path, true))
+                    }
+                    Ui::FromTemplate(name) => {
+                        let path = self.plans.find(&name).expect("checked above");
+                        self.update(Message::FromTemplate(path))
+                    }
                     Ui::Open(name) => {
                         let opened = self.plans.open_named(&self.engine.0, &name);
                         self.preload_if(opened)
@@ -734,6 +752,19 @@ impl App {
                     }
                 });
                 return self.preload();
+            }
+            Message::FromTemplate(path) => {
+                let started = self
+                    .plans
+                    .switch(&self.engine.0, Switch::FromTemplate(path));
+                return self.preload_if(started);
+            }
+            Message::SetTemplate(path, template) => {
+                if let Err(err) = self.plans.store().set_template(&path, template) {
+                    log(format!("plans: {}: {err}", path.display()));
+                }
+                // The list shows it in its new group.
+                self.plans.refresh();
             }
             Message::OpenPlan(path) => {
                 let opened = self.plans.switch(&self.engine.0, Switch::Open(path));

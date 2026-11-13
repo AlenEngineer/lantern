@@ -56,4 +56,4 @@ a search it isn't, so stepping feels impossible.
 - **Ready check** before the service: downloads done, files present, kinds
   the stage can show, image links downloaded. *(done; reading every PDF
   ahead is still to do)*
-- **Templates:** start a plan from a saved order of service.
+- **Templates:** start a plan from a saved order of service. *(done)*

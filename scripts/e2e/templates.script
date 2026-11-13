@@ -1,0 +1,16 @@
+# Templates: a saved plan starred as a template shows in its own group;
+# clicking it starts a new, unsaved plan with its order, dated today.
+wait 2500
+rename Domingo
+section 15 Alabanza
+slot !yt
+add fixtures/image.png
+press ctrl+s
+wait 300
+template Domingo
+press ctrl+o
+wait 500
+shot 1-templates-listed
+from-template Domingo
+wait 600
+shot 2-new-from-template
