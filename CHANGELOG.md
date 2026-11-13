@@ -38,6 +38,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   has a book and says how it starts.
 - "Next step · PgDn" was cut off at the bottom of a 720-line window with a
   video on stage: the monitors now shrink to leave the buttons room.
+- A title too long for its place ends in "…" instead of being chopped
+  mid-letter or running off the pane.
 
 ## [0.7.0] - 2026-11-13
 
