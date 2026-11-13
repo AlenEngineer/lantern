@@ -14,6 +14,6 @@ shot 2-running-on-track
 press pagedown
 wait 1500
 shot 3-over
-press ctrl+e
+press ctrl+r
 wait 300
-shot 4-editing
+shot 4-prepare

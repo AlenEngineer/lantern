@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The Prepare view (Ctrl+R): the plan as a document with every name, length
+  and budget a field, and the launcher beside it adding results after the
+  selected step. "Add here" adds sections, live slots, black screens and
+  notes; Alt+↑/↓ moves steps. Sections show whether their steps fit their
+  budget while you plan.
 - Settings in the app (Ctrl+,): media folders, Bibles, the Brave key and the
   colours file. Save writes `config.toml` and applies it without a restart.
 - Plan sections with time budgets. Each section's header shows its time
@@ -15,14 +20,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
   shows the running section's time left and when the service should end.
   Step lengths come from the operator, the source, the loaded video, or a
   guess.
-- Edit mode for the plan (Ctrl+E): rename, set lengths and budgets, move,
-  remove, add sections.
 - YouTube results carry their length (`Resource::DURATION`).
 - `colors` in the config names a Matugen-style JSON file of colour roles;
   the dashboard follows it and recolours when it changes.
 
 ### Changed
 
+- In Run, clicking a plan step lines it up in the preview instead of putting
+  it on stage; Enter shows it and moves the plan there. Editing the plan
+  moves to Prepare.
 - The dashboard has three panes: the plan, a launcher (search and results),
   and the stage with the preview or the plan's next step. A "live" or "plan"
   chip says which mode you're in; Ctrl+P switches.

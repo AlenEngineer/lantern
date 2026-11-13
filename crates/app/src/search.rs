@@ -300,6 +300,11 @@ impl Search {
         self.pick(&id)
     }
 
+    /// The first result that can be shown.
+    pub fn first(&self) -> Option<Arc<Resource>> {
+        self.pickable().next().cloned()
+    }
+
     /// Forgets the pick, e.g. once it went on program.
     pub fn unpick(&mut self) {
         self.picked = None;

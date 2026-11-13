@@ -16,6 +16,7 @@ use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
 use crate::plan_pane::section_status;
+use crate::prepare::View;
 use crate::search::{Group, Live, supported};
 use crate::stage::Content;
 use crate::youtube::YoutubeVideo;
@@ -72,7 +73,7 @@ impl Mode {
             }
             Mode::Plan => {
                 "PgDn next step · PgUp back · ← → slides · Ctrl+Space play · Ctrl+B blackout · \
-                 Ctrl+E edit plan · Ctrl+P live mode"
+                 Ctrl+R prepare · Ctrl+P live mode"
             }
         }
     }
@@ -81,6 +82,13 @@ impl Mode {
 impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
+        if self.view == View::Prepare {
+            return container(self.prepare_view())
+                .width(Fill)
+                .height(Fill)
+                .style(look::window(p))
+                .into();
+        }
         let seam = || {
             container(Space::new())
                 .width(1)
@@ -124,34 +132,43 @@ impl App {
             return centered(self.settings_view(draft));
         }
         let p = self.palette;
+        // Narrow between the two panes: the icon stands for the name here.
         let mut header = row![
             look::icon(Icon::Lantern, 20.0, p.primary),
-            text("Lantern").size(HEADING).font(BOLD).color(p.primary),
+            self.view_switch(),
             chip(p, self.mode.name(), self.mode.tone()),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
         .height(36);
-        if let Some(section) = timing.running() {
-            let (status, tone) = section_status(section);
-            header = header.push(chip(p, &status, tone));
-        }
-        // When the service should end, else how to switch modes.
-        let aside = match timing.end {
-            Some(end) => {
-                let left = end.duration_since(SystemTime::now()).unwrap_or_default();
-                format!("ends in {}", length::rough(left).trim_start_matches('~'))
+        // The running section and when the service should end; before it
+        // starts, how to switch modes.
+        match (timing.running(), timing.end) {
+            (Some(section), end) => {
+                let (mut status, tone) = section_status(section);
+                if let Some(end) = end {
+                    let left = end.duration_since(SystemTime::now()).unwrap_or_default();
+                    status = format!(
+                        "{status} · ends in {}",
+                        length::rough(left).trim_start_matches('~')
+                    );
+                }
+                header = header
+                    .push(chip(p, &status, tone))
+                    .push(Space::new().width(Fill));
             }
-            None => format!("Ctrl+P {} mode", self.mode.toggled().name()),
-        };
+            (None, _) => {
+                let aside = format!("Ctrl+P {} mode", self.mode.toggled().name());
+                header = header
+                    .push(Space::new().width(Fill))
+                    .push(text(aside).size(META).color(p.on_surface_variant));
+            }
+        }
         let gear = button(look::icon(Icon::Settings, 18.0, p.on_surface_variant))
             .padding(8)
             .on_press(op(Op::Settings))
             .style(look::pill(p, Tone::Plain));
-        header = header
-            .push(Space::new().width(Fill))
-            .push(text(aside).size(META).color(p.on_surface_variant))
-            .push(gear);
+        header = header.push(gear);
         let mut body = column![header, self.search_box(), self.results()]
             .spacing(12)
             .height(Fill);
@@ -175,7 +192,7 @@ impl App {
         problems
     }
 
-    fn search_box(&self) -> Element<'_, Message> {
+    pub(crate) fn search_box(&self) -> Element<'_, Message> {
         let p = self.palette;
         // A bang that became the chip; an unknown one stays as text, and
         // the results say no source answers it.
@@ -228,7 +245,7 @@ impl App {
         .into()
     }
 
-    fn results(&self) -> Element<'_, Message> {
+    pub(crate) fn results(&self) -> Element<'_, Message> {
         let p = self.palette;
         let search = &self.search;
         let bangs = search.bangs(&self.engine.0);
@@ -423,17 +440,29 @@ impl App {
     fn preview_section(&self) -> Element<'_, Message> {
         let p = self.palette;
         let scene = self.stage.preview.as_ref();
+        // A selected plan step with nothing to preview (a black screen, a
+        // live slot) still lines up here, ready to show.
+        let cued = self
+            .cued()
+            .filter(|step| !matches!(step.action, Action::Show { .. }));
         let mut section = column![heading(p, "Preview")].spacing(10);
-        match scene {
-            Some(scene) => {
+        match (scene, &cued) {
+            (Some(scene), _) => {
                 let content = self.media.preloaded(&scene.resource.id);
                 section = section
                     .push(self.monitor(scene, content, Some(p.primary)))
                     .push(self.caption(scene));
             }
-            None => section = section.push(empty_monitor(p, "Pick a result to preview it here")),
+            (None, Some(step)) => {
+                section = section
+                    .push(self.step_picture(step))
+                    .push(text(step.label.clone()).size(BODY).font(BOLD));
+            }
+            (None, None) => {
+                section = section.push(empty_monitor(p, "Pick a result to preview it here"))
+            }
         }
-        let has = scene.is_some();
+        let has = scene.is_some() || cued.is_some();
         section
             .push(
                 row![
@@ -461,23 +490,8 @@ impl App {
         let p = self.palette;
         let next = self.engine.0.up_next();
         let mut section = column![heading(p, "Up next")].spacing(10);
-        section = section.push(match next.as_ref().map(|step| &step.action) {
-            Some(Action::Show { resource }) => self.picture(
-                resource
-                    .location
-                    .as_text()
-                    .and_then(|body| body.split("\n\n").next())
-                    .map(str::to_string),
-                0,
-                self.media.preloaded(&resource.id),
-                self.loading_note(resource),
-                Some(p.primary),
-            ),
-            Some(Action::Live { .. }) => empty_monitor(p, "A live slot: search when you get there"),
-            Some(Action::Blank) => empty_monitor(p, "A black screen"),
-            Some(Action::Note | Action::Section { .. }) => {
-                empty_monitor(p, "A note for you, nothing on stage")
-            }
+        section = section.push(match &next {
+            Some(step) => self.step_picture(step),
             None => empty_monitor(p, "The end of the plan"),
         });
         if let Some(step) = &next {
@@ -497,8 +511,43 @@ impl App {
             .into()
     }
 
+    /// A plan step as a monitor: its first slide or picture, or what kind
+    /// of step it is.
+    fn step_picture(&self, step: &Step) -> Element<'_, Message> {
+        let p = self.palette;
+        match &step.action {
+            Action::Show { resource } => self.picture(
+                resource
+                    .location
+                    .as_text()
+                    .and_then(|body| body.split("\n\n").next())
+                    .map(str::to_string),
+                0,
+                self.media.preloaded(&resource.id),
+                self.loading_note(resource),
+                Some(p.primary),
+            ),
+            Action::Live { .. } => empty_monitor(p, "A live slot: search when you get there"),
+            Action::Blank => empty_monitor(p, "A black screen"),
+            Action::Note | Action::Section { .. } => {
+                empty_monitor(p, "A note for you, nothing on stage")
+            }
+        }
+    }
+
+    /// The selected plan step, ready to show (a section stands for its
+    /// first step). Only in the run view.
+    pub(crate) fn cued(&self) -> Option<Step> {
+        if self.view != View::Run {
+            return None;
+        }
+        let plan = self.engine.0.plan();
+        let at = plan.position(self.selected?)?;
+        plan.steps()[at..].iter().find(|s| !s.is_section()).cloned()
+    }
+
     /// A picture of a scene: its image or page, its current slide, or a label.
-    fn monitor<'a>(
+    pub(crate) fn monitor<'a>(
         &'a self,
         scene: &'a Scene,
         content: Option<&'a Content>,
@@ -683,7 +732,7 @@ fn heading(p: Palette, label: &str) -> Element<'_, Message> {
     text(label).size(HEADING).font(BOLD).color(p.primary).into()
 }
 
-pub(crate) fn chip(p: Palette, label: &str, tone: Tone) -> Element<'static, Message> {
+pub(crate) fn chip<'a>(p: Palette, label: &str, tone: Tone) -> Element<'a, Message> {
     container(text(label.to_string()).size(META).font(BOLD))
         .padding([3, 10])
         .style(look::chip(p, tone))
@@ -770,7 +819,7 @@ fn framed<'a>(
         .into()
 }
 
-fn empty_monitor(p: Palette, note: &str) -> Element<'static, Message> {
+pub(crate) fn empty_monitor<'a>(p: Palette, note: &str) -> Element<'a, Message> {
     framed(
         text(note.to_string())
             .size(META)

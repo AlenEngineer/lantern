@@ -256,21 +256,18 @@ impl Engine {
         lock(&self.session).reset();
     }
 
-    /// Adds a resource to the plan right after the current step, turning a
-    /// live find into part of the plan.
-    pub fn add_after_current(&self, resource: &Resource) -> StepId {
-        lock(&self.session).insert_after_current(
-            resource.title.clone(),
-            Action::Show {
-                resource: resource.clone(),
-            },
-        )
+    /// Adds a step to the plan right after `after`, or, without one, after
+    /// the current step (at the end before the service starts).
+    pub fn add(&self, after: Option<StepId>, label: impl Into<String>, action: Action) -> StepId {
+        lock(&self.session).insert_after(after, label, action)
     }
 
-    /// Adds a section right after the current step, or at the end before
-    /// the service starts.
-    pub fn add_section(&self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
-        lock(&self.session).insert_after_current(title, Action::Section { budget })
+    /// Adds a step showing `resource`, titled after it. See [`add`](Self::add).
+    pub fn add_resource(&self, after: Option<StepId>, resource: &Resource) -> StepId {
+        let action = Action::Show {
+            resource: resource.clone(),
+        };
+        self.add(after, resource.title.clone(), action)
     }
 
     // ----- The stage, operator side --------------------------------------
