@@ -311,6 +311,8 @@ impl App {
             Tone::Plain
         };
         let mut meta: Vec<String> = resource.subtitle.iter().cloned().collect();
+        // A passage says how it starts: that's what tells two verses apart.
+        meta.extend(resource.location.as_text().and_then(opening));
         meta.extend(self.download_state(resource));
         if !ok {
             meta.push("can't be shown yet".into());
@@ -343,41 +345,34 @@ impl App {
             .into()
     }
 
-    /// A small picture of `resource`, `width` wide at 16:9: a text's first
-    /// slide in the stage's look, a picture, page or video still once it's
-    /// made, and the kind's icon until then (or when there's none).
+    /// A small picture of `resource`, `width` wide at 16:9: a picture, page
+    /// or video still once it's made, and the kind's icon until then or
+    /// when there's none. A text has the icon: its slide at this size is
+    /// unreadable, so every passage looked the same.
     pub(crate) fn thumbnail<'a>(&self, resource: &Resource, width: f32) -> Element<'a, Message> {
         let p = self.palette;
         let height = width * 9.0 / 16.0;
-        let look = &self.look;
-        let picture: Element<'a, Message> = match resource.location.as_text() {
-            Some(body) => {
-                let first = self
-                    .slides
-                    .slides(body)
-                    .first()
-                    .cloned()
-                    .unwrap_or_default();
-                crate::backdrop(look, fit::fit_text(first, look), crate::Over::Text)
-            }
-            None => match self.thumbs.get(resource) {
-                Some(handle) => container(
-                    image(handle)
-                        .width(Fill)
-                        .height(Fill)
-                        .content_fit(iced::ContentFit::Cover),
-                )
-                .style(|_| container::Style::default().background(Color::BLACK))
-                .into(),
-                None => container(look::icon(
-                    Icon::of(&resource.kind),
-                    height * 0.4,
-                    p.on_surface_variant,
-                ))
-                .center(Fill)
-                .style(look::chip(p, Tone::Plain))
-                .into(),
-            },
+        let made = match resource.location.as_text() {
+            Some(_) => None,
+            None => self.thumbs.get(resource),
+        };
+        let picture: Element<'a, Message> = match made {
+            Some(handle) => container(
+                image(handle)
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(iced::ContentFit::Cover),
+            )
+            .style(|_| container::Style::default().background(Color::BLACK))
+            .into(),
+            None => container(look::icon(
+                Icon::of(&resource.kind),
+                height * 0.4,
+                p.on_surface_variant,
+            ))
+            .center(Fill)
+            .style(look::chip(p, Tone::Plain))
+            .into(),
         };
         container(picture)
             .width(width)
@@ -895,6 +890,20 @@ pub(crate) fn single_line<'a>(content: impl text::IntoFragment<'a>) -> text::Tex
     text(content).wrapping(text::Wrapping::None)
 }
 
+/// How a text starts, on one line, for a row's second line: its first
+/// words, up to about a row's width. `None` for an empty text.
+pub(crate) fn opening(body: &str) -> Option<String> {
+    const WORDS: usize = 90;
+    let line = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.is_empty() {
+        return None;
+    }
+    Some(match line.char_indices().nth(WORDS) {
+        Some((end, _)) => format!("{}…", line[..end].trim_end()),
+        None => line,
+    })
+}
+
 /// A section heading: bold `primary`.
 fn heading(p: Palette, label: &str) -> Element<'_, Message> {
     text(label).size(HEADING).font(BOLD).color(p.primary).into()
@@ -1013,4 +1022,21 @@ pub(crate) fn pill<'a>(
 
 pub(crate) fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
     button.width(Fill)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::opening;
+
+    #[test]
+    fn a_passage_says_how_it_starts_on_one_line() {
+        assert_eq!(opening("  \n "), None);
+        assert_eq!(
+            opening("EN el principio\nera el Verbo").as_deref(),
+            Some("EN el principio era el Verbo")
+        );
+        let long = "amó ".repeat(40);
+        let cut = opening(&long).unwrap();
+        assert!(cut.ends_with('…') && cut.chars().count() <= 91, "{cut}");
+    }
 }

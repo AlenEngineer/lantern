@@ -75,9 +75,9 @@ the result you're looking at right after it, where the pink line says.
 **Plans** at the top of the plan lists your saved plans to open, or starts
 a new one; **Save** shows while the plan has unsaved changes.
 
-Results and plan steps show a thumbnail: a picture, a PDF's first page, a
-video's still (YouTube too), or a passage's first slide as the stage will
-show it.
+Results and plan steps show a thumbnail: a picture, a PDF's first page or a
+video's still (YouTube too). A passage has a book instead, and its result
+says how it starts.
 
 Typing always goes to the search box, so every shortcut is a key that
 doesn't type. Find files and Bible verses, type a reference like
