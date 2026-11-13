@@ -22,6 +22,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   adding to the old one.
 - A step's name or length field kept only the first letter typed after a
   save or open; the rest went to the search box.
+- A length or time field takes only digits and a colon; letters stayed in
+  it unread.
 
 ## [0.7.0] - 2026-11-13
 

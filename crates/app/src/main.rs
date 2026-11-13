@@ -768,6 +768,8 @@ impl App {
                     }
                 })
             }
+            // A length field takes only what a length is made of.
+            Message::Length(_, typed) if !length::typeable(typed.trim()) => {}
             Message::Length(id, typed) => {
                 if let Some(value) = length::parse(&typed) {
                     self.remember(Some(id));
