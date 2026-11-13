@@ -25,7 +25,7 @@ pub const META: f32 = 12.0;
 /// Row and panel corners.
 pub const ROW_RADIUS: f32 = 12.0;
 /// Buttons and chips are pills: iced caps a radius at half the height.
-const PILL_RADIUS: f32 = 999.0;
+pub const PILL_RADIUS: f32 = 999.0;
 /// Standard and compact pill heights.
 pub const PILL: f32 = 36.0;
 pub const PILL_SMALL: f32 = 30.0;

@@ -569,6 +569,7 @@ impl App {
                     .and_then(|body| self.slides.slides(body).first().cloned()),
                 0,
                 self.media.preloaded(&resource.id),
+                self.thumbs.get(resource),
                 self.loading_note(resource),
                 Some(p.primary),
             ),
@@ -619,23 +620,62 @@ impl App {
             self.slides.slide(scene),
             scene.frame(),
             content,
+            self.thumbs.get(&scene.resource),
             loading,
             ring,
         )
     }
 
-    /// What a monitor shows: the slide's text, the loaded image or page,
-    /// that a video is ready, or `loading` until something has loaded.
+    /// What a monitor shows: the slide's text, the loaded image or page, a
+    /// video's `still` (its thumbnail) marked as a video, or `loading`
+    /// until something has loaded, over the still when there is one.
     fn picture<'a>(
         &'a self,
         slide: Option<String>,
         frame: usize,
         content: Option<&'a Content>,
+        still: Option<image::Handle>,
         loading: String,
         ring: Option<Color>,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        // A still with a few words in its corner: which video this is
+        // matters more than that it is one.
+        let marked = |still: &image::Handle, icon: Option<Icon>, words: String| {
+            let mut mark = row![].spacing(4).align_y(Alignment::Center);
+            if let Some(icon) = icon {
+                mark = mark.push(look::icon(icon, 14.0, Color::WHITE));
+            }
+            // White on a dark scrim: it reads over any still.
+            let mark = container(mark.push(single_line(words).size(META).color(Color::WHITE)))
+                .padding([3, 8])
+                .style(|_| container::Style {
+                    background: Some(Color::BLACK.scale_alpha(0.7).into()),
+                    border: iced::Border {
+                        radius: look::PILL_RADIUS.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                });
+            framed_with(
+                stack![
+                    thumb(still),
+                    container(mark)
+                        .align_left(Fill)
+                        .align_bottom(Fill)
+                        .padding(8),
+                ],
+                ring,
+                2,
+            )
+        };
         let picture: Element<'a, Message> = match (slide, content) {
+            (None, Some(Content::Video { .. })) if still.is_some() => {
+                return marked(still.as_ref().unwrap(), Some(Icon::Play), "video".into());
+            }
+            (None, None) if still.is_some() => {
+                return marked(still.as_ref().unwrap(), None, loading);
+            }
             // A slide is a miniature of the stage, edge to edge.
             (Some(body), _) => {
                 let look = &self.look;
