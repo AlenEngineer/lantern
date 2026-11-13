@@ -1356,10 +1356,10 @@ impl App {
                 (_, Some(body)) => (fit::fit_text(body, look).into(), Over::Text),
                 (_, None) => match self.media.content(scene.id) {
                     None => nothing(),
-                    Some(Content::Image(handle)) => (fit(image(handle.clone())), Over::Nothing),
+                    Some(Content::Image(handle)) => (fit(image(handle.clone())), Over::Media),
                     Some(Content::Pages(pages)) => {
                         let page = &pages[scene.frame().min(pages.len() - 1)];
-                        (fit(image(page.clone())), Over::Nothing)
+                        (fit(image(page.clone())), Over::Media)
                     }
                     Some(Content::Video { player, .. }) => (
                         VideoPlayer::new(player)
@@ -1368,7 +1368,7 @@ impl App {
                             .content_fit(ContentFit::Contain)
                             .on_end_of_stream(Message::Ended(scene.id))
                             .into(),
-                        Over::Nothing,
+                        Over::Media,
                     ),
                 },
             };
@@ -1483,6 +1483,9 @@ pub(crate) enum Over {
     Nothing,
     /// Slide text: the image dimmed by the look's `dim`, so it reads.
     Text,
+    /// A picture, page or video: only the colour, so what its shape leaves
+    /// uncovered is plain bars, not strips of the look's image.
+    Media,
 }
 
 /// `content` over the look's background: its colour, and its image
@@ -1494,10 +1497,10 @@ pub(crate) fn backdrop<'a>(
 ) -> Element<'a, Message> {
     let colour = fit::color(look.background);
     let content = container(content).center(Fill);
-    let layers: Element<'a, Message> = match &look.image {
+    let layers: Element<'a, Message> = match look.image.as_ref().filter(|_| over != Over::Media) {
         Some(path) => {
             let dimming = match over {
-                Over::Nothing => 0.0,
+                Over::Nothing | Over::Media => 0.0,
                 Over::Text => look.dimming(),
             };
             let dim = container(Space::new())

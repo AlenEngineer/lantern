@@ -27,6 +27,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Text over the stage's image was hard to read: the image is now dimmed
   under text (**Dim image** in Settings, `dim` in `[stage]`, 60% unless
   set).
+- A video, picture or PDF page that doesn't fill the screen has plain bars
+  in the background colour beside it, not strips of the stage's image.
 
 ## [0.7.0] - 2026-11-13
 
