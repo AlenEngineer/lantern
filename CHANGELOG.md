@@ -41,6 +41,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   look, making it a template, **Duplicate** and **Delete**. It replaces the
   Look button and the step count, so the name has the header's room; "3
   of 7" still shows while the plan runs.
+- Settings show one part at a time, picked from a list (This plan, Stage,
+  Output, Library, Appearance, Keys), and take the stage pane's room as
+  well as the middle's. A key is changed by clicking it and pressing the
+  new one; ↺ puts the usual key back.
 
 ### Fixed
 
