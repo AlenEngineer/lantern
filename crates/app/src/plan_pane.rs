@@ -7,11 +7,13 @@
 
 use std::time::{Duration, SystemTime};
 
-use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Alignment, Element, Fill};
-use lantern_engine::{Action, Basis, Pace, Phase, Plan, Query, SectionTiming, Step, Timing};
+use iced::widget::{Space, button, column, container, row, text, text_input};
+use iced::{Alignment, Element, Fill, Length};
+use lantern_engine::{
+    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, Timing,
+};
 
-use crate::dashboard::{NAME_BOX, chip, op, pill, scrolling, single_line, wide};
+use crate::dashboard::{NAME_BOX, chip, op, pill, scrolling, single_line, unit, wide};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, MEDIUM, META, PILL_SMALL, Tone};
@@ -211,8 +213,19 @@ impl App {
             _ if self.selected == Some(step.id) => Tone::Selected,
             _ => Tone::Plain,
         };
+        // On stage, the row says how far into it the stage is.
+        let progress = match (place, &self.stage.program) {
+            (Place::Current, Some(scene)) if shown => progress(&scene.media, &scene.resource),
+            _ => None,
+        };
         let (marker, note) = match place {
-            Place::Current if shown => ("●".to_string(), Some("on stage".to_string())),
+            Place::Current if shown => (
+                "●".to_string(),
+                Some(match &progress {
+                    Some((how_far, _)) => format!("on stage · {how_far}"),
+                    None => "on stage".to_string(),
+                }),
+            ),
             // A live slot under way says what it searches and showed.
             Place::Current => match &step.action {
                 Action::Live { hint, shown } => (
@@ -254,7 +267,11 @@ impl App {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        button(line)
+        let content: Element<'_, Message> = match progress {
+            Some((_, done)) => column![line, bar(p, done)].spacing(6).into(),
+            None => line.into(),
+        };
+        button(content)
             .width(Fill)
             .padding([8, 10])
             .on_press(Message::Select(step.id))
@@ -351,6 +368,52 @@ pub(crate) fn section_status(section: &SectionTiming) -> (String, Tone) {
         ),
     };
     (text, pace_tone(pace))
+}
+
+/// How far into its media the stage is: "slide 2 of 5", "page 1 of 3",
+/// "1:22 / 4:26", and the share done. `None` for what has no progress (a
+/// still image, a one-slide text, a video of unknown length).
+pub(crate) fn progress(media: &Media, resource: &Resource) -> Option<(String, f32)> {
+    match media {
+        Media::Frames {
+            frame,
+            count: Some(count),
+        } if count.get() > 1 => Some((
+            format!("{} {} of {count}", unit(resource), frame + 1),
+            (frame + 1) as f32 / count.get() as f32,
+        )),
+        Media::Timed(timed) => {
+            let duration = timed.duration.filter(|d| !d.is_zero())?;
+            Some((
+                format!(
+                    "{} / {}",
+                    length::clock(timed.position),
+                    length::clock(duration)
+                ),
+                (timed.position.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// A thin bar, `done` of it filled in the on-stage tint.
+fn bar<'a>(p: Palette, done: f32) -> Element<'a, Message> {
+    let part = |portion: f32| (portion * 1000.0).round().max(1.0) as u16;
+    let fill =
+        |color: iced::Color| move |_: &iced::Theme| container::Style::default().background(color);
+    let filled = container(Space::new())
+        .height(3)
+        .width(Length::FillPortion(part(done)));
+    let rest = container(Space::new())
+        .height(3)
+        .width(Length::FillPortion(part(1.0 - done)));
+    container(row![
+        filled.style(fill(p.tertiary)),
+        rest.style(fill(p.surface_container_highest)),
+    ])
+    .padding(iced::Padding::default().left(24.0))
+    .into()
 }
 
 /// A live slot's line: how much was shown in it, then what it searches,
@@ -543,5 +606,54 @@ mod tests {
     fn a_live_slot_says_what_it_searches_and_what_it_showed() {
         assert_eq!(slot_detail(None, 0), "live search");
         assert_eq!(slot_detail(Some(&Query::new("!yt ")), 2), "2 shown · !yt");
+    }
+
+    #[test]
+    fn progress_says_how_far_in_the_stage_is() {
+        use std::num::NonZeroUsize;
+
+        use lantern_engine::{Kind, Location, Playback, ResourceId, SourceId, Timed};
+
+        let resource = |kind| {
+            let source = SourceId::new("test").unwrap();
+            Resource::new(
+                ResourceId::new(&source, "x"),
+                "X",
+                kind,
+                Location::Inline("a".into()),
+            )
+        };
+        let frames = |frame, count| Media::Frames {
+            frame,
+            count: NonZeroUsize::new(count),
+        };
+        let (text, done) = progress(&frames(1, 4), &resource(Kind::Text)).unwrap();
+        assert_eq!((text.as_str(), done), ("slide 2 of 4", 0.5));
+        let (text, _) = progress(&frames(0, 3), &resource(Kind::Document)).unwrap();
+        assert_eq!(text, "page 1 of 3");
+        assert_eq!(
+            progress(&frames(0, 1), &resource(Kind::Text)),
+            None,
+            "one slide"
+        );
+
+        let timed = |duration| {
+            Media::Timed(Timed {
+                position: Duration::from_secs(82),
+                duration,
+                playback: Playback::Playing,
+            })
+        };
+        let (text, _) = progress(
+            &timed(Some(Duration::from_secs(266))),
+            &resource(Kind::Video),
+        )
+        .unwrap();
+        assert_eq!(text, "1:22 / 4:26");
+        assert_eq!(
+            progress(&timed(None), &resource(Kind::Video)),
+            None,
+            "length unknown"
+        );
     }
 }
