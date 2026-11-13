@@ -47,10 +47,6 @@ impl Store {
         }
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Every `.json` file in the folder, newest first. A missing folder is empty.
     pub fn list(&self) -> io::Result<Vec<Entry>> {
         let files = match std::fs::read_dir(&self.dir) {
