@@ -1,0 +1,24 @@
+# A single click lines a result up in Next; a double click puts it on the
+# stage. The same goes for plan steps. Clicks further apart than a double
+# click stay single.
+wait 2500
+add fixtures/image.png
+add fixtures/pages.pdf
+type !b juan 3:16
+wait 800
+click 1
+wait 600
+click 1
+wait 300
+shot 1-single-clicks-only-preview
+click 1
+click 1
+wait 500
+shot 2-double-click-shows
+press escape
+type e
+wait 800
+step 1
+step 1
+wait 800
+shot 3-double-click-on-a-step

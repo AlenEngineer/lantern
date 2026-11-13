@@ -114,8 +114,12 @@ pub enum Command {
     /// `select N`: pick result N in the dashboard, counted from 1, which
     /// previews it. Web pages are skipped, as on screen.
     Select(usize),
+    /// `click N`: click result N in the dashboard, counted from 1. Twice in
+    /// a row is a double click, which shows it.
+    Click(usize),
     /// `step N`: click entry N of the plan, counted from 1, sections
-    /// included: it becomes the selection.
+    /// included: it becomes the selection. Twice in a row is a double
+    /// click, which shows it.
     Step(usize),
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
     /// (see [`keys::op_named`] for the names). `press ctrl+s` saves
@@ -224,6 +228,10 @@ impl Command {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
             },
+            "click" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Click(n - 1),
+                _ => return Err(format!("click needs a number from 1, got {rest:?}")),
+            },
             "press" if keys::op_named(rest).is_some() => Command::Press(rest.to_lowercase()),
             "press" => return Err(format!("press needs a key name, got {rest:?}")),
             "next" => Command::Next,
@@ -256,6 +264,7 @@ impl Command {
                 | Command::ShowHit(_)
                 | Command::Type(_)
                 | Command::Select(_)
+                | Command::Click(_)
                 | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
@@ -274,6 +283,7 @@ impl Command {
 pub enum Ui {
     Type(String),
     Select(usize),
+    Click(usize),
     Step(usize),
     Path(String),
     Font(String),
@@ -335,6 +345,7 @@ impl Script {
                     ui(Ui::Type(text.clone()));
                 }
                 Command::Select(n) => ui(Ui::Select(*n)),
+                Command::Click(n) => ui(Ui::Click(*n)),
                 Command::Step(n) => ui(Ui::Step(*n)),
                 Command::Path(text) => ui(Ui::Path(text.clone())),
                 Command::Font(text) => ui(Ui::Font(text.clone())),
@@ -399,6 +410,7 @@ impl Script {
             | Command::ShowHit(_)
             | Command::Type(_)
             | Command::Select(_)
+            | Command::Click(_)
             | Command::Step(_)
             | Command::Path(_)
             | Command::Font(_)
@@ -574,7 +586,7 @@ mod tests {
         let downloads = Downloads::new("/nonexistent".into());
         let mut sent = Vec::new();
         let script =
-            "type pa\nselect 2\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
+            "type pa\nselect 2\nclick 3\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
         Script::parse(script, Path::new(""), None).unwrap().run(
             &engine,
             &library,
@@ -587,6 +599,7 @@ mod tests {
             [
                 Ui::Type("pa".into()),
                 Ui::Select(1),
+                Ui::Click(2),
                 Ui::Press(Op::Next),
                 Ui::Press(Op::Save),
                 Ui::Rename("Sunday 3".into()),
