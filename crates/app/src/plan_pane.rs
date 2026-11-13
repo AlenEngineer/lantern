@@ -1,10 +1,9 @@
-//! The dashboard's left pane: the plan. Its steps, grouped under section
+//! The run view's left pane: the plan. Its steps, grouped under section
 //! headers that say how each part of the service is keeping to its time,
 //! and the plan's files (open, save, new).
 //!
-//! In edit mode a click no longer puts a step on stage: names, lengths and
-//! budgets become fields, and steps can be moved, removed, and sections
-//! added.
+//! Clicking a step selects it and lines it up in the preview; Enter puts it
+//! on stage. Editing the plan is the prepare view's job.
 
 use std::time::{Duration, SystemTime};
 
@@ -12,7 +11,7 @@ use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 use lantern_engine::{Action, Basis, Pace, Phase, Plan, SectionTiming, Step, Timing};
 
-use crate::dashboard::{Mode, NAME_BOX, chip, op, pill, scrolling, single_line, wide};
+use crate::dashboard::{NAME_BOX, chip, op, pill, scrolling, single_line, wide};
 use crate::keys::Op;
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, MEDIUM, META, PILL_SMALL, Tone};
@@ -23,7 +22,6 @@ use crate::{App, Message};
 const PLAN_WIDTH: f32 = 280.0;
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
-const LENGTH_FIELD: f32 = 56.0;
 
 /// Where a step is in the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,23 +46,12 @@ impl App {
             plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
         });
         let small = |label, message| wide(pill(p, label, Tone::Plain, PILL_SMALL, Some(message)));
-        let buttons = match (&self.plans.mode, self.editing) {
-            (plans::Mode::Browsing(_), _) => row![small("Cancel", Message::ClosePlanMode)],
-            (_, true) => row![
-                small("Add section", Message::AddSection),
-                wide(pill(
-                    p,
-                    "Done",
-                    Tone::Selected,
-                    PILL_SMALL,
-                    Some(op(Op::ToggleEditing))
-                )),
-            ],
-            (_, false) => row![
+        let buttons = match &self.plans.mode {
+            plans::Mode::Browsing(_) => row![small("Cancel", Message::ClosePlanMode)],
+            _ => row![
                 small("Open", op(Op::Open)),
                 small("Save", op(Op::Save)),
                 small("New", op(Op::New)),
-                small("Edit", op(Op::ToggleEditing)),
             ],
         };
         pane.push(buttons.spacing(4))
@@ -182,13 +169,6 @@ impl App {
     /// it's doing. Clicking it goes to its first step.
     fn section_row(&self, step: &Step, timing: Option<&SectionTiming>) -> Element<'_, Message> {
         let p = self.palette;
-        if self.editing {
-            let budget = match step.action {
-                Action::Section { budget } => budget,
-                _ => None,
-            };
-            return self.edit_row(step, budget, "min".into(), true);
-        }
         let (time, pace) = timing.map_or((String::new(), None), |t| (section_time(t), t.pace()));
         let mut line = row![
             container(
@@ -209,17 +189,13 @@ impl App {
         button(line)
             .width(Fill)
             .padding([10, 10])
-            .on_press(Message::GoTo(step.id))
+            .on_press(Message::Select(step.id))
             .style(look::row(p, Tone::Plain))
             .into()
     }
 
     fn step_row(&self, number: usize, step: &Step, place: Place) -> Element<'_, Message> {
         let p = self.palette;
-        if self.editing {
-            let shown = self.step_length(step);
-            return self.edit_row(step, step.estimate, shown, false);
-        }
         // The current step is on stage unless something off the plan was
         // shown since.
         let shown = match &step.action {
@@ -230,9 +206,9 @@ impl App {
                 .is_some_and(|scene| scene.resource.id == resource.id),
             _ => false,
         };
-        let tone = match (place, self.mode) {
-            (Place::Current, _) if shown => Tone::Live,
-            (Place::Next, Mode::Plan) => Tone::Selected,
+        let tone = match place {
+            Place::Current if shown => Tone::Live,
+            _ if self.selected == Some(step.id) => Tone::Selected,
             _ => Tone::Plain,
         };
         let (marker, note) = match place {
@@ -274,7 +250,7 @@ impl App {
         button(line)
             .width(Fill)
             .padding([8, 10])
-            .on_press(Message::GoTo(step.id))
+            .on_press(Message::Select(step.id))
             .style(look::row(p, tone))
             .into()
     }
@@ -288,52 +264,6 @@ impl App {
             Basis::Guess => length::rough(estimate.length),
             Basis::Set | Basis::Known => length::clock(estimate.length),
         }
-    }
-
-    /// A step or section in edit mode: its name and length as fields, and
-    /// buttons to move it up or down or take it out. `hint` is the length
-    /// field's placeholder: the length the plan uses when none is typed.
-    fn edit_row(
-        &self,
-        step: &Step,
-        current: Option<Duration>,
-        hint: String,
-        section: bool,
-    ) -> Element<'_, Message> {
-        let p = self.palette;
-        let id = step.id;
-        let field = |value: &str, placeholder: &str| {
-            text_input(placeholder, value)
-                .size(BODY)
-                .padding([6, 8])
-                .style(look::input(p))
-        };
-        let length = self
-            .drafts
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| current.map(length::typed).unwrap_or_default());
-        let small = |label: &'static str, message| {
-            button(text(label).size(META).color(p.on_surface_variant))
-                .padding([4, 6])
-                .on_press(message)
-                .style(look::row(p, Tone::Plain))
-        };
-        let name = field(&step.label, if section { "Section" } else { "Step" })
-            .on_input(move |label| Message::Rename(id, label))
-            .font(if section { BOLD } else { MEDIUM });
-        row![
-            name.width(Fill),
-            field(&length, &hint)
-                .on_input(move |text| Message::Length(id, text))
-                .width(LENGTH_FIELD),
-            small("↑", Message::Move(id, -1)),
-            small("↓", Message::Move(id, 1)),
-            small("✕", Message::Remove(id)),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into()
     }
 
     fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
@@ -380,6 +310,7 @@ fn section_time(section: &SectionTiming) -> String {
         None => time,
     };
     match section.phase {
+        Phase::Coming { planned } if planned.is_zero() => of("empty".into()),
         Phase::Coming { planned } => of(length::rough(planned)),
         Phase::Running { elapsed, .. } => of(length::clock(elapsed)),
         Phase::Done { took: Some(took) } => format!("took {}", length::clock(took)),
@@ -503,7 +434,7 @@ fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch) -> Element<'a, Message>
 }
 
 /// "1 step", "3 steps".
-fn count(n: usize, noun: &str) -> String {
+pub(crate) fn count(n: usize, noun: &str) -> String {
     match n {
         1 => format!("1 {noun}"),
         n => format!("{n} {noun}s"),

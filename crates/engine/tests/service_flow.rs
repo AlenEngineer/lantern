@@ -226,7 +226,7 @@ fn live_finds_can_join_the_plan() {
     engine.load_plan(plan);
 
     engine.next();
-    let added = engine.add_after_current(&image("Pastor's request"));
+    let added = engine.add_resource(None, &image("Pastor's request"));
     assert_eq!(engine.up_next().unwrap().id, added);
     assert_eq!(engine.next(), Moved::Step(added));
     assert!(engine.go_to(added).is_ok());

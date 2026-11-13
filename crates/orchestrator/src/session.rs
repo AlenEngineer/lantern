@@ -143,11 +143,20 @@ impl Session {
         });
     }
 
-    /// Inserts a step right after the current one, or at the end before
-    /// the session starts, so a plan built ahead of time keeps its order.
-    /// Handy for turning something found live into part of the plan.
-    pub fn insert_after_current(&mut self, label: impl Into<String>, action: Action) -> StepId {
-        let index = self.current_index().map_or(self.plan.len(), |i| i + 1);
+    /// Inserts a step right after `after`. Without one (or if it's gone),
+    /// right after the current step, or at the end before the session
+    /// starts, so a plan built ahead of time keeps its order. Handy for
+    /// turning something found live into part of the plan.
+    pub fn insert_after(
+        &mut self,
+        after: Option<StepId>,
+        label: impl Into<String>,
+        action: Action,
+    ) -> StepId {
+        let index = after
+            .and_then(|id| self.plan.position(id))
+            .or(self.current_index())
+            .map_or(self.plan.len(), |i| i + 1);
         self.plan.insert(index, label, action)
     }
 
@@ -260,7 +269,8 @@ mod tests {
     fn insert_after_current() {
         let mut s = session();
         s.next(); // Welcome
-        s.insert_after_current(
+        s.insert_after(
+            None,
             "Announcement",
             Action::Show {
                 resource: resource("Ad"),
@@ -298,8 +308,15 @@ mod tests {
     #[test]
     fn before_the_start_new_steps_go_at_the_end() {
         let mut s = session();
-        s.insert_after_current("Benediction", Action::Note);
+        s.insert_after(None, "Benediction", Action::Note);
         let last = s.plan().steps().last().unwrap();
         assert_eq!(last.label, "Benediction");
+        let welcome = s.plan().steps()[0].id;
+        s.insert_after(Some(welcome), "Intro", Action::Note);
+        assert_eq!(
+            s.plan().steps()[1].label,
+            "Intro",
+            "right after the one asked for"
+        );
     }
 }

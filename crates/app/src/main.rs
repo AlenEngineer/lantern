@@ -17,6 +17,7 @@ mod look;
 mod palette;
 mod plan_pane;
 mod plans;
+mod prepare;
 mod script;
 mod search;
 mod settings;
@@ -45,6 +46,7 @@ use crate::keys::Op;
 use crate::library::Library;
 use crate::palette::Palette;
 use crate::plans::{Plans, Store, Switch};
+use crate::prepare::View;
 use crate::script::{Script, Ui};
 use crate::search::{Live, Search};
 use crate::stage::{Content, Loaded, Stage};
@@ -184,10 +186,14 @@ enum Message {
     Type(String),
     /// Time to see whether the colours file changed.
     CheckPalette,
-    GoTo(StepId),
+    /// A plan step was clicked: it becomes the selection, where new steps
+    /// go, and in the run view it's lined up in the preview.
+    Select(StepId),
     Remove(StepId),
-    /// Adds a section after the current step, or at the end.
-    AddSection,
+    /// Adds a section, live slot, black screen or note after the selection.
+    AddStep(prepare::NewStep),
+    /// The plan's new name, typed in the prepare view.
+    PlanTitle(String),
     /// A step's or section's new name.
     Rename(StepId, String),
     /// What was typed in a step's length or a section's budget.
@@ -237,8 +243,11 @@ struct App {
     media: Stage,
     search: Search,
     mode: Mode,
-    /// Edit mode, in the plan pane.
-    editing: bool,
+    /// Run or prepare.
+    view: View,
+    /// The selected plan step: where new steps go, and in the run view
+    /// what Enter puts on stage.
+    selected: Option<StepId>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
     /// Where the timeline is being dragged, until it is let go.
@@ -286,7 +295,8 @@ impl App {
             stage: StageState::default(),
             search: Search::default(),
             mode: Mode::default(),
-            editing: false,
+            view: View::default(),
+            selected: None,
             drafts: HashMap::new(),
             scrub: None,
         };
@@ -351,6 +361,13 @@ impl App {
                             Task::none()
                         }
                     },
+                    Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
+                        Some(step) => self.update(Message::Select(step.id)),
+                        None => {
+                            log(format!("dashboard: no plan step {}", n + 1));
+                            Task::none()
+                        }
+                    },
                     Ui::Press(op) => self.op(op),
                     Ui::Open(name) => {
                         let opened = self.plans.open_named(&self.engine.0, &name);
@@ -397,22 +414,28 @@ impl App {
                 }
             }
             Message::SaveSettings => self.save_settings(),
-            Message::GoTo(step) => {
-                self.mode = Mode::Plan;
-                if let Err(err) = self.engine.0.go_to(step) {
-                    log(format!("dashboard: {err}"));
+            Message::Select(step) => {
+                self.selected = Some(step);
+                if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
+                    self.search.unpick();
+                    self.engine.0.preview(Arc::new(resource));
+                } else if self.view == View::Run {
+                    self.engine.0.clear_preview();
                 }
                 return self.preload();
             }
             Message::Remove(step) => {
+                if self.selected == Some(step) {
+                    self.selected = None;
+                }
                 self.engine.0.edit_plan(|plan| plan.remove(step));
                 return self.preload();
             }
-            Message::AddSection => {
-                self.engine
-                    .0
-                    .add_section("New section", Some(Duration::from_secs(15 * 60)));
+            Message::AddStep(new) => {
+                let (label, action) = new.step();
+                self.selected = Some(self.engine.0.add(self.selected, label, action));
             }
+            Message::PlanTitle(title) => self.engine.0.edit_plan(|plan| plan.title = title),
             Message::Rename(id, label) => self.engine.0.edit_plan(|plan| {
                 if let Some(step) = plan.get_mut(id) {
                     step.label = label;
@@ -471,6 +494,10 @@ impl App {
     fn query(&mut self, query: String) -> Task<Message> {
         if !query.trim().is_empty() {
             self.mode = Mode::Live;
+            // Running, a new search takes over Enter from the selected step.
+            if self.view == View::Run {
+                self.selected = None;
+            }
         }
         let had_bang = self.search.bang().is_some();
         let edit = self.search.edit(query, &self.engine.0);
@@ -505,6 +532,13 @@ impl App {
                 if let Some(stream) = self.search.start_on_enter(&engine) {
                     return live_search(stream);
                 }
+                // Preparing, Enter adds the result to the plan; running, it
+                // shows the plan step lined up in the preview.
+                match self.view {
+                    View::Prepare => return self.op(Op::AddToPlan),
+                    View::Run if self.cued().is_some() => return self.op(Op::Take),
+                    View::Run => {}
+                }
                 if self.search.picked().is_none() {
                     if let Some(first) = self.search.pick_nth(0) {
                         engine.preview(first);
@@ -518,13 +552,37 @@ impl App {
                 return self.op(Op::Take);
             }
             Op::Take => {
+                // The selected plan step, if it's what's lined up: going to
+                // it keeps the plan, the timer and PgDn in step.
+                let preview = engine.stage().preview;
+                let cued = self.cued().filter(|step| match (&step.action, &preview) {
+                    (Action::Show { resource }, Some(scene)) => resource.id == scene.resource.id,
+                    (_, Some(_)) => false,
+                    (action, None) => !matches!(action, Action::Show { .. }),
+                });
+                if let Some(step) = cued {
+                    self.mode = Mode::Plan;
+                    self.selected = None;
+                    if let Err(err) = engine.go_to(step.id) {
+                        log(format!("dashboard: {err}"));
+                    }
+                    return self.preload();
+                }
                 if engine.take() {
                     self.search.unpick();
                 }
             }
             Op::AddToPlan => {
-                if let Some(scene) = engine.stage().preview {
-                    engine.add_after_current(&scene.resource);
+                let resource = match self.view {
+                    View::Prepare => self
+                        .search
+                        .picked()
+                        .cloned()
+                        .or_else(|| self.search.first()),
+                    View::Run => engine.stage().preview.map(|scene| scene.resource.clone()),
+                };
+                if let Some(resource) = resource {
+                    self.selected = Some(engine.add_resource(self.selected, &resource));
                     return self.preload();
                 }
             }
@@ -578,9 +636,16 @@ impl App {
                 return self.preload_if(replaced);
             }
             Op::ToggleMode => self.mode = self.mode.toggled(),
-            Op::ToggleEditing => {
-                self.editing = !self.editing;
+            Op::ToggleView => {
+                self.view = self.view.toggled();
                 self.drafts.clear();
+                return operation::focus(SEARCH_BOX);
+            }
+            Op::MoveUp | Op::MoveDown => {
+                if let (View::Prepare, Some(step)) = (self.view, self.selected) {
+                    let by = if op == Op::MoveUp { -1 } else { 1 };
+                    return self.update(Message::Move(step, by));
+                }
             }
             Op::Complete => {
                 if let Some(text) = self.search.completion(&engine) {

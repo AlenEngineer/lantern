@@ -106,6 +106,9 @@ pub enum Command {
     /// `select N`: pick result N in the dashboard, counted from 1, which
     /// previews it. Web pages are skipped, as on screen.
     Select(usize),
+    /// `step N`: click entry N of the plan, counted from 1, sections
+    /// included: it becomes the selection.
+    Step(usize),
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
     /// (see [`keys::op_named`] for the names). `press ctrl+s` saves
     /// the plan, `ctrl+o` lists saved plans, `ctrl+n` starts a new one.
@@ -198,6 +201,10 @@ impl Command {
             "open" | "rename" if rest.is_empty() => return Err(format!("{word} needs a name")),
             "open" => Command::Open(rest.to_string()),
             "rename" => Command::Rename(rest.to_string()),
+            "step" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Step(n - 1),
+                _ => return Err(format!("step needs a number from 1, got {rest:?}")),
+            },
             "select" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
@@ -231,6 +238,7 @@ impl Command {
                 | Command::ShowHit(_)
                 | Command::Type(_)
                 | Command::Select(_)
+                | Command::Step(_)
                 | Command::Press(_)
                 | Command::Open(_)
                 | Command::Rename(_)
@@ -248,6 +256,7 @@ impl Command {
 pub enum Ui {
     Type(String),
     Select(usize),
+    Step(usize),
     Press(Op),
     Open(String),
     Rename(String),
@@ -306,6 +315,7 @@ impl Script {
                     ui(Ui::Type(text.clone()));
                 }
                 Command::Select(n) => ui(Ui::Select(*n)),
+                Command::Step(n) => ui(Ui::Step(*n)),
                 Command::Press(key) => ui(Ui::Press(
                     keys::op_named(key).expect("checked by Command::parse"),
                 )),
@@ -326,7 +336,7 @@ impl Script {
                 }
             }
             Command::Hymn => {
-                let step = engine.add_after_current(&hymn());
+                let step = engine.add_resource(None, &hymn());
                 if let Err(err) = engine.go_to(step) {
                     log(format!("script: hymn: {err}"));
                 }
@@ -335,10 +345,13 @@ impl Script {
             Command::Show(target) => engine.show_now(Arc::new(target.resource(downloads))),
             Command::Preview(target) => engine.preview(Arc::new(target.resource(downloads))),
             Command::Add(target) => {
-                engine.add_after_current(&target.resource(downloads));
+                engine.add_resource(None, &target.resource(downloads));
             }
             Command::Section(budget, title) => {
-                engine.add_section(title.clone(), Some(*budget));
+                let action = lantern_engine::Action::Section {
+                    budget: Some(*budget),
+                };
+                engine.add(None, title.clone(), action);
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
             Command::Play => log(format!("script: play -> {}", engine.play())),
@@ -359,6 +372,7 @@ impl Script {
             | Command::ShowHit(_)
             | Command::Type(_)
             | Command::Select(_)
+            | Command::Step(_)
             | Command::Press(_)
             | Command::Open(_)
             | Command::Rename(_) => {}

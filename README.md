@@ -67,6 +67,14 @@ Two windows open: the **dashboard** for the operator and the fullscreen
 left, a launcher in the middle (search box and results), and the stage on
 the right, with what the audience sees above the preview.
 
+The window has two views, switched with **Prepare | Run** at the top or
+Ctrl+R. **Prepare** is for building the plan ahead of time: the plan as a
+document on the left, with every name, length and budget a field, and the
+launcher on the right, where Enter *adds* the result after the selected
+step instead of showing it. **Add here** adds a section, live slot, black
+screen or note; Alt+↑/↓ moves the selected step. Nothing in Prepare reaches
+the projector. **Run** is for the service itself, described below.
+
 Typing always goes to the search box, so every shortcut is a key that
 doesn't type. Find files and Bible verses, type a reference like
 `jn 3 16-17`, or paste a YouTube link. The launcher's header says which
@@ -89,7 +97,8 @@ lists the keys for the mode you're in.
 | Esc | clear the search box |
 | Backspace | in an empty box, take the bang chip away |
 | Ctrl+P | switch between live and plan mode |
-| Ctrl+E | edit the plan: names, lengths, budgets, sections |
+| Ctrl+R | switch between Prepare and Run |
+| Alt+↑ ↓ | move the selected step (Prepare) |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
 ### Bangs
@@ -141,11 +150,14 @@ last plan you opened or saved, and says why if it can't.
 Before the service starts, Ctrl+A adds to the end of the plan; once it has
 started, right after the current step.
 
+In Run, clicking a step selects it and lines it up in the preview; Enter
+(or **Show now**) puts it on stage and moves the plan there, so nothing
+reaches the projector from a stray click.
+
 **Sections and time.** Split the plan into parts with a time budget, such as
-"Alabanza, 15 min" and "Palabra, 30 min". **Edit** (Ctrl+E) turns the plan
-into fields: rename steps, type a length (`4` is four minutes, `4:30` four
-and a half), give a section its budget, move steps up and down, remove
-them, and **Add section**. Once a section starts, its header shows the time
+"Alabanza, 15 min" and "Palabra, 30 min", in Prepare: type a length (`4` is
+four minutes, `4:30` four and a half) or a section's budget, and each
+section says while you plan whether its steps fit. Once a section starts, its header shows the time
 against its budget, and the launcher's header shows how much is left, or how
 far over it is, plus when the service should end. It warns, it never stops
 you: "on track", "tight" when it should end in the last minute or tenth of

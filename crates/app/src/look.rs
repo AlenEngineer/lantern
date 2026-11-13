@@ -215,7 +215,7 @@ pub fn timeline(p: Palette) -> impl Fn(&iced::Theme, slider::Status) -> slider::
 }
 
 /// An icon in `color`.
-pub fn icon(icon: Icon, size: f32, color: Color) -> svg::Svg<'static> {
+pub fn icon<'a>(icon: Icon, size: f32, color: Color) -> svg::Svg<'a> {
     svg(svg::Handle::from_memory(icon.svg()))
         .width(size)
         .height(size)

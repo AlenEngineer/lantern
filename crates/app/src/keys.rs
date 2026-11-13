@@ -40,8 +40,11 @@ pub enum Op {
     ToggleMode,
     /// Completes a half-typed bang (`!y` → `!yt `).
     Complete,
-    /// Edit mode on or off: clicks in the plan edit it instead of running it.
-    ToggleEditing,
+    /// Switches between the run and prepare views.
+    ToggleView,
+    /// Moves the selected step up or down (prepare view).
+    MoveUp,
+    MoveDown,
     /// Takes the bang chip off the search, so it asks every source again.
     DropBang,
     /// Opens or closes the settings.
@@ -52,6 +55,7 @@ enum Bind {
     Named(Named),
     Ctrl(char),
     CtrlNamed(Named),
+    Alt(Named),
 }
 
 /// When a key counts while the search box has focus, which is nearly always.
@@ -132,7 +136,19 @@ const KEYS: &[(&str, Bind, Op, When)] = &[
     ("ctrl+o", Bind::Ctrl('o'), Op::Open, When::Always),
     ("ctrl+n", Bind::Ctrl('n'), Op::New, When::Always),
     ("ctrl+p", Bind::Ctrl('p'), Op::ToggleMode, When::Always),
-    ("ctrl+e", Bind::Ctrl('e'), Op::ToggleEditing, When::Always),
+    ("ctrl+r", Bind::Ctrl('r'), Op::ToggleView, When::Always),
+    (
+        "alt+up",
+        Bind::Alt(Named::ArrowUp),
+        Op::MoveUp,
+        When::Always,
+    ),
+    (
+        "alt+down",
+        Bind::Alt(Named::ArrowDown),
+        Op::MoveDown,
+        When::Always,
+    ),
     ("ctrl+,", Bind::Ctrl(','), Op::Settings, When::Always),
 ];
 
@@ -143,10 +159,11 @@ pub fn op_named(name: &str) -> Option<Op> {
         .map(|(_, _, op, _)| *op)
 }
 
-fn lookup(key: &Key, ctrl: bool) -> Option<(Op, When)> {
+fn lookup(key: &Key, ctrl: bool, alt: bool) -> Option<(Op, When)> {
     let is = |pressed: &str, c: char| pressed.to_lowercase().chars().eq(std::iter::once(c));
     KEYS.iter()
         .find(|(_, bind, ..)| match (bind, key.as_ref()) {
+            _ if alt => matches!((bind, key.as_ref()), (Bind::Alt(named), Key::Named(pressed)) if *named == pressed),
             (Bind::Ctrl(c), Key::Character(pressed)) => ctrl && is(pressed, *c),
             (Bind::CtrlNamed(named), Key::Named(pressed)) => ctrl && *named == pressed,
             (Bind::CtrlNamed(Named::Space), Key::Character(" ")) => ctrl,
@@ -176,10 +193,8 @@ pub fn key_event(
     };
     let used = status == event::Status::Captured;
     let ctrl = modifiers.command();
-    if modifiers.alt() {
-        return None;
-    }
-    if let Some((op, when)) = lookup(&key, ctrl) {
+    let alt = modifiers.alt();
+    if let Some((op, when)) = lookup(&key, ctrl, alt) {
         if when == When::Unused && used {
             return None;
         }
@@ -190,7 +205,7 @@ pub fn key_event(
         });
     }
     let typed = text.filter(|text| !text.chars().any(char::is_control))?;
-    (!used && !ctrl).then(|| Message::Type(typed.to_string()))
+    (!used && !ctrl && !alt).then(|| Message::Type(typed.to_string()))
 }
 
 #[cfg(test)]
@@ -239,6 +254,15 @@ mod tests {
             op(press(Key::Named(Named::Space), CTRL, TYPING)),
             Some((Op::PlayPause, false))
         );
+        assert_eq!(
+            op(press(
+                Key::Named(Named::ArrowUp),
+                keyboard::Modifiers::ALT,
+                TYPING
+            )),
+            Some((Op::MoveUp, false))
+        );
+        assert_eq!(ctrl("r"), Some((Op::ToggleView, false)));
     }
 
     #[test]
