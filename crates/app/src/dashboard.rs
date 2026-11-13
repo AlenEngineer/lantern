@@ -493,6 +493,9 @@ impl App {
         let blackout = self.stage.blackout;
         let state = match (scene, blackout) {
             (_, true) => chip(p, "blackout", Tone::Danger),
+            (Some(_), false) if self.off_plan().is_some() => {
+                chip(p, "● live · off the plan", Tone::Live)
+            }
             (Some(_), false) => chip(p, "● live", Tone::Live),
             // Without a program the projector still shows the look's image.
             (None, false) if self.look.image.is_some() => chip(p, "background", Tone::Plain),
@@ -620,6 +623,28 @@ impl App {
 
     fn next_section(&self) -> Vec<Element<'_, Message>> {
         let p = self.palette;
+        // Off the plan, what matters is the way back: the step the plan is
+        // waiting at, and a button that shows it again.
+        if let Some(step) = self.off_plan() {
+            let (label, moves) = self.next_label(self.engine.0.up_next().is_some());
+            return vec![
+                heading(p, "The plan is waiting"),
+                self.step_picture(&step),
+                single_line(step.label.clone()).size(BODY).font(BOLD).into(),
+                row![
+                    wide(pill(
+                        p,
+                        "Back to the plan",
+                        Tone::Selected,
+                        PILL,
+                        Some(Message::Resume)
+                    )),
+                    pill(p, &label, Tone::Plain, PILL, moves.then_some(op(Op::Next))),
+                ]
+                .spacing(4)
+                .into(),
+            ];
+        }
         let next = self.engine.0.up_next();
         let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Up next")];
         section.push(match &next {
@@ -642,6 +667,19 @@ impl App {
             .into(),
         );
         section
+    }
+
+    /// The plan's current step, while the stage shows something that isn't
+    /// it: a result shown on the fly in the middle of the plan. A live slot
+    /// or a note has nothing of its own on stage, so it's never off.
+    pub(crate) fn off_plan(&self) -> Option<Step> {
+        let step = self.engine.0.current_step()?;
+        let scene = self.stage.program.as_ref()?;
+        match &step.action {
+            Action::Show { resource } if resource.id != scene.resource.id => Some(step),
+            Action::Blank => Some(step),
+            _ => None,
+        }
     }
 
     /// What PgDn does now, for its button, and whether it does anything:

@@ -63,6 +63,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   one key mid-service took the plan away.
 - The Next button says "Next slide · PgDn" while PgDn steps through what's
   on stage, and works then even at the end of the plan.
+- With something shown on the fly in the middle of the plan, On stage says
+  "off the plan", the step says it's waiting, and **Back to the plan**
+  shows it again.
 
 ## [0.7.0] - 2026-11-13
 

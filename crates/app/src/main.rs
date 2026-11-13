@@ -259,6 +259,8 @@ enum Message {
     CheckIndex,
     /// Show slide (verse, stanza, page) N of what's on stage.
     GotoFrame(usize),
+    /// Back to the plan: shows its current step again.
+    Resume,
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
@@ -698,6 +700,12 @@ impl App {
             }
             Message::SaveSettings => self.save_settings(),
             Message::CheckOutputs => self.check_outputs(),
+            Message::Resume => {
+                self.engine.0.resume();
+                self.engine.0.clear_preview();
+                self.selected = None;
+                return Task::batch([self.preload(), self.arrive()]);
+            }
             Message::GotoFrame(frame) => {
                 self.engine.0.goto_frame(frame);
                 self.stepping = true;
