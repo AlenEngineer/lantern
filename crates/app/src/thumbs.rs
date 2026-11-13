@@ -60,7 +60,7 @@ impl Source {
 
     fn make(&self) -> Result<Handle, String> {
         match self {
-            Source::Image(path) => shrink(image::open(path).map_err(|e| e.to_string())?),
+            Source::Image(path) => shrink(open(path)?),
             Source::Pdf(path) => first_page(path),
             Source::Video(path) => video_still(path),
             Source::Links(links) => {
@@ -74,10 +74,7 @@ impl Source {
                     } else {
                         stage::download(link, &path)
                     };
-                    match fetched
-                        .and_then(|()| image::open(&path).map_err(|e| e.to_string()))
-                        .and_then(shrink)
-                    {
+                    match fetched.and_then(|()| open(&path)).and_then(shrink) {
                         Ok(handle) => return Ok(handle),
                         Err(why) => failures.push(why),
                     }
@@ -86,6 +83,16 @@ impl Source {
             }
         }
     }
+}
+
+/// The picture at `path`, its format read from its first bytes: the
+/// download cache names files by a hash, with no extension to go by.
+fn open(path: &Path) -> Result<image::DynamicImage, String> {
+    image::ImageReader::open(path)
+        .and_then(|reader| reader.with_guessed_format())
+        .map_err(|e| e.to_string())?
+        .decode()
+        .map_err(|e| e.to_string())
 }
 
 /// `picture` scaled to fit the thumbnail size.
@@ -116,7 +123,7 @@ fn first_page(path: &Path) -> Result<Handle, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    shrink(image::open(out.with_extension("png")).map_err(|e| e.to_string())?)
+    shrink(open(&out.with_extension("png"))?)
 }
 
 /// A frame a little way into a video, so it isn't a black fade-in.
@@ -215,6 +222,19 @@ mod tests {
     fn resource(kind: Kind, location: Location) -> Resource {
         let source = SourceId::new("test").unwrap();
         Resource::new(ResourceId::new(&source, "x"), "X", kind, location)
+    }
+
+    #[test]
+    fn a_cached_picture_opens_without_an_extension() {
+        let dir = std::env::temp_dir().join(format!("lantern-thumbs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("88c814cb25463dc3");
+        image::RgbaImage::new(4, 3)
+            .save_with_format(&path, image::ImageFormat::Png)
+            .unwrap();
+        let picture = open(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(picture.map(|p| (p.width(), p.height())), Ok((4, 3)));
     }
 
     #[test]
