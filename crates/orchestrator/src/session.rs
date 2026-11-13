@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::SystemTime;
 
 use lantern_resource::Resource;
@@ -22,11 +23,14 @@ pub struct LogEntry {
 ///
 /// The cursor points at a step *id*, not an index, so the plan can be edited
 /// mid-session (add a song the pastor just asked for) without losing your place.
+/// It never rests on a section marker: stepping passes over them.
 #[derive(Debug, Clone)]
 pub struct Session {
     plan: Plan,
     cursor: Option<StepId>,
     log: Vec<LogEntry>,
+    /// When each step was first reached, for timing sections.
+    entered: HashMap<StepId, SystemTime>,
 }
 
 impl Session {
@@ -36,6 +40,7 @@ impl Session {
             plan,
             cursor: None,
             log: Vec::new(),
+            entered: HashMap::new(),
         }
     }
 
@@ -50,13 +55,11 @@ impl Session {
         let before = self.current_index();
         let result = f(&mut self.plan);
         if let (Some(index), None) = (before, self.current_index()) {
-            self.cursor = index
-                .checked_sub(1)
-                .and_then(|i| {
-                    self.plan
-                        .steps()
-                        .get(i.min(self.plan.len().saturating_sub(1)))
-                })
+            let steps = self.plan.steps();
+            self.cursor = steps[..index.min(steps.len())]
+                .iter()
+                .rev()
+                .find(|s| !s.is_section())
                 .map(|s| s.id);
         }
         result
@@ -65,7 +68,7 @@ impl Session {
     /// Swaps in a different plan and starts over. The log is kept.
     pub fn replace_plan(&mut self, plan: Plan) {
         self.plan = plan;
-        self.cursor = None;
+        self.reset();
     }
 
     /// The step we're at, if the session has started.
@@ -80,34 +83,42 @@ impl Session {
 
     /// The step [`next`](Self::next) would move to, for an "up next" panel.
     pub fn peek_next(&self) -> Option<&Step> {
-        self.plan
-            .steps()
-            .get(self.current_index().map_or(0, |i| i + 1))
+        let from = self.current_index().map_or(0, |i| i + 1);
+        self.plan.steps().get(self.forward(from)?)
     }
 
     /// Moves to the next step (or the first, if not started). At the end,
     /// stays on the last step and returns `None`.
     #[allow(clippy::should_implement_trait)] // a cursor, not an iterator: it moves both ways
     pub fn next(&mut self) -> Option<&Step> {
-        let index = self.current_index().map_or(0, |i| i + 1);
+        let index = self.forward(self.current_index().map_or(0, |i| i + 1))?;
         self.move_to_index(index)
     }
 
     /// Moves to the previous step. At the first step, stays and returns `None`.
     pub fn prev(&mut self) -> Option<&Step> {
-        let index = self.current_index()?.checked_sub(1)?;
+        let before = self.current_index()?;
+        let index = self.plan.steps()[..before]
+            .iter()
+            .rposition(|s| !s.is_section())?;
         self.move_to_index(index)
     }
 
-    /// Jumps to a step.
+    /// Jumps to a step, or to the first step of a section.
     pub fn goto(&mut self, id: StepId) -> Option<&Step> {
-        let index = self.plan.position(id)?;
+        let index = self.forward(self.plan.position(id)?)?;
         self.move_to_index(index)
     }
 
-    /// Goes back to "not started".
+    /// Goes back to "not started", forgetting when steps were reached.
     pub fn reset(&mut self) {
         self.cursor = None;
+        self.entered.clear();
+    }
+
+    /// When a step was first reached in this session.
+    pub fn entered(&self, id: StepId) -> Option<SystemTime> {
+        self.entered.get(&id).copied()
     }
 
     /// Records that `resource` went on stage. Off-plan resources shown during
@@ -132,10 +143,11 @@ impl Session {
         });
     }
 
-    /// Inserts a step right after the current one (or first, if not started).
+    /// Inserts a step right after the current one, or at the end before
+    /// the session starts, so a plan built ahead of time keeps its order.
     /// Handy for turning something found live into part of the plan.
     pub fn insert_after_current(&mut self, label: impl Into<String>, action: Action) -> StepId {
-        let index = self.current_index().map_or(0, |i| i + 1);
+        let index = self.current_index().map_or(self.plan.len(), |i| i + 1);
         self.plan.insert(index, label, action)
     }
 
@@ -144,9 +156,16 @@ impl Session {
         &self.log
     }
 
+    /// The first step at or after `index` that isn't a section marker.
+    fn forward(&self, index: usize) -> Option<usize> {
+        let steps = self.plan.steps();
+        (index..steps.len()).find(|&i| !steps[i].is_section())
+    }
+
     fn move_to_index(&mut self, index: usize) -> Option<&Step> {
         let step = self.plan.steps().get(index)?;
         self.cursor = Some(step.id);
+        self.entered.entry(step.id).or_insert_with(SystemTime::now);
         Some(step)
     }
 }
@@ -248,5 +267,39 @@ mod tests {
             },
         );
         assert_eq!(label(s.next()), Some("Announcement"));
+    }
+
+    #[test]
+    fn stepping_passes_over_sections() {
+        let mut plan = Plan::new("Sunday");
+        plan.section("Alabanza", None);
+        plan.show(resource("Song"));
+        let word = plan.section("Palabra", None);
+        plan.push("Sermon", Action::Blank);
+        let mut s = Session::new(plan);
+        assert_eq!(label(s.peek_next()), Some("Song"));
+        assert_eq!(label(s.next()), Some("Song"));
+        assert_eq!(label(s.next()), Some("Sermon"));
+        assert_eq!(label(s.prev()), Some("Song"));
+        assert_eq!(
+            label(s.goto(word)),
+            Some("Sermon"),
+            "a section jumps to its first step"
+        );
+        assert!(s.entered(s.current().unwrap().id).is_some());
+
+        let sermon = s.current().unwrap().id;
+        s.edit(|plan| plan.remove(sermon));
+        assert_eq!(label(s.current()), Some("Song"), "back past the marker");
+        s.reset();
+        assert!(s.entered(sermon).is_none());
+    }
+
+    #[test]
+    fn before_the_start_new_steps_go_at_the_end() {
+        let mut s = session();
+        s.insert_after_current("Benediction", Action::Note);
+        let last = s.plan().steps().last().unwrap();
+        assert_eq!(last.label, "Benediction");
     }
 }

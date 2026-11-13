@@ -9,12 +9,13 @@ use iced::widget::{
     Space, button, column, container, image, row, scrollable, slider, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Length};
-use lantern_engine::{Action, Bang, Media, Plan, Playback, Resource, Scene, Scope, Step, Timed};
+use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
 
 use crate::keys::Op;
-use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, PILL_SMALL, Tone};
+use crate::length;
+use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::palette::Palette;
-use crate::plans::{self, Entry, Notice, Switch, file_name};
+use crate::plan_pane::section_status;
 use crate::search::{Group, Live, supported};
 use crate::stage::Content;
 use crate::youtube::YoutubeVideo;
@@ -24,7 +25,6 @@ pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
 pub const NAME_BOX: &str = "plan-name";
 
-const PLAN_WIDTH: f32 = 280.0;
 const STAGE_WIDTH: f32 = 360.0;
 const LAUNCHER_WIDTH: f32 = 720.0;
 const MONITOR_HEIGHT: f32 = 184.0;
@@ -72,7 +72,7 @@ impl Mode {
             }
             Mode::Plan => {
                 "PgDn next step · PgUp back · ← → slides · Ctrl+Space play · Ctrl+B blackout · \
-                 Ctrl+P live mode"
+                 Ctrl+E edit plan · Ctrl+P live mode"
             }
         }
     }
@@ -87,10 +87,11 @@ impl App {
                 .height(Fill)
                 .style(look::hairline(p))
         };
+        let timing = self.timing();
         let panes = row![
-            self.plan_pane(),
+            self.plan_pane(&timing),
             seam(),
-            self.launcher(),
+            self.launcher(&timing),
             seam(),
             self.stage_pane(),
         ]
@@ -104,21 +105,44 @@ impl App {
 
     // The launcher
 
-    fn launcher(&self) -> Element<'_, Message> {
+    /// The plan's timing now, with the lengths of the videos loaded so far.
+    fn timing(&self) -> Timing {
+        self.engine.0.timing(&|step| self.loaded_length(step))
+    }
+
+    /// A step's media length, once the stage has loaded it.
+    pub(crate) fn loaded_length(&self, step: &Step) -> Option<Duration> {
+        match &step.action {
+            Action::Show { resource } => self.media.length(&resource.id),
+            _ => None,
+        }
+    }
+
+    fn launcher(&self, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
-        let other = self.mode.toggled().name();
-        let header = row![
+        let mut header = row![
             look::icon(Icon::Lantern, 20.0, p.primary),
             text("Lantern").size(HEADING).font(BOLD).color(p.primary),
             chip(p, self.mode.name(), self.mode.tone()),
-            Space::new().width(Fill),
-            text(format!("Ctrl+P {other} mode"))
-                .size(META)
-                .color(p.on_surface_variant),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
         .height(36);
+        if let Some(section) = timing.running() {
+            let (status, tone) = section_status(section);
+            header = header.push(chip(p, &status, tone));
+        }
+        // When the service should end, else how to switch modes.
+        let aside = match timing.end {
+            Some(end) => {
+                let left = end.duration_since(SystemTime::now()).unwrap_or_default();
+                format!("ends in {}", length::rough(left).trim_start_matches('~'))
+            }
+            None => format!("Ctrl+P {} mode", self.mode.toggled().name()),
+        };
+        header = header
+            .push(Space::new().width(Fill))
+            .push(text(aside).size(META).color(p.on_surface_variant));
         let mut body = column![header, self.search_box(), self.results()]
             .spacing(12)
             .height(Fill);
@@ -440,7 +464,9 @@ impl App {
             ),
             Some(Action::Live { .. }) => empty_monitor(p, "A live slot: search when you get there"),
             Some(Action::Blank) => empty_monitor(p, "A black screen"),
-            Some(Action::Note) => empty_monitor(p, "A note for you, nothing on stage"),
+            Some(Action::Note | Action::Section { .. }) => {
+                empty_monitor(p, "A note for you, nothing on stage")
+            }
             None => empty_monitor(p, "The end of the plan"),
         });
         if let Some(step) = &next {
@@ -518,7 +544,7 @@ impl App {
     }
 
     /// A YouTube video's download state ("downloading 42%"), or `None`.
-    fn download_state(&self, resource: &Resource) -> Option<String> {
+    pub(crate) fn download_state(&self, resource: &Resource) -> Option<String> {
         let video = YoutubeVideo::of(resource)?;
         self.downloads
             .0
@@ -590,8 +616,8 @@ impl App {
         };
         let times = format!(
             "{} / {}",
-            clock(Duration::from_secs_f64(position)),
-            timed.duration.map_or("?".into(), clock)
+            length::clock(Duration::from_secs_f64(position)),
+            timed.duration.map_or("?".into(), length::clock)
         );
         row![
             play,
@@ -602,242 +628,9 @@ impl App {
         .align_y(Alignment::Center)
         .into()
     }
-
-    // The plan pane
-
-    fn plan_pane(&self) -> Element<'_, Message> {
-        let p = self.palette;
-        let plan = self.engine.0.plan();
-        let mut pane = column![self.plan_header(&plan)].spacing(8);
-        if let Some(notice) = self.plan_notice(&plan) {
-            pane = pane.push(notice);
-        }
-        pane = pane.push(match &self.plans.mode {
-            plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan),
-            plans::Mode::Browsing(entries) => self.saved_plans(entries),
-            plans::Mode::Confirm(switch) => confirm(p, &plan, switch),
-        });
-        let close = matches!(self.plans.mode, plans::Mode::Browsing(_));
-        let buttons = if close {
-            row![wide(pill(
-                p,
-                "Cancel",
-                Tone::Plain,
-                PILL_SMALL,
-                Some(Message::ClosePlanMode)
-            ))]
-        } else {
-            row![
-                wide(pill(p, "Open", Tone::Plain, PILL_SMALL, Some(op(Op::Open)))),
-                wide(pill(p, "Save", Tone::Plain, PILL_SMALL, Some(op(Op::Save)))),
-                wide(pill(p, "New", Tone::Plain, PILL_SMALL, Some(op(Op::New)))),
-            ]
-        };
-        pane.push(buttons.spacing(4))
-            .padding([16, 12])
-            .width(PLAN_WIDTH)
-            .height(Fill)
-            .into()
-    }
-
-    /// The plan's name (click to rename), an unsaved marker, and where the
-    /// service is: "3 of 7".
-    fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
-        let p = self.palette;
-        let name: Element<'_, Message> = match &self.plans.mode {
-            plans::Mode::Renaming(draft) => text_input("Plan name", draft)
-                .id(NAME_BOX)
-                .on_input(Message::PlanName)
-                .on_submit(Message::SubmitPlanName)
-                .size(BODY)
-                .padding([6, 10])
-                .style(look::input(p))
-                .into(),
-            _ => button(
-                single_line(plan.title.clone())
-                    .size(HEADING)
-                    .font(BOLD)
-                    .color(p.primary),
-            )
-            .padding([4, 8])
-            .on_press(Message::EditPlanName)
-            .style(look::row(p, Tone::Plain))
-            .width(Fill)
-            .into(),
-        };
-        let at = self
-            .engine
-            .0
-            .current_step()
-            .and_then(|current| plan.steps().iter().position(|s| s.id == current.id));
-        let mut place = match at {
-            Some(at) => format!("{} of {}", at + 1, plan.len()),
-            None => count(plan.len(), "step"),
-        };
-        if self.plans.is_dirty(plan) {
-            place.push_str(" · unsaved");
-        }
-        row![name, text(place).size(META).color(p.on_surface_variant)]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .into()
-    }
-
-    /// The last save or open: its error, or that it worked while nothing
-    /// has changed since.
-    fn plan_notice(&self, plan: &Plan) -> Option<Element<'_, Message>> {
-        let p = self.palette;
-        let (message, color) = match self.plans.notice.as_ref()? {
-            Notice::Failed(why) => (why, p.error),
-            Notice::Done(_) if self.plans.is_dirty(plan) => return None,
-            Notice::Done(what) => (what, p.on_surface_variant),
-        };
-        Some(
-            container(text(message.as_str()).size(META).color(color))
-                .padding([0, 8])
-                .into(),
-        )
-    }
-
-    fn steps(&self, plan: &Plan) -> Element<'_, Message> {
-        let p = self.palette;
-        let current = self.engine.0.current_step().map(|step| step.id);
-        let next = self.engine.0.up_next().map(|step| step.id);
-        let at = current.and_then(|id| plan.steps().iter().position(|s| s.id == id));
-        let mut steps = column![].spacing(2);
-        for (index, step) in plan.steps().iter().enumerate() {
-            let place = if Some(step.id) == current {
-                Place::Current
-            } else if Some(step.id) == next {
-                Place::Next
-            } else if at.is_some_and(|at| index < at) {
-                Place::Done
-            } else {
-                Place::Later
-            };
-            steps = steps.push(self.step_row(index, step, place));
-        }
-        if plan.is_empty() {
-            steps = steps.push(
-                container(
-                    text("The plan is empty. Preview something and press Ctrl+A to add it.")
-                        .size(BODY)
-                        .color(p.on_surface_variant),
-                )
-                .padding([4, 8]),
-            );
-        }
-        scrolling(steps).into()
-    }
-
-    fn step_row(&self, index: usize, step: &Step, place: Place) -> Element<'_, Message> {
-        let p = self.palette;
-        // The current step is on stage unless something off the plan was
-        // shown since.
-        let shown = match &step.action {
-            Action::Show { resource } => self
-                .stage
-                .program
-                .as_ref()
-                .is_some_and(|scene| scene.resource.id == resource.id),
-            _ => false,
-        };
-        let tone = match (place, self.mode) {
-            (Place::Current, _) if shown => Tone::Live,
-            (Place::Next, Mode::Plan) => Tone::Selected,
-            _ => Tone::Plain,
-        };
-        let (marker, note) = match place {
-            Place::Current if shown => ("●".to_string(), Some("on stage".to_string())),
-            Place::Current => ("●".to_string(), Some("current step".to_string())),
-            Place::Next => ("○".to_string(), Some("next, PgDn".to_string())),
-            Place::Done | Place::Later => ((index + 1).to_string(), None),
-        };
-        let label_color = match (place, tone) {
-            (Place::Done, _) => p.outline,
-            (_, Tone::Plain) => p.on_surface,
-            (_, tone) => tone.text(p),
-        };
-        let mut label = column![
-            single_line(step.label.clone())
-                .size(BODY)
-                .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
-                .color(label_color)
-        ];
-        let detail = note.or_else(|| match &step.action {
-            Action::Show { resource } => self.download_state(resource),
-            Action::Live { .. } => Some("live search".into()),
-            Action::Blank => Some("black screen".into()),
-            Action::Note => Some("note".into()),
-        });
-        if let Some(detail) = detail {
-            label = label.push(single_line(detail).size(META).color(p.on_surface_variant));
-        }
-        let remove = button(text("✕").size(META).color(p.on_surface_variant))
-            .padding([2, 8])
-            .on_press(Message::Remove(step.id))
-            .style(look::row(p, Tone::Plain));
-        let line = row![
-            text(marker).size(META).color(label_color).width(16),
-            container(label).width(Fill).clip(true),
-            remove,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        button(line)
-            .width(Fill)
-            .padding([8, 10])
-            .on_press(Message::GoTo(step.id))
-            .style(look::row(p, tone))
-            .into()
-    }
-
-    fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
-        let p = self.palette;
-        let folder = self.plans.store().dir().display().to_string();
-        let mut list = column![
-            container(
-                column![
-                    text("Open a saved plan")
-                        .size(BODY)
-                        .font(BOLD)
-                        .color(p.primary),
-                    single_line(folder).size(META).color(p.on_surface_variant),
-                ]
-                .spacing(2)
-            )
-            .padding([4, 8])
-        ]
-        .spacing(2);
-        if entries.is_empty() {
-            list = list.push(
-                container(
-                    text("No saved plans yet. Save makes one.")
-                        .size(BODY)
-                        .color(p.on_surface_variant),
-                )
-                .padding([4, 8]),
-            );
-        }
-        let now = SystemTime::now();
-        for entry in entries {
-            let when = now.duration_since(entry.modified).unwrap_or_default();
-            list = list.push(saved_plan(p, entry, ago(when)));
-        }
-        scrolling(list).into()
-    }
 }
 
-/// Where a step is in the service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Place {
-    Done,
-    Current,
-    Next,
-    Later,
-}
-
-fn op(op: Op) -> Message {
+pub(crate) fn op(op: Op) -> Message {
     Message::Key {
         op,
         only_if_empty: false,
@@ -853,107 +646,15 @@ fn unit(resource: &Resource) -> &'static str {
     }
 }
 
-fn saved_plan(p: Palette, entry: &Entry, when: String) -> Element<'_, Message> {
-    let (title, detail, color) = match &entry.summary {
-        Ok((title, steps)) => (
-            title.clone(),
-            format!("{} · {when}", count(*steps, "step")),
-            p.on_surface,
-        ),
-        Err(why) => (
-            file_name(&entry.path),
-            format!("can't read: {why}"),
-            p.error,
-        ),
-    };
-    button(
-        column![
-            single_line(title).size(BODY).font(MEDIUM).color(color),
-            single_line(detail).size(META).color(p.on_surface_variant),
-        ]
-        .spacing(2),
-    )
-    .width(Fill)
-    .padding([8, 10])
-    .on_press_maybe(
-        entry
-            .summary
-            .is_ok()
-            .then(|| Message::OpenPlan(entry.path.clone())),
-    )
-    .style(look::row(p, Tone::Plain))
-    .into()
-}
-
-fn confirm<'a>(p: Palette, plan: &Plan, switch: &Switch) -> Element<'a, Message> {
-    let then = match switch {
-        Switch::New => "start a new one",
-        Switch::Open(_) => "open another",
-    };
-    column![
-        text(format!(
-            "“{}” was never saved. Discard it and {then}?",
-            plan.title
-        ))
-        .size(BODY),
-        text("Ctrl+S saves it instead.")
-            .size(META)
-            .color(p.on_surface_variant),
-        row![
-            wide(pill(
-                p,
-                "Discard",
-                Tone::Danger,
-                PILL_SMALL,
-                Some(Message::DiscardPlan)
-            )),
-            wide(pill(
-                p,
-                "Keep it",
-                Tone::Plain,
-                PILL_SMALL,
-                Some(Message::ClosePlanMode)
-            )),
-        ]
-        .spacing(4),
-    ]
-    .spacing(10)
-    .padding([4, 8])
-    .height(Fill)
-    .into()
-}
-
-/// "1 step", "3 steps".
-fn count(n: usize, noun: &str) -> String {
-    match n {
-        1 => format!("1 {noun}"),
-        n => format!("{n} {noun}s"),
-    }
-}
-
-/// How long ago, roughly: "just now", "5 min ago", "3 h ago", "2 days ago".
-fn ago(elapsed: Duration) -> String {
-    let minutes = elapsed.as_secs() / 60;
-    match minutes {
-        0 => "just now".into(),
-        1..60 => format!("{minutes} min ago"),
-        60..1440 => format!("{} h ago", minutes / 60),
-        1440..2880 => "1 day ago".into(),
-        _ => format!("{} days ago", minutes / 1440),
-    }
-}
-
-fn clock(d: Duration) -> String {
-    format!("{}:{:02}", d.as_secs() / 60, d.as_secs() % 60)
-}
-
 /// A list that scrolls, with its scrollbar beside the rows instead of over them.
-fn scrolling<'a>(content: impl Into<Element<'a, Message>>) -> scrollable::Scrollable<'a, Message> {
+pub(crate) fn scrolling<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> scrollable::Scrollable<'a, Message> {
     scrollable(content).spacing(6).height(Fill)
 }
 
 /// One line of text; what doesn't fit is cut at the row's edge.
-fn single_line<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
+pub(crate) fn single_line<'a>(content: impl text::IntoFragment<'a>) -> text::Text<'a> {
     text(content).wrapping(text::Wrapping::None)
 }
 
@@ -962,7 +663,7 @@ fn heading(p: Palette, label: &str) -> Element<'_, Message> {
     text(label).size(HEADING).font(BOLD).color(p.primary).into()
 }
 
-fn chip(p: Palette, label: &str, tone: Tone) -> Element<'static, Message> {
+pub(crate) fn chip(p: Palette, label: &str, tone: Tone) -> Element<'static, Message> {
     container(text(label.to_string()).size(META).font(BOLD))
         .padding([3, 10])
         .style(look::chip(p, tone))
@@ -1067,7 +768,7 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .into()
 }
 
-fn pill<'a>(
+pub(crate) fn pill<'a>(
     p: Palette,
     label: &str,
     tone: Tone,
@@ -1086,23 +787,13 @@ fn pill<'a>(
     .style(look::pill(p, tone))
 }
 
-fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
+pub(crate) fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
     button.width(Fill)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ages_are_rough() {
-        let minutes = |m: u64| ago(Duration::from_secs(m * 60));
-        assert_eq!(minutes(0), "just now");
-        assert_eq!(minutes(5), "5 min ago");
-        assert_eq!(minutes(130), "2 h ago");
-        assert_eq!(minutes(1500), "1 day ago");
-        assert_eq!(minutes(3 * 1440), "3 days ago");
-    }
 
     #[test]
     fn modes_toggle_and_say_their_keys() {

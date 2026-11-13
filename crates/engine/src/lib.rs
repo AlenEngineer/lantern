@@ -25,6 +25,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+pub use lantern_orchestrator::timing::{self, Basis, Estimate, Pace, Phase, SectionTiming, Timing};
 pub use lantern_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -163,6 +164,36 @@ impl Engine {
         lock(&self.session).log().to_vec()
     }
 
+    /// How each section of the plan is keeping to its budget, now. `loaded`
+    /// gives a step's media length once the app has loaded it. While the
+    /// current step's video plays, what's left of it is exact.
+    pub fn timing(&self, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Timing {
+        let session = lock(&self.session);
+        let current = session.current().cloned();
+        let current_left = current.as_ref().and_then(|step| {
+            let Action::Show { resource } = &step.action else {
+                return None;
+            };
+            let stage = lock(&self.stage);
+            let scene = stage
+                .program()
+                .filter(|scene| scene.resource.id == resource.id)?;
+            let timed = scene.timed()?;
+            Some(timed.duration?.saturating_sub(timed.position))
+        });
+        let entered = |id| session.entered(id);
+        timing::timing(
+            session.plan(),
+            &timing::Clock {
+                now: std::time::SystemTime::now(),
+                current: current.map(|step| step.id),
+                entered: &entered,
+                current_left,
+                loaded,
+            },
+        )
+    }
+
     // ----- Running the plan ----------------------------------------------
 
     /// The "next" button: the next frame of what's on stage if there is one,
@@ -234,6 +265,12 @@ impl Engine {
                 resource: resource.clone(),
             },
         )
+    }
+
+    /// Adds a section right after the current step, or at the end before
+    /// the service starts.
+    pub fn add_section(&self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
+        lock(&self.session).insert_after_current(title, Action::Section { budget })
     }
 
     // ----- The stage, operator side --------------------------------------
@@ -357,8 +394,9 @@ fn perform(stage: &mut Showman, step: &Step) {
     match &step.action {
         Action::Show { resource } => stage.show(Arc::new(resource.clone())),
         Action::Blank => stage.clear(),
-        // Live slots and notes leave the stage as the operator left it.
-        Action::Live { .. } | Action::Note => {}
+        // Live slots and notes leave the stage as the operator left it, and
+        // the session never stops on a section marker.
+        Action::Live { .. } | Action::Note | Action::Section { .. } => {}
     }
 }
 

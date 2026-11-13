@@ -227,6 +227,7 @@ fn print_plan(engine: &Engine) {
             Action::Live { shown, .. } => format!("live ({} shown)", shown.len()),
             Action::Blank => "blank".into(),
             Action::Note => "note".into(),
+            Action::Section { .. } => "section".into(),
         };
         println!(" {marker} {} {:30} {what}", step.id, step.label);
     }

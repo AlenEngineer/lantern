@@ -88,6 +88,7 @@ lists the keys for the mode you're in.
 | Ctrl+B | blackout |
 | Esc | clear the search box |
 | Ctrl+P | switch between live and plan mode |
+| Ctrl+E | edit the plan: names, lengths, budgets, sections |
 
 ### Bangs
 
@@ -131,6 +132,22 @@ to the name means it has changes since. **Open** (Ctrl+O) lists the saved plans,
 first. **New** (Ctrl+N) starts an empty one. Leaving a plan saves it first if
 it has a file, and otherwise asks before discarding it. The app reopens the
 last plan you opened or saved, and says why if it can't.
+
+Before the service starts, Ctrl+A adds to the end of the plan; once it has
+started, right after the current step.
+
+**Sections and time.** Split the plan into parts with a time budget, such as
+"Alabanza, 15 min" and "Palabra, 30 min". **Edit** (Ctrl+E) turns the plan
+into fields: rename steps, type a length (`4` is four minutes, `4:30` four
+and a half), give a section its budget, move steps up and down, remove
+them, and **Add section**. Once a section starts, its header shows the time
+against its budget, and the launcher's header shows how much is left, or how
+far over it is, plus when the service should end. It warns, it never stops
+you: "on track", "tight" when it should end in the last minute or tenth of
+its budget, "over" past it. Each step's length is the one you typed, else
+the one its source gives (a YouTube video's), else its real length once
+loaded, else a guess shown as `~4 min`. A playing video counts what's left
+of it exactly.
 
 ### Configuration
 

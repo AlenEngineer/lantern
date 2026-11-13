@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Called by the app for `shot NAME`: moves each window onto its headless
 # output if it isn't there yet, then captures it. Set up by scripts/e2e.sh.
+#
+# Windows are found by app id *and* the app's process (this script's
+# parent), so a Lantern the user has open is never moved or captured.
 set -euo pipefail
 name=$1
+app=$PPID
 
-client() { hyprctl clients -j | jq -c --arg class "$1" 'first(.[] | select(.class == $class)) // empty'; }
+client() {
+    hyprctl clients -j | jq -c --arg class "$1" --argjson pid "$app" \
+        'first(.[] | select(.class == $class and .pid == $pid)) // empty'
+}
 monitor_id() { hyprctl monitors -j | jq --arg name "$1" '.[] | select(.name == $name) | .id'; }
 workspace_of() { hyprctl monitors -j | jq --arg name "$1" '.[] | select(.name == $name) | .activeWorkspace.id'; }
 
@@ -21,7 +28,9 @@ place() {
         return 1
     fi
     if [[ $(jq .monitor <<<"$window") != "$(monitor_id "$output")" ]]; then
-        hyprctl dispatch "hl.dsp.window.move({ workspace = $(workspace_of "$output"), window = \"class:$class\" })" >/dev/null
+        local address
+        address=$(jq -r .address <<<"$window")
+        hyprctl dispatch "hl.dsp.window.move({ workspace = $(workspace_of "$output"), window = \"address:$address\" })" >/dev/null
         moved=1
     fi
 }
@@ -39,4 +48,5 @@ place lantern-dashboard "$E2E_DASHBOARD_OUTPUT"
 if (( moved )); then sleep 1; else sleep 0.3; fi
 capture lantern-stage "$E2E_OUT/$name-stage.png"
 capture lantern-dashboard "$E2E_OUT/$name-dashboard.png"
-hyprctl clients -j | jq -c '.[] | select(.class | startswith("lantern")) | {class, monitor, fullscreen, at, size}' >>"$E2E_OUT/windows.log"
+hyprctl clients -j | jq -c --argjson pid "$app" \
+    '.[] | select(.pid == $pid) | {class, monitor, fullscreen, at, size}' >>"$E2E_OUT/windows.log"

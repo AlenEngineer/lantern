@@ -1,5 +1,6 @@
 use std::fmt;
 use std::path::Path;
+use std::time::Duration;
 
 use lantern_resource::{Query, Resource};
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,14 @@ pub enum Action {
     Blank,
     /// A reminder for the operator only. Leaves the stage as it is.
     Note,
+    /// Starts a section: the steps after it, up to the next section, are
+    /// one part of the service, such as the music or the sermon. Stepping
+    /// through the plan passes over it.
+    Section {
+        /// How long the section should take.
+        #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
+        budget: Option<Duration>,
+    },
 }
 
 /// One entry of a plan.
@@ -63,6 +72,16 @@ pub struct Step {
     pub notes: Option<String>,
     /// What happens when the step is reached.
     pub action: Action,
+    /// How long the operator says the step takes, over any guess.
+    #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
+    pub estimate: Option<Duration>,
+}
+
+impl Step {
+    /// Whether this step starts a section rather than doing something.
+    pub fn is_section(&self) -> bool {
+        matches!(self.action, Action::Section { .. })
+    }
 }
 
 /// An ordered list of steps, prepared ahead of time. Saved as JSON.
@@ -136,6 +155,7 @@ impl Plan {
             label: label.into(),
             notes: None,
             action,
+            estimate: None,
         };
         self.steps.insert(index.min(self.steps.len()), step);
         id
@@ -156,6 +176,11 @@ impl Plan {
                 shown: Vec::new(),
             },
         )
+    }
+
+    /// Appends a section, which runs until the next one.
+    pub fn section(&mut self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
+        self.push(title, Action::Section { budget })
     }
 
     /// Removes a step.
@@ -197,6 +222,24 @@ impl Plan {
     /// Reads a plan from a file.
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PlanError> {
         Self::from_json(&std::fs::read_to_string(path)?)
+    }
+}
+
+/// Lengths as whole seconds in JSON, which people can read and edit.
+mod seconds {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(duration) => s.serialize_some(&duration.as_secs()),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+        Ok(Option::<u64>::deserialize(d)?.map(Duration::from_secs))
     }
 }
 
@@ -250,6 +293,19 @@ mod tests {
         let mut repaired = Plan::from_json(&stale).unwrap();
         let id = repaired.push("New", Action::Note);
         assert_eq!(id, StepId(2));
+    }
+
+    #[test]
+    fn sections_and_estimates_save_as_seconds() {
+        let mut plan = Plan::new("Sunday");
+        plan.section("Alabanza", Some(Duration::from_secs(15 * 60)));
+        let song = plan.show(resource("Sublime gracia"));
+        plan.get_mut(song).unwrap().estimate = Some(Duration::from_secs(240));
+        let json = plan.to_json();
+        assert!(json.contains("\"budget\": 900"), "{json}");
+        assert!(json.contains("\"estimate\": 240"), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        assert!(plan.steps()[0].is_section() && !plan.steps()[1].is_section());
     }
 
     #[test]

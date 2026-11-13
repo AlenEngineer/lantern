@@ -8,6 +8,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Plan sections with time budgets. Each section's header shows its time
+  against its budget and whether it's on track, tight or over; the launcher
+  shows the running section's time left and when the service should end.
+  Step lengths come from the operator, the source, the loaded video, or a
+  guess.
+- Edit mode for the plan (Ctrl+E): rename, set lengths and budgets, move,
+  remove, add sections.
+- YouTube results carry their length (`Resource::DURATION`).
 - `colors` in the config names a Matugen-style JSON file of colour roles;
   the dashboard follows it and recolours when it changes.
 
@@ -16,6 +24,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The dashboard has three panes: the plan, a launcher (search and results),
   and the stage with the preview or the plan's next step. A "live" or "plan"
   chip says which mode you're in; Ctrl+P switches.
+- Before the service starts, Ctrl+A adds to the end of the plan instead of
+  the start, so a plan built in order keeps it.
 - Typing always goes to the search box. The shortcuts that were letters move
   to Ctrl: Ctrl+B blackout, Ctrl+A add to plan, Ctrl+Space play/pause. ← →
   step only while the search box is empty, and Esc clears it.

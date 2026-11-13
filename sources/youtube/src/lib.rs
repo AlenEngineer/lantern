@@ -8,6 +8,7 @@
 //! Each result is the same resource a pasted YouTube link becomes
 //! ([`lantern_source_link::youtube_video`]), titled with the video's title.
 //! The subtitle has the channel and the length, or `live` for a stream.
+//! The length is also in [`Resource::DURATION`], for timing plans.
 
 use std::process::Command;
 
@@ -61,7 +62,8 @@ impl YoutubeSource {
 
     fn resource(&self, entry: Entry) -> Resource {
         let mut resource = youtube_video(&self.id, &entry.id);
-        let length = if entry.live_status.as_deref() == Some("is_live") {
+        let live = entry.live_status.as_deref() == Some("is_live");
+        let length = if live {
             Some("live".to_string())
         } else {
             entry.duration.map(|seconds| clock(seconds as u64))
@@ -77,6 +79,9 @@ impl YoutubeSource {
         }
         if let Some(title) = entry.title {
             resource.title = title;
+        }
+        if let (Some(seconds), false) = (entry.duration, live) {
+            resource = resource.with_meta(Resource::DURATION, (seconds as u64).to_string());
         }
         resource
     }
@@ -179,6 +184,7 @@ mod tests {
         );
         assert_eq!(first.meta["provider"], "youtube");
         assert_eq!(first.meta["youtube_id"], "Hc-8A7NA-Uk");
+        assert_eq!(first.meta[Resource::DURATION], "382");
         assert_eq!(
             first.location.as_url(),
             Some("https://www.youtube.com/watch?v=Hc-8A7NA-Uk")
@@ -192,6 +198,7 @@ mod tests {
             .unwrap();
         assert_eq!(found[0].title, "YouTube video abcdefghijk");
         assert_eq!(found[0].subtitle.as_deref(), Some("live"));
+        assert!(!found[0].meta.contains_key(Resource::DURATION));
     }
 
     #[test]

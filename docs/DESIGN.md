@@ -37,6 +37,9 @@ solid block:
 | Blackout, destructive | `error` at 14%, `error` text |
 | Neutral button | `on_surface` at 8% |
 
+A section's pace uses the same tints: on track is plain, tight is the
+`tertiary` warning tint, over is the `error` tint, and each says its word.
+
 Solid `primary` is kept for the play button and the timeline. A state is
 never colour alone: the on-stage step has a ●, the next one a ○, and the
 chips say "live", "blackout" or "empty".
