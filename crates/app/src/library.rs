@@ -410,6 +410,10 @@ mod tests {
         assert_eq!(names(&kept), ["RV1909", "KJV"]);
     }
 
+    /// What the Time source always has in the index: the clock, the timer
+    /// and its four usual countdowns.
+    const CLOCKS: usize = 6;
+
     fn repo() -> &'static Path {
         Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
     }
@@ -557,7 +561,11 @@ mod tests {
             path = "missing/kjv.json"
             "#,
         );
-        assert_eq!(engine.searcher().index().len(), 12, "4 files and 8 verses");
+        assert_eq!(
+            engine.searcher().index().len(),
+            12 + CLOCKS,
+            "4 files and 8 verses, and the clocks"
+        );
         let problems = library.problems();
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(
@@ -592,7 +600,7 @@ mod tests {
             path = "scripts/e2e/fixtures"
             "#,
         );
-        assert_eq!(engine.searcher().index().len(), 4);
+        assert_eq!(engine.searcher().index().len(), 4 + CLOCKS);
         let bible_only = Config::parse(
             r#"
             [[bibles]]
@@ -606,7 +614,11 @@ mod tests {
         .unwrap();
         library.apply(bible_only);
         assert!(library.settle(Duration::from_secs(30)));
-        assert_eq!(engine.searcher().index().len(), 8, "the verses, no files");
+        assert_eq!(
+            engine.searcher().index().len(),
+            8 + CLOCKS,
+            "the verses and the clocks, no files"
+        );
         let ids: Vec<String> = engine
             .searcher()
             .sources()

@@ -548,11 +548,11 @@ mod tests {
         let mut search = Search::default();
         assert_eq!(
             bang_names(&search, &engine),
-            ["b", "f", "gi", "yt"],
+            ["b", "f", "gi", "t", "yt"],
             "before any typing"
         );
         assert_eq!(search.edit(String::new(), &engine), None);
-        assert_eq!(bang_names(&search, &engine), ["b", "f", "gi", "yt"]);
+        assert_eq!(bang_names(&search, &engine), ["b", "f", "gi", "t", "yt"]);
         assert_eq!(search.completion(&engine), None, "nothing typed yet");
 
         search.edit("!F".into(), &engine);

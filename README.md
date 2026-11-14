@@ -180,7 +180,7 @@ too. Image search uses SafeSearch strict.
 Give a folder its own bang in Settings (the field after its path) or with
 `bang = "h"` in `config.toml`, and `!h himno` searches only that folder;
 folders may share a bang. `!f` still searches every folder. A bang Lantern
-already uses (`b`, `f`, `gi`, `yt`) can't be taken.
+already uses (`b`, `f`, `gi`, `t`, `yt`) can't be taken.
 
 Every source declares its own bangs (`Source::bangs`), so a new source
 brings its own.
