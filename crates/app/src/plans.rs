@@ -104,9 +104,27 @@ impl Store {
     }
 
     /// Saves `plan`, which came from elsewhere, to a new file of its own.
-    pub fn adopt(&self, plan: &Plan) -> io::Result<PathBuf> {
+    /// With a saved plan of the same name already here, it's named apart
+    /// ("Domingo (imported)", then "Domingo (imported 2)"), so the two can
+    /// be told from each other in the list.
+    pub fn adopt(&self, mut plan: Plan) -> io::Result<PathBuf> {
+        let taken: Vec<String> = self
+            .list()?
+            .into_iter()
+            .filter_map(|entry| entry.summary.ok())
+            .map(|summary| summary.title.to_lowercase())
+            .collect();
+        let title = plan.title.clone();
+        plan.title = (0..)
+            .map(|n| match n {
+                0 => title.clone(),
+                1 => format!("{title} (imported)"),
+                n => format!("{title} (imported {n})"),
+            })
+            .find(|name| !taken.contains(&name.to_lowercase()))
+            .expect("some numbered name is free");
         let path = self.free_path(&plan.title);
-        self.write(&path, plan)?;
+        self.write(&path, &plan)?;
         Ok(path)
     }
 
@@ -630,8 +648,15 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         let mut plan = Plan::new("Campaña");
         plan.folders = vec![media.join("folders/dia 1")];
-        let original = store.adopt(&plan).unwrap();
+        let original = store.adopt(plan.clone()).unwrap();
         assert_eq!(Plan::load(&original).unwrap(), plan);
+        // The same plan brought in again is named apart from the first.
+        let twin = store.adopt(plan.clone()).unwrap();
+        assert_eq!(Plan::load(&twin).unwrap().title, "Campaña (imported)");
+        let third = store.adopt(plan.clone()).unwrap();
+        assert_eq!(Plan::load(&third).unwrap().title, "Campaña (imported 2)");
+        std::fs::remove_file(twin).unwrap();
+        std::fs::remove_file(third).unwrap();
 
         let mut plans = Plans::start(store.clone(), &engine);
         assert!(plans.switch(&engine, Switch::Open(original.clone())));
