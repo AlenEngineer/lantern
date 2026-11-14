@@ -90,6 +90,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   leaves nothing on disk; the plan's are still downloaded ahead of time.
   It can be paused, scrubbed and replayed, and is downloaded instead if it
   can't be streamed. Settings → Library → YouTube turns it off.
+- **Time on stage**: `!t` finds a clock, a timer that counts up, and
+  countdowns (`!t 7` for seven minutes, `!t 10:30` to count down to half
+  past ten). They're shown, planned and kept on standby like anything
+  else, in large figures.
 
 ### Fixed
 

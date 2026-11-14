@@ -92,7 +92,7 @@ pub struct FolderEntry {
 }
 
 /// The bangs Lantern's own sources answer, which a folder can't take.
-pub const TAKEN_BANGS: [&str; 4] = ["b", "f", "gi", "yt"];
+pub const TAKEN_BANGS: [&str; 5] = ["b", "f", "gi", "t", "yt"];
 
 /// A folder's bang as typed (`h`, `!H`), lowercased without its `!`, or
 /// why it can't be one.

@@ -700,7 +700,11 @@ impl App {
             .style(|_| container::Style::default().background(Color::BLACK))
             .into(),
             None => container(look::icon(
-                Icon::of(&resource.kind),
+                // What shows time has a clock, not a passage's book.
+                match lantern_source_clock::Clock::of(resource) {
+                    Some(_) => Icon::Clock,
+                    None => Icon::of(&resource.kind),
+                },
                 height * 0.4,
                 p.on_surface_variant,
             ))
@@ -999,10 +1003,15 @@ impl App {
         let p = self.palette;
         match &step.action {
             Action::Show { resource } => self.picture(
-                resource
-                    .location
-                    .as_text()
-                    .and_then(|body| self.slides.slides(body).first().cloned()),
+                // A countdown still to come shows where it will start.
+                match lantern_source_clock::Clock::of(resource) {
+                    Some(clock) => Some(clock.text(None, length::now_of_day())),
+                    None => resource
+                        .location
+                        .as_text()
+                        .and_then(|body| self.slides.slides(body).first().cloned()),
+                },
+                lantern_source_clock::Clock::of(resource).is_some(),
                 0,
                 self.media.preloaded(&resource.id),
                 self.thumbs.get(resource),
@@ -1053,7 +1062,8 @@ impl App {
         }
         let loading = self.loading_note(&scene.resource);
         self.picture(
-            self.slides.slide(scene),
+            self.scene_text(scene),
+            lantern_source_clock::Clock::of(&scene.resource).is_some(),
             scene.frame(),
             content,
             self.thumbs.get(&scene.resource),
@@ -1065,9 +1075,12 @@ impl App {
     /// What a monitor shows: the slide's text, the loaded image or page, a
     /// video's `still` (its thumbnail) marked as a video, or `loading`
     /// until something has loaded, over the still when there is one.
+    // Each is a different thing the picture may be made of.
+    #[allow(clippy::too_many_arguments)]
     fn picture<'a>(
         &'a self,
         slide: Option<String>,
+        clock: bool,
         frame: usize,
         content: Option<&'a Content>,
         still: Option<image::Handle>,
@@ -1121,7 +1134,11 @@ impl App {
             }
             // A slide is a miniature of the stage, edge to edge.
             (Some(body), _) => {
-                let look = &self.look;
+                // A clock's few figures are set as large as the stage's.
+                let look = &match clock {
+                    true => crate::clock_look(&self.look),
+                    false => self.look.clone(),
+                };
                 return framed_with(
                     crate::backdrop(look, fit::fit_text(body, look), crate::Over::Text),
                     ring,

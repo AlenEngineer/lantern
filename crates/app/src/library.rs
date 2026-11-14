@@ -10,6 +10,7 @@ use std::time::Duration;
 use lantern_engine::{Engine, Plan, SourceId};
 use lantern_source_bible::{Bible, BibleSource, Translation};
 use lantern_source_brave::BraveImages;
+use lantern_source_clock::ClockSource;
 use lantern_source_link::LinkSource;
 use lantern_source_local::{Folder, LocalSource};
 use lantern_source_youtube::YoutubeSource;
@@ -94,6 +95,7 @@ impl Library {
     pub fn start(engine: Arc<Engine>, config: Config) -> Arc<Library> {
         let fixed = [
             engine.add_source(LinkSource::new(id("link"))),
+            engine.add_source(ClockSource::new(id("clock"))),
             engine.add_source(YoutubeSource::new(id("youtube"))),
         ];
         for err in fixed.into_iter().filter_map(Result::err) {
@@ -408,6 +410,10 @@ mod tests {
         assert_eq!(names(&kept), ["RV1909", "KJV"]);
     }
 
+    /// What the Time source always has in the index: the clock, the timer
+    /// and its four usual countdowns.
+    const CLOCKS: usize = 6;
+
     fn repo() -> &'static Path {
         Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
     }
@@ -555,7 +561,11 @@ mod tests {
             path = "missing/kjv.json"
             "#,
         );
-        assert_eq!(engine.searcher().index().len(), 12, "4 files and 8 verses");
+        assert_eq!(
+            engine.searcher().index().len(),
+            12 + CLOCKS,
+            "4 files and 8 verses, and the clocks"
+        );
         let problems = library.problems();
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert!(
@@ -590,7 +600,7 @@ mod tests {
             path = "scripts/e2e/fixtures"
             "#,
         );
-        assert_eq!(engine.searcher().index().len(), 4);
+        assert_eq!(engine.searcher().index().len(), 4 + CLOCKS);
         let bible_only = Config::parse(
             r#"
             [[bibles]]
@@ -604,7 +614,11 @@ mod tests {
         .unwrap();
         library.apply(bible_only);
         assert!(library.settle(Duration::from_secs(30)));
-        assert_eq!(engine.searcher().index().len(), 8, "the verses, no files");
+        assert_eq!(
+            engine.searcher().index().len(),
+            8 + CLOCKS,
+            "the verses and the clocks, no files"
+        );
         let ids: Vec<String> = engine
             .searcher()
             .sources()
