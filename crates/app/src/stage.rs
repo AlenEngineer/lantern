@@ -8,10 +8,10 @@
 //! the plan's next step), so a take of a preloaded video only swaps a player
 //! that is already built.
 //!
-//! A YouTube video loads like a local one, from the download cache, and
-//! waits for its download when it isn't there yet. It never streams: a
-//! stream started with frozen frames or no sound and saved only a few
-//! seconds over the download. An image at a link is downloaded into the
+//! A YouTube video in the plan loads like a local one, from the download
+//! cache, and waits for its download when it isn't there yet. One shown
+//! outside the plan plays straight from YouTube ([`open_stream`]), and is
+//! downloaded only if that fails. An image at a link is downloaded into the
 //! cache first, falling back to its [thumbnail](Resource::THUMBNAIL) when the
 //! site refuses.
 
@@ -246,12 +246,36 @@ fn open_stream(urls: &[String]) -> Result<Video, String> {
         .by_name("sink")
         .and_then(|sink| sink.downcast::<gstreamer_app::AppSink>().ok())
         .ok_or_else(|| fail(&"no video sink"))?;
+    wait_to_start(&pipeline).map_err(|err| fail(&err))?;
     let mut player = Video::from_gst_pipeline(pipeline, sink, None).map_err(|err| fail(&err))?;
     player.set_paused(true);
     player
         .seek(Duration::ZERO, true)
         .map_err(|err| fail(&err))?;
     Ok(player)
+}
+
+/// How long a stream may take to show its first picture.
+const STREAM_START: Duration = Duration::from_secs(20);
+
+/// Blocks until `pipeline` has its first picture and sound, paused, for at
+/// most [`STREAM_START`]. The player gives a pipeline five seconds to get
+/// there and then fails, which a slow network doesn't always manage; one
+/// that is there already passes at once.
+fn wait_to_start(pipeline: &gst::Pipeline) -> Result<(), String> {
+    let stop = |reason: &str| {
+        let _ = pipeline.set_state(gst::State::Null);
+        Err(reason.to_string())
+    };
+    if pipeline.set_state(gst::State::Paused).is_err() {
+        return stop("it wouldn't start");
+    }
+    let wait = gst::ClockTime::from_nseconds(STREAM_START.as_nanos() as u64);
+    match pipeline.state(wait) {
+        (Ok(gst::StateChangeSuccess::Async), ..) => stop("it took too long to start"),
+        (Ok(_), ..) => Ok(()),
+        (Err(_), ..) => stop("it wouldn't start"),
+    }
 }
 
 /// A player for a video file, at its start.
