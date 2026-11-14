@@ -2302,6 +2302,7 @@ dependencies = [
  "lantern-source-clock",
  "lantern-source-link",
  "lantern-source-local",
+ "lantern-source-text",
  "lantern-source-youtube",
  "notify",
  "serde",
@@ -2410,6 +2411,13 @@ dependencies = [
  "lantern-resource",
  "tempfile",
  "walkdir",
+]
+
+[[package]]
+name = "lantern-source-text"
+version = "0.7.0"
+dependencies = [
+ "lantern-resource",
 ]
 
 [[package]]

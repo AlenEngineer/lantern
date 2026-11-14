@@ -180,7 +180,7 @@ too. Image search uses SafeSearch strict.
 Give a folder its own bang in Settings (the field after its path) or with
 `bang = "h"` in `config.toml`, and `!h himno` searches only that folder;
 folders may share a bang. `!f` still searches every folder. A bang Lantern
-already uses (`b`, `f`, `gi`, `t`, `yt`) can't be taken.
+already uses (`b`, `f`, `gi`, `t`, `x`, `yt`) can't be taken.
 
 Every source declares its own bangs (`Source::bangs`), so a new source
 brings its own.
@@ -241,6 +241,17 @@ there lines it up and a second click or Enter shows it; ↓ past the last
 step reaches the shelf too. Showing from standby doesn't move the plan:
 PgDn goes on from where it was. ✕, or Del while it's lined up, takes it
 off. The shelf is saved with the plan and comes along with a template.
+
+**Your own text.** `!x Bienvenidos` shows what you typed. ` | ` starts a
+new line and ` || ` a new slide, since the search box has one line:
+`!x Feliz sábado | a todos || Dios les bendiga` is two slides. Like
+anything else it can be shown, added to the plan or kept on standby.
+
+**The verse in the corner.** While a Bible passage is on stage, its lower
+right corner says where it is and in which Bible ("Juan 3:17 · RVG"),
+following the verse as you step through. It sits in the margin the text
+leaves free. Settings → Stage → **Verse** hides it (`no_reference = true`
+under `[stage]`), for all plans or for one with a look of its own.
 
 **Time on stage.** `!t` finds what shows time: **Clock** (the time of
 day), **Timer** (counts up from when it's shown) and countdowns. `!t 7` is a

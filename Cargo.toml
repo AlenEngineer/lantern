@@ -19,6 +19,7 @@ lantern-engine = { path = "crates/engine" }
 lantern-source-local = { path = "sources/local" }
 lantern-source-link = { path = "sources/link" }
 lantern-source-clock = { path = "sources/clock" }
+lantern-source-text = { path = "sources/text" }
 lantern-source-bible = { path = "sources/bible" }
 lantern-source-youtube = { path = "sources/youtube" }
 lantern-source-brave = { path = "sources/brave" }

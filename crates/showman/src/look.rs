@@ -31,6 +31,10 @@ pub struct Look {
     /// is set over it, in percent, so the text reads. 0 leaves it as it is.
     #[serde(skip_serializing_if = "Look::is_default_dim")]
     pub dim: u8,
+    /// Leave out the small line in the lower corner that says which verse
+    /// a passage is at.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_reference: bool,
 }
 
 impl Default for Look {
@@ -43,6 +47,7 @@ impl Default for Look {
             max_size: 96,
             min_size: 40,
             dim: Look::DIM,
+            no_reference: false,
         }
     }
 }

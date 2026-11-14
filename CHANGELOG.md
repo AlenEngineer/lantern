@@ -94,6 +94,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   countdowns (`!t 7` for seven minutes, `!t 10:30` to count down to half
   past ten). They're shown, planned and kept on standby like anything
   else, in large figures.
+- While a Bible passage is on stage, its lower right corner says the
+  verse it's at and the Bible ("Juan 3:17 · RVG"). Settings → Stage →
+  Verse hides it.
+- `!x` shows what you type after it: `!x Bienvenidos`. ` | ` starts a
+  new line and ` || ` a new slide.
 
 ### Fixed
 

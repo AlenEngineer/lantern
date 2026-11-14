@@ -15,6 +15,7 @@ path = "src/main.rs"
 lantern-engine.workspace = true
 lantern-source-link.workspace = true
 lantern-source-clock.workspace = true
+lantern-source-text.workspace = true
 lantern-source-local.workspace = true
 lantern-source-bible.workspace = true
 lantern-source-youtube.workspace = true

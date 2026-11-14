@@ -137,6 +137,8 @@ struct Stage {
     max_size: String,
     min_size: String,
     dim: String,
+    /// Say which verse a passage is at, in the stage's lower corner.
+    reference: bool,
 }
 
 impl Stage {
@@ -149,6 +151,7 @@ impl Stage {
             max_size: look.max_size.to_string(),
             min_size: look.min_size.to_string(),
             dim: look.dim.to_string(),
+            reference: !look.no_reference,
         }
     }
 
@@ -185,6 +188,7 @@ impl Stage {
                         self.dim.trim()
                     )
                 })?,
+            no_reference: !self.reference,
         })
     }
 }
@@ -291,6 +295,8 @@ pub enum Edit {
     MaxSize(String),
     MinSize(String),
     Dim(String),
+    /// Say which verse a passage is at, on stage, or don't.
+    Reference(bool),
     /// A suggestion was chosen for a path field.
     Choose(Field, String),
     /// Tab: the first suggestion for the field being typed in.
@@ -598,6 +604,7 @@ impl Draft {
             Edit::MaxSize(text) => self.stage_mut().max_size = text,
             Edit::MinSize(text) => self.stage_mut().min_size = text,
             Edit::Dim(text) => self.stage_mut().dim = text,
+            Edit::Reference(on) => self.stage_mut().reference = on,
             Edit::SeeThrough(percent) => {
                 self.see_through = percent.min(config::MOST_SEE_THROUGH);
             }
@@ -1162,6 +1169,26 @@ impl App {
                 ])
                 .into(),
                 line(row![
+                    label("Verse"),
+                    pill(
+                        p,
+                        if draft.stage().reference {
+                            "✓ Shown"
+                        } else {
+                            "Hidden"
+                        },
+                        if draft.stage().reference {
+                            Tone::Selected
+                        } else {
+                            Tone::Plain
+                        },
+                        look::PILL_SMALL,
+                        Some(settings(Edit::Reference(!draft.stage().reference))),
+                    ),
+                    note("which verse a passage is at, in the lower corner"),
+                ])
+                .into(),
+                line(row![
                     label("Font"),
                     field(
                         p,
@@ -1604,6 +1631,7 @@ impl App {
                 .ok()
                 .filter(|dim| *dim <= 100)
                 .unwrap_or(saved.dim),
+            no_reference: !draft.stage().reference,
         };
         let sample = crate::backdrop(
             &look,
