@@ -2056,10 +2056,19 @@ impl App {
             Action::Show { resource } => Some(resource),
             _ => None,
         });
-        // What's on standby must be as ready as the steps.
-        for video in shown.chain(&plan.standby).filter_map(YoutubeVideo::of) {
-            self.downloads.0.fetch(&video);
+        // What's on standby must be as ready as the steps. The plan's
+        // videos are downloaded; one shown outside it is streamed.
+        let planned: Vec<YoutubeVideo> = shown
+            .chain(&plan.standby)
+            .filter_map(YoutubeVideo::of)
+            .collect();
+        for video in &planned {
+            self.downloads.0.fetch(video);
         }
+        self.media.plan_videos(
+            planned.into_iter().map(|video| video.id).collect(),
+            !self.config.always_download,
+        );
         let preview = self.stage.preview.as_ref().map(|s| (*s.resource).clone());
         let next = self.engine.0.up_next().and_then(|step| match step.action {
             Action::Show { resource } => Some(resource),
