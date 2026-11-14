@@ -25,6 +25,7 @@ mod plan_edit;
 mod plan_pane;
 mod plans;
 mod ready;
+mod relay;
 mod script;
 mod search;
 mod settings;
