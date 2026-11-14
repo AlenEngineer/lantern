@@ -153,6 +153,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A folder that isn't on this computer says so under its row in
   Settings, for the plan's own and the library's, and the save notice
   names it. It was saved without a word and never searched.
+- Settings keep what's on stage in sight: while something is live, their
+  header shows its state, its name and a small picture of it. They cover
+  the stage pane, which left the operator blind mid-service.
 
 ## [0.7.0] - 2026-11-13
 
