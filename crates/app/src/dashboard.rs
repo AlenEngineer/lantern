@@ -454,11 +454,16 @@ impl App {
         let mut panel = column![self.search_box(), self.results()].spacing(10);
         if self.stage.preview.is_some() {
             let mut preview = self.preview_section();
-            // The picture small: the list above is what's being read.
+            // The picture small: the list above is what's being read. In
+            // a short window it's left out, and the list keeps its room.
             let monitor = std::mem::replace(&mut preview[1], Space::new().into());
-            preview[1] = container(container(monitor).width(240).height(135))
-                .center_x(Fill)
-                .into();
+            let roomy = self.dashboard_size.height >= 640.0;
+            preview[1] = match roomy {
+                true => container(container(monitor).width(240).height(135))
+                    .center_x(Fill)
+                    .into(),
+                false => Space::new().into(),
+            };
             panel = panel.push(column(preview.into_iter().skip(1)).spacing(8));
         }
         panel.height(Fill).into()
