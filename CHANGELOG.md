@@ -159,6 +159,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Settings say when they have unsaved changes, and Esc asks once before
   discarding them: the first press says so, the second closes. Esc
   dropped them without a word.
+- Two actions on one key show at once under Keys, in red on both rows
+  with the other's name. Only Save said so. ↺ says which key it puts back.
 
 ## [0.7.0] - 2026-11-13
 

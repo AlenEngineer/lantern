@@ -335,6 +335,18 @@ impl Draft {
         }
     }
 
+    /// The action that has the same key as action `at`, if one does: what
+    /// Save would refuse. A key that doesn't read clashes with nothing.
+    pub fn key_clash(&self, at: usize) -> Option<&'static keys::Action> {
+        let read = |key: &String| key.parse::<keys::Bind>().ok();
+        let mine = read(self.keys.get(at)?)?;
+        self.keys
+            .iter()
+            .enumerate()
+            .find(|(other, key)| *other != at && read(key) == Some(mine))
+            .map(|(other, _)| &keys::ACTIONS[other])
+    }
+
     /// Everything Save would keep, as one text to compare.
     fn held(&self) -> String {
         format!(
@@ -1074,18 +1086,29 @@ impl App {
             } else {
                 keys::shown(key)
             };
-            let tone = if recording {
-                Tone::Selected
-            } else {
-                Tone::Plain
+            // Two actions on one key show as soon as it's pressed, on both
+            // rows: Save would only refuse it later.
+            let clash = draft.key_clash(at).filter(|_| !recording);
+            let tone = match (recording, clash) {
+                (true, _) => Tone::Selected,
+                (false, Some(_)) => Tone::Danger,
+                (false, None) => Tone::Plain,
             };
             // Only a changed key has something to put back.
             let reset: Element<'a, Message> = if key != action.key {
-                button(text("↺").size(BODY).color(p.primary))
+                iced::widget::tooltip(
+                    button(text("↺").size(BODY).color(p.primary))
+                        .padding([4, 8])
+                        .on_press(settings(Edit::ResetKey(at)))
+                        .style(look::row(p, Tone::Plain)),
+                    iced::widget::container(
+                        text(format!("Back to {}", keys::shown(action.key))).size(META),
+                    )
                     .padding([4, 8])
-                    .on_press(settings(Edit::ResetKey(at)))
-                    .style(look::row(p, Tone::Plain))
-                    .into()
+                    .style(look::tip(p)),
+                    iced::widget::tooltip::Position::Top,
+                )
+                .into()
             } else {
                 Space::new().width(28).into()
             };
@@ -1101,6 +1124,19 @@ impl App {
                 )
                 .width(SMALL_FIELD + 40.0),
             ]));
+            if let Some(other) = clash {
+                keys = keys.push(
+                    text(format!(
+                        "{} is also the key for “{}”. One of them needs another.",
+                        keys::shown(key),
+                        other.about
+                    ))
+                    .size(META)
+                    .color(p.error)
+                    .width(Fill)
+                    .align_x(iced::alignment::Horizontal::Right),
+                );
+            }
         }
 
         // Opened for a plan's look, the stage comes first.
@@ -1684,6 +1720,19 @@ mod tests {
             None,
             "no plan"
         );
+    }
+
+    #[test]
+    fn two_actions_on_one_key_clash_at_once() {
+        let mut draft = Draft::of(&sample(), home());
+        let at = |name: &str| keys::ACTIONS.iter().position(|a| a.name == name).unwrap();
+        let (blackout, save) = (at("blackout"), at("save"));
+        assert!((0..keys::ACTIONS.len()).all(|at| draft.key_clash(at).is_none()));
+        draft.edit(Edit::Key(blackout, "ctrl+s".into()));
+        assert_eq!(draft.key_clash(blackout).map(|a| a.name), Some("save"));
+        assert_eq!(draft.key_clash(save).map(|a| a.name), Some("blackout"));
+        draft.edit(Edit::ResetKey(blackout));
+        assert_eq!(draft.key_clash(save).map(|a| a.name), None);
     }
 
     #[test]
