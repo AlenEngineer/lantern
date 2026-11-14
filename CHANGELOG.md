@@ -145,6 +145,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Ctrl+A in the search box only selects what's typed. It also added the
   result to the plan, unnoticed. Adding is now Ctrl+Enter, and standby
   Alt+Enter; both can be changed under Keys.
+- "Behind" and "ends in" count the section under way for its whole
+  time, as they do the ones to come. A service that started late read as
+  ahead while its section had time to spare.
 
 ## [0.7.0] - 2026-11-13
 
