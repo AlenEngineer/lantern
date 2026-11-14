@@ -99,6 +99,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Verse hides it.
 - `!x` shows what you type after it: `!x Bienvenidos`. ` | ` starts a
   new line and ` || ` a new slide.
+- The strip has a button for each source: the Bible, YouTube, folders,
+  images, time and your own text, and a folder's own bang as `!h`. A
+  button opens the search on that source, as typing its bang would.
 
 ### Fixed
 
