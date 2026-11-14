@@ -355,7 +355,9 @@ impl App {
             },
             |t| t.phase,
         );
-        let mut time = section_time(budget, &phase);
+        // In a narrow pane the time says less, so the name keeps its room.
+        let narrow = self.plan_width() < 320.0;
+        let mut time = section_time(budget, &phase, narrow);
         // "10:45 · 12 of 15 min planned", until the section starts.
         if let (Some(due), Phase::Coming { .. }) = (due, &phase) {
             time.words = match time.words.is_empty() {
@@ -375,9 +377,15 @@ impl App {
                 .color(p.primary)
                 .into()
         };
-        let mut line = row![container(title).width(Fill).clip(true)]
-            .spacing(8)
-            .align_y(Alignment::Center);
+        // The name comes first: it takes the room it needs, and the time
+        // what's left, cut at its end when that's too little.
+        let editing_name = self.editing(id, Part::Name);
+        let mut line = row![match editing_name {
+            true => container(title).width(Fill),
+            false => container(title),
+        }]
+        .spacing(8)
+        .align_y(Alignment::Center);
         let color = match time.pace {
             Some(pace) if pace != Pace::OnTrack => pace_tone(pace).text(p),
             _ => p.on_surface_variant,
@@ -390,7 +398,7 @@ impl App {
             if !time.words.is_empty() {
                 let words = row![
                     look::icon(Icon::Clock, 13.0, color),
-                    text(time.words.clone()).size(META).color(color)
+                    single_line(time.words.clone()).size(META).color(color)
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center);
@@ -403,7 +411,7 @@ impl App {
                             .style(look::pill(p, Tone::Plain)),
                     )
                 } else {
-                    line.push(words)
+                    line.push(container(words).width(Fill).align_right(Fill).clip(true))
                 };
             }
             if time.offer {
@@ -838,7 +846,23 @@ struct SectionTime {
     offer: bool,
 }
 
-fn section_time(budget: Option<Duration>, phase: &Phase) -> SectionTime {
+/// `short` says it in fewer words, for a narrow pane: "8 / 15 min",
+/// "6:40 / 15 min", leaving "planned" and the pace to the bar's colour.
+fn section_time(budget: Option<Duration>, phase: &Phase, short: bool) -> SectionTime {
+    let mut time = section_time_in_full(budget, phase);
+    if short {
+        time.words = time
+            .words
+            .replace(" of ", " / ")
+            .replace(" planned", "")
+            .replace(" · on track", "")
+            .replace(" · tight", "")
+            .replace(" · over", "");
+    }
+    time
+}
+
+fn section_time_in_full(budget: Option<Duration>, phase: &Phase) -> SectionTime {
     let share = |used: Duration| budget.map(|b| used.as_secs_f32() / b.as_secs_f32().max(1.0));
     let of = |used: String| match budget {
         Some(budget) => format!("{used} of {}", minutes(budget)),
@@ -1220,21 +1244,21 @@ mod tests {
         let coming = |planned| Phase::Coming { planned };
         let budget = Some(15 * MIN);
 
-        let empty = section_time(None, &coming(Duration::ZERO));
+        let empty = section_time(None, &coming(Duration::ZERO), false);
         assert_eq!((empty.words.as_str(), empty.offer), ("", true));
-        let unset = section_time(None, &coming(12 * MIN));
+        let unset = section_time(None, &coming(12 * MIN), false);
         assert_eq!(
             (unset.words.as_str(), unset.offer),
             ("~12 min planned", true)
         );
 
-        let none_yet = section_time(budget, &coming(Duration::ZERO));
+        let none_yet = section_time(budget, &coming(Duration::ZERO), false);
         assert_eq!(none_yet.words, "0 of 15 min planned");
         assert!(!none_yet.offer);
-        let planned = section_time(budget, &coming(12 * MIN));
+        let planned = section_time(budget, &coming(12 * MIN), false);
         assert_eq!(planned.words, "12 min of 15 min planned");
         assert_eq!(planned.share, Some(0.8));
-        let over = section_time(budget, &coming(19 * MIN));
+        let over = section_time(budget, &coming(19 * MIN), false);
         assert_eq!(over.words, "19 min of 15 min planned · 4 min over");
         assert_eq!(over.pace, Some(Pace::Over));
 
@@ -1243,13 +1267,28 @@ mod tests {
             expected: 12 * MIN,
         };
         assert_eq!(
-            section_time(budget, &running).words,
+            section_time(budget, &running, false).words,
             "6:40 of 15 min · on track"
         );
         let done = Phase::Done {
             took: Some(14 * MIN),
         };
-        assert_eq!(section_time(None, &done).words, "took 14:00");
+        assert_eq!(section_time(None, &done, false).words, "took 14:00");
+        // In a narrow pane: fewer words, the same numbers.
+        assert_eq!(
+            section_time(budget, &coming(12 * MIN), true).words,
+            "12 min / 15 min"
+        );
+        assert!(
+            !section_time(budget, &running, true)
+                .words
+                .contains("on track")
+        );
+        assert!(
+            section_time(budget, &running, true)
+                .words
+                .contains(" / 15 min")
+        );
         assert_eq!(minutes(90 * MIN), "1 h 30 min");
     }
 

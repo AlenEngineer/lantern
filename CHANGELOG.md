@@ -187,6 +187,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   so. It did nothing.
 - The line under the plan (an export's result, an error) wraps where it
   was cut off, and a selected step's length looks like the button it is.
+- In a narrow plan pane a section keeps its name, and its time is what
+  gets shorter ("8 min / 15 min") or cut. The name was cut first.
 
 ## [0.7.0] - 2026-11-13
 
