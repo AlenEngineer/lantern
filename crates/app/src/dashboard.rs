@@ -898,7 +898,22 @@ impl App {
         let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Up next")];
         section.push(match &next {
             Some(step) => self.step_picture(step),
-            None => empty_monitor(p, "The end of the plan"),
+            // Nothing next isn't always the end: there may be no plan, or
+            // one with nothing in it to show yet.
+            None => {
+                let plan = self.engine.0.plan();
+                let steps = plan.steps().iter().any(|step| !step.is_section());
+                empty_monitor(
+                    p,
+                    if !self.plans.has_plan(&plan) {
+                        "No plan open"
+                    } else if !steps {
+                        "This plan has no steps yet"
+                    } else {
+                        "The end of the plan"
+                    },
+                )
+            }
         });
         if let Some(step) = &next {
             section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
