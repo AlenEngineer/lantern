@@ -13,6 +13,7 @@ use lantern_source_brave::BraveImages;
 use lantern_source_clock::ClockSource;
 use lantern_source_link::LinkSource;
 use lantern_source_local::{Folder, LocalSource};
+use lantern_source_text::TextSource;
 use lantern_source_youtube::YoutubeSource;
 
 use crate::config::{self, BibleEntry, Config, FolderEntry};
@@ -96,6 +97,7 @@ impl Library {
         let fixed = [
             engine.add_source(LinkSource::new(id("link"))),
             engine.add_source(ClockSource::new(id("clock"))),
+            engine.add_source(TextSource::new(id("text"))),
             engine.add_source(YoutubeSource::new(id("youtube"))),
         ];
         for err in fixed.into_iter().filter_map(Result::err) {

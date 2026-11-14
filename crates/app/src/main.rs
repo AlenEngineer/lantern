@@ -1978,6 +1978,32 @@ impl App {
         Some(clock.text(on_stage, length::now_of_day()))
     }
 
+    /// How `resource`'s slide `frame` is set: a clock large, a passage
+    /// with its verse in the corner (unless the look leaves it out).
+    pub(crate) fn slide_kind(&self, resource: &lantern_engine::Resource, frame: usize) -> Slide {
+        if lantern_source_clock::Clock::of(resource).is_some() {
+            return Slide::Clock;
+        }
+        let passage = resource.meta.get("provider").map(String::as_str) == Some("bible");
+        if !passage || self.look.no_reference {
+            return Slide::Plain;
+        }
+        let verses: Vec<String> = resource
+            .meta
+            .get("verses")
+            .map(|list| list.split(',').map(|v| v.trim().to_string()).collect())
+            .unwrap_or_default();
+        let labels = match resource.location.as_text() {
+            Some(body) => self.slides.labels(body, &verses),
+            None => Vec::new(),
+        };
+        Slide::Passage(reference(
+            &resource.title,
+            labels.get(frame).map(String::as_str),
+            resource.meta.get("translation").map(String::as_str),
+        ))
+    }
+
     /// Whether a clock, timer or countdown is on stage or lined up, so
     /// the windows redraw as it ticks.
     fn ticking(&self) -> bool {
@@ -2146,20 +2172,12 @@ impl App {
             }
             return backdrop(look, Space::new(), Over::Nothing);
         };
-        // A clock's few figures are set large: they're read from the back.
-        let big;
-        let look = match lantern_source_clock::Clock::of(&scene.resource) {
-            Some(_) => {
-                big = clock_look(look);
-                &big
-            }
-            None => look,
-        };
+        let kind = self.slide_kind(&scene.resource, scene.frame());
         let nothing = || (Space::new().into(), Over::Nothing);
         let (content, over): (Element<'_, Message>, Over) =
             match (&scene.media, self.scene_text(scene)) {
                 (Media::Failed { .. }, _) => nothing(),
-                (_, Some(body)) => (fit::fit_text(body, look).into(), Over::Text),
+                (_, Some(body)) => (slide(look, body, &kind), Over::Text),
                 (_, None) => match self.media.content(scene.id) {
                     None => nothing(),
                     Some(Content::Image(handle)) => (fit(image(handle.clone())), Over::Media),
@@ -2461,6 +2479,61 @@ fn run_script(
 }
 
 /// Resolves after `delay`, timed on its own thread.
+/// How a slide of text is set.
+pub(crate) enum Slide {
+    Plain,
+    /// A clock, timer or countdown: a few figures, set large.
+    Clock,
+    /// A Bible passage, with this in the stage's lower corner: the verse
+    /// it's at and the translation.
+    Passage(String),
+}
+
+/// What the corner says of a passage: `Juan 3:17 · RVG`. `title` is the
+/// passage's (`Juan 3:16-18`), `verse` the slide's (`17`, or `17a` for
+/// the first part of a long one). Without a verse, or for a passage over
+/// more than one chapter, the title as it is.
+fn reference(title: &str, verse: Option<&str>, translation: Option<&str>) -> String {
+    let verse = verse.map(|v| v.trim_end_matches(|c: char| c.is_ascii_lowercase()));
+    let chapter = title.split(':').next().unwrap_or(title);
+    let at = match verse.filter(|v| !v.is_empty() && title.matches(':').count() <= 1) {
+        Some(verse) => format!("{chapter}:{verse}"),
+        None => title.to_string(),
+    };
+    match translation {
+        Some(translation) => format!("{at} · {translation}"),
+        None => at,
+    }
+}
+
+/// `body` as the stage sets it: as large as fits, and for a passage its
+/// reference small in the lower right corner, inside the margin the text
+/// leaves free.
+pub(crate) fn slide<'a>(look: &Look, body: String, kind: &Slide) -> Element<'a, Message> {
+    use iced::Length::FillPortion;
+    match kind {
+        Slide::Plain => fit::fit_text(body, look).into(),
+        Slide::Clock => fit::fit_text(body, &clock_look(look)).into(),
+        Slide::Passage(corner) => {
+            // A box a twelfth of the stage tall; its text fills it.
+            let small = Look {
+                min_size: 240,
+                max_size: 600,
+                ..look.clone()
+            };
+            let corner = iced::widget::column![
+                Space::new().height(FillPortion(11)),
+                iced::widget::row![
+                    Space::new().width(FillPortion(5)),
+                    container(fit::fit_text(corner.clone(), &small)).width(FillPortion(4)),
+                ]
+                .height(FillPortion(1)),
+            ];
+            stack![fit::fit_text(body, look), corner].into()
+        }
+    }
+}
+
 /// `look` for a clock, timer or countdown: the same, but with its few
 /// figures allowed several times the size a passage's text gets.
 pub(crate) fn clock_look(look: &Look) -> Look {
@@ -2542,7 +2615,26 @@ fn move_stage(output: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::typed_into;
+    use super::{reference, typed_into};
+
+    #[test]
+    fn the_corner_says_the_verse_the_passage_is_at() {
+        assert_eq!(
+            reference("Juan 3:16-18", Some("17"), Some("RVG")),
+            "Juan 3:17 · RVG"
+        );
+        assert_eq!(
+            reference("Juan 3:16", Some("16a"), Some("RVG")),
+            "Juan 3:16 · RVG"
+        );
+        assert_eq!(reference("Salmos 23", Some("4"), None), "Salmos 23:4");
+        assert_eq!(reference("Juan 3:16", None, Some("RVG")), "Juan 3:16 · RVG");
+        // Over two chapters the verse alone wouldn't say which.
+        assert_eq!(
+            reference("Juan 3:36-4:2", Some("1"), Some("RVG")),
+            "Juan 3:36-4:2 · RVG"
+        );
+    }
 
     #[test]
     fn typing_after_a_show_keeps_only_what_was_typed() {

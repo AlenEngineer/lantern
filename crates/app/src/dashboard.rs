@@ -11,7 +11,6 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
 
-use crate::fit;
 use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
@@ -1011,7 +1010,7 @@ impl App {
                         .as_text()
                         .and_then(|body| self.slides.slides(body).first().cloned()),
                 },
-                lantern_source_clock::Clock::of(resource).is_some(),
+                self.slide_kind(resource, 0),
                 0,
                 self.media.preloaded(&resource.id),
                 self.thumbs.get(resource),
@@ -1063,7 +1062,7 @@ impl App {
         let loading = self.loading_note(&scene.resource);
         self.picture(
             self.scene_text(scene),
-            lantern_source_clock::Clock::of(&scene.resource).is_some(),
+            self.slide_kind(&scene.resource, scene.frame()),
             scene.frame(),
             content,
             self.thumbs.get(&scene.resource),
@@ -1080,7 +1079,7 @@ impl App {
     fn picture<'a>(
         &'a self,
         slide: Option<String>,
-        clock: bool,
+        kind: crate::Slide,
         frame: usize,
         content: Option<&'a Content>,
         still: Option<image::Handle>,
@@ -1134,13 +1133,9 @@ impl App {
             }
             // A slide is a miniature of the stage, edge to edge.
             (Some(body), _) => {
-                // A clock's few figures are set as large as the stage's.
-                let look = &match clock {
-                    true => crate::clock_look(&self.look),
-                    false => self.look.clone(),
-                };
+                let look = &self.look;
                 return framed_with(
-                    crate::backdrop(look, fit::fit_text(body, look), crate::Over::Text),
+                    crate::backdrop(look, crate::slide(look, body, &kind), crate::Over::Text),
                     ring,
                     2,
                 );
