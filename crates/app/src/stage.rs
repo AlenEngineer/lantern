@@ -282,6 +282,24 @@ fn wait_to_start(pipeline: &gst::Pipeline) -> Result<(), String> {
     }
 }
 
+/// Where `player` is, or `None` while it can't say. A player in the middle
+/// of a seek answers nothing, which [`Video::position`] turns into zero:
+/// on a stream that lasts seconds, and the time on the dashboard fell to
+/// 0:00 until the picture came back.
+pub fn position(player: &Video) -> Option<Duration> {
+    let pipeline = player.pipeline();
+    let settling = matches!(
+        pipeline.state(gst::ClockTime::ZERO).0,
+        Ok(gst::StateChangeSuccess::Async)
+    );
+    if settling {
+        return None;
+    }
+    pipeline
+        .query_position::<gst::ClockTime>()
+        .map(|at| Duration::from_nanos(at.nseconds()))
+}
+
 /// What the operator reads when a playing video stops on `why`.
 fn broke_reason(streamed: bool, why: &str) -> String {
     let why = why.trim_end_matches('.');
@@ -630,8 +648,8 @@ impl Stage {
         if video.paused() != paused {
             video.set_paused(paused);
         }
-        if paused {
-            engine.report(scene, MediaReport::Position(video.position()));
+        if paused && let Some(position) = position(video) {
+            engine.report(scene, MediaReport::Position(position));
         }
     }
 
