@@ -816,16 +816,16 @@ impl App {
                 );
             }
             let hint = if found.is_empty() {
-                "No exported plan in Documents, Downloads or on a USB stick. Its file:"
+                "No exported plan in Documents, Downloads or on a USB stick. Type where the file is:"
             } else {
-                "Or another's file:"
+                "Or type where the file is:"
             };
             import = import.push(
                 container(text(hint).size(META).color(p.on_surface_variant)).padding([4, 10]),
             );
             import = import.push(
                 container(
-                    text_input("~/Documents/Sábado.lantern", typed)
+                    text_input("e.g. ~/Documents/Sábado.lantern", typed)
                         .id(crate::dashboard::IMPORT_BOX)
                         .on_input(Message::ImportPath)
                         .on_submit(Message::Import(None))

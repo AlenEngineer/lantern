@@ -166,6 +166,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - **Its Bibles** says in words what the plan searches ("Searching only
   RV1909"), and with a single Bible says so in place of a toggle that
   changed nothing. It names a Bible the plan asks for that isn't here.
+- An example in an empty field is dimmer and starts with "e.g.", so it
+  isn't taken for a value. The import field's line reads "Or type where
+  the file is".
 
 ## [0.7.0] - 2026-11-13
 

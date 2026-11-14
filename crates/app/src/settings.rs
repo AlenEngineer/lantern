@@ -896,9 +896,11 @@ impl App {
                 .align_y(Alignment::Center),
             );
             folders = folders.push(
-                field(p, "~/Music", &folder.path, move |t| Edit::FolderPath(i, t))
-                    .id(Field::Folder(i).id())
-                    .width(Fill),
+                field(p, "e.g. ~/Music", &folder.path, move |t| {
+                    Edit::FolderPath(i, t)
+                })
+                .id(Field::Folder(i).id())
+                .width(Fill),
             );
             folders = folders.push(suggestions(p, draft, Field::Folder(i)));
             folders = folders.push(not_there(draft, Field::Folder(i), &folder.path));
@@ -937,7 +939,7 @@ impl App {
                 .align_y(Alignment::Center),
             );
             bibles = bibles.push(
-                field(p, "~/bibles/rv1909.tsv", &bible.path, move |t| {
+                field(p, "e.g. ~/bibles/rv1909.tsv", &bible.path, move |t| {
                     Edit::BiblePath(i, t)
                 })
                 .id(Field::Bible(i).id())
@@ -1159,7 +1161,7 @@ impl App {
         for (i, folder) in draft.plan_folder_rows().iter().enumerate() {
             plan_folders = plan_folders.push(
                 row![
-                    field(p, "~/Church/Campaña", folder, move |t| {
+                    field(p, "e.g. ~/Church/Campaña", folder, move |t| {
                         Edit::PlanFolderPath(i, t)
                     })
                     .id(Field::PlanFolder(i).id())
@@ -1395,7 +1397,7 @@ impl App {
             (None, Some(starts)) => starts.to_string(),
             (None, None) => String::new(),
         };
-        let starts = text_input("10:30", &starts)
+        let starts = text_input("e.g. 10:30", &starts)
             .on_input(Message::PlanStarts)
             .size(BODY)
             .padding([8, 10])
