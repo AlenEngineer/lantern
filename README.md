@@ -272,6 +272,8 @@ min planned"), counting each section before it for its time, or without
 one for its steps. The header counts down to the start ("starts 10:30 · in
 12 min") and, once the service is under way, says how far it runs from that
 schedule ("4 min behind", "2 min ahead", "on time") in place of "ends in".
+A section counts for its whole time even when its steps are shorter, so a
+late start reads as behind until time is made up.
 
 **Export**, beside them, puts the plan and everything it shows into one
 file, `Sábado.lantern` in your Documents, to take or send to another

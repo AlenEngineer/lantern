@@ -276,7 +276,8 @@ pub struct Timing {
     /// Every section, in order.
     pub sections: Vec<SectionTiming>,
     /// When the service is expected to end, once it has started. A section
-    /// still to come counts for its budget or its steps, whichever is more.
+    /// under way or still to come counts for its budget or its steps,
+    /// whichever is more.
     pub end: Option<SystemTime>,
 }
 
@@ -352,7 +353,10 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
                 let elapsed = began.map(since).unwrap_or_default();
                 let after: Duration = steps[i + 1..stop].iter().map(length).sum();
                 let left = current_left.unwrap_or_default() + after;
-                end = end.map(|end| end + after);
+                // Like one still to come, it counts for its budget when
+                // its steps would end sooner: the time is its to use.
+                let spare = budget.map_or(Duration::ZERO, |b| b.saturating_sub(elapsed + left));
+                end = end.map(|end| end + after + spare);
                 Phase::Running {
                     elapsed,
                     expected: elapsed + left,
@@ -569,8 +573,16 @@ mod tests {
         );
         assert_eq!(worship.pace(), Some(Pace::Tight));
         assert_eq!(timing.running().map(|s| s.title.as_str()), Some("Alabanza"));
-        // Then the sermon's 30-minute budget, more than its steps.
-        assert_eq!(timing.end, Some(now + 7 * MIN + 30 * MIN));
+        // The minute of its budget the songs leave over, then the sermon's
+        // 30-minute budget, more than its steps.
+        assert_eq!(timing.end, Some(now + 7 * MIN + MIN + 30 * MIN));
+        // So a service that started 6 minutes late, and has kept to its
+        // times since, is 6 minutes behind: not ahead by the spare minute.
+        let starts = TimeOfDay::parse("10:00").unwrap();
+        let schedule = schedule(&plan, &|_| None);
+        let of_day = TimeOfDay::parse("10:13").unwrap().since_midnight();
+        let ends_in = timing.end.unwrap().duration_since(now).unwrap();
+        assert_eq!(behind(starts, schedule.total, of_day, ends_in), 6 * 60);
     }
 
     #[test]
