@@ -12,7 +12,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId, Timing,
+    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId,
+    TimeOfDay, Timing,
 };
 
 use crate::dashboard::{
@@ -195,6 +196,11 @@ impl App {
         // The pink line is there only while a search has a result for
         // Ctrl+A to add.
         let adds = self.search.first().is_some();
+        // With a start time, a section still to come says when it's due.
+        let due = plan.starts.map(|starts| {
+            let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
+            move |id| schedule.start_of(id).map(|after| starts.plus(after))
+        });
         let mut rows = column![].spacing(2);
         let mut number = 0;
         let mut in_section = false;
@@ -211,7 +217,9 @@ impl App {
             if step.is_section() {
                 in_section = true;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
-                rows = rows.push(self.draggable(step.id, self.section_row(plan, step, section)));
+                let due = due.as_ref().and_then(|due| due(step.id));
+                rows =
+                    rows.push(self.draggable(step.id, self.section_row(plan, step, section, due)));
                 if selected && adds {
                     rows = rows.push(insertion_mark(p, INDENT));
                 }
@@ -315,6 +323,7 @@ impl App {
         plan: &Plan,
         step: &Step,
         timing: Option<&SectionTiming>,
+        due: Option<TimeOfDay>,
     ) -> Element<'_, Message> {
         let p = self.palette;
         let id = step.id;
@@ -328,7 +337,14 @@ impl App {
             },
             |t| t.phase,
         );
-        let time = section_time(budget, &phase);
+        let mut time = section_time(budget, &phase);
+        // "10:45 · 12 of 15 min planned", until the section starts.
+        if let (Some(due), Phase::Coming { .. }) = (due, &phase) {
+            time.words = match time.words.is_empty() {
+                true => due.to_string(),
+                false => format!("{due} · {}", time.words),
+            };
+        }
         let selected =
             self.selected == Some(id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
         // The name is edited where it's read.

@@ -246,6 +246,13 @@ in the plan, written as you typed them (`~/Church/Campaña`). The look is
 saved in the plan too, so opening the plan anywhere brings it, and **Use
 the look for all plans** removes it.
 
+**Starts at** is when the service begins, on a 24-hour clock (`10:30`).
+With it, each section still to come says when it's due ("10:45 · 12 of 15
+min planned"), counting each section before it for its time, or without
+one for its steps. The header counts down to the start ("starts 10:30 · in
+12 min") and, once the service is under way, says how far it runs from that
+schedule ("4 min behind", "2 min ahead", "on time") in place of "ends in".
+
 **Its Bibles** picks which of your Bibles the plan searches: all of them
 until you pick one. A plan that names a Bible this computer doesn't have
 searches them all.

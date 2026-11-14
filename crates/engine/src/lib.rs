@@ -25,7 +25,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-pub use lantern_orchestrator::timing::{self, Basis, Estimate, Pace, Phase, SectionTiming, Timing};
+pub use lantern_orchestrator::timing::{
+    self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
+};
 pub use lantern_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,

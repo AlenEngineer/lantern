@@ -255,6 +255,8 @@ enum Message {
     RenamePlan(String),
     /// Makes the open plan a template, or a plan again.
     PlanTemplate(bool),
+    /// When the open plan's service starts, as typed in its settings.
+    PlanStarts(String),
     /// Saves the open plan as a copy with its own file, and opens the copy.
     DuplicatePlan,
     /// Deletes the open plan; the first press asks, the second does.
@@ -371,6 +373,9 @@ struct App {
     /// tell a double click.
     pub(crate) resizing: Option<dashboard::Side>,
     seam_pressed: Option<(dashboard::Side, Instant)>,
+    /// The plan's start time while it's being typed and doesn't read as
+    /// one yet ("10:").
+    pub(crate) starts_typed: Option<String>,
     /// Delete was pressed once in the plan's settings: again deletes.
     pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
@@ -453,6 +458,7 @@ impl App {
             stage_dragged: layout.1,
             resizing: None,
             seam_pressed: None,
+            starts_typed: None,
             deleting_plan: false,
             editing: None,
             list_pick: None,
@@ -896,6 +902,7 @@ impl App {
                 })
             }
             Message::PlanSettings => {
+                self.starts_typed = None;
                 let mut draft = self
                     .settings
                     .take()
@@ -909,6 +916,17 @@ impl App {
             }
             Message::PlanTemplate(template) => {
                 self.engine.0.edit_plan(|plan| plan.template = template);
+            }
+            Message::PlanStarts(text) => {
+                // Only what a time is made of; kept as typed until it
+                // reads as one. Emptied, the plan has no start time.
+                if length::typeable(&text) {
+                    let starts = lantern_engine::TimeOfDay::parse(&text);
+                    if starts.is_some() || text.trim().is_empty() {
+                        self.engine.0.edit_plan(|plan| plan.starts = starts);
+                    }
+                    self.starts_typed = Some(text);
+                }
             }
             Message::DuplicatePlan => {
                 self.deleting_plan = false;
@@ -1247,6 +1265,7 @@ impl App {
             Op::Save if self.settings.is_some() => self.save_settings(),
             Op::Settings => {
                 keys::record(false);
+                self.starts_typed = None;
                 self.deleting_plan = false;
                 self.settings = match self.settings {
                     Some(_) => None,
@@ -1823,6 +1842,11 @@ impl App {
         if self.engine.0.current_step().is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+        }
+        // Before it, a plan with a start time counts down to it.
+        else if self.engine.0.edit_plan(|plan| plan.starts.is_some()) {
+            subscriptions
+                .push(iced::time::every(Duration::from_secs(15)).map(|_| Message::Progress));
         }
         // A step counting down to going on checks often, so it's on time.
         if self.goes_on_in().is_some() {

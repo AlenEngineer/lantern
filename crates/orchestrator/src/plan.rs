@@ -6,6 +6,8 @@ use lantern_resource::{Query, Resource};
 use lantern_showman::Look;
 use serde::{Deserialize, Serialize};
 
+use crate::timing::TimeOfDay;
+
 /// Errors loading or saving a plan.
 #[derive(Debug, thiserror::Error)]
 pub enum PlanError {
@@ -112,6 +114,10 @@ pub struct Plan {
     /// an app has. Empty searches them all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bibles: Vec<String>,
+    /// When the service starts, such as 10:30. With it an app can say at
+    /// what time each section comes, and how far behind the service runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub starts: Option<TimeOfDay>,
 }
 
 impl Default for Plan {
@@ -132,6 +138,7 @@ impl Plan {
             template: false,
             folders: Vec::new(),
             bibles: Vec::new(),
+            starts: None,
         }
     }
 
@@ -437,6 +444,13 @@ mod tests {
         let back = Plan::from_json(&template.to_json()).unwrap();
         assert_eq!(back.folders, template.folders);
         assert_eq!(template.from_template("Next").folders, template.folders);
+        // And when it starts: every Sunday at the same time.
+        assert!(!Plan::new("Plain").to_json().contains("starts"));
+        template.starts = TimeOfDay::parse("10:30");
+        assert!(template.to_json().contains("\"starts\": \"10:30\""));
+        let back = Plan::from_json(&template.to_json()).unwrap();
+        assert_eq!(back.starts, template.starts);
+        assert_eq!(template.from_template("Next").starts, template.starts);
         // So are the Bibles it searches.
         assert!(!Plan::new("Plain").to_json().contains("bibles"));
         template.bibles = vec!["RV1909".into()];

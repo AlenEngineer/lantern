@@ -253,22 +253,61 @@ impl App {
         .spacing(10)
         .align_y(Alignment::Center)
         .height(36);
-        // The running section and when the service should end.
+        // The running section and when the service should end; with a
+        // start time, how far behind its schedule it runs instead.
+        let ends_in = |end: SystemTime| end.duration_since(SystemTime::now()).unwrap_or_default();
+        let (starts, scheduled) = self.engine.0.edit_plan(|plan| {
+            let total = plan.starts.map(|_| {
+                lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step)).total
+            });
+            (plan.starts, total.filter(|_| !plan.is_empty()))
+        });
+        let drift = starts
+            .zip(scheduled)
+            .zip(timing.end)
+            .map(|((starts, total), end)| {
+                let behind = lantern_engine::timing::behind(
+                    starts,
+                    total,
+                    length::now_of_day(),
+                    ends_in(end),
+                );
+                length::drift(behind)
+            });
         match (timing.running(), timing.end) {
             (Some(section), end) => {
                 let (mut status, tone) = section_status(section);
-                if let Some(end) = end {
-                    let left = end.duration_since(SystemTime::now()).unwrap_or_default();
+                if let Some(drift) = &drift {
+                    status = format!("{status} · {drift}");
+                } else if let Some(end) = end {
                     status = format!(
                         "{status} · ends in {}",
-                        length::rough(left).trim_start_matches('~')
+                        length::rough(ends_in(end)).trim_start_matches('~')
                     );
                 }
                 header = header
                     .push(chip(p, &status, tone))
                     .push(Space::new().width(Fill));
             }
-            (None, _) => header = header.push(Space::new().width(Fill)),
+            // Under way outside any section.
+            (None, Some(_)) if drift.is_some() => {
+                header = header
+                    .push(chip(p, drift.as_deref().unwrap_or_default(), Tone::Plain))
+                    .push(Space::new().width(Fill));
+            }
+            // Not begun: how long until it should.
+            (None, None) => {
+                let waiting = starts.zip(scheduled).and_then(|(starts, _)| {
+                    let now = length::now_of_day().as_secs() as i64;
+                    let until = starts.since_midnight().as_secs() as i64 - now;
+                    length::starting(&starts.to_string(), until)
+                });
+                if let Some(waiting) = waiting {
+                    header = header.push(chip(p, &waiting, Tone::Plain));
+                }
+                header = header.push(Space::new().width(Fill));
+            }
+            (None, Some(_)) => header = header.push(Space::new().width(Fill)),
         }
         let gear = button(look::icon(Icon::Settings, 18.0, p.on_surface_variant))
             .padding(8)

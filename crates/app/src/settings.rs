@@ -1188,11 +1188,30 @@ impl App {
             look::PILL_SMALL,
             Some(Message::DeletePlan),
         );
+        // As typed while it doesn't read as a time yet.
+        let starts = match (&self.starts_typed, plan.starts) {
+            (Some(typed), _) => typed.clone(),
+            (None, Some(starts)) => starts.to_string(),
+            (None, None) => String::new(),
+        };
+        let starts = text_input("10:30", &starts)
+            .on_input(Message::PlanStarts)
+            .size(BODY)
+            .padding([8, 10])
+            .width(SMALL_FIELD)
+            .style(look::input(p));
         column![
             section(p, "This plan", "Its name, and what can be done with it."),
             row![label("Name"), name]
                 .spacing(8)
                 .align_y(Alignment::Center),
+            row![
+                label("Starts at"),
+                starts,
+                note("When the service begins: sections say when they're due.")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
             row![
                 label("Template"),
                 template,

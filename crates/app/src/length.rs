@@ -36,6 +36,41 @@ pub fn clock(d: Duration) -> String {
     }
 }
 
+/// The time of day now, here, as time since midnight.
+pub fn now_of_day() -> Duration {
+    use chrono::Timelike;
+    Duration::from_secs(u64::from(
+        chrono::Local::now().time().num_seconds_from_midnight(),
+    ))
+}
+
+/// How far a service is from its schedule, in words: "on time" within a
+/// minute, "4 min behind", "2 min ahead".
+pub fn drift(behind: i64) -> String {
+    let by = rough(Duration::from_secs(behind.unsigned_abs()));
+    let by = by.trim_start_matches('~');
+    match behind {
+        -59..=59 => "on time".into(),
+        60.. => format!("{by} behind"),
+        _ => format!("{by} ahead"),
+    }
+}
+
+/// What to say of a start time while the service hasn't begun: "starts
+/// 10:30 · in 12 min" from three hours before, "starts 10:30 · 5 min
+/// ago" for an hour after, and nothing the rest of the day. `until` is the
+/// seconds to go, negative once past.
+pub fn starting(starts: &str, until: i64) -> Option<String> {
+    let span = rough(Duration::from_secs(until.unsigned_abs()));
+    let span = span.trim_start_matches('~');
+    match until {
+        -3600..=-60 => Some(format!("starts {starts} · {span} ago")),
+        -59..=59 => Some(format!("starts {starts} · now")),
+        60..=10800 => Some(format!("starts {starts} · in {span}")),
+        _ => None,
+    }
+}
+
 /// What the operator typed for a length, back: `15` or `4:30`.
 pub fn typed(d: Duration) -> String {
     let s = d.as_secs();
@@ -57,6 +92,26 @@ pub fn rough(d: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drift_and_the_wait_for_the_start_read_as_people_say_them() {
+        assert_eq!(drift(0), "on time");
+        assert_eq!(drift(-45), "on time");
+        assert_eq!(drift(240), "4 min behind");
+        assert_eq!(drift(-130), "2 min ahead");
+        assert_eq!(
+            starting("10:30", 12 * 60).as_deref(),
+            Some("starts 10:30 · in 12 min")
+        );
+        assert_eq!(starting("10:30", 20).as_deref(), Some("starts 10:30 · now"));
+        assert_eq!(
+            starting("10:30", -300).as_deref(),
+            Some("starts 10:30 · 5 min ago")
+        );
+        // Not all day: a plan from last week says nothing.
+        assert_eq!(starting("10:30", 5 * 3600), None);
+        assert_eq!(starting("10:30", -2 * 3600), None);
+    }
 
     const fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
