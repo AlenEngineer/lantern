@@ -262,7 +262,9 @@ needs, such as a campaign's. They're searched like your media folders
 while the plan is open, and no longer once another plan is. They're saved
 in the plan, written as you typed them (`~/Church/Campaña`). The look is
 saved in the plan too, so opening the plan anywhere brings it, and **Use
-the look for all plans** removes it.
+the look for all plans** removes it. Opening another plan while something
+is on stage leaves that as it looks: the new plan's look starts with the
+next thing shown.
 
 **Starts at** is when the service begins, on a 24-hour clock (`10:30`).
 With it, each section still to come says when it's due ("10:45 · 12 of 15
