@@ -63,6 +63,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   a notice. A click lines it up, a second click or Enter shows it, and the
   plan keeps its place. ↓ past the last step reaches it; ✕ or Del takes
   it off. Saved with the plan.
+- The open plan's pictures and PDF pages stay loaded while it's open (up
+  to 512 MB of them), so any step or standby item shows at once, in any
+  order. Videos are still made ready one step ahead.
 
 ### Fixed
 

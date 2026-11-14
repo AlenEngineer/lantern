@@ -536,7 +536,11 @@ impl App {
                 self.mark_shown();
                 return task;
             }
-            Message::Loaded(loaded) => self.media.loaded(&loaded, &self.stage, &self.engine.0),
+            Message::Loaded(loaded) => {
+                self.media.loaded(&loaded, &self.stage, &self.engine.0);
+                // The next of the plan's pictures to keep loaded.
+                return self.media.keep_more().map(Message::Loaded);
+            }
             Message::Ended(scene) => {
                 self.engine.0.report(scene, MediaReport::Ended);
                 // A step that goes on by itself has moved the plan.
@@ -1831,9 +1835,22 @@ impl App {
             Action::Show { resource } => Some(resource),
             _ => None,
         });
-        self.media
+        // The plan's pictures and pages stay loaded while it's open: the
+        // shelf first, which is shown without warning, then the steps.
+        let stills = plan
+            .standby
+            .iter()
+            .cloned()
+            .chain(plan.steps().iter().filter_map(|step| match &step.action {
+                Action::Show { resource } => Some(resource.clone()),
+                _ => None,
+            }));
+        let keep = self.media.keep(stills).map(Message::Loaded);
+        let upcoming = self
+            .media
             .preload(preview.into_iter().chain(next))
-            .map(Message::Loaded)
+            .map(Message::Loaded);
+        Task::batch([keep, upcoming])
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
