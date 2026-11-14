@@ -185,6 +185,14 @@ frozen frames or no sound. Planned videos
 usually finish downloading long before they're needed, so the service
 doesn't depend on the network.
 
+The open plan's pictures and PDF pages are loaded when it opens and kept
+while it's open, the standby shelf first, so any of them shows at once in
+any order; an image at a link is downloaded then too. They're let go when
+they leave the plan or another plan opens. Decoded pictures are kept up to
+512 MB (about sixty at full HD); past that, the rest load when they're
+next, as videos always do: a video's player is only made for the one
+lined up and the next step's.
+
 The cache is plain `.mp4` files, safe to delete. A video unused for 30 days
 (not played, previewed or in the open plan) is deleted when Lantern starts.
 

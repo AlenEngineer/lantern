@@ -15,7 +15,7 @@
 //! cache first, falling back to its [thumbnail](Resource::THUMBNAIL) when the
 //! site refuses.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
@@ -42,6 +42,40 @@ pub enum Content {
     /// Rendered PDF pages, in order. Never empty.
     Pages(Vec<Handle>),
 }
+
+impl Content {
+    /// A copy to keep while another goes on stage, for what can be shown
+    /// twice: a picture or pages, which share their pixels. Not a player.
+    fn still(&self) -> Option<Content> {
+        match self {
+            Content::Image(handle) => Some(Content::Image(handle.clone())),
+            Content::Pages(pages) => Some(Content::Pages(pages.clone())),
+            Content::Video { .. } => None,
+        }
+    }
+
+    /// The memory its pixels take. Pages are read from their files when
+    /// drawn, so they take none here.
+    fn bytes(&self) -> usize {
+        let of = |handle: &Handle| match handle {
+            Handle::Rgba { pixels, .. } => pixels.len(),
+            Handle::Bytes(_, bytes) => bytes.len(),
+            Handle::Path(..) => 0,
+        };
+        match self {
+            Content::Image(handle) => of(handle),
+            Content::Pages(pages) => pages.iter().map(of).sum(),
+            Content::Video { .. } => 0,
+        }
+    }
+}
+
+/// The most memory the open plan's pictures are kept in. Past it, the
+/// rest load when they're next or shown, as before.
+const KEEP_BUDGET: usize = 512 * 1024 * 1024;
+
+/// How many of them load at a time.
+const KEEP_AT_ONCE: usize = 2;
 
 /// How the stage presents a resource. Decided from kind and location alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +153,15 @@ impl Loader {
             Kind::Document if is_pdf => Ok(Some(Loader::Pdf(path))),
             kind => Err(format!("the stage can't show {} files", kind.name())),
         }
+    }
+
+    /// Whether it loads something that can be kept and shown again: a
+    /// picture or pages, not a player.
+    fn is_still(&self) -> bool {
+        matches!(
+            self,
+            Loader::Image(_) | Loader::RemoteImage(_) | Loader::Pdf(_)
+        )
     }
 
     /// Blocks: decodes, builds a player, runs `pdftoppm`, or waits for or
@@ -215,6 +258,18 @@ pub struct Stage {
     loading: HashSet<ResourceId>,
     /// What the last [`preload`](Stage::preload) asked for.
     upcoming: HashSet<ResourceId>,
+    /// The open plan's pictures and pages, loaded once and kept while the
+    /// plan is open, so they show at once in any order.
+    kept: HashMap<ResourceId, Content>,
+    /// What the last [`keep`](Stage::keep) asked for.
+    keeping: HashSet<ResourceId>,
+    /// Those of them that won't be kept: they failed to load, or there was
+    /// no room left. Not tried again while they stay in the plan.
+    unkept: HashSet<ResourceId>,
+    /// Those still to load, in order, and the few loading now: a plan of
+    /// forty pictures mustn't decode them all at once.
+    to_keep: VecDeque<(ResourceId, Loader)>,
+    keep_loading: HashSet<ResourceId>,
     /// The real length of every video loaded so far, for timing the plan.
     lengths: HashMap<ResourceId, Duration>,
     downloads: Arc<Downloads>,
@@ -228,6 +283,11 @@ impl Stage {
             ready: HashMap::new(),
             loading: HashSet::new(),
             upcoming: HashSet::new(),
+            kept: HashMap::new(),
+            keeping: HashSet::new(),
+            unkept: HashSet::new(),
+            to_keep: VecDeque::new(),
+            keep_loading: HashSet::new(),
             lengths: HashMap::new(),
         }
     }
@@ -301,6 +361,11 @@ impl Stage {
             self.install(scene.id, Ok(content), stage, engine);
             return iced::Task::none();
         }
+        if let Some(content) = self.kept.get(&resource).and_then(Content::still) {
+            crate::log(format!("stage: {} was kept loaded", scene.id));
+            self.install(scene.id, Ok(content), stage, engine);
+            return iced::Task::none();
+        }
         self.program = Program::Loading {
             scene: scene.id,
             resource: resource.clone(),
@@ -316,6 +381,7 @@ impl Stage {
     /// it, into `ready` if it is still upcoming, and is dropped otherwise.
     pub fn loaded(&mut self, loaded: &Loaded, stage: &StageState, engine: &Engine) {
         self.loading.remove(&loaded.resource);
+        self.keep_loading.remove(&loaded.resource);
         let Some(result) = loaded.result.lock().ok().and_then(|mut slot| slot.take()) else {
             return;
         };
@@ -324,6 +390,23 @@ impl Stage {
         {
             self.lengths
                 .insert(loaded.resource.clone(), player.duration());
+        }
+        // One of the plan's pictures: a copy stays for the next time.
+        if self.keeping.contains(&loaded.resource) {
+            let held: usize = self.kept.values().map(Content::bytes).sum();
+            match result.as_ref().ok().and_then(Content::still) {
+                Some(copy) if held + copy.bytes() <= KEEP_BUDGET => {
+                    let held = (held + copy.bytes()) / (1024 * 1024);
+                    self.kept.insert(loaded.resource.clone(), copy);
+                    crate::log(format!(
+                        "stage: keeping {} of the plan's pictures loaded ({held} MB)",
+                        self.kept.len()
+                    ));
+                }
+                _ => {
+                    self.unkept.insert(loaded.resource.clone());
+                }
+            }
         }
         match &self.program {
             Program::Loading { scene, resource } if *resource == loaded.resource => {
@@ -409,6 +492,51 @@ impl Stage {
         engine.report(scene, MediaReport::Position(position));
     }
 
+    /// Loads the open plan's pictures and PDF pages and keeps them while
+    /// they stay in the plan, so any of them shows at once: `resources` is
+    /// everything the plan may show, in the order to load it. Videos aren't
+    /// kept (a player each is too much); the next one is still preloaded.
+    /// What left the plan is let go.
+    pub fn keep(
+        &mut self,
+        resources: impl IntoIterator<Item = Resource>,
+    ) -> iced::Task<Arc<Loaded>> {
+        let loaders: Vec<_> = resources
+            .into_iter()
+            .filter_map(|resource| match Loader::for_resource(&resource) {
+                Ok(Some(loader)) if loader.is_still() => Some((resource.id, loader)),
+                _ => None,
+            })
+            .collect();
+        self.keeping = loaders.iter().map(|(id, _)| id.clone()).collect();
+        self.kept.retain(|id, _| self.keeping.contains(id));
+        self.unkept.retain(|id| self.keeping.contains(id));
+        self.to_keep = loaders.into();
+        self.keep_more()
+    }
+
+    /// Loads the next of the plan's pictures still to keep, a couple at a
+    /// time. Called again as each load finishes.
+    pub fn keep_more(&mut self) -> iced::Task<Arc<Loaded>> {
+        let mut tasks = Vec::new();
+        while self.keep_loading.len() < KEEP_AT_ONCE {
+            let Some((id, loader)) = self.to_keep.pop_front() else {
+                break;
+            };
+            // Kept or given up on already; or loading for the stage, which
+            // keeps a copy when it lands.
+            if self.kept.contains_key(&id)
+                || self.unkept.contains(&id)
+                || !self.loading.insert(id.clone())
+            {
+                continue;
+            }
+            self.keep_loading.insert(id.clone());
+            tasks.push(spawn(id, loader, self.downloads.clone()));
+        }
+        iced::Task::batch(tasks)
+    }
+
     /// Starts loading what may go on program next.
     pub fn preload(
         &mut self,
@@ -424,7 +552,8 @@ impl Stage {
         self.upcoming = loaders.iter().map(|(id, _)| id.clone()).collect();
         let tasks: Vec<_> = loaders
             .into_iter()
-            .filter(|(id, _)| !self.ready.contains_key(id))
+            // Not what's ready or kept loaded already.
+            .filter(|(id, _)| !self.ready.contains_key(id) && !self.kept.contains_key(id))
             .filter(|(id, _)| self.loading.insert(id.clone()))
             .map(|(id, loader)| spawn(id, loader, self.downloads.clone()))
             .collect();
@@ -571,6 +700,75 @@ mod tests {
     fn resource(kind: Kind, location: Location) -> Resource {
         let source = SourceId::new("test").unwrap();
         Resource::new(ResourceId::new(&source, "x"), "X", kind, location)
+    }
+
+    /// A finished load of `resource`, as a worker would send it.
+    fn finished(resource: &Resource, result: Result<Content, String>) -> Loaded {
+        Loaded {
+            resource: resource.id.clone(),
+            result: Mutex::new(Some(result)),
+        }
+    }
+
+    #[test]
+    fn the_plans_pictures_stay_loaded_and_its_videos_dont() {
+        let named = |name: &str, kind| {
+            let source = SourceId::new("test").unwrap();
+            let path = PathBuf::from(format!("/media/{name}"));
+            Resource::new(
+                ResourceId::new(&source, name),
+                name,
+                kind,
+                Location::File(path),
+            )
+        };
+        let picture = named("a.png", Kind::Image);
+        let other = named("b.png", Kind::Image);
+        let huge = named("c.png", Kind::Image);
+        let video = named("d.mp4", Kind::Video);
+        let pixels = |bytes: usize| Content::Image(Handle::from_rgba(1, 1, vec![0; bytes]));
+        let engine = Engine::new();
+        let state = StageState::default();
+        let mut stage = Stage::new(Downloads::new(PathBuf::from("/nowhere")));
+        let plan = [picture.clone(), other.clone(), huge.clone(), video.clone()];
+        let _loads = stage.keep(plan.clone());
+        assert_eq!(stage.loading.len(), KEEP_AT_ONCE, "a couple at a time");
+        assert!(stage.keeping.contains(&picture.id));
+        assert!(
+            !stage.keeping.contains(&video.id),
+            "a player each is too much"
+        );
+
+        stage.loaded(&finished(&picture, Ok(pixels(4))), &state, &engine);
+        stage.loaded(
+            &finished(&other, Err("file not found".into())),
+            &state,
+            &engine,
+        );
+        let _loads = stage.keep_more();
+        assert!(stage.loading.contains(&huge.id), "then the next");
+        stage.loaded(&finished(&huge, Ok(pixels(KEEP_BUDGET))), &state, &engine);
+        assert!(stage.kept.contains_key(&picture.id));
+        // What failed or didn't fit isn't loaded again on every change.
+        assert!(stage.unkept.contains(&other.id) && stage.unkept.contains(&huge.id));
+        let _loads = stage.keep(plan);
+        assert!(stage.loading.is_empty(), "nothing left to try");
+        // Shown, it's still kept: it can be shown again.
+        assert!(
+            stage
+                .kept
+                .get(&picture.id)
+                .and_then(Content::still)
+                .is_some()
+        );
+
+        // Out of the plan, it's let go; and tried afresh if it comes back.
+        let _loads = stage.keep([other.clone()]);
+        assert!(stage.kept.is_empty());
+        assert_eq!(stage.unkept.len(), 1);
+        let _loads = stage.keep([picture.clone()]);
+        assert!(stage.unkept.is_empty());
+        assert!(stage.loading.contains(&picture.id));
     }
 
     #[test]
