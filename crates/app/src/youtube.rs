@@ -23,6 +23,39 @@ use lantern_engine::{Location, Resource};
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
 
+/// What a video shown outside the plan plays from, straight from YouTube:
+/// one fixed H.264 video stream up to 720p and one AAC audio stream, both
+/// plain HTTPS files, or failing that one file with both. Not the HLS
+/// manifest: its player changes quality (and codec) as it goes, which
+/// froze the picture and dropped the sound.
+const STREAM_FORMAT: &str = "bv*[vcodec^=avc1][height<=720][protocol=https]+ba[ext=m4a][protocol=https]/b[ext=mp4][protocol=https]";
+
+/// The addresses to play `video` from without downloading it: its video
+/// stream then its audio stream, or one address with both. They last a
+/// few hours. Asks `yt-dlp`, which takes a few seconds.
+pub fn stream_urls(video: &YoutubeVideo) -> Result<Vec<String>, String> {
+    let output = Command::new("yt-dlp")
+        .args(["-f", STREAM_FORMAT, "--get-url"])
+        .args(["--no-playlist", "--no-warnings"])
+        .arg(&video.url)
+        .output()
+        .map_err(|err| format!("can't run yt-dlp: {err}"))?;
+    if !output.status.success() {
+        let errors = String::from_utf8_lossy(&output.stderr);
+        return Err(failure(errors.lines(), output.status));
+    }
+    let urls: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("https://"))
+        .map(str::to_string)
+        .collect();
+    match urls.len() {
+        1 | 2 => Ok(urls),
+        _ => Err(format!("yt-dlp gave no stream for {}", video.id)),
+    }
+}
+
 /// How long a downloaded video stays without being used.
 pub const KEEP: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
@@ -131,6 +164,19 @@ impl Downloads {
     fn set(&self, id: &str, download: Download) {
         self.lock().insert(id.to_string(), download);
         self.changed.notify_all();
+    }
+
+    /// The downloaded file of `video`, if it's on disk already: from this
+    /// session or an earlier one. Marks it as used.
+    pub fn cached(&self, video: &YoutubeVideo) -> Option<PathBuf> {
+        if let Some(Download::Ready(path)) = self.state(&video.id) {
+            return Some(path);
+        }
+        let cached = cache_path(&self.dir, &video.id);
+        cached.is_file().then(|| {
+            touch(&cached);
+            cached
+        })
     }
 
     pub fn state(&self, id: &str) -> Option<Download> {

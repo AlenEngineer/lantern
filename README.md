@@ -185,14 +185,21 @@ already uses (`b`, `f`, `gi`, `yt`) can't be taken.
 Every source declares its own bangs (`Source::bangs`), so a new source
 brings its own.
 
-YouTube videos download ahead of time (720p H.264) into
-`~/.cache/lantern/youtube` as soon as they enter the plan or the preview.
-The dashboard shows each video's download state. A video needed before its
-download is done (searched live, say) waits for it, usually a few seconds
-longer than streaming would; it never streams, since a stream started with
-frozen frames or no sound. Planned videos
-usually finish downloading long before they're needed, so the service
-doesn't depend on the network.
+The plan's YouTube videos (its steps and its standby shelf) download ahead
+of time (720p H.264) into `~/.cache/lantern/youtube` as soon as they enter
+the plan, and the dashboard shows each one's download state. They usually
+finish long before they're needed, so the service doesn't depend on the
+network.
+
+A video shown outside the plan, searched and thrown on screen, plays
+straight from YouTube and leaves nothing on disk. It starts a few seconds
+after you look at it, can be paused, scrubbed and replayed like any other,
+and needs the network for as long as it plays. If it can't be streamed it's
+downloaded instead, and adding it to the plan downloads it. Lantern plays
+one fixed video stream and one audio stream side by side; the adaptive
+stream it tried before changed quality as it went, which froze the picture
+and dropped the sound. Settings → Library → **YouTube** switches this off
+(`always_download = true`), and then every video is downloaded first.
 
 The open plan's pictures and PDF pages are loaded when it opens and kept
 while it's open, the standby shelf first, so any of them shows at once in

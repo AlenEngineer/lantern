@@ -53,6 +53,11 @@ pub struct Config {
     /// can blur, and how strongly, is theirs to say.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_blur: bool,
+    /// Download every YouTube video before playing it, also one shown
+    /// outside the plan. Unset, those play straight from YouTube and only
+    /// the plan's are downloaded.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub always_download: bool,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
@@ -415,6 +420,7 @@ mod tests {
             stage_output: Some("HDMI-A-1".into()),
             see_through: 40,
             no_blur: true,
+            always_download: true,
             keys: [("new".to_string(), "ctrl+t".to_string())].into(),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),

@@ -45,6 +45,9 @@ pub struct Draft {
     /// shows through is blurred.
     pub see_through: u8,
     pub blur: bool,
+    /// A YouTube video shown outside the plan plays straight from
+    /// YouTube; off, it's downloaded first like the plan's.
+    pub stream: bool,
     /// The screen for the stage; `None` leaves it to the compositor.
     pub output: Option<String>,
     /// The screens connected when the settings opened, or why they can't
@@ -257,6 +260,8 @@ pub enum Edit {
     SeeThrough(u8),
     /// Blur what shows through, or not.
     Blur(bool),
+    /// Stream a YouTube video shown outside the plan, or download it.
+    Stream(bool),
     /// The path of the open plan's own folder N, a new one, or one less.
     PlanFolderPath(usize, String),
     AddPlanFolder,
@@ -322,6 +327,7 @@ impl Draft {
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
             see_through: config.see_through.min(config::MOST_SEE_THROUGH),
             blur: !config.no_blur,
+            stream: !config.always_download,
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
@@ -366,7 +372,7 @@ impl Draft {
                 &self.bibles,
                 &self.brave_key,
                 &self.colors,
-                (self.see_through, self.blur),
+                (self.see_through, self.blur, self.stream),
                 &self.output,
                 &self.stage,
                 &self.plan,
@@ -596,6 +602,7 @@ impl Draft {
                 self.see_through = percent.min(config::MOST_SEE_THROUGH);
             }
             Edit::Blur(on) => self.blur = on,
+            Edit::Stream(on) => self.stream = on,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -661,6 +668,7 @@ impl Draft {
             stage_output: self.output.clone(),
             see_through: self.see_through,
             no_blur: !self.blur,
+            always_download: !self.stream,
             folders,
             bibles,
             stage,
@@ -975,6 +983,34 @@ impl App {
             field(p, "Brave Search API key", &draft.brave_key, Edit::BraveKey).secure(true),
         ]
         .spacing(6);
+        // The plan's videos are always downloaded; this is for the rest.
+        let youtube = column![
+            section(
+                p,
+                "YouTube",
+                "The plan's videos download ahead of time. One shown outside the plan can play straight from YouTube, leaving nothing on disk."
+            ),
+            row![
+                text("Outside the plan").size(BODY).font(MEDIUM).width(LABEL_FIELD),
+                pill(
+                    p,
+                    if draft.stream { "✓ Streamed" } else { "Streamed" },
+                    if draft.stream { Tone::Selected } else { Tone::Plain },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Stream(true))),
+                ),
+                pill(
+                    p,
+                    if draft.stream { "Downloaded" } else { "✓ Downloaded" },
+                    if draft.stream { Tone::Plain } else { Tone::Selected },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Stream(false))),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8);
         let colors = column![
             section(
                 p,
@@ -1319,7 +1355,7 @@ impl App {
             Category::Plan => column![self.plan_section(), plan_folders, plan_bibles, stage],
             Category::Stage => column![stage],
             Category::Output => column![output],
-            Category::Library => column![folders, bibles, images],
+            Category::Library => column![folders, bibles, youtube, images],
             Category::Appearance => column![colors, glass],
             Category::Keys => column![keys],
         };

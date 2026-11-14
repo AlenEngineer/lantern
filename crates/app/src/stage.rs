@@ -166,19 +166,92 @@ impl Loader {
 
     /// Blocks: decodes, builds a player, runs `pdftoppm`, or waits for or
     /// makes a download.
-    fn load(&self, downloads: &Arc<Downloads>) -> Result<Content, String> {
+    /// `stream`: a YouTube video that isn't downloaded plays straight from
+    /// YouTube, and is downloaded only if that fails.
+    fn load(&self, downloads: &Arc<Downloads>, stream: bool) -> Result<Content, String> {
         match self {
             Loader::Image(path) => decode_image(existing(path)?).map(Content::Image),
             Loader::RemoteImage(urls) => {
                 fetch_image(urls, &cache_dir().join("images")).map(Content::Image)
             }
             Loader::Video(path) => open_file(path),
-            Loader::Youtube(video) => open_file(&downloads.ready(video)?),
+            Loader::Youtube(video) => {
+                if let Some(path) = downloads.cached(video) {
+                    return open_file(&path);
+                }
+                if stream {
+                    let streamed =
+                        crate::youtube::stream_urls(video).and_then(|urls| open_stream(&urls));
+                    match streamed {
+                        Ok(player) => {
+                            crate::log(format!("stage: streaming {}", video.id));
+                            return Ok(Content::Video { player });
+                        }
+                        Err(err) => crate::log(format!(
+                            "stage: can't stream {} ({err}), downloading it",
+                            video.id
+                        )),
+                    }
+                }
+                open_file(&downloads.ready(video)?)
+            }
             Loader::Pdf(path) => {
                 render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
             }
         }
     }
+}
+
+/// Lets a player be heard. A file's player is a `playbin`, which has its
+/// own mute; a stream's is built here, with a volume element to open.
+fn unmute(player: &mut Video) {
+    let pipeline = player.pipeline();
+    match pipeline.by_name(STREAM_VOLUME) {
+        Some(volume) => volume.set_property("mute", false),
+        None => player.set_muted(false),
+    }
+}
+
+/// The name of the element that mutes a stream's sound.
+const STREAM_VOLUME: &str = "lantern-volume";
+
+/// A player for a video straight from the net: `urls` is its video stream
+/// and its audio stream, or one address with both. Paused and silent.
+///
+/// The two streams are plain files over HTTPS, each decoded by its own
+/// branch of one pipeline, so they share a clock and stay together. Each
+/// reads through a ring buffer, which is what lets the player seek.
+fn open_stream(urls: &[String]) -> Result<Video, String> {
+    let (video, audio) = match urls {
+        [both] => {
+            let uri = url::Url::parse(both).map_err(|err| format!("{both}: {err}"))?;
+            return open_video(&uri);
+        }
+        [video, audio] => (video, audio),
+        _ => return Err("no stream to play".into()),
+    };
+    let fail = |err: &dyn fmt::Display| format!("the stream: {err}");
+    gst::init().map_err(|err| fail(&err))?;
+    let pipeline = gst::parse::launch(&format!(
+        "uridecodebin uri=\"{video}\" ring-buffer-max-size=67108864 ! queue ! \
+         videoscale add-borders=true ! videoconvert ! appsink name=sink drop=true \
+         caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1 \
+         uridecodebin uri=\"{audio}\" ring-buffer-max-size=16777216 ! queue ! \
+         audioconvert ! audioresample ! volume name={STREAM_VOLUME} mute=true ! autoaudiosink"
+    ))
+    .map_err(|err| fail(&err))?
+    .downcast::<gst::Pipeline>()
+    .map_err(|_| fail(&"not a pipeline"))?;
+    let sink = pipeline
+        .by_name("sink")
+        .and_then(|sink| sink.downcast::<gstreamer_app::AppSink>().ok())
+        .ok_or_else(|| fail(&"no video sink"))?;
+    let mut player = Video::from_gst_pipeline(pipeline, sink, None).map_err(|err| fail(&err))?;
+    player.set_paused(true);
+    player
+        .seek(Duration::ZERO, true)
+        .map_err(|err| fail(&err))?;
+    Ok(player)
 }
 
 /// A player for a video file, at its start.
@@ -218,11 +291,12 @@ fn spawn(
     resource: ResourceId,
     loader: Loader,
     downloads: Arc<Downloads>,
+    stream: bool,
 ) -> iced::Task<Arc<Loaded>> {
     iced::Task::future(async move {
         let (done, result) = iced::futures::channel::oneshot::channel();
         std::thread::spawn(move || {
-            let _ = done.send(loader.load(&downloads));
+            let _ = done.send(loader.load(&downloads, stream));
         });
         let result = result
             .await
@@ -270,6 +344,11 @@ pub struct Stage {
     /// forty pictures mustn't decode them all at once.
     to_keep: VecDeque<(ResourceId, Loader)>,
     keep_loading: HashSet<ResourceId>,
+    /// The YouTube videos the open plan shows (its steps and its standby
+    /// shelf), by id: these are downloaded. Any other is streamed, when
+    /// `stream_others` says so.
+    planned: HashSet<String>,
+    stream_others: bool,
     /// The real length of every video loaded so far, for timing the plan.
     lengths: HashMap<ResourceId, Duration>,
     downloads: Arc<Downloads>,
@@ -286,9 +365,27 @@ impl Stage {
             kept: HashMap::new(),
             keeping: HashSet::new(),
             unkept: HashSet::new(),
+            planned: HashSet::new(),
+            stream_others: false,
             to_keep: VecDeque::new(),
             keep_loading: HashSet::new(),
             lengths: HashMap::new(),
+        }
+    }
+
+    /// Says which YouTube videos the open plan shows, and whether the
+    /// others are streamed instead of downloaded.
+    pub fn plan_videos(&mut self, planned: HashSet<String>, stream_others: bool) {
+        self.planned = planned;
+        self.stream_others = stream_others;
+    }
+
+    /// Whether what `loader` loads is streamed if it can be: a YouTube
+    /// video the plan doesn't show.
+    fn streams(&self, loader: &Loader) -> bool {
+        match loader {
+            Loader::Youtube(video) => self.stream_others && !self.planned.contains(&video.id),
+            _ => false,
         }
     }
 
@@ -371,7 +468,8 @@ impl Stage {
             resource: resource.clone(),
         };
         if self.loading.insert(resource.clone()) {
-            spawn(resource, loader, self.downloads.clone())
+            let stream = self.streams(&loader);
+            spawn(resource, loader, self.downloads.clone(), stream)
         } else {
             iced::Task::none()
         }
@@ -448,7 +546,7 @@ impl Stage {
             Content::Video { player, .. } => {
                 let duration = Some(player.duration()).filter(|d| !d.is_zero());
                 engine.report(scene, MediaReport::Timeline { duration });
-                player.set_muted(false);
+                unmute(player);
             }
         }
         crate::log(format!("stage: {scene} ready"));
@@ -485,6 +583,12 @@ impl Stage {
             // next play restart from zero instead of from `position`.
             let _ = video.restart_stream();
             video.set_paused(true);
+            // Restarting plays for a moment before it seeks, and a pipeline
+            // set playing at its end says "ended" once more. Left on the
+            // bus, that would end a stream again the moment it restarted.
+            if let Some(bus) = video.pipeline().bus() {
+                while bus.pop_filtered(&[gst::MessageType::Eos]).is_some() {}
+            }
         }
         if let Err(err) = video.seek(position, true) {
             crate::log(format!("stage: seek failed: {err}"));
@@ -532,7 +636,7 @@ impl Stage {
                 continue;
             }
             self.keep_loading.insert(id.clone());
-            tasks.push(spawn(id, loader, self.downloads.clone()));
+            tasks.push(spawn(id, loader, self.downloads.clone(), false));
         }
         iced::Task::batch(tasks)
     }
@@ -550,13 +654,18 @@ impl Stage {
             })
             .collect();
         self.upcoming = loaders.iter().map(|(id, _)| id.clone()).collect();
-        let tasks: Vec<_> = loaders
-            .into_iter()
-            // Not what's ready or kept loaded already.
-            .filter(|(id, _)| !self.ready.contains_key(id) && !self.kept.contains_key(id))
-            .filter(|(id, _)| self.loading.insert(id.clone()))
-            .map(|(id, loader)| spawn(id, loader, self.downloads.clone()))
-            .collect();
+        let mut tasks = Vec::new();
+        for (id, loader) in loaders {
+            // Not what's ready or kept loaded already, or loading.
+            if self.ready.contains_key(&id)
+                || self.kept.contains_key(&id)
+                || !self.loading.insert(id.clone())
+            {
+                continue;
+            }
+            let stream = self.streams(&loader);
+            tasks.push(spawn(id, loader, self.downloads.clone(), stream));
+        }
         iced::Task::batch(tasks)
     }
 }
@@ -772,6 +881,26 @@ mod tests {
     }
 
     #[test]
+    fn only_a_youtube_video_outside_the_plan_is_streamed() {
+        let source = SourceId::new("link").unwrap();
+        let loader = |id: &str| {
+            let video = lantern_source_link::youtube_video(&source, id);
+            Loader::for_resource(&video).unwrap().unwrap()
+        };
+        let mut stage = Stage::new(Downloads::new(PathBuf::from("/nowhere")));
+        // Until it's said otherwise, everything is downloaded.
+        assert!(!stage.streams(&loader("aaaaaaaaaaa")));
+        stage.plan_videos(HashSet::from(["aaaaaaaaaaa".to_string()]), true);
+        assert!(!stage.streams(&loader("aaaaaaaaaaa")), "the plan's own");
+        assert!(stage.streams(&loader("bbbbbbbbbbb")), "shown on the fly");
+        assert!(!stage.streams(&Loader::Video("/v.mp4".into())), "a file");
+        stage.plan_videos(HashSet::new(), false);
+        assert!(!stage.streams(&loader("bbbbbbbbbbb")), "switched off");
+        // No stream to play is an error, not a panic.
+        assert!(open_stream(&[]).is_err());
+    }
+
+    #[test]
     fn the_kind_and_location_pick_how_to_present() {
         let file = |kind, name: &str| resource(kind, Location::File(fixture(name)));
         assert_eq!(
@@ -854,7 +983,7 @@ mod tests {
     fn a_missing_file_fails_with_its_path() {
         let downloads = Downloads::new("/nonexistent".into());
         let err = Loader::Image("/nonexistent/x.png".into())
-            .load(&downloads)
+            .load(&downloads, false)
             .err()
             .unwrap();
         assert_eq!(err, "file not found: /nonexistent/x.png");

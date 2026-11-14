@@ -86,6 +86,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   thing worth saying of it (what's wrong, how far the stage is into it,
   its kind, or its length). The selected step opens a second line with its
   buttons. Steps and standby items no longer carry a thumbnail.
+- A YouTube video shown outside the plan plays straight from YouTube and
+  leaves nothing on disk; the plan's are still downloaded ahead of time.
+  It can be paused, scrubbed and replayed, and is downloaded instead if it
+  can't be streamed. Settings → Library → YouTube turns it off.
 
 ### Fixed
 
