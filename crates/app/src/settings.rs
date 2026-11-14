@@ -1183,13 +1183,29 @@ impl App {
             "The Bibles this plan searches. All of them, until you pick."
         )]
         .spacing(6);
+        // What the plan asks for by name, whether or not it's here.
+        let picked = draft.plan_bibles().unwrap_or_default();
+        let here: Vec<&String> = choices.iter().map(|(name, _)| name).collect();
+        let elsewhere: Vec<&String> = picked
+            .iter()
+            .filter(|name| !here.iter().any(|h| h.eq_ignore_ascii_case(name)))
+            .collect();
+        let says = |words: String| text(words).size(META).color(p.on_surface_variant);
         if choices.is_empty() {
-            plan_bibles = plan_bibles.push(
-                text("No Bibles yet: add one under Library.")
-                    .size(META)
-                    .color(p.on_surface_variant),
-            );
+            plan_bibles = plan_bibles.push(says("No Bibles yet: add one under Library.".into()));
+        } else if choices.len() == 1 && picked.is_empty() {
+            // One Bible is no choice: a toggle here would change nothing.
+            plan_bibles = plan_bibles.push(says(format!(
+                "{} is the only Bible here, so this plan searches it. \
+                 With another added under Library, you can pick.",
+                choices[0].0
+            )));
         } else {
+            let ticked: Vec<String> = choices
+                .iter()
+                .filter(|(_, on)| *on)
+                .map(|(name, _)| name.clone())
+                .collect();
             let pills = choices.into_iter().map(|(name, on)| {
                 let label = if on {
                     format!("✓ {name}")
@@ -1200,17 +1216,32 @@ impl App {
                 let edit = settings(Edit::PlanBible(name));
                 pill(p, &label, tone, look::PILL_SMALL, Some(edit)).into()
             });
+            // In words too: a tick alone doesn't say whether the rest
+            // are still searched.
+            let state = if all {
+                "Searching all of them.".to_string()
+            } else {
+                format!("Searching only {}.", ticked.join(" and "))
+            };
             plan_bibles = plan_bibles.push(
                 row(pills)
-                    .push(
-                        text(if all { "Searching all of them." } else { "" })
-                            .size(META)
-                            .color(p.on_surface_variant),
-                    )
+                    .push(says(state))
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .wrap(),
             );
+        }
+        if !elsewhere.is_empty() {
+            let names: Vec<&str> = elsewhere.iter().map(|name| name.as_str()).collect();
+            plan_bibles = plan_bibles.push(says(format!(
+                "This plan also asks for {}, which isn't on this computer{}.",
+                names.join(" and "),
+                if all {
+                    ": until it is, it searches them all"
+                } else {
+                    ""
+                }
+            )));
         }
 
         // One part at a time, picked from the list beside it.
