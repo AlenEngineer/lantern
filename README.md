@@ -281,7 +281,8 @@ computer, **Import a plan** at the end of the list of plans shows the
 exported plans in Documents, Downloads, the desktop and on anything plugged
 in, with a field for one somewhere else. Importing copies the media into
 Lantern's own folder (`bundles/` beside `plans/`), so the USB stick can
-come out, and opens the plan. Deleting an imported plan removes its media,
+come out, and opens the plan; if a plan of that name is already saved, the
+new one is named apart ("Sábado (imported)"). Deleting an imported plan removes its media,
 once no copy of it uses them.
 
 **Its Bibles** picks which of your Bibles the plan searches: all of them

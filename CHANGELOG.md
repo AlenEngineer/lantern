@@ -136,6 +136,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The home screen (the middle, with the search closed) leads with a search
   box to click and sets the keys in three columns, where it had one long
   column and a scrollbar in the middle of the pane.
+- Importing a plan when one of the same name is already saved names the
+  new one apart ("Domingo (imported)"), and says it's the imported one
+  that opened. They were two rows that read the same.
 
 ## [0.7.0] - 2026-11-13
 

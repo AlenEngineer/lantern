@@ -1064,7 +1064,7 @@ impl App {
                     in_thread(move || {
                         let plan = bundle::import(&from, store.bundles(), &videos)?;
                         store
-                            .adopt(&plan)
+                            .adopt(plan.clone())
                             .map_err(|err| format!("Couldn't save “{}”: {err}", plan.title))
                     }),
                     Message::Imported,
@@ -1076,7 +1076,19 @@ impl App {
                     Ok(path) => {
                         self.importing = None;
                         self.plans.notice = None;
-                        return self.switch_plan(Switch::Open(path));
+                        let opening = self.switch_plan(Switch::Open(path.clone()));
+                        // Says it's the imported one that's open, by the
+                        // name it got here; or, while a question waits,
+                        // that it's in the list.
+                        let title = self.engine.0.plan().title;
+                        self.plans.notice = Some(plans::Notice::Done(
+                            if self.plans.file() == Some(path.as_path()) {
+                                format!("Imported “{title}”")
+                            } else {
+                                "Imported: it's in your plans".into()
+                            },
+                        ));
+                        return opening;
                     }
                     Err(why) => self.plans.notice = Some(plans::Notice::Failed(why)),
                 }
