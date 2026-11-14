@@ -41,6 +41,9 @@ ureq = "3"
 url = "2.5"
 walkdir = "2.5"
 
+# The time of day here, for a plan's start time. Only the local clock.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
 # Dev-only
 tempfile = "3"
 

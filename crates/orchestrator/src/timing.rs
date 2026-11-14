@@ -8,9 +8,11 @@
 //! and the lengths of the steps after it, and compares that with the budget.
 //! Nothing here stops the service: it only reports.
 
+use std::fmt;
 use std::time::{Duration, SystemTime};
 
 use lantern_resource::{Kind, Resource};
+use serde::{Deserialize, Serialize};
 
 use crate::{Action, Plan, Step, StepId};
 
@@ -85,6 +87,111 @@ fn guess_for(resource: &Resource) -> Duration {
         Kind::Document | Kind::Presentation => DOCUMENT,
         _ => STILL,
     }
+}
+
+/// A time of day to the minute, such as the 10:30 a service starts at.
+/// Saved as it reads: `"10:30"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TimeOfDay(u16);
+
+impl TimeOfDay {
+    /// Reads `10:30`, `9:05`, or `10` for ten o'clock, on a 24-hour clock.
+    /// `None` for anything else.
+    pub fn parse(text: &str) -> Option<TimeOfDay> {
+        let (hour, minute) = match text.trim().split_once(':') {
+            Some((hour, minute)) if minute.len() == 2 => (hour, minute.parse::<u16>().ok()?),
+            Some(_) => return None,
+            None => (text.trim(), 0),
+        };
+        let hour = hour.parse::<u16>().ok()?;
+        (hour < 24 && minute < 60).then_some(TimeOfDay(hour * 60 + minute))
+    }
+
+    /// How long after midnight it is.
+    pub fn since_midnight(self) -> Duration {
+        Duration::from_secs(u64::from(self.0) * 60)
+    }
+
+    /// The time of day `after` later, to the minute below, past midnight
+    /// if need be.
+    pub fn plus(self, after: Duration) -> TimeOfDay {
+        let minutes = (u64::from(self.0) + after.as_secs() / 60) % (24 * 60);
+        TimeOfDay(minutes as u16)
+    }
+}
+
+impl fmt::Display for TimeOfDay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{:02}", self.0 / 60, self.0 % 60)
+    }
+}
+
+impl TryFrom<String> for TimeOfDay {
+    type Error = String;
+    fn try_from(text: String) -> Result<Self, String> {
+        TimeOfDay::parse(&text).ok_or_else(|| format!("“{text}” isn't a time of day like 10:30"))
+    }
+}
+
+impl From<TimeOfDay> for String {
+    fn from(time: TimeOfDay) -> String {
+        time.to_string()
+    }
+}
+
+/// The plan as it was meant to go: how long after the start each section
+/// begins, and how long the whole of it takes. A section counts for its
+/// budget, or without one for its steps.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Schedule {
+    /// Each section's marker and how long after the start it begins.
+    pub sections: Vec<(StepId, Duration)>,
+    /// From the start to the end.
+    pub total: Duration,
+}
+
+impl Schedule {
+    /// How long after the start the section `id` begins.
+    pub fn start_of(&self, id: StepId) -> Option<Duration> {
+        self.sections
+            .iter()
+            .find(|(section, _)| *section == id)
+            .map(|(_, after)| *after)
+    }
+}
+
+/// The schedule of `plan`. `loaded` is a step's media length, once loaded.
+pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Schedule {
+    let mut schedule = Schedule::default();
+    // What the section under way adds up to, and its budget.
+    let mut planned = Duration::ZERO;
+    let mut budget = None;
+    for step in plan.steps() {
+        match step.action {
+            Action::Section { budget: next } => {
+                schedule.total += budget.unwrap_or(planned);
+                schedule.sections.push((step.id, schedule.total));
+                planned = Duration::ZERO;
+                budget = next;
+            }
+            _ => planned += estimate(step, loaded(step)).length,
+        }
+    }
+    schedule.total += budget.unwrap_or(planned);
+    schedule
+}
+
+/// How far behind its schedule a service runs (negative: ahead), in
+/// seconds. `now` is the time of day as time since midnight, `ends_in` how
+/// long until the service is expected to end, and the schedule says it
+/// should end `total` after `starts`. A service around midnight reads
+/// right: the difference is taken the short way round the clock.
+pub fn behind(starts: TimeOfDay, total: Duration, now: Duration, ends_in: Duration) -> i64 {
+    const DAY: i64 = 24 * 60 * 60;
+    let scheduled_end = (starts.since_midnight() + total).as_secs() as i64;
+    let expected_end = (now + ends_in).as_secs() as i64;
+    (expected_end - scheduled_end + DAY / 2).rem_euclid(DAY) - DAY / 2
 }
 
 /// How a section is doing against its budget.
@@ -321,6 +428,66 @@ mod tests {
         let word = plan.section("Palabra", Some(30 * MIN));
         let sermon = plan.push("Sermon", Action::Blank);
         (plan, vec![worship, a, b, c, word, sermon])
+    }
+
+    #[test]
+    fn a_time_of_day_reads_and_writes_as_people_do() {
+        let half_ten = TimeOfDay::parse("10:30").unwrap();
+        assert_eq!(half_ten.to_string(), "10:30");
+        assert_eq!(TimeOfDay::parse(" 9:05 ").unwrap().to_string(), "9:05");
+        assert_eq!(TimeOfDay::parse("19").unwrap().to_string(), "19:00");
+        for bad in ["", "10:", "10:3", "24:00", "10:60", "ten", "1030"] {
+            assert_eq!(TimeOfDay::parse(bad), None, "{bad}");
+        }
+        assert_eq!(half_ten.plus(50 * MIN).to_string(), "11:20");
+        assert_eq!(
+            TimeOfDay::parse("23:50")
+                .unwrap()
+                .plus(20 * MIN)
+                .to_string(),
+            "0:10"
+        );
+        let json = serde_json::to_string(&half_ten).unwrap();
+        assert_eq!(json, "\"10:30\"");
+        assert_eq!(serde_json::from_str::<TimeOfDay>(&json).unwrap(), half_ten);
+        assert!(serde_json::from_str::<TimeOfDay>("\"late\"").is_err());
+    }
+
+    #[test]
+    fn the_schedule_counts_a_section_for_its_budget_or_else_its_steps() {
+        let (mut plan, ids) = service();
+        // A welcome before any section, and a section without a budget.
+        plan.insert(
+            0,
+            "Welcome",
+            Action::Show {
+                resource: video("W", Some(120)),
+            },
+        );
+        plan.section("Cierre", None);
+        plan.show(video("Z", Some(180)));
+        let close = plan.steps()[plan.len() - 2].id;
+        let schedule = schedule(&plan, &|_| None);
+        assert_eq!(schedule.start_of(ids[0]), Some(2 * MIN));
+        // Alabanza counts for its 15 minutes, not the 12 its songs add up to.
+        assert_eq!(schedule.start_of(ids[4]), Some(17 * MIN));
+        assert_eq!(schedule.start_of(close), Some(47 * MIN));
+        assert_eq!(schedule.total, 50 * MIN);
+        assert_eq!(schedule.start_of(ids[1]), None, "a step isn't a section");
+    }
+
+    #[test]
+    fn behind_is_the_expected_end_against_the_scheduled_one() {
+        let starts = TimeOfDay::parse("10:30").unwrap();
+        let of_day = |text: &str| TimeOfDay::parse(text).unwrap().since_midnight();
+        // Should end at 11:20. At 10:50 with 35 minutes to go: 5 behind.
+        assert_eq!(behind(starts, 50 * MIN, of_day("10:50"), 35 * MIN), 300);
+        assert_eq!(behind(starts, 50 * MIN, of_day("10:50"), 30 * MIN), 0);
+        assert_eq!(behind(starts, 50 * MIN, of_day("10:50"), 28 * MIN), -120);
+        // A vigil over midnight: should end at 0:20, expected at 0:25.
+        let late = TimeOfDay::parse("23:30").unwrap();
+        assert_eq!(behind(late, 50 * MIN, of_day("23:55"), 30 * MIN), 300);
+        assert_eq!(behind(late, 50 * MIN, of_day("0:05"), 10 * MIN), -300);
     }
 
     fn at(

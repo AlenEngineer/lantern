@@ -54,6 +54,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A plan can pick its Bibles (**Its Bibles** in the plan's settings): the
   ones it searches, out of those in Settings. All of them until one is
   picked.
+- A plan can have a start time (**Starts at** in the plan's settings).
+  Sections still to come say when they're due, the header counts down to
+  the start, and once the service runs it says how far behind or ahead of
+  that schedule it is.
 
 ### Fixed
 
