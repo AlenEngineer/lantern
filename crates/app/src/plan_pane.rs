@@ -16,9 +16,7 @@ use lantern_engine::{
     TimeOfDay, Timing,
 };
 
-use crate::dashboard::{
-    NAME_BOX, STEP_THUMB, level_tone, op, pill, scrolling, single_line, unit, wide,
-};
+use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
 use crate::drag::{Drag, Half};
 use crate::keys::{self, Op};
 use crate::length;
@@ -305,17 +303,7 @@ impl App {
         if moving.is_none() && !plan.standby.is_empty() {
             rows = rows.push(Space::new().height(10));
             rows = rows.push(
-                container(
-                    row![
-                        text("Standby").size(BODY).font(BOLD).color(p.primary),
-                        text("ready, not in the order")
-                            .size(META)
-                            .color(p.on_surface_variant),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .padding([4, 10]),
+                container(text("Standby").size(BODY).font(BOLD).color(p.primary)).padding([4, 10]),
             );
             let lined_up = self.standby_lined_up();
             for (at, resource) in plan.standby.iter().enumerate() {
@@ -481,30 +469,11 @@ impl App {
             (Place::Current, Some(scene)) if shown => progress(&scene.media, &scene.resource),
             _ => None,
         };
-        let (marker, note) = match place {
-            Place::Current if shown => (
-                "●".to_string(),
-                Some(match &progress {
-                    Some((how_far, _)) => format!("on stage · {how_far}"),
-                    None => "on stage".to_string(),
-                }),
-            ),
-            // A live slot under way says what it searches and showed.
-            Place::Current => match &step.action {
-                Action::Live { hint, shown } => (
-                    "●".to_string(),
-                    Some(slot_detail(hint.as_ref(), shown.len())),
-                ),
-                _ if self.off_plan().is_some() => {
-                    ("●".to_string(), Some("waiting · off the plan".to_string()))
-                }
-                _ => ("●".to_string(), Some("current step".to_string())),
-            },
-            Place::Next => (
-                "○".to_string(),
-                Some(format!("next, {}", keys::label(Op::Next))),
-            ),
-            Place::Done | Place::Later => (number.to_string(), None),
+        // Where the step is, in a mark: on now, next, or its number.
+        let marker = match place {
+            Place::Current => "●".to_string(),
+            Place::Next => "○".to_string(),
+            Place::Done | Place::Later => number.to_string(),
         };
         let label_color = match (place, tone) {
             (Place::Done, _) => p.outline,
@@ -521,97 +490,50 @@ impl App {
                 .color(label_color)
                 .into()
         };
-        let mut label = column![title];
-        // What's wrong with a step comes before anything else about it.
-        let (detail, detail_color) = match (note, issue) {
-            (Some(note), _) => (Some(note), p.on_surface_variant),
-            (None, Some(issue)) => (
+        // One short thing at the row's end, the most pressing there is:
+        // what's wrong with the step, how far the stage is into it, when
+        // it goes on by itself, what kind it is; else how long it takes.
+        let length = self.step_length(step);
+        let kind = match &step.action {
+            Action::Show { resource } => self.download_state(resource),
+            Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
+            Action::Blank => Some("black".to_string()),
+            Action::Note => Some("note".to_string()),
+            Action::Section { .. } => None,
+        }
+        // "Note · note" says nothing twice: the kind shows once renamed.
+        .filter(|kind| !kind.eq_ignore_ascii_case(step.label.trim()));
+        let (said, said_color) = match (issue, place) {
+            (Some(issue), _) => (
                 Some(issue.what.clone()),
                 level_tone(Some(issue.level)).text(p),
             ),
-            (None, None) => (
-                match &step.action {
-                    Action::Show { resource } => self.download_state(resource),
-                    Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
-                    Action::Blank => Some("black screen".into()),
-                    Action::Note => Some("note".into()),
-                    Action::Section { .. } => None,
-                },
-                p.on_surface_variant,
+            (None, Place::Current) if step.advance && self.goes_on_in().is_some() => (
+                self.goes_on_in()
+                    .map(|left| format!("goes on in {}", seconds_left(left))),
+                label_color,
             ),
+            (None, Place::Current) if shown => (
+                progress.as_ref().map(|(how_far, _)| how_far.clone()),
+                label_color,
+            ),
+            (None, Place::Current) if self.off_plan().is_some() => {
+                (Some("waiting".to_string()), label_color)
+            }
+            (None, _) => (kind, p.on_surface_variant),
         };
-        // A step that goes on by itself says so, and counts down once up.
-        let detail = match (step.advance, place) {
-            (false, _) => detail,
-            (true, Place::Current) => match self.goes_on_in() {
-                Some(left) => Some(join(detail, format!("goes on in {}", seconds_left(left)))),
-                None => Some(join(detail, "goes on when it ends".into())),
-            },
-            (true, _) => Some(join(detail, "goes on".into())),
-        };
-        // "Note / note" says nothing twice: the kind shows once renamed.
-        let detail = detail.filter(|detail| !detail.eq_ignore_ascii_case(step.label.trim()));
         let selected =
             self.selected == Some(step.id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
-        if self.editing(step.id, Part::Search) {
-            label = label.push(self.search_field(step));
-        } else if selected {
-            // The selected row's second line ends in what can be done to it.
-            let said: Element<'_, Message> = match detail {
-                Some(detail) => single_line(detail).size(META).color(detail_color).into(),
-                None => Space::new().into(),
-            };
-            label = label.push(
-                row![
-                    container(said).width(Fill).clip(true),
-                    self.step_actions(step)
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            );
-        } else if let Some(detail) = detail {
-            label = label.push(single_line(detail).size(META).color(detail_color));
-        }
-        // Every row has a picture, so the titles line up: a step that shows
-        // nothing of its own has its kind's icon, a black screen is black.
-        let kind = |icon: Option<Icon>| -> Element<'_, Message> {
-            let height = STEP_THUMB * 9.0 / 16.0;
-            let inside: Element<'_, Message> = match icon {
-                Some(icon) => look::icon(icon, height * 0.4, p.on_surface_variant).into(),
-                None => Space::new().into(),
-            };
-            let black = icon.is_none();
-            container(inside)
-                .center(Fill)
-                .width(STEP_THUMB)
-                .height(height)
-                .style(move |theme| {
-                    let style = look::thumb(p)(theme);
-                    if black {
-                        style.background(iced::Color::BLACK)
-                    } else {
-                        style
-                    }
-                })
-                .into()
-        };
-        let picture: Element<'_, Message> = match &step.action {
-            Action::Show { resource } => self.thumbnail(resource, STEP_THUMB),
-            Action::Live { .. } => kind(Some(Icon::Search)),
-            Action::Blank => kind(None),
-            Action::Note | Action::Section { .. } => kind(Some(Icon::Document)),
-        };
         // The length is edited where it's read: on the selected row a click
         // on it turns it into its field. A live slot has none to set.
         let has_length = !matches!(step.action, Action::Live { .. });
-        let length = self.step_length(step);
-        let length: Element<'_, Message> = if self.editing(step.id, Part::Length) {
+        let end: Element<'_, Message> = if self.editing(step.id, Part::Length) {
             self.step_length_field(step)
         } else if selected && has_length {
             let shown = if length.is_empty() {
                 "min".to_string()
             } else {
-                length
+                length.clone()
             };
             // Filled like a button, so it reads as something to click.
             button(text(shown).size(META).color(p.on_surface))
@@ -620,19 +542,56 @@ impl App {
                 .style(look::pill(p, Tone::Plain))
                 .into()
         } else {
-            text(length).size(META).color(p.on_surface_variant).into()
+            // What there is to say, else the length; a step that goes on
+            // by itself is marked.
+            let words = match (&said, step.advance) {
+                (Some(said), _) => said.clone(),
+                (None, true) if !length.is_empty() => format!("{length} ↦"),
+                (None, _) => length.clone(),
+            };
+            let color = if said.is_some() {
+                said_color
+            } else {
+                p.on_surface_variant
+            };
+            text(words)
+                .size(META)
+                .color(color)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .into()
         };
+        let mut label = column![title];
+        if self.editing(step.id, Part::Search) {
+            label = label.push(self.search_field(step));
+        } else if selected {
+            // The selected row opens a second line: what there is to say
+            // of it, and what can be done to it.
+            let words: Element<'_, Message> = match &said {
+                Some(said) => single_line(said.clone())
+                    .size(META)
+                    .color(said_color)
+                    .into(),
+                None => Space::new().into(),
+            };
+            label = label.push(
+                row![
+                    container(words).width(Fill).clip(true),
+                    self.step_actions(step)
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            );
+        }
         let line = row![
             text(marker).size(META).color(label_color).width(16),
-            picture,
             container(label).width(Fill).clip(true),
-            length,
+            end,
         ]
         .spacing(8)
         .align_y(Alignment::Center);
         let row = button(line)
             .width(Fill)
-            .padding([8, 10])
+            .padding([10, 10])
             .on_press(Message::Click(Clicked::Step(step.id)))
             .style(look::row(p, tone));
         // The bar lies in the row's bottom padding, so a step going on
@@ -667,20 +626,10 @@ impl App {
             Tone::Plain => p.on_surface,
             tone => tone.text(p),
         };
-        let mut label = column![
-            single_line(resource.title.clone())
-                .size(BODY)
-                .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
-                .color(color)
-        ];
-        let detail = match (on_stage, lined_up) {
-            (true, _) => Some("on stage".to_string()),
-            (false, true) => Some(format!("{} shows it", keys::label(Op::Enter))),
-            (false, false) => None,
-        };
-        if let Some(detail) = detail {
-            label = label.push(single_line(detail).size(META).color(p.on_surface_variant));
-        }
+        let label = single_line(resource.title.clone())
+            .size(BODY)
+            .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
+            .color(color);
         let off = tooltip(
             button(text("✕").size(META).color(p.on_surface_variant))
                 .padding([2, 6])
@@ -693,7 +642,6 @@ impl App {
         );
         let line = row![
             Space::new().width(16),
-            self.thumbnail(resource, STEP_THUMB),
             container(label).width(Fill).clip(true),
             off,
         ]
@@ -701,7 +649,7 @@ impl App {
         .align_y(Alignment::Center);
         button(line)
             .width(Fill)
-            .padding([8, 10])
+            .padding([10, 10])
             .on_press(Message::Click(Clicked::Standby(resource.id.clone())))
             .style(look::row(p, tone))
             .into()
@@ -1226,14 +1174,6 @@ fn drop_gap<'a>(p: Palette, label: String) -> Element<'a, Message> {
             ..container::Style::default()
         })
         .into()
-}
-
-/// `detail · more`, or just `more`.
-fn join(detail: Option<String>, more: String) -> String {
-    match detail {
-        Some(detail) => format!("{detail} · {more}"),
-        None => more,
-    }
 }
 
 /// "12 s", "1:05": a countdown, rounded up so it never shows 0 early.

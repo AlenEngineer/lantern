@@ -1,7 +1,7 @@
-//! The operator's window: three panes joined by hairlines. The plan on the
-//! left, the launcher (search box and results) in the middle, and the stage
-//! on the right: what the audience sees, and below it the preview (live
-//! mode) or the plan's next step (plan mode).
+//! The operator's window: three cards on one ground. A strip across the
+//! top (the plan, the service's time, the tools), the plan on the left, and
+//! the stage in the middle: what the audience sees, and beside it what's
+//! next or lined up. The search drops from the strip as a panel.
 
 use std::time::{Duration, SystemTime};
 
@@ -75,9 +75,8 @@ pub(crate) fn pane_widths(width: f32) -> (f32, f32) {
 }
 /// What the stage pane's estimate of its own height may be short by.
 const FIT_SLACK: f32 = 24.0;
-/// How wide a result's thumbnail is; a plan row's is smaller.
+/// How wide a result's thumbnail is.
 const RESULT_THUMB: f32 = 96.0;
-pub(crate) const STEP_THUMB: f32 = 64.0;
 
 impl App {
     /// The plan pane's and the next column's widths: as dragged, else as
@@ -843,27 +842,22 @@ impl App {
                 _ => false,
             };
         let add = if in_plan {
-            // Without its key: with it the button took two lines.
-            "Add again".to_string()
+            keys::with_key("Add again", Op::AddToPlan)
         } else {
             keys::with_key("Add", Op::AddToPlan)
         };
+        // One under the other: side by side their keys didn't fit.
         section.push(
-            row![
-                wide(pill(
+            column![
+                pill(
                     p,
                     &keys::with_key("Show now", Op::Enter),
                     Tone::Selected,
                     PILL,
                     has.then_some(op(Op::Take))
-                )),
-                wide(pill(
-                    p,
-                    &add,
-                    Tone::Plain,
-                    PILL,
-                    has.then_some(op(Op::AddToPlan))
-                )),
+                )
+                .width(Fill),
+                pill(p, &add, Tone::Plain, PILL, has.then_some(op(Op::AddToPlan))).width(Fill),
             ]
             .spacing(4)
             .into(),

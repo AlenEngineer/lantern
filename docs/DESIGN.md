@@ -16,7 +16,7 @@ names a hex value outside `palette.rs`.
 | `on_surface` | text and icons |
 | `on_surface_variant` | secondary text: subtitles, counts, hints |
 | `outline` | text for steps already done, empty-monitor notes |
-| `outline_variant` | the hairlines between panes, dividers |
+| `outline_variant` | dividers, a field's edge |
 | `surface_container` | the search field |
 | `surface_container_highest` | the timeline's track |
 | `primary` | headings, focus, what is selected or comes next |
@@ -49,15 +49,20 @@ broadcast tally, because red is blackout's.
 
 ## Shape and space
 
-- Panes join with 1px `outline_variant` hairlines; there are no cards or
-  shadows inside the window.
+- The window is a ground (`surface`, darkened) with three cards on it:
+  the strip, the plan and the stage. A card is `surface` with 22px corners
+  (the strip is a pill), a hairline of light and a shadow, 10px from its
+  neighbours and 12px from the window's edge. No lines divide a card.
+- With **Glass** on, the ground and the cards let the desktop show through,
+  the cards less than the ground so text on them reads. A panel that drops
+  from the strip stays nearly solid.
 - Rows and monitors have 12px corners. Buttons and chips are pills.
 - Spacing steps by 4px: 4 between buttons, 8–12 inside rows and sections,
   16 around pane content.
 - Text is Inter: 16px bold for headings, 13px for body, 12px for metadata.
 - Icons are Material Design Icons, tinted with the text they sit beside.
-- A list row is one line of title and one of metadata; what doesn't fit is
-  cut at the row's edge, never wrapped.
+- A plan step is one line; a result is a line of title and one of
+  metadata. What doesn't fit is cut at the row's edge, never wrapped.
 
 ## Keys
 
