@@ -123,6 +123,16 @@ impl App {
         self.dashboard_size.width - plan - stage - 1.0
     }
 
+    /// How see-through the dashboard is now, from 0 (solid) to 1: as the
+    /// settings' slider has it while they're open, else as saved.
+    pub(crate) fn see_through(&self) -> f32 {
+        let percent = match &self.settings {
+            Some(draft) => draft.see_through,
+            None => self.config.see_through,
+        };
+        f32::from(percent.min(crate::config::MOST_SEE_THROUGH)) / 100.0
+    }
+
     /// Whether the stage pane has anything to show: something on stage or
     /// lined up, a blackout, or a step of the plan to come.
     fn stage_shown(&self) -> bool {
@@ -170,7 +180,7 @@ impl App {
         let window = container(panes)
             .width(Fill)
             .height(Fill)
-            .style(look::window(p));
+            .style(look::window(p, self.see_through()));
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
         match self.drag.as_ref().filter(|drag| drag.moving) {

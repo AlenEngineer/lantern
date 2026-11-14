@@ -379,6 +379,16 @@ themed from its wallpaper can theme Lantern too; the file is read again
 whenever it changes. Without it, Lantern uses Material's baseline dark
 palette. [docs/DESIGN.md](docs/DESIGN.md) says which role goes where.
 
+Settings → Appearance → **Glass** lets the desktop show through the
+dashboard: **See-through** goes from solid to 80%, and follows the slider
+as it moves. **Blur** has the desktop blur what shows through, which is
+what keeps text readable over a busy wallpaper. How strong the blur is,
+and whether there is any, is the desktop's to say: Lantern can only draw
+its own window. On Hyprland the switch works at once; on other desktops
+that blur behind windows it takes effect when Lantern next starts. The
+stage window is always solid. In the config they're `see_through = 40`
+and `no_blur = true`.
+
 ### Putting the stage on the projector
 
 Settings → **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`).

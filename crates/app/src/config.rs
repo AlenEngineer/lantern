@@ -45,6 +45,14 @@ pub struct Config {
     /// Unset, the compositor places it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stage_output: Option<String>,
+    /// How see-through the dashboard is, in percent: 0 is solid, and the
+    /// most is [`MOST_SEE_THROUGH`], so what's written on it still reads.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub see_through: u8,
+    /// Don't ask the desktop to blur what shows through. Which desktops
+    /// can blur, and how strongly, is theirs to say.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_blur: bool,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
@@ -56,6 +64,13 @@ pub struct Config {
     /// name to its key (`new = "ctrl+t"`). See `keys::ACTIONS`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
+}
+
+/// The most see-through the dashboard gets, in percent.
+pub const MOST_SEE_THROUGH: u8 = 80;
+
+fn is_zero(n: &u8) -> bool {
+    *n == 0
 }
 
 /// A media folder to index.
@@ -398,6 +413,8 @@ mod tests {
             brave_api_key: Some("key".into()),
             colors: Some("/home/ana/.config/amane/colors.json".into()),
             stage_output: Some("HDMI-A-1".into()),
+            see_through: 40,
+            no_blur: true,
             keys: [("new".to_string(), "ctrl+t".to_string())].into(),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),
@@ -419,6 +436,16 @@ mod tests {
         assert!(text.contains("image = \"~/Pictures/cross.jpg\""), "{text}");
         assert!(text.contains("path = \"~/Music\""), "{text}");
         assert!(text.contains("/srv/bibles/rv1909.tsv"), "{text}");
+        assert!(
+            text.contains("see_through = 40") && text.contains("no_blur = true"),
+            "{text}"
+        );
+        // Solid and blurred are the usual: a plain config says neither.
+        let plain = Config::default().to_toml(Some(home));
+        assert!(
+            !plain.contains("see_through") && !plain.contains("blur"),
+            "{plain}"
+        );
         let settings = text.find("colors").unwrap();
         assert!(
             settings < text.find("[[folders]]").unwrap(),

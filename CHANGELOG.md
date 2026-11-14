@@ -72,6 +72,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   `<plan>.lantern` in Documents, a zip; **Import a plan** in the list of
   plans finds exported plans there, in Downloads and on what's plugged in,
   copies the media in and opens the plan.
+- **Glass**: Settings → Appearance lets the desktop show through the
+  dashboard, from solid to 80%, with a switch for blurring what shows
+  through. The stage stays solid.
 
 ### Fixed
 

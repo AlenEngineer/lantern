@@ -171,9 +171,14 @@ pub fn tip(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
 }
 
 /// The window: the `surface` role.
-pub fn window(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
+/// The window's ground: `surface`, `see_through` of the way to clear
+/// (0 is solid), so the desktop shows through a transparent window.
+pub fn window(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(p.surface)),
+        background: Some(Background::Color(Color {
+            a: 1.0 - see_through.clamp(0.0, 1.0),
+            ..p.surface
+        })),
         text_color: Some(p.on_surface),
         ..container::Style::default()
     }

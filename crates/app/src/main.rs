@@ -117,6 +117,12 @@ fn main() -> ExitCode {
     )
     .title(App::title)
     .theme(|app: &App, _| look::theme(app.palette))
+    // The window itself is clear; the dashboard paints its own ground,
+    // as solid as the settings say, and the stage paints black.
+    .style(|app: &App, _| iced::theme::Style {
+        background_color: Color::TRANSPARENT,
+        text_color: app.palette.on_surface,
+    })
     .default_font(look::UI)
     .subscription(App::subscription)
     .run();
@@ -340,6 +346,11 @@ struct App {
     slides: fit::Splitter,
     /// The stage's look now: the open plan's own, or else the default.
     look: Look,
+    /// Whether the desktop was last told to blur behind the dashboard;
+    /// `None` until its window is open, or once telling it failed.
+    blur_told: Option<bool>,
+    /// The dashboard's window is open, so the desktop can be told.
+    dashboard_open: bool,
     /// Another plan was opened with something on stage: what's there keeps
     /// the look it went up with, until something else goes on.
     look_held: bool,
@@ -435,6 +446,10 @@ impl App {
     ) -> (App, Task<Message>) {
         let (dashboard_window, open_dashboard) = window::open(window::Settings {
             size: iced::Size::new(1280.0, 720.0),
+            // Always able to be see-through: how much is the config's,
+            // and can change while the window is open.
+            transparent: true,
+            blur: !config.no_blur,
             platform_specific: platform(DASHBOARD_APP_ID),
             ..window::Settings::default()
         });
@@ -458,6 +473,8 @@ impl App {
             slides: fit::Splitter::new(&config.stage),
             look: config.stage.clone(),
             look_held: false,
+            blur_told: None,
+            dashboard_open: false,
             output_watch: outputs::Watch::default(),
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
@@ -527,7 +544,36 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         let task = self.handle(message);
         self.sync_look();
+        self.sync_blur();
         task
+    }
+
+    /// Has the desktop blur behind the dashboard, or not, as the settings
+    /// say: the switch as it stands while they're open, else as saved.
+    /// Only on a change, and only where the desktop can be told (a
+    /// window asks for blur itself when it opens, which is enough on
+    /// the others that can).
+    fn sync_blur(&mut self) {
+        if !self.dashboard_open || !outputs::supported() {
+            return;
+        }
+        let wanted = match &self.settings {
+            Some(draft) => draft.blur,
+            None => !self.config.no_blur,
+        };
+        // Blurred is how a window starts: nothing to say until it isn't.
+        if self.blur_told.unwrap_or(true) == wanted {
+            return;
+        }
+        match outputs::blur_dashboard(wanted) {
+            Ok(true) => self.blur_told = Some(wanted),
+            Ok(false) => {}
+            Err(err) => {
+                log(format!("blur: {err}"));
+                // Not asked again on every message.
+                self.blur_told = Some(wanted);
+            }
+        }
     }
 
     /// Follows the look to the open plan's (or the default when it has
@@ -1188,6 +1234,7 @@ impl App {
                 return iced::exit();
             }
             Message::Resized(window, size) if window != self.stage_window => {
+                self.dashboard_open = true;
                 self.dashboard_size = size;
             }
             Message::Resized(_, size) => {
