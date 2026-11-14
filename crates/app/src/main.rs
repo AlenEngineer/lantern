@@ -340,6 +340,9 @@ struct App {
     slides: fit::Splitter,
     /// The stage's look now: the open plan's own, or else the default.
     look: Look,
+    /// Another plan was opened with something on stage: what's there keeps
+    /// the look it went up with, until something else goes on.
+    look_held: bool,
     /// What the stage's screen was last seen as, to move it only on change.
     output_watch: outputs::Watch,
     /// The library's change count the search last followed.
@@ -454,6 +457,7 @@ impl App {
             colors: config.colors.clone().map(palette::Source::new),
             slides: fit::Splitter::new(&config.stage),
             look: config.stage.clone(),
+            look_held: false,
             output_watch: outputs::Watch::default(),
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
@@ -536,7 +540,7 @@ impl App {
             .plan()
             .look
             .unwrap_or_else(|| self.config.stage.clone());
-        if look != self.look {
+        if look != self.look && !self.look_held {
             self.look = look;
             if self.slides.set_look(&self.look) {
                 self.report_slides();
@@ -1617,6 +1621,8 @@ impl App {
         match saved {
             Ok((config, plan_look)) => {
                 draft.notice = Some(Ok(settings::saved(&path, home)));
+                // A look just saved is meant to be seen.
+                self.look_held = false;
                 // The plan's own look goes into the plan, saved with it when
                 // it has a file (an untitled plan shows Save instead).
                 if let Some(look) = plan_look
@@ -1753,6 +1759,9 @@ impl App {
     /// Preloads for a plan that replaced the last one.
     fn preload_if(&mut self, replaced: bool) -> Task<Message> {
         if replaced {
+            // What the audience is looking at doesn't change its font and
+            // colours because the operator opened another plan.
+            self.look_held = self.stage.program.is_some();
             // Ctrl+Z never reaches back into the plan that was open before.
             self.editing = None;
             self.undo.clear();
@@ -1783,6 +1792,8 @@ impl App {
         let engine = &self.engine.0;
         match event {
             StageEvent::Program { .. } => {
+                // Something else is up, or nothing: the open plan's look.
+                self.look_held = false;
                 self.report_slides();
                 return self.program_changed();
             }

@@ -139,6 +139,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Importing a plan when one of the same name is already saved names the
   new one apart ("Domingo (imported)"), and says it's the imported one
   that opened. They were two rows that read the same.
+- Opening another plan (or deleting the open one) no longer changes the
+  font and colours of what's on stage. It keeps the look it went up with;
+  the new plan's look starts with the next thing shown.
 
 ## [0.7.0] - 2026-11-13
 
