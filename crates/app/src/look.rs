@@ -193,11 +193,7 @@ pub fn card(
     radius: f32,
 ) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(Color {
-            // Never so clear that what's written on it is lost.
-            a: (1.0 - 1.15 * see_through).clamp(0.35, 1.0),
-            ..p.surface
-        })),
+        background: Some(Background::Color(float_colour(p, see_through))),
         text_color: Some(p.on_surface),
         border: Border {
             color: Color::WHITE.scale_alpha(0.10),
@@ -213,18 +209,17 @@ pub fn card(
     }
 }
 
-/// The colour of what floats over the cards: the strip, and what drops
-/// from it. A step lighter than a card, so it shows against one without
-/// an outline, and less see-through, so it's the same colour whatever
-/// lies under it.
+/// The colour of the strip and of what drops from it: a card's own. A
+/// shadow, not a colour, sets a dropped panel off from the card under it.
 pub fn float_colour(p: Palette, see_through: f32) -> Color {
     Color {
-        a: (1.0 - 0.5 * see_through).clamp(0.6, 1.0),
-        ..p.surface_container
+        // Never so clear that what's written on it is lost.
+        a: (1.0 - 1.15 * see_through).clamp(0.35, 1.0),
+        ..p.surface
     }
 }
 
-/// The strip: [`float_colour`], a pill, lifted by a shadow. It has no
+/// The strip: a card's colour, a pill, lifted by a shadow. It has no
 /// outline, so a panel can drop from it without a seam.
 pub fn strip(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
@@ -255,6 +250,13 @@ pub fn panel(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container
                 .bottom_left(CARD_RADIUS)
                 .bottom_right(CARD_RADIUS),
             ..Border::default()
+        },
+        // Thrown well down, so little of it reaches up to the strip,
+        // which is drawn over it anyway.
+        shadow: iced::Shadow {
+            color: Color::BLACK.scale_alpha(0.55),
+            offset: iced::Vector::new(0.0, 16.0),
+            blur_radius: 28.0,
         },
         ..container::Style::default()
     }

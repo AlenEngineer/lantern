@@ -55,9 +55,9 @@ broadcast tally, because red is blackout's.
   neighbours and 12px from the window's edge. No lines divide a card.
 - With **Glass** on, the ground and the cards let the desktop show through,
   the cards less than the ground so text on them reads.
-- The strip floats over the cards: `surface_container`, a step lighter
-  than a card, with a shadow and no outline. A panel that drops from it is
-  the same colour and meets it without a seam, its two shoulders curving
+- The strip is a card's colour, with a shadow and no outline. A panel
+  that drops from it is the same colour, set off from the card under it by
+  its shadow, and meets the strip without a seam, its two shoulders curving
   from the strip's underside into its sides, like a drop leaving the water
   it hangs from. It's as tall as what's in it, up to the window's foot;
   past that its list scrolls.

@@ -200,6 +200,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Esc empties the search and keeps its bang chip, so the next search asks
   the same source: several verses or videos in a row. Esc on an empty box
   closes the search; Backspace there still takes the chip away.
+- The strip and the search that drops from it are the cards' colour; a
+  shadow sets the dropped search off from the card under it.
 
 ## [0.7.0] - 2026-11-13
 

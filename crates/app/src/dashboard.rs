@@ -183,8 +183,10 @@ impl App {
             .padding(CARD_PADDING)
             .style(look::card(p, glass, look::CARD_RADIUS));
         let window = container(
+            // The strip's room: the strip itself is drawn last, over what
+            // drops from it.
             column![
-                self.strip(&timing),
+                Space::new().height(STRIP),
                 row![plan, seam(Side::Plan, GAP), stage].height(Fill)
             ]
             .spacing(GAP),
@@ -211,15 +213,24 @@ impl App {
                 .max_height(most)
                 .padding(CARD_PADDING)
                 .style(look::panel(p, glass));
+            // The panel first, so its shadow falls on the cards and not
+            // on its own shoulders or the strip.
             layers = layers
+                .push(pin(panel).x(left).y(top))
                 .push(
                     pin(look::shoulder(true, colour))
                         .x(left - look::SHOULDER)
                         .y(top),
                 )
-                .push(pin(look::shoulder(false, colour)).x(right).y(top))
-                .push(pin(panel).x(left).y(top));
+                .push(pin(look::shoulder(false, colour)).x(right).y(top));
         }
+        // The strip, over all of that: what drops from it comes out from
+        // under its edge.
+        layers = layers.push(
+            pin(container(self.strip(&timing)).width(self.dashboard_size.width - 2.0 * EDGE))
+                .x(EDGE)
+                .y(EDGE),
+        );
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
         if let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) {
@@ -508,7 +519,7 @@ impl App {
             match (&self.search.scope, self.search.bang()) {
                 (Scope::Bang(bang), Some(_)) => {
                     let sources = bang.sources.join(", ");
-                    let placeholder = format!("Search {sources} · Backspace for everything");
+                    let placeholder = format!("Search {sources}");
                     (chip(p, &sources, Tone::Plain), placeholder)
                 }
                 // The whole hint only where it fits.
