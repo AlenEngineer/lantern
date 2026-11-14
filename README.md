@@ -63,13 +63,18 @@ cargo run --release -p lantern-app
 ```
 
 Two windows open: the **dashboard** for the operator and the fullscreen
-**stage** for the audience. The dashboard has up to three panes: the plan
-on the left; the middle, which lists the keys until Ctrl+K opens the search
-there (search box and results); and the stage on the right, with what the
-audience sees above the preview. The stage pane shows once there's
-something on stage, lined up, or coming next in the plan. Drag the line
-between two panes to make the plan or the stage pane narrower or wider; a
-double click on it lets the pane size itself again. The widths are kept.
+**stage** for the audience. The dashboard is three cards on one
+ground. Across the top, a **strip**: the plan's name and its buttons, the
+running section's time and how the service stands against its schedule,
+the time of day, then Search, what isn't ready, the stage's screen, Blackout
+and Settings. Each says how something stands and opens what changes it. On
+the left, the **plan**, a line a step. In the middle, the **stage**: what
+the audience sees, large, and beside it what comes next, or what you're
+looking at. Ctrl+K drops the **search** from the strip over that side
+column, with the result you're looking at under the list; Esc sends it
+back. Drag the gap between the plan and the stage, or between the live
+picture and the column beside it, to make them narrower or wider; a double
+click lets them size themselves again. The widths are kept.
 
 There is one screen, the same before and during the service. The plan is
 edited where it is: the selected step's row carries small buttons to rename
@@ -84,14 +89,18 @@ saved ones. A new plan starts on its name, and with no plan to reopen
 Lantern starts on that list. **Save** shows while the plan has unsaved
 changes.
 
-Results and plan steps show a thumbnail: a picture, a PDF's first page or a
-video's still (YouTube too). A passage has a book instead, and its result
-says how it starts.
+Results show a thumbnail: a picture, a PDF's first page or a video's still
+(YouTube too). A passage has a book instead, and its result says how it
+starts. A plan step is one line: its mark (● on stage, ○ next, else its
+number), its name, and at its end the one thing worth saying of it: what's
+wrong with it, how far the stage is into it, what kind it is, or how long
+it takes (↦ after it means it goes on by itself). Selecting it opens a
+second line with what can be done to it.
 
 Ctrl+K opens the search, and while it's open typing goes to its box, so
 every shortcut is a key that doesn't type. Esc empties the box, and closes
 the search once it's empty. Find files and Bible verses, type a reference like
-`jn 3 16-17`, or paste a YouTube link. The lower box of the stage pane shows
+`jn 3 16-17`, or paste a YouTube link. The column beside the live picture shows
 what you're looking at (a result, or a step you clicked), and otherwise the
 plan's next step: Enter shows the first, PgDn the second. A single click
 on a result or step only lines it up; a double click shows it at once.
@@ -316,7 +325,7 @@ time**, or click it and type its time (`15` is fifteen minutes, `4:30` four
 and a half). Each section header says in words how it's doing, "12 min of
 15 min planned" over a bar while you plan, "6:40 of 15 min · on track"
 while it runs. Once a section starts, its header shows the time
-against its budget, and the launcher's header shows how much is left, or how
+against its budget, and the strip shows how much is left, or how
 far over it is, plus when the service should end. It warns, it never stops
 you: "on track", "tight" when it should end in the last minute or tenth of
 its budget, "over" past it. Each step's length is the one you typed, else
@@ -326,7 +335,7 @@ of it exactly.
 
 ### Configuration
 
-**Settings** (Ctrl+, or the gear in the launcher) edits the config from the
+**Settings** (Ctrl+, or the gear in the strip) edits the config from the
 app: media folders, Bibles, the Brave key and the colours file. **Save**
 (Ctrl+S) writes the file and applies it at once: the folders and Bibles are
 reindexed and the colours reload, no restart. It rewrites the file, so

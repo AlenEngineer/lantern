@@ -82,6 +82,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   audience sees, large, with what comes next beside it. Ctrl+K drops the
   search from the strip, with the result you're looking at under the list.
   The list of keys in the middle is gone (they're under Settings → Keys).
+- A plan step is one line: its mark, its name, and at its end the one
+  thing worth saying of it (what's wrong, how far the stage is into it,
+  its kind, or its length). The selected step opens a second line with its
+  buttons. Steps and standby items no longer carry a thumbnail.
 
 ### Fixed
 
