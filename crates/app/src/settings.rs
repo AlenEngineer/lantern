@@ -633,6 +633,37 @@ impl Draft {
         )
     }
 
+    /// Whether the folder typed in `field` isn't on this computer: not
+    /// while it's still being typed and has somewhere to go, and not for
+    /// an empty row.
+    pub fn missing_folder(
+        &self,
+        field: Field,
+        typed: &str,
+        dir: &Path,
+        home: Option<&Path>,
+    ) -> bool {
+        let typed = typed.trim();
+        let going = self
+            .suggesting
+            .as_ref()
+            .is_some_and(|(at, to)| *at == field && !to.is_empty());
+        !typed.is_empty() && !going && !config::resolve(Path::new(typed), dir, home).is_dir()
+    }
+
+    /// The folders of the draft that aren't on this computer, as typed:
+    /// the app's and the open plan's.
+    pub fn missing_folders(&self, dir: &Path, home: Option<&Path>) -> Vec<String> {
+        let app = self.folders.iter().map(|folder| folder.path.as_str());
+        let plan = self.plan_folder_rows().iter().map(String::as_str);
+        app.chain(plan)
+            .map(str::trim)
+            .filter(|typed| !typed.is_empty())
+            .filter(|typed| !config::resolve(Path::new(typed), dir, home).is_dir())
+            .map(str::to_string)
+            .collect()
+    }
+
     /// The Bibles the open plan searches, by name; empty for all of them.
     /// `None` when no plan is being edited. A name that's no longer one
     /// of the Bibles here is kept: the plan may go back to where it is.
@@ -754,6 +785,20 @@ impl App {
             "The folders Lantern indexes, with those inside them. A bang like !h searches only that folder."
         )]
         .spacing(6);
+        // A folder that isn't there says so under its row, once it's
+        // typed: saved as it is, it would just never find anything.
+        let config_dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let home = self.home.clone();
+        let not_there = move |draft: &Draft, field: Field, typed: &str| {
+            draft
+                .missing_folder(field, typed, &config_dir, home.as_deref())
+                .then(|| -> Element<'a, Message> {
+                    text("Not found on this computer. It's skipped until it's there.")
+                        .size(META)
+                        .color(p.error)
+                        .into()
+                })
+        };
         for (i, folder) in draft.folders.iter().enumerate() {
             // The path has a line to itself: beside the label and the bang
             // it showed about twenty characters of a folder's path.
@@ -773,6 +818,7 @@ impl App {
                     .width(Fill),
             );
             folders = folders.push(suggestions(p, draft, Field::Folder(i)));
+            folders = folders.push(not_there(draft, Field::Folder(i), &folder.path));
         }
         folders = folders.push(add(p, "Add folder", Edit::AddFolder));
 
@@ -1017,6 +1063,7 @@ impl App {
                 .align_y(Alignment::Center),
             );
             plan_folders = plan_folders.push(suggestions(p, draft, Field::PlanFolder(i)));
+            plan_folders = plan_folders.push(not_there(draft, Field::PlanFolder(i), folder));
         }
         plan_folders = plan_folders.push(add(p, "Add folder", Edit::AddPlanFolder));
 
@@ -1550,6 +1597,27 @@ mod tests {
             None,
             "no plan"
         );
+    }
+
+    #[test]
+    fn a_folder_that_isnt_there_is_named() {
+        let here = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(here.path().join("Media")).unwrap();
+        let mut plan = Plan::new("Campaña");
+        plan.folders = vec!["Media".into(), "nowhere".into()];
+        let mut draft = Draft::of(&Config::default(), None).with_plan(&plan);
+        draft.edit(Edit::AddFolder);
+        draft.edit(Edit::FolderPath(0, "gone".into()));
+        draft.edit(Edit::AddFolder);
+        // Relative to the config's folder; an empty row isn't missing.
+        assert_eq!(
+            draft.missing_folders(here.path(), None),
+            ["gone", "nowhere"]
+        );
+        let field = Field::PlanFolder(1);
+        assert!(draft.missing_folder(field, "nowhere", here.path(), None));
+        assert!(!draft.missing_folder(Field::PlanFolder(0), "Media", here.path(), None));
+        assert!(!draft.missing_folder(field, "  ", here.path(), None));
     }
 
     #[test]

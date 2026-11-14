@@ -1620,7 +1620,16 @@ impl App {
         });
         match saved {
             Ok((config, plan_look)) => {
-                draft.notice = Some(Ok(settings::saved(&path, home)));
+                // Saved all the same: a folder may be on a stick that's out.
+                let missing = draft.missing_folders(dir, home);
+                draft.notice = Some(Ok(match missing.as_slice() {
+                    [] => settings::saved(&path, home),
+                    missing => format!(
+                        "{} Not found, so not searched: {}.",
+                        settings::saved(&path, home),
+                        missing.join(", ")
+                    ),
+                }));
                 // A look just saved is meant to be seen.
                 self.look_held = false;
                 // The plan's own look goes into the plan, saved with it when
