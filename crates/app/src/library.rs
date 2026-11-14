@@ -2,11 +2,12 @@
 //! so the windows open at once, and swapped for new ones when the settings
 //! change.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use lantern_engine::{Engine, SourceId};
+use lantern_engine::{Engine, Plan, SourceId};
 use lantern_source_bible::{Bible, BibleSource, Translation};
 use lantern_source_brave::BraveImages;
 use lantern_source_link::LinkSource;
@@ -21,6 +22,52 @@ use crate::{log, watch};
 pub struct Indexed {
     pub source: String,
     pub result: Result<usize, String>,
+}
+
+/// What the open plan asks of the library: folders of its own beside the
+/// config's, and which of the config's Bibles it searches.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanNeeds {
+    /// As the plan has them (`~/Church/Campaña`).
+    pub folders: Vec<PathBuf>,
+    /// Bible names; empty for all of them.
+    pub bibles: Vec<String>,
+}
+
+impl PlanNeeds {
+    /// What `plan` asks for.
+    pub fn of(plan: &Plan) -> PlanNeeds {
+        PlanNeeds {
+            folders: plan.folders.clone(),
+            bibles: plan.bibles.clone(),
+        }
+    }
+
+    /// `config` as the library should index it for this plan: its folders
+    /// after the config's own (relative ones against `dir`, `~` against
+    /// `home`), and only its Bibles. A plan that names none of the Bibles
+    /// here, as one made on another computer may, keeps them all: better
+    /// another translation than none.
+    pub fn apply(&self, mut config: Config, dir: &Path, home: Option<&Path>) -> Config {
+        config.folders.extend(self.folders.iter().map(|folder| {
+            let path = config::resolve(folder, dir, home);
+            FolderEntry {
+                label: path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+                path,
+                bang: None,
+            }
+        }));
+        let wanted = |entry: &BibleEntry| {
+            let name = bible_name(entry);
+            self.bibles.iter().any(|b| b.eq_ignore_ascii_case(&name))
+        };
+        if config.bibles.iter().any(wanted) {
+            config.bibles.retain(wanted);
+        }
+        config
+    }
 }
 
 /// The configured sources and the index's progress.
@@ -268,13 +315,19 @@ fn folder_name(entry: &FolderEntry) -> String {
     })
 }
 
-fn bible_name(entry: &BibleEntry) -> String {
-    entry.name.clone().unwrap_or_else(|| {
-        entry
-            .path
+/// A Bible's name: the one it was given, or else its file's, in capitals.
+pub fn bible_name(entry: &BibleEntry) -> String {
+    name_of_bible(entry.name.as_deref(), &entry.path)
+}
+
+/// The same from a name that may be missing and the file's path.
+pub fn name_of_bible(name: Option<&str>, path: &Path) -> String {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => name.to_string(),
+        None => path
             .file_stem()
-            .map_or("bible".into(), |s| s.to_string_lossy().to_uppercase())
-    })
+            .map_or("bible".into(), |s| s.to_string_lossy().to_uppercase()),
+    }
 }
 
 fn slug(name: &str) -> String {
@@ -317,6 +370,43 @@ mod tests {
 
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    fn a_plan_adds_its_folders_and_picks_its_bibles() {
+        let config = Config::parse(
+            "[[folders]]\npath = \"/media\"\n\
+             [[bibles]]\nlang = \"es\"\npath = \"/b/rv1909.tsv\"\n\
+             [[bibles]]\nlang = \"en\"\npath = \"/b/kjv.tsv\"\nname = \"KJV\"\n",
+            Path::new("/etc/lantern"),
+            None,
+        )
+        .unwrap();
+        let home = Some(Path::new("/home/ana"));
+        let names =
+            |config: &Config| -> Vec<String> { config.bibles.iter().map(bible_name).collect() };
+        // Nothing asked: the config as it is.
+        let plain = PlanNeeds::default().apply(config.clone(), Path::new("/etc/lantern"), home);
+        assert_eq!(plain, config);
+        let needs = PlanNeeds {
+            folders: vec!["~/Church/Campaña".into()],
+            bibles: vec!["kjv".into()],
+        };
+        let for_plan = needs.apply(config.clone(), Path::new("/etc/lantern"), home);
+        let folders: Vec<_> = for_plan.folders.iter().map(|f| f.path.clone()).collect();
+        assert_eq!(
+            folders,
+            [Path::new("/media"), Path::new("/home/ana/Church/Campaña")]
+        );
+        assert_eq!(for_plan.folders[1].label.as_deref(), Some("Campaña"));
+        assert_eq!(names(&for_plan), ["KJV"], "by name, whatever the case");
+        // A Bible this computer doesn't have: all of them, not none.
+        let elsewhere = PlanNeeds {
+            folders: Vec::new(),
+            bibles: vec!["NVI".into()],
+        };
+        let kept = elsewhere.apply(config.clone(), Path::new("/etc/lantern"), home);
+        assert_eq!(names(&kept), ["RV1909", "KJV"]);
+    }
 
     fn repo() -> &'static Path {
         Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))

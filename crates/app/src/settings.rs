@@ -9,12 +9,13 @@ use std::path::{Path, PathBuf};
 use iced::widget::{Space, button, column, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 
-use lantern_engine::{Look, Rgb, fold};
+use lantern_engine::{Look, Plan, Rgb, fold};
 
 use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
 use crate::dashboard::{chip, pill, scrolling, wide};
 use crate::fit;
 use crate::keys::{self, Keymap, Op};
+use crate::library;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::outputs::Output;
 use crate::palette::Palette;
@@ -108,6 +109,8 @@ struct PlanLook {
     own: Option<Stage>,
     /// The folders only this plan uses, as typed.
     folders: Vec<String>,
+    /// The Bibles it searches, by name; empty for all of them.
+    bibles: Vec<String>,
 }
 
 /// The stage's look, as typed.
@@ -243,6 +246,8 @@ pub enum Edit {
     PlanFolderPath(usize, String),
     AddPlanFolder,
     RemovePlanFolder(usize),
+    /// The open plan searches the Bible of this name, or stops.
+    PlanBible(String),
     /// The key of action N of `keys::ACTIONS`.
     Key(usize, String),
     /// Shows a part of the settings.
@@ -444,6 +449,20 @@ impl Draft {
                     plan.folders.remove(i);
                 }
             }
+            Edit::PlanBible(name) => {
+                if let Some(plan) = &mut self.plan {
+                    match plan
+                        .bibles
+                        .iter()
+                        .position(|b| b.eq_ignore_ascii_case(&name))
+                    {
+                        Some(at) => {
+                            plan.bibles.remove(at);
+                        }
+                        None => plan.bibles.push(name),
+                    }
+                }
+            }
             Edit::RemoveFolder(i) => {
                 if i < self.folders.len() {
                     self.folders.remove(i);
@@ -583,7 +602,8 @@ impl Draft {
 
     /// Also edits `title`'s look: `look` is its own, `None` when it uses
     /// the look for all plans.
-    pub fn with_plan(mut self, title: &str, look: Option<&Look>, folders: &[PathBuf]) -> Draft {
+    pub fn with_plan(mut self, plan: &Plan) -> Draft {
+        let (title, look, folders) = (&plan.title, plan.look.as_ref(), &plan.folders);
         let home = self.home.clone();
         let shown = |path: &Path| match &home {
             Some(home) => config::tilde(path, home).display().to_string(),
@@ -593,6 +613,7 @@ impl Draft {
             title: title.to_string(),
             own: look.map(|look| Stage::of(look, &shown)),
             folders: folders.iter().map(|f| f.display().to_string()).collect(),
+            bibles: plan.bibles.clone(),
         });
         self
     }
@@ -610,6 +631,28 @@ impl Draft {
                 .map(PathBuf::from)
                 .collect(),
         )
+    }
+
+    /// The Bibles the open plan searches, by name; empty for all of them.
+    /// `None` when no plan is being edited. A name that's no longer one
+    /// of the Bibles here is kept: the plan may go back to where it is.
+    pub fn plan_bibles(&self) -> Option<Vec<String>> {
+        self.plan.as_ref().map(|plan| plan.bibles.clone())
+    }
+
+    /// The Bibles there are to pick from, by name, and whether the open
+    /// plan picked each.
+    fn bible_choices(&self) -> Vec<(String, bool)> {
+        let picked = self.plan.as_ref().map_or(&[][..], |p| p.bibles.as_slice());
+        self.bibles
+            .iter()
+            .filter(|bible| !bible.path.trim().is_empty())
+            .map(|bible| {
+                let name = library::name_of_bible(Some(&bible.name), Path::new(bible.path.trim()));
+                let on = picked.iter().any(|b| b.eq_ignore_ascii_case(&name));
+                (name, on)
+            })
+            .collect()
     }
 
     /// The field of the plan's last folder row, to type in once it's added.
@@ -977,9 +1020,48 @@ impl App {
         }
         plan_folders = plan_folders.push(add(p, "Add folder", Edit::AddPlanFolder));
 
+        // Which Bibles it searches: all of them until one is picked.
+        let choices = draft.bible_choices();
+        let all = !choices.iter().any(|(_, on)| *on);
+        let mut plan_bibles = column![section(
+            p,
+            "Its Bibles",
+            "The Bibles this plan searches. All of them, until you pick."
+        )]
+        .spacing(6);
+        if choices.is_empty() {
+            plan_bibles = plan_bibles.push(
+                text("No Bibles yet: add one under Library.")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+        } else {
+            let pills = choices.into_iter().map(|(name, on)| {
+                let label = if on {
+                    format!("✓ {name}")
+                } else {
+                    name.clone()
+                };
+                let tone = if on { Tone::Selected } else { Tone::Plain };
+                let edit = settings(Edit::PlanBible(name));
+                pill(p, &label, tone, look::PILL_SMALL, Some(edit)).into()
+            });
+            plan_bibles = plan_bibles.push(
+                row(pills)
+                    .push(
+                        text(if all { "Searching all of them." } else { "" })
+                            .size(META)
+                            .color(p.on_surface_variant),
+                    )
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .wrap(),
+            );
+        }
+
         // One part at a time, picked from the list beside it.
         let part = match draft.category {
-            Category::Plan => column![self.plan_section(), plan_folders, stage],
+            Category::Plan => column![self.plan_section(), plan_folders, plan_bibles, stage],
             Category::Stage => column![stage],
             Category::Output => column![output],
             Category::Library => column![folders, bibles, images],
@@ -1382,7 +1464,7 @@ mod tests {
     #[test]
     fn a_plan_gets_its_own_look_without_touching_the_one_for_all() {
         let dir = Path::new("/home/ana/.config/lantern");
-        let mut draft = Draft::of(&sample(), home()).with_plan("Santa Cena", None, &[]);
+        let mut draft = Draft::of(&sample(), home()).with_plan(&Plan::new("Santa Cena"));
         assert_eq!(
             draft.plan_look(dir, home()).unwrap(),
             Some(None),
@@ -1432,6 +1514,25 @@ mod tests {
             None,
             "no plan"
         );
+    }
+
+    #[test]
+    fn a_plan_picks_its_bibles_by_name() {
+        let mut plan = Plan::new("Bilingual");
+        plan.bibles = vec!["NVI".into()];
+        let mut draft = Draft::of(&sample(), home()).with_plan(&plan);
+        let names: Vec<String> = draft.bible_choices().into_iter().map(|(n, _)| n).collect();
+        assert!(!names.is_empty(), "the sample has a Bible");
+        assert!(draft.bible_choices().iter().all(|(_, on)| !on));
+        draft.edit(Edit::PlanBible(names[0].clone()));
+        assert!(draft.bible_choices()[0].1);
+        // One the computer doesn't have stays in the plan.
+        assert_eq!(
+            draft.plan_bibles(),
+            Some(vec!["NVI".to_string(), names[0].clone()])
+        );
+        draft.edit(Edit::PlanBible(names[0].to_lowercase()));
+        assert_eq!(draft.plan_bibles(), Some(vec!["NVI".to_string()]));
     }
 
     #[test]
