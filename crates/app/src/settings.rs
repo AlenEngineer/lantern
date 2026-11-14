@@ -65,6 +65,11 @@ pub struct Draft {
     suggesting: Option<(Field, Vec<Suggestion>)>,
     /// The key of each of `keys::ACTIONS`, as typed (`ctrl+n`).
     keys: Vec<String>,
+    /// What the fields held when they were last saved or opened, to tell
+    /// whether closing would lose anything.
+    saved: String,
+    /// Closing was asked for with changes unsaved: asking again closes.
+    pub leaving: bool,
 }
 
 /// A part of the settings: one shows at a time, picked from the list.
@@ -318,6 +323,8 @@ impl Draft {
             notice: None,
             home: home.map(Path::to_path_buf),
             suggesting: None,
+            saved: String::new(),
+            leaving: false,
             // Keys the config gets wrong show as the usual ones.
             keys: {
                 let map = Keymap::with(&config.keys).unwrap_or_else(|_| Keymap::defaults());
@@ -326,6 +333,34 @@ impl Draft {
                     .collect()
             },
         }
+    }
+
+    /// Everything Save would keep, as one text to compare.
+    fn held(&self) -> String {
+        format!(
+            "{:?}",
+            (
+                &self.folders,
+                &self.bibles,
+                &self.brave_key,
+                &self.colors,
+                &self.output,
+                &self.stage,
+                &self.plan,
+                &self.keys
+            )
+        )
+    }
+
+    /// The fields are as saved (or as opened) now.
+    pub fn mark_saved(&mut self) {
+        self.saved = self.held();
+        self.leaving = false;
+    }
+
+    /// Whether closing now would lose a change.
+    pub fn is_dirty(&self) -> bool {
+        self.saved != self.held()
     }
 
     /// The draft, with these font families to suggest.
@@ -337,6 +372,7 @@ impl Draft {
     /// view can put the cursor at its end.
     pub fn edit(&mut self, edit: Edit) -> Option<Field> {
         self.notice = None;
+        self.leaving = false;
         let typed = match &edit {
             Edit::FolderPath(i, _) => Some(Field::Folder(*i)),
             Edit::PlanFolderPath(i, _) => Some(Field::PlanFolder(*i)),
@@ -1204,11 +1240,27 @@ impl App {
         } else {
             footer = footer.push(Space::new().width(Fill));
         }
+        // Unsaved changes say so, and closing then says it discards them.
+        let dirty = draft.is_dirty();
+        if dirty && !draft.leaving {
+            footer = footer.push(chip(p, "unsaved changes", Tone::Live));
+        }
         footer = footer
             .push(pill(
                 p,
-                &keys::with_key("Close", Op::ClearSearch),
-                Tone::Plain,
+                &keys::with_key(
+                    match (dirty, draft.leaving) {
+                        (true, true) => "Discard them",
+                        (true, false) => "Discard",
+                        (false, _) => "Close",
+                    },
+                    Op::ClearSearch,
+                ),
+                if dirty && draft.leaving {
+                    Tone::Danger
+                } else {
+                    Tone::Plain
+                },
                 PILL,
                 Some(Message::Key {
                     op: Op::ClearSearch,
@@ -1632,6 +1684,25 @@ mod tests {
             None,
             "no plan"
         );
+    }
+
+    #[test]
+    fn a_draft_knows_when_closing_would_lose_a_change() {
+        let mut draft = Draft::of(&sample(), home()).with_plan(&Plan::new("Santa Cena"));
+        draft.mark_saved();
+        assert!(!draft.is_dirty());
+        // Looking around changes nothing.
+        draft.edit(Edit::Category(Category::Keys));
+        draft.edit(Edit::Record(0));
+        draft.edit(Edit::StopRecording);
+        assert!(!draft.is_dirty());
+        draft.edit(Edit::Background("#102030".into()));
+        assert!(draft.is_dirty());
+        draft.leaving = true;
+        draft.edit(Edit::AddPlanFolder);
+        assert!(!draft.leaving, "an edit takes the question back");
+        draft.mark_saved();
+        assert!(!draft.is_dirty());
     }
 
     #[test]
