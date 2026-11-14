@@ -8,6 +8,7 @@
 //! after its last line (see [`script`]). `LANTERN_SHOT=<program>` is run
 //! for each `shot NAME` in it.
 
+mod bundle;
 mod config;
 mod cut;
 mod dashboard;
@@ -263,6 +264,18 @@ enum Message {
     PlanStarts(String),
     /// Saves the open plan as a copy with its own file, and opens the copy.
     DuplicatePlan,
+    /// Writes the open plan and its media to a folder to take along.
+    ExportPlan,
+    /// The export finished: where it went, or why it didn't.
+    Exported(Result<String, String>),
+    /// Opens or closes "Import a plan" in the list of plans.
+    ToggleImport,
+    /// The path typed for the plan to import.
+    ImportPath(String),
+    /// Imports the exported plan in this folder; `None` for the one typed.
+    Import(Option<PathBuf>),
+    /// The import finished: the new plan's file, or why there's none.
+    Imported(Result<PathBuf, String>),
     /// Deletes the open plan; the first press asks, the second does.
     DeletePlan,
     /// What was typed in a step's length or a section's budget.
@@ -377,6 +390,11 @@ struct App {
     /// tell a double click.
     pub(crate) resizing: Option<dashboard::Side>,
     seam_pressed: Option<(dashboard::Side, Instant)>,
+    /// An export or import is copying files.
+    pub(crate) copying: bool,
+    /// "Import a plan" is open in the list of plans: the path typed, and
+    /// the exported plans found lying about.
+    pub(crate) importing: Option<(String, Vec<PathBuf>)>,
     /// The plan's start time while it's being typed and doesn't read as
     /// one yet ("10:").
     pub(crate) starts_typed: Option<String>,
@@ -462,6 +480,8 @@ impl App {
             stage_dragged: layout.1,
             resizing: None,
             seam_pressed: None,
+            copying: false,
+            importing: None,
             starts_typed: None,
             deleting_plan: false,
             editing: None,
@@ -956,6 +976,111 @@ impl App {
                     return operation::focus(SEARCH_BOX);
                 }
             }
+            Message::ExportPlan if self.copying => {}
+            Message::ExportPlan => {
+                let plan = self.engine.0.plan();
+                let home = self.home.clone();
+                // Beside the user's documents, where it's easy to find.
+                let into = match &home {
+                    Some(home) if home.join("Documents").is_dir() => home.join("Documents"),
+                    Some(home) => home.clone(),
+                    None => PathBuf::from("."),
+                };
+                let file = self.config_status.path().to_path_buf();
+                let videos: Vec<PathBuf> = plan
+                    .steps()
+                    .iter()
+                    .filter_map(|step| match &step.action {
+                        Action::Show { resource } => Some(resource),
+                        _ => None,
+                    })
+                    .chain(&plan.standby)
+                    .filter_map(YoutubeVideo::of)
+                    .filter_map(|video| match self.downloads.0.state(&video.id) {
+                        Some(youtube::Download::Ready(path)) => Some(path),
+                        _ => None,
+                    })
+                    .collect();
+                self.copying = true;
+                self.plans.notice = Some(plans::Notice::Done("Exporting…".into()));
+                return Task::perform(
+                    in_thread(move || {
+                        let dir = file.parent().unwrap_or(std::path::Path::new("."));
+                        let resolve =
+                            |path: &std::path::Path| config::resolve(path, dir, home.as_deref());
+                        bundle::export(&plan, &into, &resolve, &videos)
+                            .map(|exported| exported.said(home.as_deref()))
+                    }),
+                    Message::Exported,
+                );
+            }
+            Message::Exported(result) => {
+                self.copying = false;
+                self.plans.notice = Some(match result {
+                    Ok(said) => plans::Notice::Done(said),
+                    Err(why) => plans::Notice::Failed(why),
+                });
+            }
+            Message::ToggleImport => {
+                self.importing = match self.importing {
+                    Some(_) => None,
+                    None => {
+                        let user = config::env("USER");
+                        let places = bundle::places(self.home.as_deref(), user.as_deref());
+                        Some((String::new(), bundle::find(&places)))
+                    }
+                };
+                if self.importing.is_some() {
+                    return operation::focus(dashboard::IMPORT_BOX);
+                }
+            }
+            Message::ImportPath(text) => {
+                if let Some((path, _)) = &mut self.importing {
+                    *path = text;
+                }
+            }
+            Message::Import(_) if self.copying => {}
+            Message::Import(picked) => {
+                let typed = self
+                    .importing
+                    .as_ref()
+                    .map(|(path, _)| path.trim().to_string());
+                let from = match picked {
+                    Some(path) => path,
+                    None => match typed.filter(|path| !path.is_empty()) {
+                        Some(path) => config::resolve(
+                            std::path::Path::new(&path),
+                            std::path::Path::new("."),
+                            self.home.as_deref(),
+                        ),
+                        None => return Task::none(),
+                    },
+                };
+                let store = self.plans.store().clone();
+                let videos = stage::cache_dir().join("youtube");
+                self.copying = true;
+                self.plans.notice = Some(plans::Notice::Done("Importing…".into()));
+                return Task::perform(
+                    in_thread(move || {
+                        let plan = bundle::import(&from, store.bundles(), &videos)?;
+                        store
+                            .adopt(&plan)
+                            .map_err(|err| format!("Couldn't save “{}”: {err}", plan.title))
+                    }),
+                    Message::Imported,
+                );
+            }
+            Message::Imported(result) => {
+                self.copying = false;
+                match result {
+                    Ok(path) => {
+                        self.importing = None;
+                        self.plans.notice = None;
+                        return self.switch_plan(Switch::Open(path));
+                    }
+                    Err(why) => self.plans.notice = Some(plans::Notice::Failed(why)),
+                }
+            }
             Message::DeletePlan if !self.deleting_plan => self.deleting_plan = true,
             Message::DeletePlan => {
                 self.deleting_plan = false;
@@ -1295,6 +1420,7 @@ impl App {
                 // With nothing else to let go of, Esc leaves the list of
                 // plans for the plan that's open.
                 let idle = self.adding.is_none()
+                    && self.importing.is_none()
                     && !self.searching()
                     && !matches!(self.plans.mode, plans::Mode::Renaming(_));
                 if idle
@@ -1311,6 +1437,7 @@ impl App {
                 self.adding = None;
                 self.editing = None;
                 self.list_pick = None;
+                self.importing = None;
                 self.search.clear(&engine);
                 return operation::focus(SEARCH_BOX);
             }
@@ -2174,6 +2301,22 @@ fn run_script(
 }
 
 /// Resolves after `delay`, timed on its own thread.
+/// Runs `work` on a thread of its own, so copying files doesn't freeze
+/// the windows.
+fn in_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> impl Future<Output = Result<T, String>> {
+    let (done, result) = iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(work());
+    });
+    async move {
+        result
+            .await
+            .unwrap_or_else(|_| Err("it stopped before it finished".into()))
+    }
+}
+
 fn after(delay: Duration) -> impl Future<Output = ()> {
     let (done, wait) = iced::futures::channel::oneshot::channel();
     std::thread::spawn(move || {

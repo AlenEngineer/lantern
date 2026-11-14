@@ -19,6 +19,8 @@ pub struct Store {
     last: PathBuf,
     /// Where the side panes' widths are kept.
     layout: PathBuf,
+    /// Where the media of imported plans is kept, a folder each.
+    bundles: PathBuf,
 }
 
 /// A saved plan, as the open list shows it.
@@ -47,6 +49,7 @@ impl Store {
             dir: data.join("plans"),
             last: data.join("last-plan"),
             layout: data.join("layout"),
+            bundles: data.join("bundles"),
         }
     }
 
@@ -93,6 +96,42 @@ impl Store {
         }
         entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified));
         Ok(entries)
+    }
+
+    /// Where the media of imported plans is kept, a folder each.
+    pub fn bundles(&self) -> &Path {
+        &self.bundles
+    }
+
+    /// Saves `plan`, which came from elsewhere, to a new file of its own.
+    pub fn adopt(&self, plan: &Plan) -> io::Result<PathBuf> {
+        let path = self.free_path(&plan.title);
+        self.write(&path, plan)?;
+        Ok(path)
+    }
+
+    /// Removes the imported media that `gone`, a plan just deleted, was
+    /// using and no saved plan still does (a copy of it may).
+    fn forget_media(&self, gone: &Plan) {
+        let folders = |plan: &Plan| -> Vec<PathBuf> {
+            crate::bundle::media(plan)
+                .iter()
+                .filter_map(|path| path.strip_prefix(&self.bundles).ok()?.components().next())
+                .map(|folder| self.bundles.join(folder))
+                .collect()
+        };
+        let used: Vec<PathBuf> = self
+            .list()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|entry| Plan::load(&entry.path).ok())
+            .flat_map(|plan| folders(&plan))
+            .collect();
+        for folder in folders(gone) {
+            if !used.contains(&folder) && folder.is_dir() {
+                let _ = std::fs::remove_dir_all(&folder);
+            }
+        }
     }
 
     /// Makes the saved plan at `path` a template, or not.
@@ -413,7 +452,8 @@ impl Plans {
     /// Deletes the open plan, file and all, and goes to the list of plans
     /// with an empty plan open. Returns whether it's gone.
     pub fn delete(&mut self, engine: &Engine) -> bool {
-        let title = engine.plan().title;
+        let gone = engine.plan();
+        let title = gone.title.clone();
         if let Some(path) = self.file.clone() {
             if let Err(err) = std::fs::remove_file(&path) {
                 self.notice = Some(Notice::couldnt("delete", &path, err));
@@ -421,6 +461,8 @@ impl Plans {
             }
             // Nothing to reopen at the next start.
             let _ = std::fs::remove_file(&self.store.last);
+            // An imported plan takes its media with it.
+            self.store.forget_media(&gone);
         }
         self.load(engine, Switch::New);
         self.browse();
@@ -577,6 +619,30 @@ mod tests {
         assert!(engine.plan().is_empty());
         assert!(matches!(plans.mode, Mode::Browsing(_)));
         assert!(store.last().is_none(), "nothing to reopen");
+    }
+
+    #[test]
+    fn an_imported_plans_media_goes_with_the_last_plan_that_uses_it() {
+        let (_data, store, engine) = setup();
+        let media = store.bundles().join("campaña");
+        std::fs::create_dir_all(media.join("folders/dia 1")).unwrap();
+        let other = store.bundles().join("otro");
+        std::fs::create_dir_all(&other).unwrap();
+        let mut plan = Plan::new("Campaña");
+        plan.folders = vec![media.join("folders/dia 1")];
+        let original = store.adopt(&plan).unwrap();
+        assert_eq!(Plan::load(&original).unwrap(), plan);
+
+        let mut plans = Plans::start(store.clone(), &engine);
+        assert!(plans.switch(&engine, Switch::Open(original.clone())));
+        assert!(plans.duplicate(&engine));
+        // The copy goes; the plan it was copied from still shows the media.
+        assert!(plans.delete(&engine));
+        assert!(media.is_dir());
+        assert!(plans.switch(&engine, Switch::Open(original)));
+        assert!(plans.delete(&engine));
+        assert!(!media.exists(), "nothing uses it now");
+        assert!(other.is_dir(), "another plan's media is left alone");
     }
 
     #[test]

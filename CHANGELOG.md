@@ -66,6 +66,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The open plan's pictures and PDF pages stay loaded while it's open (up
   to 512 MB of them), so any step or standby item shows at once, in any
   order. Videos are still made ready one step ahead.
+- A plan can be taken to another computer. **Export** in the plan's
+  settings copies it and its media (the files it shows, its own folders,
+  its look's image, its downloaded YouTube videos) into one folder in
+  Documents; **Import a plan** in the list of plans finds exported plans
+  there, in Downloads and on what's plugged in, copies the media in and
+  opens the plan.
 
 ### Fixed
 

@@ -1233,6 +1233,23 @@ impl App {
             .spacing(8)
             .align_y(Alignment::Center),
             row![
+                label("Take along"),
+                pill(
+                    p,
+                    if self.copying {
+                        "Exporting…"
+                    } else {
+                        "Export"
+                    },
+                    Tone::Plain,
+                    look::PILL_SMALL,
+                    (!self.copying).then_some(Message::ExportPlan)
+                ),
+                note("Copies the plan and its media to Documents, for another computer.")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
                 label("Delete"),
                 delete,
                 note("Removes the plan and its file.")

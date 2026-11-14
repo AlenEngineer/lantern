@@ -27,6 +27,8 @@ use crate::{App, Clicked, Message};
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
 pub const NAME_BOX: &str = "plan-name";
+/// The field for the path of a plan to import.
+pub const IMPORT_BOX: &str = "plan-import";
 
 /// The side panes' widths with room to spare, and the least they shrink to
 /// in a narrow window (the plan's four Add buttons; a readable monitor).

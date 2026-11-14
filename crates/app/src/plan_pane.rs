@@ -772,6 +772,71 @@ impl App {
         for entry in plans {
             list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
         }
+        // A plan made on another computer, brought here with its media.
+        list = list.push(Space::new().height(10));
+        list = list.push(list_action(
+            p,
+            if self.importing.is_some() {
+                "−"
+            } else {
+                "↓"
+            },
+            "Import a plan".into(),
+            Message::ToggleImport,
+        ));
+        if let Some((typed, found)) = &self.importing {
+            let mut import = column![].spacing(2);
+            for bundle in found {
+                let name = bundle
+                    .file_stem()
+                    .map_or_else(|| file_name(bundle), |n| n.to_string_lossy().into_owned());
+                let place = bundle.parent().map_or(String::new(), |dir| {
+                    match &self.home {
+                        Some(home) => crate::config::tilde(dir, home),
+                        None => dir.to_path_buf(),
+                    }
+                    .display()
+                    .to_string()
+                });
+                import = import.push(
+                    button(
+                        column![
+                            single_line(name)
+                                .size(BODY)
+                                .font(MEDIUM)
+                                .color(p.on_surface),
+                            single_line(place).size(META).color(p.on_surface_variant),
+                        ]
+                        .spacing(2),
+                    )
+                    .width(Fill)
+                    .padding([8, 10])
+                    .on_press_maybe((!self.copying).then(|| Message::Import(Some(bundle.clone()))))
+                    .style(look::row(p, Tone::Plain)),
+                );
+            }
+            let hint = if found.is_empty() {
+                "No exported plan in Documents, Downloads or on a USB stick. Its folder:"
+            } else {
+                "Or the folder of another:"
+            };
+            import = import.push(
+                container(text(hint).size(META).color(p.on_surface_variant)).padding([4, 10]),
+            );
+            import = import.push(
+                container(
+                    text_input("~/Documents/Sábado.lantern", typed)
+                        .id(crate::dashboard::IMPORT_BOX)
+                        .on_input(Message::ImportPath)
+                        .on_submit(Message::Import(None))
+                        .size(BODY)
+                        .padding([6, 10])
+                        .style(look::input(p)),
+                )
+                .padding([0, 10]),
+            );
+            list = list.push(container(import).padding(iced::Padding::default().left(24.0)));
+        }
         scrolling(list).into()
     }
 }
