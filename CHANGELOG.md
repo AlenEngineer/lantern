@@ -197,6 +197,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   line where they meet, and curved shoulders into the strip. It's as tall
   as what it holds, and its list scrolls once it reaches the window's foot.
   It was a full-height box of another colour.
+- Esc empties the search and keeps its bang chip, so the next search asks
+  the same source: several verses or videos in a row. Esc on an empty box
+  closes the search; Backspace there still takes the chip away.
 
 ## [0.7.0] - 2026-11-13
 

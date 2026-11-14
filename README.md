@@ -119,7 +119,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
 | Ctrl+K | open the search |
-| Esc | clear the search box; again closes the search |
+| Esc | clear the search box, keeping its bang chip for the next search; again closes the search |
 | Del | with no search, remove the selected step |
 | F2 | rename the selected step, in its row |
 | Backspace | in an empty box, take the bang chip away |
