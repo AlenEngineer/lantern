@@ -360,9 +360,10 @@ struct App {
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
-    /// The open plan's own folders the library was last given, to notice
-    /// when another plan (or an edit) brings different ones.
-    plan_folders: Vec<PathBuf>,
+    /// What the open plan asked of the library when it was last given it
+    /// (its own folders, its Bibles), to notice when another plan or an
+    /// edit asks for something else.
+    plan_needs: library::PlanNeeds,
     /// The side panes' widths as dragged; `None` sizes one for the window.
     pub(crate) plan_dragged: Option<f32>,
     pub(crate) stage_dragged: Option<f32>,
@@ -447,7 +448,7 @@ impl App {
             spent: false,
             adding: None,
             search_open: false,
-            plan_folders: Vec::new(),
+            plan_needs: library::PlanNeeds::default(),
             plan_dragged: layout.0,
             stage_dragged: layout.1,
             resizing: None,
@@ -1378,7 +1379,7 @@ impl App {
     fn settings_draft(&self) -> settings::Draft {
         let plan = self.engine.0.plan();
         settings::Draft::of(&self.config, self.home.as_deref())
-            .with_plan(&plan.title, plan.look.as_ref(), &plan.folders)
+            .with_plan(&plan)
             .with_outputs(outputs::list())
             .with_fonts(fit::families())
     }
@@ -1392,6 +1393,7 @@ impl App {
         let dir = path.parent().unwrap_or(std::path::Path::new("."));
         // Both looks must read before anything is written.
         let plan_folders = draft.plan_folders();
+        let plan_bibles = draft.plan_bibles();
         let saved = draft.plan_look(dir, home).and_then(|plan_look| {
             draft
                 .config(dir, home)
@@ -1410,11 +1412,19 @@ impl App {
                         self.plans.save(&self.engine.0);
                     }
                 }
-                // So do its own folders.
+                // So do its own folders and its Bibles.
                 if let Some(folders) = plan_folders
                     && self.engine.0.plan().folders != folders
                 {
                     self.engine.0.edit_plan(|plan| plan.folders = folders);
+                    if self.plans.has_file() {
+                        self.plans.save(&self.engine.0);
+                    }
+                }
+                if let Some(bibles) = plan_bibles
+                    && self.engine.0.plan().bibles != bibles
+                {
+                    self.engine.0.edit_plan(|plan| plan.bibles = bibles);
                     if self.plans.has_file() {
                         self.plans.save(&self.engine.0);
                     }
@@ -1424,10 +1434,10 @@ impl App {
                 let _ = keys::configure(&config.keys);
                 let colors_changed = config.colors != self.config.colors;
                 self.config = config.clone();
-                self.plan_folders = self.engine.0.plan().folders;
+                self.plan_needs = library::PlanNeeds::of(&self.engine.0.plan());
                 self.library
                     .0
-                    .apply(self.library_config(&self.plan_folders.clone()));
+                    .apply(self.library_config(&self.plan_needs.clone()));
                 if colors_changed {
                     self.colors = config.colors.clone().map(palette::Source::new);
                     if self.colors.is_none() {
@@ -1674,37 +1684,30 @@ impl App {
         }
     }
 
-    /// The config with the open plan's own folders after its own: what
-    /// the library indexes.
-    fn library_config(&self, plan_folders: &[PathBuf]) -> Config {
-        let mut config = self.config.clone();
+    /// The config as the open plan needs it indexed: its own folders
+    /// too, and only its Bibles.
+    fn library_config(&self, needs: &library::PlanNeeds) -> Config {
         let file = self.config_status.path();
         let dir = file.parent().unwrap_or(std::path::Path::new("."));
-        config.folders.extend(plan_folders.iter().map(|folder| {
-            let path = config::resolve(folder, dir, self.home.as_deref());
-            config::FolderEntry {
-                label: path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned()),
-                path,
-                bang: None,
-            }
-        }));
-        config
+        needs.apply(self.config.clone(), dir, self.home.as_deref())
     }
 
-    /// Gives the library the open plan's own folders when they aren't the
-    /// ones it has: another plan was opened, or its folders were edited.
+    /// Gives the library what the open plan needs when that isn't what it
+    /// has: another plan was opened, or its folders or Bibles were edited.
     /// The index is built again, so only on a change.
     fn sync_library(&mut self) {
-        let folders = self.engine.0.edit_plan(|plan| plan.folders.clone());
-        if folders != self.plan_folders {
+        let needs = self.engine.0.edit_plan(|plan| library::PlanNeeds::of(plan));
+        if needs != self.plan_needs {
             log(format!(
-                "library: {} of the plan's own folders",
-                folders.len()
+                "library: the plan has {} folders of its own and {}",
+                needs.folders.len(),
+                match needs.bibles.len() {
+                    0 => "every Bible".to_string(),
+                    n => format!("{n} of the Bibles"),
+                }
             ));
-            self.library.0.apply(self.library_config(&folders));
-            self.plan_folders = folders;
+            self.library.0.apply(self.library_config(&needs));
+            self.plan_needs = needs;
         }
     }
 

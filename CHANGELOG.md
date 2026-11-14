@@ -51,6 +51,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A plan can have folders of its own (**Its folders** in the plan's
   settings): media only that plan needs, searched while it's open and
   not after. They're saved in the plan.
+- A plan can pick its Bibles (**Its Bibles** in the plan's settings): the
+  ones it searches, out of those in Settings. All of them until one is
+  picked.
 
 ### Fixed
 

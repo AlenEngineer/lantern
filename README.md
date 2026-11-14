@@ -242,9 +242,13 @@ and opens a copy) and **Delete** (press twice).
 **Its folders**, in the same place, lists folders of media only that plan
 needs, such as a campaign's. They're searched like your media folders
 while the plan is open, and no longer once another plan is. They're saved
-in the plan, written as you typed them (`~/Church/Campaña`). It's saved in
-the plan, so opening the plan anywhere brings its look, and **Use the look
-for all plans** removes it.
+in the plan, written as you typed them (`~/Church/Campaña`). The look is
+saved in the plan too, so opening the plan anywhere brings it, and **Use
+the look for all plans** removes it.
+
+**Its Bibles** picks which of your Bibles the plan searches: all of them
+until you pick one. A plan that names a Bible this computer doesn't have
+searches them all.
 
 **Ready check.** While something in the plan isn't ready, a line under its
 name says so ("2 not ready yet", "1 problem"), and each step that isn't says

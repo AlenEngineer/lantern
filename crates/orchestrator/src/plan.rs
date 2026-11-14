@@ -108,6 +108,10 @@ pub struct Plan {
     /// An app indexes them while the plan is open, beside its own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<PathBuf>,
+    /// The Bibles this plan searches, by name (`RV1909`), out of the ones
+    /// an app has. Empty searches them all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bibles: Vec<String>,
 }
 
 impl Default for Plan {
@@ -127,6 +131,7 @@ impl Plan {
             look: None,
             template: false,
             folders: Vec::new(),
+            bibles: Vec::new(),
         }
     }
 
@@ -432,6 +437,12 @@ mod tests {
         let back = Plan::from_json(&template.to_json()).unwrap();
         assert_eq!(back.folders, template.folders);
         assert_eq!(template.from_template("Next").folders, template.folders);
+        // So are the Bibles it searches.
+        assert!(!Plan::new("Plain").to_json().contains("bibles"));
+        template.bibles = vec!["RV1909".into()];
+        let back = Plan::from_json(&template.to_json()).unwrap();
+        assert_eq!(back.bibles, ["RV1909"]);
+        assert_eq!(template.from_template("Next").bibles, ["RV1909"]);
     }
 
     #[test]
