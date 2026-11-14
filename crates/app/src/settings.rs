@@ -41,6 +41,10 @@ pub struct Draft {
     bibles: Vec<Bible>,
     brave_key: String,
     colors: String,
+    /// How see-through the dashboard is, in percent, and whether what
+    /// shows through is blurred.
+    pub see_through: u8,
+    pub blur: bool,
     /// The screen for the stage; `None` leaves it to the compositor.
     pub output: Option<String>,
     /// The screens connected when the settings opened, or why they can't
@@ -249,6 +253,10 @@ pub enum Edit {
     RemoveBible(usize),
     BraveKey(String),
     Colors(String),
+    /// How see-through the dashboard is, in percent.
+    SeeThrough(u8),
+    /// Blur what shows through, or not.
+    Blur(bool),
     /// The path of the open plan's own folder N, a new one, or one less.
     PlanFolderPath(usize, String),
     AddPlanFolder,
@@ -312,6 +320,8 @@ impl Draft {
                 .collect(),
             brave_key: config.brave_api_key.clone().unwrap_or_default(),
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
+            see_through: config.see_through.min(config::MOST_SEE_THROUGH),
+            blur: !config.no_blur,
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
@@ -356,6 +366,7 @@ impl Draft {
                 &self.bibles,
                 &self.brave_key,
                 &self.colors,
+                (self.see_through, self.blur),
                 &self.output,
                 &self.stage,
                 &self.plan,
@@ -581,6 +592,10 @@ impl Draft {
             Edit::MaxSize(text) => self.stage_mut().max_size = text,
             Edit::MinSize(text) => self.stage_mut().min_size = text,
             Edit::Dim(text) => self.stage_mut().dim = text,
+            Edit::SeeThrough(percent) => {
+                self.see_through = percent.min(config::MOST_SEE_THROUGH);
+            }
+            Edit::Blur(on) => self.blur = on,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -644,6 +659,8 @@ impl Draft {
             brave_api_key: optional(&self.brave_key),
             colors: optional(&self.colors).map(|c| path(&c)),
             stage_output: self.output.clone(),
+            see_through: self.see_through,
+            no_blur: !self.blur,
             folders,
             bibles,
             stage,
@@ -975,6 +992,57 @@ impl App {
         ]
         .spacing(6);
 
+        // The window's glass: how much shows through, and whether blurred.
+        // It follows the slider as it moves; Save keeps it.
+        let most = f32::from(config::MOST_SEE_THROUGH);
+        let glass = column![
+            section(
+                p,
+                "Glass",
+                "Lets the desktop show through the dashboard. The stage stays solid."
+            ),
+            row![
+                text("See-through")
+                    .size(BODY)
+                    .font(MEDIUM)
+                    .width(LABEL_FIELD),
+                iced::widget::slider(0.0..=most, f32::from(draft.see_through), |v| {
+                    settings(Edit::SeeThrough(v.round() as u8))
+                })
+                .step(5.0_f32)
+                .width(260)
+                .style(look::timeline(p)),
+                text(match draft.see_through {
+                    0 => "solid".to_string(),
+                    percent => format!("{percent}%"),
+                })
+                .size(META)
+                .color(p.on_surface_variant),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            row![
+                text("Blur").size(BODY).font(MEDIUM).width(LABEL_FIELD),
+                pill(
+                    p,
+                    if draft.blur { "✓ Blurred" } else { "Sharp" },
+                    if draft.blur {
+                        Tone::Selected
+                    } else {
+                        Tone::Plain
+                    },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Blur(!draft.blur))),
+                ),
+                text("What shows through. How strong the blur is, is your desktop's setting.")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8);
+
         let small = |placeholder, value, edit: fn(String) -> Edit| {
             field(p, placeholder, value, edit).width(SMALL_FIELD)
         };
@@ -1252,7 +1320,7 @@ impl App {
             Category::Stage => column![stage],
             Category::Output => column![output],
             Category::Library => column![folders, bibles, images],
-            Category::Appearance => column![colors],
+            Category::Appearance => column![colors, glass],
             Category::Keys => column![keys],
         };
         let mut parts = vec![

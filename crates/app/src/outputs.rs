@@ -120,6 +120,35 @@ fn stage_client() -> Result<Option<Client>, String> {
         .find(|c| c.class == crate::STAGE_APP_ID && c.pid == pid))
 }
 
+/// Has the compositor blur what shows through the dashboard window, or
+/// not. The window's own request for blur is made when it opens, and
+/// Hyprland doesn't take it: there a window's blur is a property the
+/// compositor keeps, set here. `Ok(false)` when the window isn't open yet.
+pub fn blur_dashboard(on: bool) -> Result<bool, String> {
+    let pid = std::process::id();
+    let clients: Vec<Client> = hyprctl("clients")?;
+    let Some(dashboard) = clients
+        .into_iter()
+        .find(|c| c.class == crate::DASHBOARD_APP_ID && c.pid == pid)
+    else {
+        return Ok(false);
+    };
+    let dispatch = format!(
+        "hl.dsp.window.set_prop({{ window = \"address:{}\", prop = \"no_blur\", value = \"{}\" }})",
+        dashboard.address,
+        u8::from(!on)
+    );
+    let done = Command::new("hyprctl")
+        .args(["dispatch", &dispatch])
+        .output()
+        .map_err(|err| format!("hyprctl: {err}"))?;
+    let said = String::from_utf8_lossy(&done.stdout);
+    if !done.status.success() || !said.trim().eq_ignore_ascii_case("ok") {
+        return Err(format!("hyprctl dispatch: {}", said.trim()));
+    }
+    Ok(true)
+}
+
 /// Moves the stage window to `output`'s visible workspace, where it stays
 /// fullscreen. Nothing to do when it's there already or not mapped yet.
 pub fn put_stage_on(output: &str) -> Result<(), String> {
