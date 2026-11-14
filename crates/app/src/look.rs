@@ -213,29 +213,69 @@ pub fn card(
     }
 }
 
-/// A panel that drops from the strip, over what's under it: nearly solid
-/// however see-through the rest is, square where it meets the strip.
-pub fn panel(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+/// The colour of what floats over the cards: the strip, and what drops
+/// from it. A step lighter than a card, so it shows against one without
+/// an outline, and less see-through, so it's the same colour whatever
+/// lies under it.
+pub fn float_colour(p: Palette, see_through: f32) -> Color {
+    Color {
+        a: (1.0 - 0.5 * see_through).clamp(0.6, 1.0),
+        ..p.surface_container
+    }
+}
+
+/// The strip: [`float_colour`], a pill, lifted by a shadow. It has no
+/// outline, so a panel can drop from it without a seam.
+pub fn strip(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(Color {
-            a: 1.0 - 0.12 * see_through.clamp(0.0, 1.0),
-            ..p.surface_container
-        })),
+        background: Some(Background::Color(float_colour(p, see_through))),
         text_color: Some(p.on_surface),
         border: Border {
-            color: Color::WHITE.scale_alpha(0.14),
-            width: 1.0,
-            radius: iced::border::Radius::default()
-                .bottom_left(CARD_RADIUS)
-                .bottom_right(CARD_RADIUS),
+            radius: PILL_RADIUS.into(),
+            ..Border::default()
         },
         shadow: iced::Shadow {
-            color: Color::BLACK.scale_alpha(0.45),
-            offset: iced::Vector::new(0.0, 14.0),
-            blur_radius: 36.0,
+            color: Color::BLACK.scale_alpha(0.35),
+            offset: iced::Vector::new(0.0, 6.0),
+            blur_radius: 18.0,
         },
         ..container::Style::default()
     }
+}
+
+/// A panel that drops from the strip: the strip's own colour and no edge
+/// where they meet, so the two read as one body. Square at the top, where
+/// its [shoulders](shoulder) flare into the strip.
+pub fn panel(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(float_colour(p, see_through))),
+        text_color: Some(p.on_surface),
+        border: Border {
+            radius: iced::border::Radius::default()
+                .bottom_left(CARD_RADIUS)
+                .bottom_right(CARD_RADIUS),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
+/// How far a dropped panel's shoulders reach to each side of it.
+pub const SHOULDER: f32 = 18.0;
+
+/// One shoulder of a dropped panel: the curve that carries the strip's
+/// underside down into the panel's side, the way a drop hangs from the
+/// water it's leaving. `left` is the one on the panel's left. Coloured as
+/// the panel is.
+pub fn shoulder<'a>(left: bool, color: Color) -> svg::Svg<'a> {
+    // A square with a quarter disc taken out of the corner away from
+    // the panel: what's left is the fillet between strip and panel.
+    const LEFT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0H24V24A24 24 0 0 0 0 0Z"/></svg>"#;
+    const RIGHT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M24 0H0V24A24 24 0 0 1 24 0Z"/></svg>"#;
+    svg(svg::Handle::from_memory(if left { LEFT } else { RIGHT }))
+        .width(SHOULDER)
+        .height(SHOULDER)
+        .style(move |_, _| svg::Style { color: Some(color) })
 }
 
 /// An item of the strip: a pill with no fill until it's hovered or lit.

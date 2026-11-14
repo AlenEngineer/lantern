@@ -193,6 +193,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   was cut off, and a selected step's length looks like the button it is.
 - In a narrow plan pane a section keeps its name, and its time is what
   gets shorter ("8 min / 15 min") or cut. The name was cut first.
+- The search drops from the strip as one body with it: the same colour, no
+  line where they meet, and curved shoulders into the strip. It's as tall
+  as what it holds, and its list scrolls once it reaches the window's foot.
+  It was a full-height box of another colour.
 
 ## [0.7.0] - 2026-11-13
 
