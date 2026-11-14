@@ -163,6 +163,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   with the other's name. Only Save said so. ↺ says which key it puts back.
 - The Blackout button is solid red while the projector is black and says
   "Blackout is ON: end it". On and off looked almost the same.
+- **Its Bibles** says in words what the plan searches ("Searching only
+  RV1909"), and with a single Bible says so in place of a toggle that
+  changed nothing. It names a Bible the plan asks for that isn't here.
 
 ## [0.7.0] - 2026-11-13
 
