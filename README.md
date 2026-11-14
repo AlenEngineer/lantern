@@ -242,6 +242,16 @@ step reaches the shelf too. Showing from standby doesn't move the plan:
 PgDn goes on from where it was. ✕, or Del while it's lined up, takes it
 off. The shelf is saved with the plan and comes along with a template.
 
+**Time on stage.** `!t` finds what shows time: **Clock** (the time of
+day), **Timer** (counts up from when it's shown) and countdowns. `!t 7` is a
+seven-minute countdown, `!t 2:30` one of two and a half minutes, and also
+one to half past two. A plain search for "clock", "timer" or "countdown 7"
+finds them too. They're shown, added to the plan or kept on standby like
+anything else; a countdown counts from the moment it goes on stage, stops at
+0:00, and in a plan has its length, so a step set to go on by itself moves
+on when it runs out. Their figures are set several times larger than a
+passage's text, in the stage's font and colours.
+
 **Stage look.** Settings → Stage sets what the audience sees: a background
 colour and image (covering the screen, also shown when the stage is clear;
 blackout stays black), the text colour, the font (type to find an installed

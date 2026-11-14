@@ -1960,6 +1960,33 @@ impl App {
     }
 
     /// Notes when what's on stage (scene or slide) changed.
+    /// The text of `scene` now: its current slide, or for a clock, timer
+    /// or countdown what it reads this second. A countdown counts from
+    /// when it went on stage; lined up, it shows where it would start.
+    pub(crate) fn scene_text(&self, scene: &lantern_engine::Scene) -> Option<String> {
+        let Some(clock) = lantern_source_clock::Clock::of(&scene.resource) else {
+            return self.slides.slide(scene);
+        };
+        let on_stage = match (&self.stage.program, self.shown_since) {
+            (Some(program), Some((Some(shown), _, since)))
+                if program.id == scene.id && shown == scene.id =>
+            {
+                Some(since.elapsed())
+            }
+            _ => None,
+        };
+        Some(clock.text(on_stage, length::now_of_day()))
+    }
+
+    /// Whether a clock, timer or countdown is on stage or lined up, so
+    /// the windows redraw as it ticks.
+    fn ticking(&self) -> bool {
+        [&self.stage.program, &self.stage.preview]
+            .into_iter()
+            .flatten()
+            .any(|scene| lantern_source_clock::Clock::of(&scene.resource).is_some())
+    }
+
     fn mark_shown(&mut self) {
         let program = self.engine.0.stage().program;
         let shown = (
@@ -2119,9 +2146,18 @@ impl App {
             }
             return backdrop(look, Space::new(), Over::Nothing);
         };
+        // A clock's few figures are set large: they're read from the back.
+        let big;
+        let look = match lantern_source_clock::Clock::of(&scene.resource) {
+            Some(_) => {
+                big = clock_look(look);
+                &big
+            }
+            None => look,
+        };
         let nothing = || (Space::new().into(), Over::Nothing);
         let (content, over): (Element<'_, Message>, Over) =
-            match (&scene.media, self.slides.slide(scene)) {
+            match (&scene.media, self.scene_text(scene)) {
                 (Media::Failed { .. }, _) => nothing(),
                 (_, Some(body)) => (fit::fit_text(body, look).into(), Over::Text),
                 (_, None) => match self.media.content(scene.id) {
@@ -2200,6 +2236,12 @@ impl App {
         if self.goes_on_in().is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
+        }
+        // What shows time is drawn again several times a second, so it
+        // never skips one.
+        if self.ticking() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(200)).map(|_| Message::Progress));
         }
         if self.downloads.0.busy() || self.library.0.indexing() || self.thumbs.busy() {
             subscriptions
@@ -2419,6 +2461,17 @@ fn run_script(
 }
 
 /// Resolves after `delay`, timed on its own thread.
+/// `look` for a clock, timer or countdown: the same, but with its few
+/// figures allowed several times the size a passage's text gets.
+pub(crate) fn clock_look(look: &Look) -> Look {
+    let (least, most) = look.sizes();
+    Look {
+        min_size: least,
+        max_size: most.saturating_mul(4).max(360),
+        ..look.clone()
+    }
+}
+
 /// Runs `work` on a thread of its own, so copying files doesn't freeze
 /// the windows.
 fn in_thread<T: Send + 'static>(

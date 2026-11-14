@@ -10,6 +10,7 @@ use std::time::Duration;
 use lantern_engine::{Engine, Plan, SourceId};
 use lantern_source_bible::{Bible, BibleSource, Translation};
 use lantern_source_brave::BraveImages;
+use lantern_source_clock::ClockSource;
 use lantern_source_link::LinkSource;
 use lantern_source_local::{Folder, LocalSource};
 use lantern_source_youtube::YoutubeSource;
@@ -94,6 +95,7 @@ impl Library {
     pub fn start(engine: Arc<Engine>, config: Config) -> Arc<Library> {
         let fixed = [
             engine.add_source(LinkSource::new(id("link"))),
+            engine.add_source(ClockSource::new(id("clock"))),
             engine.add_source(YoutubeSource::new(id("youtube"))),
         ];
         for err in fixed.into_iter().filter_map(Result::err) {
