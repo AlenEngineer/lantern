@@ -128,25 +128,31 @@ impl Store {
         Ok(path)
     }
 
-    /// Removes the imported media that `gone`, a plan just deleted, was
-    /// using and no saved plan still does (a copy of it may).
-    fn forget_media(&self, gone: &Plan) {
-        let folders = |plan: &Plan| -> Vec<PathBuf> {
-            crate::bundle::media(plan)
-                .iter()
-                .filter_map(|path| path.strip_prefix(&self.bundles).ok()?.components().next())
-                .map(|folder| self.bundles.join(folder))
-                .collect()
+    /// Removes the media of imported plans that no saved plan uses any
+    /// more. Done when the app starts, not when a plan is deleted: the
+    /// delete can still be taken back, and an import may be copying.
+    fn sweep_media(&self) {
+        let Ok(folders) = std::fs::read_dir(&self.bundles) else {
+            return;
         };
-        let used: Vec<PathBuf> = self
-            .list()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|entry| Plan::load(&entry.path).ok())
-            .flat_map(|plan| folders(&plan))
-            .collect();
-        for folder in folders(gone) {
-            if !used.contains(&folder) && folder.is_dir() {
+        // A plan that can't be read may still use its media: leave it all.
+        let Ok(entries) = self.list() else {
+            return;
+        };
+        let mut used: Vec<PathBuf> = Vec::new();
+        for entry in &entries {
+            let Ok(plan) = Plan::load(&entry.path) else {
+                return;
+            };
+            used.extend(
+                crate::bundle::media(&plan)
+                    .iter()
+                    .filter_map(|path| path.strip_prefix(&self.bundles).ok()?.components().next())
+                    .map(|folder| self.bundles.join(folder)),
+            );
+        }
+        for folder in folders.flatten().map(|entry| entry.path()) {
+            if folder.is_dir() && !used.contains(&folder) {
                 let _ = std::fs::remove_dir_all(&folder);
             }
         }
@@ -298,6 +304,9 @@ pub struct Plans {
     saved: Plan,
     pub mode: Mode,
     pub notice: Option<Notice>,
+    /// The plan just deleted and the file it had, until another plan is
+    /// opened or saved: what Ctrl+Z brings back.
+    deleted: Option<(PathBuf, Plan)>,
 }
 
 impl Plans {
@@ -310,7 +319,11 @@ impl Plans {
             saved: engine.plan(),
             mode: Mode::Steps,
             notice: None,
+            deleted: None,
         };
+        // Media of imported plans that no saved plan uses any more: a
+        // deleted plan's, once the chance to bring it back has passed.
+        plans.store.sweep_media();
         match plans.store.last() {
             Some(path) => {
                 plans.load(engine, Switch::Open(path));
@@ -379,6 +392,7 @@ impl Plans {
         self.notice = Some(self.remembered(&path, format!("Saved “{}”", plan.title)));
         self.file = Some(path);
         self.saved = plan;
+        self.deleted = None;
         true
     }
 
@@ -479,13 +493,46 @@ impl Plans {
             }
             // Nothing to reopen at the next start.
             let _ = std::fs::remove_file(&self.store.last);
-            // An imported plan takes its media with it.
-            self.store.forget_media(&gone);
         }
+        let file = self.file.clone();
         self.load(engine, Switch::New);
         self.browse();
-        self.notice = Some(Notice::Done(format!("Deleted “{title}”")));
+        // Kept until another plan is opened or saved; an imported plan's
+        // media stays until the next start, in case it comes back.
+        self.deleted = file.map(|path| (path, gone));
+        self.notice = Some(Notice::Done(match &self.deleted {
+            Some(_) => format!(
+                "Deleted “{title}”. {} brings it back.",
+                crate::keys::label(crate::keys::Op::Undo)
+            ),
+            None => format!("Deleted “{title}”"),
+        }));
         true
+    }
+
+    /// Brings back the plan just deleted, to the file it had, and opens
+    /// it. False when there's none to bring back.
+    pub fn undelete(&mut self, engine: &Engine) -> bool {
+        let Some((path, plan)) = self.deleted.take() else {
+            return false;
+        };
+        // Its name may have been taken since.
+        let path = if path.exists() {
+            self.store.free_path(&plan.title)
+        } else {
+            path
+        };
+        if let Err(err) = self.store.write(&path, &plan) {
+            self.notice = Some(Notice::couldnt("bring back", &path, err));
+            self.deleted = Some((path, plan));
+            return false;
+        }
+        let title = plan.title.clone();
+        let opened = self.load(engine, Switch::Open(path));
+        if opened {
+            self.notice = Some(Notice::Done(format!("“{title}” is back")));
+        }
+        opened
     }
 
     /// Asks before `to` replaces a plan that's running: one key mid-service
@@ -537,6 +584,8 @@ impl Plans {
 
     fn load(&mut self, engine: &Engine, to: Switch) -> bool {
         self.mode = Mode::Steps;
+        // Another plan is coming: the deleted one is past bringing back.
+        self.deleted = None;
         let (file, plan, notice) = match to {
             Switch::New => (None, Plan::default(), None),
             // Unsaved, so it shows Save and asks before it's replaced.
@@ -658,14 +707,34 @@ mod tests {
         std::fs::remove_file(twin).unwrap();
         std::fs::remove_file(third).unwrap();
 
+        // Another saved plan uses the other folder.
+        let mut keeper = Plan::new("Otro");
+        keeper.folders = vec![other.clone()];
+        store.adopt(keeper).unwrap();
+
         let mut plans = Plans::start(store.clone(), &engine);
+        assert!(media.is_dir() && other.is_dir(), "both are in use");
         assert!(plans.switch(&engine, Switch::Open(original.clone())));
         assert!(plans.duplicate(&engine));
         // The copy goes; the plan it was copied from still shows the media.
         assert!(plans.delete(&engine));
+        let mut plans = Plans::start(store.clone(), &engine);
         assert!(media.is_dir());
-        assert!(plans.switch(&engine, Switch::Open(original)));
+
+        // Deleted, the plan can come back, so its media waits.
+        assert!(plans.switch(&engine, Switch::Open(original.clone())));
         assert!(plans.delete(&engine));
+        assert!(!original.exists() && media.is_dir());
+        assert!(plans.undelete(&engine));
+        assert_eq!(engine.plan(), plan);
+        assert!(original.exists(), "to the file it had");
+        assert!(!plans.undelete(&engine), "once");
+
+        // Deleted and left deleted, it goes at the next start.
+        assert!(plans.delete(&engine));
+        plans.load(&engine, Switch::New);
+        assert!(!plans.undelete(&engine), "another plan came since");
+        Plans::start(store.clone(), &engine);
         assert!(!media.exists(), "nothing uses it now");
         assert!(other.is_dir(), "another plan's media is left alone");
     }

@@ -255,7 +255,7 @@ A plan can have a look of its own, for a Santa Cena or a youth night: the
 **⋯** in the plan's header opens Settings on **This plan**, where
 **Give it its own look** starts from the look for all plans. The same place
 has the plan's name, **Make it a template**, **Duplicate** (saves the plan
-and opens a copy) and **Delete** (press twice).
+and opens a copy) and **Delete** (press twice; Ctrl+Z right after brings the plan back).
 
 **Its folders**, in the same place, lists folders of media only that plan
 needs, such as a campaign's. They're searched like your media folders
@@ -286,8 +286,9 @@ exported plans in Documents, Downloads, the desktop and on anything plugged
 in, with a field for one somewhere else. Importing copies the media into
 Lantern's own folder (`bundles/` beside `plans/`), so the USB stick can
 come out, and opens the plan; if a plan of that name is already saved, the
-new one is named apart ("Sábado (imported)"). Deleting an imported plan removes its media,
-once no copy of it uses them.
+new one is named apart ("Sábado (imported)"). Deleting an imported plan
+removes its media the next time Lantern starts, once no copy of it uses
+them.
 
 **Its Bibles** picks which of your Bibles the plan searches: all of them
 until you pick one. A plan that names a Bible this computer doesn't have
