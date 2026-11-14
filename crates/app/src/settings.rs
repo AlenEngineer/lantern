@@ -1245,7 +1245,7 @@ impl App {
                     look::PILL_SMALL,
                     (!self.copying).then_some(Message::ExportPlan)
                 ),
-                note("Copies the plan and its media to Documents, for another computer.")
+                note("One file in Documents with the plan and its media, for another computer.")
             ]
             .spacing(8)
             .align_y(Alignment::Center),

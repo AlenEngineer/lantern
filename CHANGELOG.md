@@ -68,8 +68,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   order. Videos are still made ready one step ahead.
 - A plan can be taken to another computer. **Export** in the plan's
   settings copies it and its media (the files it shows, its own folders,
-  its look's image, its downloaded YouTube videos) into one folder in
-  Documents; **Import a plan** in the list of plans finds exported plans
+  its look's image, its downloaded YouTube videos) into one file in
+  Documents, a zip named `<plan>.lantern`; **Import a plan** in the list of plans finds exported plans
   there, in Downloads and on what's plugged in, copies the media in and
   opens the plan.
 

@@ -271,11 +271,12 @@ one for its steps. The header counts down to the start ("starts 10:30 · in
 12 min") and, once the service is under way, says how far it runs from that
 schedule ("4 min behind", "2 min ahead", "on time") in place of "ends in".
 
-**Export**, beside them, copies the plan and everything it shows into one
-folder, `Sábado.lantern` in your Documents, to take to another computer:
-the files its steps and standby shelf show, its own folders whole, its
-look's image, and its YouTube videos as downloaded. What can't be found is
-left out and named. Exporting again replaces the folder. On the other
+**Export**, beside them, puts the plan and everything it shows into one
+file, `Sábado.lantern` in your Documents, to take or send to another
+computer: the files its steps and standby shelf show, its own folders
+whole, its look's image, and its YouTube videos as downloaded. What can't
+be found is left out and named. Exporting again replaces the file. It's a
+zip with nothing compressed, so any archive tool opens it. On the other
 computer, **Import a plan** at the end of the list of plans shows the
 exported plans in Documents, Downloads, the desktop and on anything plugged
 in, with a field for one somewhere else. Importing copies the media into
