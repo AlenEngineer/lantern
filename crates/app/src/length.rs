@@ -44,6 +44,12 @@ pub fn now_of_day() -> Duration {
     ))
 }
 
+/// A time of day as a clock shows it: `10:52`.
+pub fn clock_of_day(since_midnight: Duration) -> String {
+    let minutes = since_midnight.as_secs() / 60;
+    format!("{}:{:02}", minutes / 60 % 24, minutes % 60)
+}
+
 /// How far a service is from its schedule, in words: "on time" within a
 /// minute, "4 min behind", "2 min ahead".
 pub fn drift(behind: i64) -> String {

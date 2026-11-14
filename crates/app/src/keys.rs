@@ -582,16 +582,6 @@ pub fn label(op: Op) -> String {
     keymap().label(op)
 }
 
-/// The key of the action called `name` in [`ACTIONS`], as a button shows
-/// it: for an op with two keys, where the second is meant.
-pub fn label_of(name: &str) -> String {
-    ACTIONS
-        .iter()
-        .position(|action| action.name == name)
-        .map(|at| keymap().bind(at).to_string())
-        .unwrap_or_default()
-}
-
 /// "New plan · Ctrl+N": what a button does and its key.
 pub fn with_key(what: &str, op: Op) -> String {
     format!("{what} · {}", label(op))

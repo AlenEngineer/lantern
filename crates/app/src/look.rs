@@ -171,22 +171,100 @@ pub fn tip(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
 }
 
 /// The window: the `surface` role.
-/// The window's ground: `surface`, `see_through` of the way to clear
-/// (0 is solid), so the desktop shows through a transparent window.
-pub fn window(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+/// How round a card's corners are.
+pub const CARD_RADIUS: f32 = 22.0;
+
+/// `colour` at `share` of the way to black.
+fn darker(colour: Color, share: f32) -> Color {
+    Color {
+        r: colour.r * (1.0 - share),
+        g: colour.g * (1.0 - share),
+        b: colour.b * (1.0 - share),
+        a: colour.a,
+    }
+}
+
+/// A card on the window's ground: the strip, the plan, the stage.
+/// `surface`, less see-through than the ground it sits on so what's
+/// written on it reads, with a hairline of light and a shadow to lift it.
+pub fn card(
+    p: Palette,
+    see_through: f32,
+    radius: f32,
+) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(Background::Color(Color {
-            a: 1.0 - see_through.clamp(0.0, 1.0),
+            // Never so clear that what's written on it is lost.
+            a: (1.0 - 1.15 * see_through).clamp(0.35, 1.0),
             ..p.surface
         })),
         text_color: Some(p.on_surface),
+        border: Border {
+            color: Color::WHITE.scale_alpha(0.10),
+            width: 1.0,
+            radius: radius.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::BLACK.scale_alpha(0.35),
+            offset: iced::Vector::new(0.0, 8.0),
+            blur_radius: 24.0,
+        },
         ..container::Style::default()
     }
 }
 
-/// A 1px `outline_variant` seam between panes, or a divider.
-pub fn hairline(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
-    move |_| container::Style::default().background(p.outline_variant)
+/// A panel that drops from the strip, over what's under it: nearly solid
+/// however see-through the rest is, square where it meets the strip.
+pub fn panel(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(Color {
+            a: 1.0 - 0.12 * see_through.clamp(0.0, 1.0),
+            ..p.surface_container
+        })),
+        text_color: Some(p.on_surface),
+        border: Border {
+            color: Color::WHITE.scale_alpha(0.14),
+            width: 1.0,
+            radius: iced::border::Radius::default()
+                .bottom_left(CARD_RADIUS)
+                .bottom_right(CARD_RADIUS),
+        },
+        shadow: iced::Shadow {
+            color: Color::BLACK.scale_alpha(0.45),
+            offset: iced::Vector::new(0.0, 14.0),
+            blur_radius: 36.0,
+        },
+        ..container::Style::default()
+    }
+}
+
+/// An item of the strip: a pill with no fill until it's hovered or lit.
+pub fn strip_item(
+    p: Palette,
+    tone: Tone,
+) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |theme, status| match tone {
+        Tone::Plain => {
+            let mut style = row(p, Tone::Plain)(theme, status);
+            style.border.radius = PILL_RADIUS.into();
+            style
+        }
+        tone => pill(p, tone)(theme, status),
+    }
+}
+
+/// The window's ground, under its cards: darker than `surface`, and
+/// `see_through` of the way to clear (0 is solid), so the desktop shows
+/// through a transparent window.
+pub fn window(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(Color {
+            a: (1.0 - 1.2 * see_through).clamp(0.06, 1.0),
+            ..darker(p.surface, 0.35)
+        })),
+        text_color: Some(p.on_surface),
+        ..container::Style::default()
+    }
 }
 
 /// A picture of the stage: black, ringed in `ring` (none for an empty one).
@@ -261,7 +339,6 @@ pub fn icon<'a>(icon: Icon, size: f32, color: Color) -> svg::Svg<'a> {
 /// The icons the dashboard uses, from Material Design Icons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
-    Lantern,
     Search,
     Play,
     Pause,
@@ -291,9 +368,6 @@ impl Icon {
             };
         }
         match self {
-            Icon::Lantern => mdi!(
-                "M12,2A7,7 0 0,0 5,9C5,11.38 6.19,13.47 8,14.74V17A1,1 0 0,0 9,18H15A1,1 0 0,0 16,17V14.74C17.81,13.47 19,11.38 19,9A7,7 0 0,0 12,2M9,21A1,1 0 0,0 10,22H14A1,1 0 0,0 15,21V20H9V21Z"
-            ),
             Icon::Search => mdi!(
                 "M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"
             ),

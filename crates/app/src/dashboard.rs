@@ -30,20 +30,27 @@ pub const NAME_BOX: &str = "plan-name";
 /// The field for the path of a plan to import.
 pub const IMPORT_BOX: &str = "plan-import";
 
-/// The side panes' widths with room to spare, and the least they shrink to
-/// in a narrow window (the plan's four Add buttons; a readable monitor).
-const PLAN_WIDTH: (f32, f32) = (380.0, 330.0);
-const STAGE_WIDTH: (f32, f32) = (360.0, 280.0);
-/// What the launcher keeps before the side panes start to shrink.
-const LAUNCHER_ROOM: f32 = 400.0;
-const LAUNCHER_WIDTH: f32 = 720.0;
-/// A side pane dragged to a width stays between these, and leaves the
-/// middle at least its own.
-const PANE_LEAST: f32 = 220.0;
+/// The plan pane's and the next column's widths with room to spare, and
+/// the least they shrink to in a narrow window.
+const PLAN_WIDTH: (f32, f32) = (340.0, 280.0);
+const STAGE_WIDTH: (f32, f32) = (280.0, 220.0);
+/// What the live picture keeps before the side columns start to shrink.
+const LAUNCHER_ROOM: f32 = 560.0;
+/// A side column dragged to a width stays between these, and leaves the
+/// live picture at least its own.
+const PANE_LEAST: f32 = 200.0;
 const PANE_MOST: f32 = 560.0;
 const MIDDLE_LEAST: f32 = 320.0;
 /// How wide the line between panes is to the pointer.
-const SEAM_GRIP: f32 = 7.0;
+const SEAM_GRIP: f32 = 10.0;
+/// The window's padding, the gap between its cards, a card's padding, and
+/// the strip's height.
+const EDGE: f32 = 12.0;
+const GAP: f32 = 10.0;
+const CARD_PADDING: f32 = 16.0;
+const STRIP: f32 = 48.0;
+/// How wide the search panel is, where the window has the room.
+const SEARCH_PANEL: f32 = 460.0;
 
 /// A side pane, by the edge that sizes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,13 +59,8 @@ pub enum Side {
     Stage,
 }
 
-/// The most the settings spread, with the stage pane's room too.
+/// The most the settings spread.
 const SETTINGS_WIDTH: f32 = 880.0;
-/// A group of keys on the home screen: its width, and its chips' share.
-const KEY_COLUMN: f32 = 212.0;
-const KEY_CHIPS: f32 = 100.0;
-/// The stage pane's padding, each side.
-const STAGE_PADDING: f32 = 16.0;
 
 /// The plan and stage panes' widths in a window `width` wide: their full
 /// widths while the launcher has room, then both narrower by the same
@@ -78,8 +80,9 @@ const RESULT_THUMB: f32 = 96.0;
 pub(crate) const STEP_THUMB: f32 = 64.0;
 
 impl App {
-    /// The side panes' widths: as dragged, else as they come for the
-    /// window, and never so wide that the middle loses its room.
+    /// The plan pane's and the next column's widths: as dragged, else as
+    /// they come for the window, and never so wide that the live picture
+    /// loses its room.
     fn side_widths(&self) -> (f32, f32) {
         let window = self.dashboard_size.width;
         let (plan, stage) = pane_widths(window);
@@ -90,37 +93,49 @@ impl App {
         let stage = self
             .stage_dragged
             .map_or(stage, |w| w.clamp(PANE_LEAST, PANE_MOST));
-        let shown = if self.stage_shown() { stage } else { 0.0 };
-        (plan.min(most(shown)), stage.min(most(plan)))
+        (plan.min(most(stage)), stage.min(most(plan)))
     }
 
     pub(crate) fn plan_width(&self) -> f32 {
         self.side_widths().0
     }
 
-    fn stage_width(&self) -> f32 {
-        self.side_widths().1
+    /// The column beside the live picture: what's next, or the search
+    /// while it's open.
+    fn side_width(&self) -> f32 {
+        if self.search_open {
+            self.search_width()
+        } else {
+            self.side_widths().1
+        }
+    }
+
+    /// The search panel's width: its own, less in a narrow window so the
+    /// live picture keeps some room.
+    fn search_width(&self) -> f32 {
+        let room = self.dashboard_size.width - self.plan_width() - MIDDLE_LEAST;
+        SEARCH_PANEL.min(room).max(PANE_LEAST)
     }
 
     /// Where the pointer has dragged the edge of a side pane to.
     pub(crate) fn dragged_to(&self, side: Side, x: f32) -> f32 {
         let width = match side {
-            Side::Plan => x,
-            Side::Stage => self.dashboard_size.width - x,
+            Side::Plan => x - EDGE,
+            Side::Stage => self.dashboard_size.width - x - EDGE - CARD_PADDING,
         };
         width.clamp(PANE_LEAST, PANE_MOST)
     }
 
-    /// A monitor at its full height: 16:9 of the stage pane's width.
-    fn monitor_height(&self) -> f32 {
-        ((self.stage_width() - 2.0 * STAGE_PADDING) * 9.0 / 16.0).round()
-    }
-
-    /// What's left for the launcher, between the panes and their seams.
-    fn launcher_width(&self) -> f32 {
-        let (plan, stage) = self.side_widths();
-        let stage = if self.stage_shown() { stage + 1.0 } else { 0.0 };
-        self.dashboard_size.width - plan - stage - 1.0
+    /// The live picture's room: what the plan, the side column and the
+    /// gaps leave of the window's width.
+    fn live_width(&self) -> f32 {
+        let taken = 2.0 * EDGE
+            + self.plan_width()
+            + GAP
+            + 2.0 * CARD_PADDING
+            + SEAM_GRIP
+            + self.side_width();
+        (self.dashboard_size.width - taken).max(120.0)
     }
 
     /// How see-through the dashboard is now, from 0 (solid) to 1: as the
@@ -133,84 +148,96 @@ impl App {
         f32::from(percent.min(crate::config::MOST_SEE_THROUGH)) / 100.0
     }
 
-    /// Whether the stage pane has anything to show: something on stage or
-    /// lined up, a blackout, or a step of the plan to come.
-    fn stage_shown(&self) -> bool {
-        // The settings take the stage pane's room as well as the middle's.
-        self.settings.is_none()
-            && (self.stage.program.is_some()
-                || self.stage.preview.is_some()
-                || self.stage.blackout
-                || self.engine.0.up_next().is_some()
-                || self.engine.0.current_step().is_some())
-    }
-
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
-        // The line between two panes is a handle: drag it to size the side
-        // pane it bounds, double-click it to let the pane size itself again.
-        // It's lit while it's held.
-        let seam = |side: Side| {
+        let glass = self.see_through();
+        // The gap between two cards is a handle: drag it to size the side
+        // it bounds, double-click it to let that size itself again. A line
+        // shows in it while it's held.
+        let seam = |side: Side, width: f32| {
             let held = self.resizing == Some(side);
             let line = container(Space::new())
-                .width(if held { 2 } else { 1 })
+                .width(2)
                 .height(Fill)
-                .style(move |theme| {
-                    if held {
-                        container::Style::default().background(p.primary)
-                    } else {
-                        look::hairline(p)(theme)
-                    }
+                .style(move |_| match held {
+                    true => container::Style::default().background(p.primary),
+                    false => container::Style::default(),
                 });
-            iced::widget::mouse_area(container(line).center_x(SEAM_GRIP).height(Fill))
+            iced::widget::mouse_area(container(line).center_x(width).height(Fill))
                 .on_press(Message::ResizePane(side))
                 .interaction(iced::mouse::Interaction::ResizingHorizontally)
         };
         let timing = self.timing();
-        let mut panes = row![
-            self.plan_pane(&timing),
-            seam(Side::Plan),
-            self.launcher(&timing)
-        ];
-        // The stage pane is there once it has something to show.
-        if self.stage_shown() {
-            panes = panes.push(seam(Side::Stage)).push(self.stage_pane());
-        }
-        let panes = panes.height(Fill);
-        let window = container(panes)
-            .width(Fill)
+        let plan = container(self.plan_pane(&timing))
             .height(Fill)
-            .style(look::window(p, self.see_through()));
+            .style(look::card(p, glass, look::CARD_RADIUS));
+        // The settings take the stage's card while they're open.
+        let middle: Element<'_, Message> = match &self.settings {
+            Some(draft) => container(self.settings_view(draft))
+                .max_width(SETTINGS_WIDTH)
+                .into(),
+            None => self.stage_centre(&seam),
+        };
+        let stage = container(middle)
+            .center_x(Fill)
+            .height(Fill)
+            .padding(CARD_PADDING)
+            .style(look::card(p, glass, look::CARD_RADIUS));
+        let window = container(
+            column![
+                self.strip(&timing),
+                row![plan, seam(Side::Plan, GAP), stage].height(Fill)
+            ]
+            .spacing(GAP),
+        )
+        .width(Fill)
+        .height(Fill)
+        .padding(EDGE)
+        .style(look::window(p, glass));
+        let mut layers = stack![window];
+        // The search drops from the strip, over the room the stage's card
+        // leaves it beside the live picture.
+        if self.search_open && self.settings.is_none() {
+            let size = self.dashboard_size;
+            let panel = container(self.search_panel())
+                .width(self.search_width() + CARD_PADDING)
+                .height((size.height - EDGE - STRIP - EDGE).max(160.0))
+                .padding(CARD_PADDING)
+                .style(look::panel(p, glass));
+            layers = layers.push(
+                pin(panel)
+                    .x(size.width - EDGE - self.search_width() - CARD_PADDING)
+                    .y(EDGE + STRIP),
+            );
+        }
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
-        match self.drag.as_ref().filter(|drag| drag.moving) {
-            Some(drag) => {
-                let card = container(
-                    text(drag.label(&self.engine.0.plan()))
-                        .size(BODY)
-                        .font(BOLD)
-                        .color(p.primary),
-                )
-                .padding([10, 14])
-                .max_width(320)
-                .style(move |_| container::Style {
-                    background: Some(p.surface_container_highest.into()),
-                    border: iced::Border {
-                        color: p.primary,
-                        width: 1.0,
-                        radius: 14.0.into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: Color::BLACK.scale_alpha(0.4),
-                        offset: iced::Vector::new(0.0, 4.0),
-                        blur_radius: 12.0,
-                    },
-                    ..container::Style::default()
-                });
-                stack![window, pin(card).x(drag.at.x + 16.0).y(drag.at.y + 8.0)].into()
-            }
-            None => window.into(),
+        if let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) {
+            let card = container(
+                text(drag.label(&self.engine.0.plan()))
+                    .size(BODY)
+                    .font(BOLD)
+                    .color(p.primary),
+            )
+            .padding([10, 14])
+            .max_width(320)
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.into()),
+                border: iced::Border {
+                    color: p.primary,
+                    width: 1.0,
+                    radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::BLACK.scale_alpha(0.4),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                },
+                ..container::Style::default()
+            });
+            layers = layers.push(pin(card).x(drag.at.x + 16.0).y(drag.at.y + 8.0));
         }
+        layers.into()
     }
 
     // The launcher
@@ -248,25 +275,41 @@ impl App {
         }
     }
 
-    fn launcher(&self, timing: &Timing) -> Element<'_, Message> {
-        // The settings take the launcher's place while they're open.
-        if let Some(draft) = &self.settings {
-            return container(container(self.settings_view(draft)).max_width(SETTINGS_WIDTH))
-                .center_x(Fill)
-                .height(Fill)
-                .padding([16, 24])
-                .into();
-        }
+    /// The strip across the top: every item says how something stands
+    /// and opens what changes it. The plan and its place on the left, the
+    /// service's time in the middle, the tools on the right.
+    fn strip(&self, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
-        let mut header = row![
-            look::icon(Icon::Lantern, 20.0, p.primary),
-            text("Lantern").size(HEADING).font(BOLD).color(p.primary),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .height(36);
-        // The running section and when the service should end; with a
-        // start time, how far behind its schedule it runs instead.
+        let wide = self.dashboard_size.width;
+        let plan = self.engine.0.plan();
+        let tool = |icon: Icon, label: &str, tone: Tone, message: Message| {
+            let colour = match tone {
+                Tone::Plain => p.on_surface_variant,
+                tone => tone.text(p),
+            };
+            let mut inside = row![look::icon(icon, 15.0, colour)]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            if !label.is_empty() {
+                inside = inside.push(
+                    text(label.to_string())
+                        .size(BODY)
+                        .font(MEDIUM)
+                        .color(colour)
+                        .wrapping(text::Wrapping::None),
+                );
+            }
+            button(inside)
+                .padding([9, 12])
+                .on_press(message)
+                .style(look::strip_item(p, tone))
+        };
+        let mut strip = row![container(self.plan_header(&plan)).width(self.plan_width() - 8.0)]
+            .spacing(4)
+            .align_y(Alignment::Center);
+        strip = strip.push(Space::new().width(Fill));
+        // The running section and how the service stands against its
+        // schedule: behind or ahead with a start time, else when it ends.
         let ends_in = |end: SystemTime| end.duration_since(SystemTime::now()).unwrap_or_default();
         let (starts, scheduled) = self.engine.0.edit_plan(|plan| {
             let total = plan.starts.map(|_| {
@@ -286,26 +329,33 @@ impl App {
                 );
                 length::drift(behind)
             });
+        let said = |words: String| {
+            text(words)
+                .size(BODY)
+                .color(p.on_surface)
+                .wrapping(text::Wrapping::None)
+        };
         match (timing.running(), timing.end) {
             (Some(section), end) => {
-                let (mut status, tone) = section_status(section);
+                let (status, tone) = section_status(section);
+                strip = strip.push(chip(p, &status, tone));
                 if let Some(drift) = &drift {
-                    status = format!("{status} · {drift}");
+                    strip = strip.push(container(said(drift.clone())).padding([0, 10]));
                 } else if let Some(end) = end {
-                    status = format!(
-                        "{status} · ends in {}",
-                        length::rough(ends_in(end)).trim_start_matches('~')
+                    strip = strip.push(
+                        container(said(format!(
+                            "ends in {}",
+                            length::rough(ends_in(end)).trim_start_matches('~')
+                        )))
+                        .padding([0, 10]),
                     );
                 }
-                header = header
-                    .push(chip(p, &status, tone))
-                    .push(Space::new().width(Fill));
             }
             // Under way outside any section.
-            (None, Some(_)) if drift.is_some() => {
-                header = header
-                    .push(chip(p, drift.as_deref().unwrap_or_default(), Tone::Plain))
-                    .push(Space::new().width(Fill));
+            (None, Some(_)) => {
+                if let Some(drift) = &drift {
+                    strip = strip.push(container(said(drift.clone())).padding([0, 10]));
+                }
             }
             // Not begun: how long until it should.
             (None, None) => {
@@ -315,155 +365,104 @@ impl App {
                     length::starting(&starts.to_string(), until)
                 });
                 if let Some(waiting) = waiting {
-                    header = header.push(chip(p, &waiting, Tone::Plain));
+                    strip = strip.push(container(said(waiting)).padding([0, 10]));
                 }
-                header = header.push(Space::new().width(Fill));
             }
-            (None, Some(_)) => header = header.push(Space::new().width(Fill)),
         }
-        let gear = button(look::icon(Icon::Settings, 18.0, p.on_surface_variant))
-            .padding(8)
-            .on_press(op(Op::Settings))
-            .style(look::pill(p, Tone::Plain));
-        header = header.push(gear);
-        // The search is here once its key opens it; until then, the keys.
-        let mut body = if self.search_open {
-            column![header, self.search_box(), self.results()]
+        // The time of day, where there's room for it.
+        if wide >= 1100.0 {
+            strip = strip.push(
+                container(
+                    text(length::clock_of_day(length::now_of_day()))
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.on_surface_variant),
+                )
+                .padding([0, 10]),
+            );
+        }
+        strip = strip.push(Space::new().width(Fill));
+        let search_tone = if self.search_open {
+            Tone::Selected
         } else {
-            column![header, self.key_sheet()]
+            Tone::Plain
+        };
+        strip = strip.push(tool(
+            Icon::Search,
+            if wide >= 1000.0 { "Search" } else { "" },
+            search_tone,
+            op(Op::Search),
+        ));
+        // What isn't ready, while something isn't.
+        let issues = self.issues(&plan);
+        if !issues.is_empty()
+            && let Some(readiness) = self.readiness(&plan, &issues)
+        {
+            strip = strip.push(readiness);
         }
-        .spacing(12)
-        .height(Fill);
-        for problem in self.problems() {
-            body = body.push(text(problem).size(META).color(p.error));
+        // The screen the stage is on, where one was chosen.
+        if let Some(output) = self
+            .config
+            .stage_output
+            .as_deref()
+            .filter(|_| wide >= 1180.0)
+        {
+            strip = strip.push(tool(
+                Icon::Video,
+                output,
+                Tone::Plain,
+                Message::Settings(crate::settings::Edit::Category(
+                    crate::settings::Category::Output,
+                )),
+            ));
         }
-        centered(body)
+        // Blackout: solid while the projector is black.
+        let blackout = self.stage.blackout;
+        strip = strip.push(
+            button(
+                text(if blackout {
+                    "● Blackout ON"
+                } else {
+                    "Blackout"
+                })
+                .size(BODY)
+                .font(MEDIUM)
+                .wrapping(text::Wrapping::None),
+            )
+            .padding([9, 14])
+            .on_press(Message::Key {
+                op: Op::Blackout,
+                only_if_empty: false,
+            })
+            .style(look::pill(
+                p,
+                if blackout { Tone::Alarm } else { Tone::Danger },
+            )),
+        );
+        strip = strip.push(tool(Icon::Settings, "", Tone::Plain, op(Op::Settings)));
+        container(strip)
+            .height(STRIP)
+            .padding([0, 8])
+            .align_y(Alignment::Center)
+            .style(look::card(p, self.see_through(), look::PILL_RADIUS))
+            .into()
     }
 
-    /// The keys worth knowing, as they're set: what the middle shows while
-    /// the search is closed.
-    fn key_sheet(&self) -> Element<'_, Message> {
-        let p = self.palette;
-        let key = keys::label;
-        let arrows = |a: &str, b: &str| format!("{} {}", keys::label_of(a), keys::label_of(b));
-        // Few words each: three columns sit side by side in the room there is.
-        let groups: [(&str, Vec<(String, &str)>); 3] = [
-            (
-                "Find",
-                vec![
-                    (key(Op::Search), "Search"),
-                    (key(Op::Enter), "Look, then show"),
-                    (key(Op::AddToPlan), "Add to the plan"),
-                    (key(Op::Standby), "Keep on standby"),
-                    (key(Op::ClearSearch), "Clear, then close"),
-                ],
-            ),
-            (
-                "Plan",
-                vec![
-                    (key(Op::Open), "Your plans"),
-                    (key(Op::New), "New plan / step"),
-                    (arrows("pick-prev", "pick-next"), "Steps or plans"),
-                    (key(Op::Enter), "Show or open"),
-                    (
-                        format!("{} {}", key(Op::MoveUp), key(Op::MoveDown)),
-                        "Move the step",
-                    ),
-                    (key(Op::Rename), "Rename"),
-                    (key(Op::RemoveStep), "Remove"),
-                    (key(Op::Undo), "Undo"),
-                    (key(Op::Save), "Save"),
-                ],
-            ),
-            (
-                "Stage",
-                vec![
-                    (format!("{} {}", key(Op::Next), key(Op::Prev)), "Next, back"),
-                    (arrows("prev-arrow", "next-arrow"), "Next, back"),
-                    (key(Op::PlayPause), "Play or pause"),
-                    (key(Op::Blackout), "Blackout"),
-                    (key(Op::Settings), "Settings"),
-                ],
-            ),
-        ];
-        // What the middle is for, first: a search box to click, saying its
-        // key. It opens the real one.
-        let search = button(
-            row![
-                look::icon(Icon::Search, 18.0, p.on_surface_variant),
-                text("Search everything, or paste a link")
-                    .size(15)
-                    .color(p.on_surface_variant)
-                    .width(Fill)
-                    .wrapping(text::Wrapping::None),
-                container(
-                    text(key(Op::Search))
-                        .size(META)
-                        .font(MEDIUM)
-                        .color(p.on_surface)
-                        .wrapping(text::Wrapping::None)
-                )
-                .padding([3, 8])
-                .style(look::chip(p, Tone::Plain)),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .padding([10, 14])
-        .on_press(op(Op::Search))
-        .style(move |theme, status| {
-            let field = look::input(p)(theme, text_input::Status::Active);
-            let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-            button::Style {
-                background: Some(field.background),
-                border: iced::Border {
-                    color: if hovered {
-                        p.primary
-                    } else {
-                        p.outline_variant
-                    },
-                    width: 2.0,
-                    radius: look::ROW_RADIUS.into(),
-                },
-                ..button::Style::default()
-            }
-        });
-        // The groups flow side by side and wrap under each other in a
-        // narrower pane, so nothing scrolls at the usual sizes.
-        let columns = groups.into_iter().map(|(name, rows)| {
-            let mut group = column![text(name).size(BODY).font(BOLD).color(p.primary)].spacing(6);
-            for (keys, what) in rows {
-                group = group.push(
-                    row![
-                        container(
-                            container(
-                                text(keys)
-                                    .size(META)
-                                    .font(MEDIUM)
-                                    .color(p.on_surface)
-                                    .wrapping(text::Wrapping::None)
-                            )
-                            .padding([3, 8])
-                            .style(look::chip(p, Tone::Plain))
-                        )
-                        .width(KEY_CHIPS),
-                        single_line(what).size(BODY).color(p.on_surface_variant),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                );
-            }
-            container(group).width(KEY_COLUMN).into()
-        });
-        let sheet = row(columns).spacing(16).wrap().vertical_spacing(20);
-        column![
-            search,
-            scrollable(container(sheet).padding([12, 0])).height(Fill)
-        ]
-        .spacing(12)
-        .height(Fill)
-        .into()
+    /// The search, as the panel that drops from the strip: the box, what
+    /// it found, and under them the result being looked at with what can
+    /// be done with it.
+    fn search_panel(&self) -> Element<'_, Message> {
+        let mut panel = column![self.search_box(), self.results()].spacing(10);
+        if self.stage.preview.is_some() {
+            let mut preview = self.preview_section();
+            // The picture small: the list above is what's being read.
+            let monitor = std::mem::replace(&mut preview[1], Space::new().into());
+            preview[1] = container(container(monitor).width(240).height(135))
+                .center_x(Fill)
+                .into();
+            panel = panel.push(column(preview.into_iter().skip(1)).spacing(8));
+        }
+        panel.height(Fill).into()
     }
 
     /// The config, the index and the colours, only when something is wrong
@@ -487,9 +486,10 @@ impl App {
                     (chip(p, &sources, Tone::Plain), placeholder)
                 }
                 // The whole hint only where it fits.
-                _ if self.launcher_width() < 520.0 => {
-                    (Space::new().into(), "Search, or ! for one source".into())
-                }
+                _ if self.search_width() < 520.0 => (
+                    Space::new().into(),
+                    "Search, ! for one source, or a link".into(),
+                ),
                 _ => (
                     Space::new().into(),
                     "Search everything, ! for one source, or paste a link".into(),
@@ -680,62 +680,66 @@ impl App {
 
     // The stage pane
 
-    fn stage_pane(&self) -> Element<'_, Message> {
+    /// The stage's card: what the audience sees, large, and beside it
+    /// what comes next (or what's lined up). While the search is open its
+    /// panel lies over the side column, which is left empty for it.
+    fn stage_centre<'a>(
+        &'a self,
+        seam: &dyn Fn(Side, f32) -> iced::widget::MouseArea<'a, Message>,
+    ) -> Element<'a, Message> {
         let p = self.palette;
-        // What Enter or PgDn would show: the result or step being looked
-        // at, else the plan's next step.
-        let lower = if self.stage.preview.is_some() {
-            self.preview_section()
-        } else {
-            self.next_section()
-        };
-        let mut upper = self.on_stage_section();
-        let mut lower = lower;
-        // The monitors (second in each section) are full height when the
-        // window has room for everything. In a shorter one they share what
-        // the rest leaves, so they shrink together instead of pushing the
-        // last button off the bottom.
+        let mut live = self.on_stage_section();
+        // The picture is 16:9 of its column where the card is tall enough
+        // for the rest too; in a shorter one it takes what the rest leaves.
         let scene = self.stage.program.as_ref();
         let rest = [
-            (true, 32.0 + 5.0 + 24.0 + 22.0 + 2.0 * PILL),
+            (true, 36.0 + PILL),
             (scene.is_some(), 36.0),
             (
                 scene.is_some_and(|s| self.slide_strip(s).is_some()),
                 STRIP_HEIGHT,
             ),
             (scene.is_some_and(|s| s.timed().is_some()), PILL),
-            (lower.len() > 3, 36.0),
         ]
         .iter()
         .filter(|(there, _)| *there)
         .map(|(_, height)| height)
         .sum::<f32>()
-            + 10.0 * (upper.len() + lower.len()) as f32
+            + 10.0 * live.len() as f32
             + FIT_SLACK;
-        let full = self.monitor_height();
-        let roomy = rest + 2.0 * full <= self.dashboard_size.height;
-        for section in [&mut upper, &mut lower] {
-            let monitor = std::mem::replace(&mut section[1], Space::new().into());
-            let slot = container(monitor).width(Fill);
-            section[1] = if roomy {
-                slot.height(full).into()
-            } else {
-                slot.height(Fill).into()
-            };
+        let room = self.dashboard_size.height - 2.0 * EDGE - STRIP - GAP - 2.0 * CARD_PADDING;
+        let full = (self.live_width() * 9.0 / 16.0).round();
+        let monitor = std::mem::replace(&mut live[1], Space::new().into());
+        let slot = container(monitor).width(Fill);
+        live[1] = if rest + full <= room {
+            slot.height(full).into()
+        } else {
+            slot.height(Fill).into()
+        };
+        let mut live = column(live).spacing(10).width(Fill).height(Fill);
+        for problem in self.problems() {
+            live = live.push(text(problem).size(META).color(p.error));
         }
-        let seam = container(
-            container(Space::new())
-                .height(1)
+        // Beside it: the search's room while it's open, else what Enter or
+        // PgDn would show (the result or step being looked at, or the
+        // plan's next step).
+        let side: Element<'_, Message> = if self.search_open {
+            Space::new().width(self.search_width()).into()
+        } else {
+            let mut next = if self.stage.preview.is_some() {
+                self.preview_section()
+            } else {
+                self.next_section()
+            };
+            let width = self.side_width();
+            let monitor = std::mem::replace(&mut next[1], Space::new().into());
+            next[1] = container(monitor)
                 .width(Fill)
-                .style(look::hairline(p)),
-        )
-        .padding([2, 0]);
-        column(upper)
-            .push(seam)
-            .extend(lower)
-            .spacing(10)
-            .padding(STAGE_PADDING)
-            .width(self.stage_width())
+                .height((width * 9.0 / 16.0).round())
+                .into();
+            column(next).spacing(10).width(width).into()
+        };
+        row![live, seam(Side::Stage, SEAM_GRIP), side]
             .height(Fill)
             .into()
     }
@@ -755,7 +759,7 @@ impl App {
             (None, false) => chip(p, "empty", Tone::Plain),
         };
         let mut section: Vec<Element<'_, Message>> = vec![
-            row![heading(p, "On stage"), Space::new().width(Fill), state]
+            row![state, Space::new().width(Fill)]
                 .align_y(Alignment::Center)
                 .into(),
         ];
@@ -785,27 +789,13 @@ impl App {
                 section.push(self.transport(timed));
             }
         }
-        // On, the button is solid and says what pressing it does now.
-        let blackout_label = if blackout {
-            keys::with_key("● Blackout is ON: end it", Op::Blackout)
-        } else {
-            keys::with_key("Blackout", Op::Blackout)
-        };
+        // Blackout is in the strip; what's left here empties the stage.
         section.push(
             row![
-                wide(pill(
-                    p,
-                    &blackout_label,
-                    if blackout { Tone::Alarm } else { Tone::Danger },
-                    PILL,
-                    Some(Message::Key {
-                        op: Op::Blackout,
-                        only_if_empty: false,
-                    })
-                )),
+                Space::new().width(Fill),
                 pill(
                     p,
-                    "Clear",
+                    "Clear the stage",
                     Tone::Plain,
                     PILL,
                     scene.is_some().then_some(Message::Key {
@@ -814,7 +804,6 @@ impl App {
                     })
                 ),
             ]
-            .spacing(4)
             .into(),
         );
         section
@@ -1210,14 +1199,6 @@ impl App {
 }
 
 /// The middle pane's content, at the launcher's width.
-fn centered<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    container(container(content).max_width(LAUNCHER_WIDTH))
-        .center_x(Fill)
-        .height(Fill)
-        .padding([16, 24])
-        .into()
-}
-
 pub(crate) fn op(op: Op) -> Message {
     Message::Key {
         op,
@@ -1473,18 +1454,17 @@ mod tests {
     #[test]
     fn the_side_panes_narrow_together_and_stop_at_their_least() {
         use super::pane_widths;
-        assert_eq!(pane_widths(1920.0), (380.0, 360.0));
+        assert_eq!(pane_widths(1920.0), (340.0, 280.0));
         assert_eq!(
-            pane_widths(1140.0),
-            (380.0, 360.0),
-            "the launcher has its room"
+            pane_widths(1180.0),
+            (340.0, 280.0),
+            "the live picture has its room"
         );
-        let (plan, stage) = pane_widths(1100.0);
-        assert!(plan < 380.0 && stage < 360.0, "{plan} {stage}");
-        assert_eq!(pane_widths(940.0), (330.0, 280.0));
+        let (plan, side) = pane_widths(1100.0);
+        assert!(plan < 340.0 && side < 280.0, "{plan} {side}");
         assert_eq!(
             pane_widths(300.0),
-            (330.0, 280.0),
+            (280.0, 220.0),
             "never below their least"
         );
     }
