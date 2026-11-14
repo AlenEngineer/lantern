@@ -48,6 +48,9 @@ pub enum Tone {
     Danger,
     /// The one solid control, play/pause: `primary` with `on_primary`.
     Solid,
+    /// Something is off that the audience notices, and this puts it
+    /// back: solid `error`, to be seen across a dark booth.
+    Alarm,
 }
 
 impl Tone {
@@ -59,6 +62,7 @@ impl Tone {
             Tone::Live => (Palette::tint(p.tertiary, SELECTED), p.tertiary),
             Tone::Danger => (Palette::tint(p.error, 0.14), p.error),
             Tone::Solid => (p.primary, p.on_primary),
+            Tone::Alarm => (p.error, p.surface),
         }
     }
 

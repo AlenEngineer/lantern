@@ -775,8 +775,9 @@ impl App {
                 section.push(self.transport(timed));
             }
         }
+        // On, the button is solid and says what pressing it does now.
         let blackout_label = if blackout {
-            keys::with_key("Blackout on", Op::Blackout)
+            keys::with_key("● Blackout is ON: end it", Op::Blackout)
         } else {
             keys::with_key("Blackout", Op::Blackout)
         };
@@ -785,7 +786,7 @@ impl App {
                 wide(pill(
                     p,
                     &blackout_label,
-                    Tone::Danger,
+                    if blackout { Tone::Alarm } else { Tone::Danger },
                     PILL,
                     Some(Message::Key {
                         op: Op::Blackout,
