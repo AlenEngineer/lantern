@@ -150,6 +150,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   ahead while its section had time to spare.
 - **Up next** says "No plan open" or "This plan has no steps yet" when
   that's why nothing is next. It said "The end of the plan" either way.
+- A folder that isn't on this computer says so under its row in
+  Settings, for the plan's own and the library's, and the save notice
+  names it. It was saved without a word and never searched.
 
 ## [0.7.0] - 2026-11-13
 
