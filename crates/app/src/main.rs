@@ -1458,6 +1458,23 @@ impl App {
                 return operation::focus(SEARCH_BOX);
             }
             Op::Save if self.settings.is_some() => self.save_settings(),
+            // Closing with changes unsaved asks once: the first press says
+            // so, the second discards them.
+            Op::Settings
+                if self
+                    .settings
+                    .as_ref()
+                    .is_some_and(|draft| draft.is_dirty() && !draft.leaving) =>
+            {
+                keys::record(false);
+                if let Some(draft) = &mut self.settings {
+                    draft.leaving = true;
+                    draft.notice = Some(Err(format!(
+                        "Unsaved changes: {} again discards them.",
+                        keys::label(Op::ClearSearch)
+                    )));
+                }
+            }
             Op::Settings => {
                 keys::record(false);
                 self.starts_typed = None;
@@ -1597,10 +1614,12 @@ impl App {
     /// The settings as saved, with the open plan's look too.
     fn settings_draft(&self) -> settings::Draft {
         let plan = self.engine.0.plan();
-        settings::Draft::of(&self.config, self.home.as_deref())
+        let mut draft = settings::Draft::of(&self.config, self.home.as_deref())
             .with_plan(&plan)
             .with_outputs(outputs::list())
-            .with_fonts(fit::families())
+            .with_fonts(fit::families());
+        draft.mark_saved();
+        draft
     }
 
     fn save_settings(&mut self) {
@@ -1630,6 +1649,7 @@ impl App {
                         missing.join(", ")
                     ),
                 }));
+                draft.mark_saved();
                 // A look just saved is meant to be seen.
                 self.look_held = false;
                 // The plan's own look goes into the plan, saved with it when

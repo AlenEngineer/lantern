@@ -156,6 +156,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Settings keep what's on stage in sight: while something is live, their
   header shows its state, its name and a small picture of it. They cover
   the stage pane, which left the operator blind mid-service.
+- Settings say when they have unsaved changes, and Esc asks once before
+  discarding them: the first press says so, the second closes. Esc
+  dropped them without a word.
 
 ## [0.7.0] - 2026-11-13
 
