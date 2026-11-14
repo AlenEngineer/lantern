@@ -106,6 +106,7 @@ on a result or step only lines it up; a double click shows it at once.
 | click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
 | Ctrl+A | add the result you're looking at after the selected step |
+| Ctrl+Shift+A | keep it on standby instead: ready under the plan, not in its order |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
 | Ctrl+K | open the search |
@@ -207,6 +208,15 @@ slots showed last time. **Edit** opens the template itself.
 
 Before the service starts, Ctrl+A adds to the end of the plan; once it has
 started, right after the current step.
+
+**Standby.** Some things you want ready without knowing when, or whether,
+they'll be needed: a spare song, a notice to move a car. Ctrl+Shift+A puts
+the result you're looking at (or, with no search, what's lined up, such as
+the selected step's) on the plan's standby shelf, under its steps. A click
+there lines it up and a second click or Enter shows it; ↓ past the last
+step reaches the shelf too. Showing from standby doesn't move the plan:
+PgDn goes on from where it was. ✕, or Del while it's lined up, takes it
+off. The shelf is saved with the plan and comes along with a template.
 
 **Stage look.** Settings → Stage sets what the audience sees: a background
 colour and image (covering the screen, also shown when the stage is clear;

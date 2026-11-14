@@ -29,6 +29,8 @@ pub enum Op {
     Take,
     /// Adds the preview to the plan after the current step.
     AddToPlan,
+    /// Puts the result, or what's lined up, on the plan's standby shelf.
+    Standby,
     Next,
     Prev,
     PlayPause,
@@ -344,6 +346,13 @@ pub const ACTIONS: &[Action] = &[
         Op::AddToPlan,
         When::Always,
         "Add the result to the plan",
+    ),
+    action(
+        "standby",
+        "ctrl+shift+a",
+        Op::Standby,
+        When::Always,
+        "Keep the result on standby: ready, but not in the plan's order",
     ),
     action("save", "ctrl+s", Op::Save, When::Always, "Save the plan"),
     action("plans", "ctrl+o", Op::Open, When::Always, "Your plans"),
@@ -676,6 +685,12 @@ mod tests {
         assert_eq!(ctrl("A"), Some((Op::AddToPlan, false)));
         assert_eq!(ctrl("s"), Some((Op::Save, false)));
         assert_eq!(ctrl("q"), None);
+        // Shift makes it standby; without it, the plan.
+        let shifted = CTRL | keyboard::Modifiers::SHIFT;
+        assert_eq!(
+            op(press(Key::Character("A".into()), shifted, TYPING)),
+            Some((Op::Standby, false))
+        );
         assert_eq!(
             op(press(Key::Named(Named::Space), CTRL, TYPING)),
             Some((Op::PlayPause, false))

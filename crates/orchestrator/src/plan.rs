@@ -118,6 +118,10 @@ pub struct Plan {
     /// what time each section comes, and how far behind the service runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub starts: Option<TimeOfDay>,
+    /// Things kept ready outside the running order: a spare song, a notice
+    /// to move a car. Shown when wanted, without moving the plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub standby: Vec<Resource>,
 }
 
 impl Default for Plan {
@@ -139,6 +143,7 @@ impl Plan {
             folders: Vec::new(),
             bibles: Vec::new(),
             starts: None,
+            standby: Vec::new(),
         }
     }
 
@@ -191,6 +196,16 @@ impl Plan {
         };
         self.steps.insert(index.min(self.steps.len()), step);
         id
+    }
+
+    /// Puts `resource` on standby, after what's there. False if it already
+    /// is.
+    pub fn keep_ready(&mut self, resource: Resource) -> bool {
+        let new = !self.standby.iter().any(|r| r.id == resource.id);
+        if new {
+            self.standby.push(resource);
+        }
+        new
     }
 
     /// Appends a step showing `resource`, labeled with its title.
@@ -451,6 +466,13 @@ mod tests {
         let back = Plan::from_json(&template.to_json()).unwrap();
         assert_eq!(back.starts, template.starts);
         assert_eq!(template.from_template("Next").starts, template.starts);
+        // And what it keeps on standby, once.
+        assert!(!Plan::new("Plain").to_json().contains("standby"));
+        assert!(template.keep_ready(resource("Move your car")));
+        assert!(!template.keep_ready(resource("Move your car")));
+        let back = Plan::from_json(&template.to_json()).unwrap();
+        assert_eq!(back.standby, template.standby);
+        assert_eq!(template.from_template("Next").standby.len(), 1);
         // So are the Bibles it searches.
         assert!(!Plan::new("Plain").to_json().contains("bibles"));
         template.bibles = vec!["RV1909".into()];

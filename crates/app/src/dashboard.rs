@@ -342,6 +342,7 @@ impl App {
                     (key(Op::Search), "Search"),
                     (key(Op::Enter), "Look, then show"),
                     (key(Op::AddToPlan), "Add to the plan"),
+                    (key(Op::Standby), "Keep on standby"),
                     (key(Op::ClearSearch), "Clear, then close"),
                 ],
             ),
