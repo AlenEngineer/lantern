@@ -264,7 +264,7 @@ enum Message {
     PlanStarts(String),
     /// Saves the open plan as a copy with its own file, and opens the copy.
     DuplicatePlan,
-    /// Writes the open plan and its media to a folder to take along.
+    /// Writes the open plan and its media to one file to take along.
     ExportPlan,
     /// The export finished: where it went, or why it didn't.
     Exported(Result<String, String>),
@@ -272,7 +272,7 @@ enum Message {
     ToggleImport,
     /// The path typed for the plan to import.
     ImportPath(String),
-    /// Imports the exported plan in this folder; `None` for the one typed.
+    /// Imports the exported plan in this file; `None` for the one typed.
     Import(Option<PathBuf>),
     /// The import finished: the new plan's file, or why there's none.
     Imported(Result<PathBuf, String>),

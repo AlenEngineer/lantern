@@ -816,9 +816,9 @@ impl App {
                 );
             }
             let hint = if found.is_empty() {
-                "No exported plan in Documents, Downloads or on a USB stick. Its folder:"
+                "No exported plan in Documents, Downloads or on a USB stick. Its file:"
             } else {
-                "Or the folder of another:"
+                "Or another's file:"
             };
             import = import.push(
                 container(text(hint).size(META).color(p.on_surface_variant)).padding([4, 10]),
