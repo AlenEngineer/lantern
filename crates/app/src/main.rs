@@ -1492,16 +1492,22 @@ impl App {
                 {
                     self.plans.cancel();
                 }
-                // Esc empties the search, and closes it once it's empty.
-                if self.search_open && self.search.query.is_empty() && self.search.bang().is_none()
-                {
+                // Esc empties the search and keeps its bang, for the next
+                // search of the same source; on an empty box it closes
+                // the search, and the bang goes with it.
+                let closing = !self.search_open || self.search.query.is_empty();
+                if closing {
                     self.search_open = false;
                 }
                 self.adding = None;
                 self.editing = None;
                 self.list_pick = None;
                 self.importing = None;
-                self.search.clear(&engine);
+                if closing {
+                    self.search.clear(&engine);
+                } else {
+                    self.search.empty(&engine);
+                }
                 return operation::focus(SEARCH_BOX);
             }
             Op::Save if self.settings.is_some() => self.save_settings(),

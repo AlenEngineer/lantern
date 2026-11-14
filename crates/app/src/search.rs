@@ -186,6 +186,12 @@ impl Search {
         self.edit(query, engine)
     }
 
+    /// Empties the box and keeps the chip: the next search asks the same
+    /// source, for several verses or videos in a row.
+    pub fn empty(&mut self, engine: &Engine) {
+        self.edit(String::new(), engine);
+    }
+
     /// Empties the box and takes the chip away.
     pub fn clear(&mut self, engine: &Engine) {
         self.bang = None;
