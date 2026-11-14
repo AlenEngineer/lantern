@@ -185,6 +185,13 @@ already uses (`b`, `f`, `gi`, `t`, `x`, `yt`) can't be taken.
 Every source declares its own bangs (`Source::bangs`), so a new source
 brings its own.
 
+The strip has a button for each bang, so nobody has to remember them: a
+book for the Bible, a play mark for YouTube, a folder, a picture, a clock,
+a pencil for your own text. A folder's own bang shows as it's typed
+(`!h`). A button only opens the search on its bang, exactly as typing it
+would, and its tooltip says which bang that is. They show in a window
+1100 wide or more.
+
 The plan's YouTube videos (its steps and its standby shelf) download ahead
 of time (720p H.264) into `~/.cache/lantern/youtube` as soon as they enter
 the plan, and the dashboard shows each one's download state. They usually

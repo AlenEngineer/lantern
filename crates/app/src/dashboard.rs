@@ -51,6 +51,23 @@ const STRIP: f32 = 48.0;
 /// How wide the search panel is, where the window has the room.
 const SEARCH_PANEL: f32 = 460.0;
 
+/// The bangs Lantern's own sources answer, in the order the strip shows
+/// their buttons; a folder's own comes after them.
+const BANG_ORDER: [&str; 6] = ["b", "yt", "f", "gi", "t", "x"];
+
+/// The picture for one of Lantern's own bangs; none for a folder's.
+fn bang_icon(bang: &str) -> Option<Icon> {
+    Some(match bang {
+        "b" => Icon::Book,
+        "yt" => Icon::Play,
+        "f" => Icon::Folder,
+        "gi" => Icon::Image,
+        "t" => Icon::Clock,
+        "x" => Icon::Pencil,
+        _ => return None,
+    })
+}
+
 /// A side pane, by the edge that sizes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -402,6 +419,44 @@ impl App {
             );
         }
         strip = strip.push(Space::new().width(Fill));
+        // One button a source: the Bible, YouTube, the folders, the clock…
+        // Each only opens the search on its bang, as typing `!b ` would;
+        // a folder's own bang, which has no picture, shows as it's typed.
+        // The one being searched is lit.
+        if wide >= 1100.0 && self.settings.is_none() {
+            let mut bangs = self.engine.0.searcher().bangs();
+            bangs.sort_by_key(|bang| {
+                let place = BANG_ORDER.iter().position(|known| *known == bang.bang);
+                (place.unwrap_or(BANG_ORDER.len()), bang.bang.clone())
+            });
+            // Only as many as the strip has room for beside the rest.
+            let room = ((wide - 1100.0) / 40.0) as usize + 4;
+            for bang in bangs.into_iter().take(room) {
+                let lit = self.search_open && self.search.bang() == Some(bang.bang.as_str());
+                let tone = if lit { Tone::Selected } else { Tone::Plain };
+                let colour = if lit { p.primary } else { p.on_surface_variant };
+                let face: Element<'_, Message> = match bang_icon(&bang.bang) {
+                    Some(icon) => look::icon(icon, 16.0, colour).into(),
+                    None => text(format!("!{}", bang.bang))
+                        .size(META)
+                        .font(BOLD)
+                        .color(colour)
+                        .wrapping(text::Wrapping::None)
+                        .into(),
+                };
+                let about = format!("{} · !{}", bang.sources.join(", "), bang.bang);
+                strip = strip.push(iced::widget::tooltip(
+                    button(face)
+                        .padding([9, 10])
+                        .on_press(Message::Bang(bang.bang.clone()))
+                        .style(look::strip_item(p, tone)),
+                    container(text(about).size(META))
+                        .padding([4, 8])
+                        .style(look::tip(p)),
+                    iced::widget::tooltip::Position::Bottom,
+                ));
+            }
+        }
         let search_tone = if self.search_open {
             Tone::Selected
         } else {
