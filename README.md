@@ -271,6 +271,18 @@ one for its steps. The header counts down to the start ("starts 10:30 · in
 12 min") and, once the service is under way, says how far it runs from that
 schedule ("4 min behind", "2 min ahead", "on time") in place of "ends in".
 
+**Export**, beside them, copies the plan and everything it shows into one
+folder, `Sábado.lantern` in your Documents, to take to another computer:
+the files its steps and standby shelf show, its own folders whole, its
+look's image, and its YouTube videos as downloaded. What can't be found is
+left out and named. Exporting again replaces the folder. On the other
+computer, **Import a plan** at the end of the list of plans shows the
+exported plans in Documents, Downloads, the desktop and on anything plugged
+in, with a field for one somewhere else. Importing copies the media into
+Lantern's own folder (`bundles/` beside `plans/`), so the USB stick can
+come out, and opens the plan. Deleting an imported plan removes its media,
+once no copy of it uses them.
+
 **Its Bibles** picks which of your Bibles the plan searches: all of them
 until you pick one. A plan that names a Bible this computer doesn't have
 searches them all.
