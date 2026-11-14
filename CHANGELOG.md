@@ -218,6 +218,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   other, with its stereo track; it used to fail to start and be downloaded
   instead. A stream on a slow network gets twenty seconds to start, not
   five, before Lantern falls back to downloading it.
+- A video that stops on an error says so. A stream whose network went away
+  used to look like a video that had reached its end, and a step set to go
+  on by itself moved on; now the stage reports it failed, with the reason,
+  and the plan stays where it is.
 
 ## [0.7.0] - 2026-11-13
 
