@@ -102,6 +102,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The strip has a button for each source: the Bible, YouTube, folders,
   images, time and your own text, and a folder's own bang as `!h`. A
   button opens the search on that source, as typing its bang would.
+- Live YouTube videos play. A video that is live now plays as it comes, at
+  720p, off the plan or in it: its step says `live` where a download would
+  show, and the time under it says `live`. It can't be scrubbed, and it
+  isn't downloaded. Live videos used to fail with "Requested format is not
+  available".
 
 ### Fixed
 
