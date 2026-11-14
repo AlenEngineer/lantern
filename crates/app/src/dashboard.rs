@@ -844,7 +844,8 @@ impl App {
                 _ => false,
             };
         let add = if in_plan {
-            keys::with_key("Add again", Op::AddToPlan)
+            // Without its key: with it the button took two lines.
+            "Add again".to_string()
         } else {
             keys::with_key("Add", Op::AddToPlan)
         };

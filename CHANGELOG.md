@@ -169,6 +169,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - An example in an empty field is dimmer and starts with "e.g.", so it
   isn't taken for a value. The import field's line reads "Or type where
   the file is".
+- Ctrl+Z right after deleting a plan brings it back, and the notice says
+  so. It did nothing.
+- The line under the plan (an export's result, an error) wraps where it
+  was cut off, and a selected step's length looks like the button it is.
 
 ## [0.7.0] - 2026-11-13
 

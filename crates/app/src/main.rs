@@ -1518,6 +1518,10 @@ impl App {
                     return self.update(Message::Unstandby(id));
                 }
             }
+            // With no edit to take back, a plan just deleted comes back.
+            Op::Undo if self.undo.is_empty() && self.plans.undelete(&engine) => {
+                return self.switched(true);
+            }
             Op::Undo => {
                 if let Some(before) = self.undo.pop() {
                     self.editing = None;

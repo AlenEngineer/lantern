@@ -173,7 +173,15 @@ impl App {
             Notice::Done(_) if self.plans.is_dirty(plan) => return None,
             Notice::Done(what) => (what, p.on_surface_variant),
         };
-        Some(single_line(message.as_str()).size(META).color(color).into())
+        // On as many lines as it takes: an export's result or an error's
+        // reason is the part that was cut off.
+        Some(
+            text(message.as_str())
+                .size(META)
+                .color(color)
+                .width(Fill)
+                .into(),
+        )
     }
 
     fn steps(&self, plan: &Plan, timing: &Timing, issues: &[Issue]) -> Element<'_, Message> {
@@ -401,9 +409,9 @@ impl App {
                 line = if selected && !time.offer {
                     line.push(
                         button(words)
-                            .padding([2, 4])
+                            .padding([2, 6])
                             .on_press(set_time.clone())
-                            .style(look::row(p, Tone::Plain)),
+                            .style(look::pill(p, Tone::Plain)),
                     )
                 } else {
                     line.push(words)
@@ -604,10 +612,11 @@ impl App {
             } else {
                 length
             };
-            button(text(shown).size(META).color(p.on_surface_variant))
-                .padding([2, 4])
+            // Filled like a button, so it reads as something to click.
+            button(text(shown).size(META).color(p.on_surface))
+                .padding([2, 6])
                 .on_press(Message::EditStep(Some((step.id, Part::Length))))
-                .style(look::row(p, Tone::Plain))
+                .style(look::pill(p, Tone::Plain))
                 .into()
         } else {
             text(length).size(META).color(p.on_surface_variant).into()
