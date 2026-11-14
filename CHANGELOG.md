@@ -161,6 +161,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   dropped them without a word.
 - Two actions on one key show at once under Keys, in red on both rows
   with the other's name. Only Save said so. ↺ says which key it puts back.
+- The Blackout button is solid red while the projector is black and says
+  "Blackout is ON: end it". On and off looked almost the same.
 
 ## [0.7.0] - 2026-11-13
 
