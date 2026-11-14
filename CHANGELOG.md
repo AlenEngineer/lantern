@@ -75,6 +75,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - **Glass**: Settings → Appearance lets the desktop show through the
   dashboard, from solid to 80%, with a switch for blurring what shows
   through. The stage stays solid.
+- **A new layout.** A strip across the top holds the plan's name, the
+  running section's time, how the service stands against its schedule, the
+  time of day, Search, what isn't ready, the stage's screen, Blackout and
+  Settings. The plan is on the left and the stage in the middle: what the
+  audience sees, large, with what comes next beside it. Ctrl+K drops the
+  search from the strip, with the result you're looking at under the list.
+  The list of keys in the middle is gone (they're under Settings → Keys).
 
 ### Fixed
 

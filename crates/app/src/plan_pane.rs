@@ -51,7 +51,8 @@ impl App {
         // up as it went, under the pointer. And the steps must stay the
         // same child of the pane: iced keeps a widget's state, like which
         // field has focus, by its place among its siblings.
-        let mut pane = column![self.plan_header(&plan)].spacing(8);
+        // The plan's name and its buttons are in the strip, over the pane.
+        let mut pane = column![].spacing(8);
         pane = pane.push(match &self.plans.mode {
             plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
@@ -77,7 +78,7 @@ impl App {
 
     /// The Plans button, the plan's name (click to rename), and where the
     /// service is: "3 of 7".
-    fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
+    pub(crate) fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
         let p = self.palette;
         // The list of plans is the pane's home: its header is its own, not
         // the open plan's name and count over a list of other plans.
