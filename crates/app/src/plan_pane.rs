@@ -292,6 +292,27 @@ impl App {
                 );
             }
         }
+        // Under the steps, what's kept ready outside their order.
+        if moving.is_none() && !plan.standby.is_empty() {
+            rows = rows.push(Space::new().height(10));
+            rows = rows.push(
+                container(
+                    row![
+                        text("Standby").size(BODY).font(BOLD).color(p.primary),
+                        text("ready, not in the order")
+                            .size(META)
+                            .color(p.on_surface_variant),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 10]),
+            );
+            let lined_up = self.standby_lined_up();
+            for (at, resource) in plan.standby.iter().enumerate() {
+                rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
+            }
+        }
         // Leaving the list means letting go would move nothing.
         mouse_area(scrolling(rows))
             .on_exit(Message::LeftPlan)
@@ -616,6 +637,64 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// Something on standby: its picture and name. A click lines it up,
+    /// a second (or Enter) shows it; ✕ takes it off the shelf.
+    fn standby_row(&self, resource: &Resource, lined_up: bool) -> Element<'_, Message> {
+        let p = self.palette;
+        let on_stage = self
+            .stage
+            .program
+            .as_ref()
+            .is_some_and(|scene| scene.resource.id == resource.id);
+        let tone = match (on_stage, lined_up) {
+            (true, _) => Tone::Live,
+            (false, true) => Tone::Selected,
+            (false, false) => Tone::Plain,
+        };
+        let color = match tone {
+            Tone::Plain => p.on_surface,
+            tone => tone.text(p),
+        };
+        let mut label = column![
+            single_line(resource.title.clone())
+                .size(BODY)
+                .font(if tone == Tone::Plain { MEDIUM } else { BOLD })
+                .color(color)
+        ];
+        let detail = match (on_stage, lined_up) {
+            (true, _) => Some("on stage".to_string()),
+            (false, true) => Some(format!("{} shows it", keys::label(Op::Enter))),
+            (false, false) => None,
+        };
+        if let Some(detail) = detail {
+            label = label.push(single_line(detail).size(META).color(p.on_surface_variant));
+        }
+        let off = tooltip(
+            button(text("✕").size(META).color(p.on_surface_variant))
+                .padding([2, 6])
+                .on_press(Message::Unstandby(resource.id.clone()))
+                .style(look::row(p, Tone::Plain)),
+            container(text("Take it off standby").size(META))
+                .padding([4, 8])
+                .style(look::tip(p)),
+            tooltip::Position::Top,
+        );
+        let line = row![
+            Space::new().width(16),
+            self.thumbnail(resource, STEP_THUMB),
+            container(label).width(Fill).clip(true),
+            off,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        button(line)
+            .width(Fill)
+            .padding([8, 10])
+            .on_press(Message::Click(Clicked::Standby(resource.id.clone())))
+            .style(look::row(p, tone))
+            .into()
     }
 
     /// How long a step takes: `4:00` when known, `~4 min` when guessed,

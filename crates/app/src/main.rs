@@ -174,6 +174,8 @@ const UNDO_DEPTH: usize = 50;
 enum Clicked {
     Result(ResourceId),
     Step(StepId),
+    /// Something on the plan's standby shelf.
+    Standby(ResourceId),
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +240,8 @@ enum Message {
     /// go, and is lined up in the preview.
     Select(StepId),
     Remove(StepId),
+    /// Takes this off the plan's standby shelf.
+    Unstandby(ResourceId),
     /// Adds a section, live slot, black screen or note after the selection.
     AddStep(plan_edit::NewStep),
     /// "Set a time" on a section: select it and focus its time field.
@@ -752,6 +756,7 @@ impl App {
                 let lined_up = match target {
                     Clicked::Result(id) => self.update(Message::Pick(id)),
                     Clicked::Step(step) => self.update(Message::Select(step)),
+                    Clicked::Standby(id) => self.line_up_standby(&id),
                 };
                 if double {
                     return Task::batch([lined_up, self.op(Op::Take)]);
@@ -855,6 +860,18 @@ impl App {
                     self.search.unpick();
                     self.engine.0.preview(Arc::new(resource));
                 } else {
+                    self.engine.0.clear_preview();
+                }
+                return self.preload();
+            }
+            Message::Unstandby(id) => {
+                self.remember(None);
+                self.engine
+                    .0
+                    .edit_plan(|plan| plan.standby.retain(|resource| resource.id != id));
+                // It was the one lined up: nothing is now.
+                let preview = self.engine.0.stage().preview;
+                if self.selected.is_none() && preview.is_some_and(|scene| scene.resource.id == id) {
                     self.engine.0.clear_preview();
                 }
                 return self.preload();
@@ -1172,6 +1189,28 @@ impl App {
                     return self.preload();
                 }
             }
+            Op::Standby => {
+                // While searching, the result picked or else the first;
+                // otherwise what's lined up, such as the selected step's.
+                let found = self
+                    .search
+                    .picked()
+                    .cloned()
+                    .or_else(|| self.search.first())
+                    .filter(|_| self.searching() && !self.search.query.trim().is_empty());
+                let resource =
+                    found.or_else(|| engine.stage().preview.map(|scene| scene.resource.clone()));
+                if let Some(resource) = resource {
+                    let resource = (*resource).clone();
+                    let kept =
+                        engine.edit_plan(|plan| plan.standby.iter().any(|r| r.id == resource.id));
+                    if !kept {
+                        self.remember(None);
+                        engine.edit_plan(|plan| plan.keep_ready(resource));
+                    }
+                    return self.preload();
+                }
+            }
             Op::Next | Op::Prev => {
                 let moved = if op == Op::Next {
                     engine.next()
@@ -1219,10 +1258,19 @@ impl App {
                         .and_then(|pick| order.iter().position(|entry| &entry.path == pick));
                     self.list_pick = around(at, order.len()).map(|at| order[at].path.clone());
                 } else {
+                    // The steps, then what's on standby under them.
                     let plan = engine.plan();
-                    let at = self.selected.and_then(|id| plan.position(id));
-                    if let Some(at) = around(at, plan.len()) {
-                        return self.update(Message::Select(plan.steps()[at].id));
+                    let steps = plan.len();
+                    let at = match self.selected.and_then(|id| plan.position(id)) {
+                        Some(at) => Some(at),
+                        None => self.standby_lined_up().map(|at| steps + at),
+                    };
+                    match around(at, steps + plan.standby.len()) {
+                        Some(at) if at < steps => {
+                            return self.update(Message::Select(plan.steps()[at].id));
+                        }
+                        Some(at) => return self.line_up_standby(&plan.standby[at - steps].id),
+                        None => {}
                     }
                 }
             }
@@ -1299,6 +1347,11 @@ impl App {
             Op::RemoveStep => {
                 if let Some(step) = self.selected.filter(|_| !self.searching()) {
                     return self.update(Message::Remove(step));
+                }
+                // With no step selected, what's lined up from standby.
+                if let Some(at) = self.standby_lined_up().filter(|_| !self.searching()) {
+                    let id = engine.edit_plan(|plan| plan.standby[at].id.clone());
+                    return self.update(Message::Unstandby(id));
                 }
             }
             Op::Undo => {
@@ -1703,6 +1756,37 @@ impl App {
         }
     }
 
+    /// Lines up something from the plan's standby shelf: it's looked at in
+    /// the preview, and Enter (or a second click) shows it. No step stays
+    /// selected, so Enter means this.
+    fn line_up_standby(&mut self, id: &ResourceId) -> Task<Message> {
+        let resource = self
+            .engine
+            .0
+            .edit_plan(|plan| plan.standby.iter().find(|r| &r.id == id).cloned());
+        if let Some(resource) = resource {
+            self.selected = None;
+            self.editing = None;
+            self.search.unpick();
+            self.engine.0.preview(Arc::new(resource));
+        }
+        self.preload()
+    }
+
+    /// Which of the standby shelf is lined up in the preview, while no
+    /// step is selected: where the arrows are, under the steps.
+    pub(crate) fn standby_lined_up(&self) -> Option<usize> {
+        if self.selected.is_some() {
+            return None;
+        }
+        let preview = self.stage.preview.as_ref()?;
+        self.engine.0.edit_plan(|plan| {
+            plan.standby
+                .iter()
+                .position(|r| r.id == preview.resource.id)
+        })
+    }
+
     /// The config as the open plan needs it indexed: its own folders
     /// too, and only its Bibles.
     fn library_config(&self, needs: &library::PlanNeeds) -> Config {
@@ -1733,12 +1817,14 @@ impl App {
     fn preload(&mut self) -> Task<Message> {
         // Every change of plan comes through here.
         self.sync_library();
-        for step in self.engine.0.plan().steps() {
-            if let Action::Show { resource } = &step.action
-                && let Some(video) = YoutubeVideo::of(resource)
-            {
-                self.downloads.0.fetch(&video);
-            }
+        let plan = self.engine.0.plan();
+        let shown = plan.steps().iter().filter_map(|step| match &step.action {
+            Action::Show { resource } => Some(resource),
+            _ => None,
+        });
+        // What's on standby must be as ready as the steps.
+        for video in shown.chain(&plan.standby).filter_map(YoutubeVideo::of) {
+            self.downloads.0.fetch(&video);
         }
         let preview = self.stage.preview.as_ref().map(|s| (*s.resource).clone());
         let next = self.engine.0.up_next().and_then(|step| match step.action {
