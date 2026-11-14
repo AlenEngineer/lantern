@@ -213,7 +213,9 @@ pub fn input(p: Palette) -> impl Fn(&iced::Theme, text_input::Status) -> text_in
                 radius: ROW_RADIUS.into(),
             },
             icon: p.on_surface_variant,
-            placeholder: p.on_surface_variant,
+            // Dimmer than anything typed, so an example isn't taken for a
+            // value that's already there.
+            placeholder: p.outline,
             value: p.on_surface,
             selection: Palette::tint(p.primary, 0.4),
         }
