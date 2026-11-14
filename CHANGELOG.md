@@ -148,6 +148,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - "Behind" and "ends in" count the section under way for its whole
   time, as they do the ones to come. A service that started late read as
   ahead while its section had time to spare.
+- **Up next** says "No plan open" or "This plan has no steps yet" when
+  that's why nothing is next. It said "The end of the plan" either way.
 
 ## [0.7.0] - 2026-11-13
 
