@@ -3,7 +3,7 @@
 //! [`crate::plan_edit`]), and behind the Plans button the saved plans.
 //!
 //! Clicking a step selects it, opens its edit strip and lines it up in the
-//! preview; Enter puts it on stage, and Ctrl+A adds after it.
+//! preview; Enter puts it on stage, and Ctrl+Enter adds after it.
 
 use std::time::{Duration, SystemTime};
 
@@ -194,7 +194,7 @@ impl App {
             .padding(iced::Padding::default().left(indent))
         };
         // The pink line is there only while a search has a result for
-        // Ctrl+A to add.
+        // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
         // With a start time, a section still to come says when it's due.
         let due = plan.starts.map(|starts| {

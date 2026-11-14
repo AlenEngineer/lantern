@@ -487,11 +487,9 @@ impl App {
             };
         let input = text_input(&placeholder, &self.search.query)
             .id(SEARCH_BOX)
+            // No `on_submit`: Enter comes through the keymap, so Ctrl+Enter
+            // can mean something else and Enter can be another key.
             .on_input(Message::Query)
-            .on_submit(Message::Key {
-                op: Op::Enter,
-                only_if_empty: false,
-            })
             .size(15)
             .padding([10, 0])
             .style(move |theme, status| text_input::Style {

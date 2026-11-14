@@ -75,7 +75,7 @@ There is one screen, the same before and during the service. The plan is
 edited where it is: the selected step's row carries small buttons to rename
 it, move it and remove it (and to go on by itself), F2 turns its name into
 a field, and a click on its length, or a section's time, turns that into
-one; Enter or Esc is done. Ctrl+A adds the result you're looking at right
+one; Enter or Esc is done. Ctrl+Enter adds the result you're looking at right
 after it, where the pink line shows while you search.
 **Add step** at the end of the plan adds a **Section**, **Live slot**,
 **Black** or **Note**. The **‹** beside the plan's name (Ctrl+O) goes to
@@ -105,8 +105,8 @@ on a result or step only lines it up; a double click shows it at once.
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
 | click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
-| Ctrl+A | add the result you're looking at after the selected step |
-| Ctrl+Shift+A | keep it on standby instead: ready under the plan, not in its order |
+| Ctrl+Enter | add the result you're looking at after the selected step |
+| Alt+Enter | keep it on standby instead: ready under the plan, not in its order |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
 | Ctrl+K | open the search |
@@ -198,7 +198,7 @@ The cache is plain `.mp4` files, safe to delete. A video unused for 30 days
 
 ### Plans
 
-The plan pane holds the rundown you build with Ctrl+A. Click its name to
+The plan pane holds the rundown you build with Ctrl+Enter. Click its name to
 rename it. **Save** (Ctrl+S) writes it to
 `~/.local/share/lantern/plans/<name>.json` (or under `$XDG_DATA_HOME`); a
 plan that already has a file saves over it, and a new plan never replaces
@@ -214,11 +214,11 @@ the top of the list; clicking one starts a new, unsaved plan from it, titled
 with today's date ("Domingo 2026-11-15"), with everything but what its live
 slots showed last time. **Edit** opens the template itself.
 
-Before the service starts, Ctrl+A adds to the end of the plan; once it has
+Before the service starts, Ctrl+Enter adds to the end of the plan; once it has
 started, right after the current step.
 
 **Standby.** Some things you want ready without knowing when, or whether,
-they'll be needed: a spare song, a notice to move a car. Ctrl+Shift+A puts
+they'll be needed: a spare song, a notice to move a car. Alt+Enter puts
 the result you're looking at (or, with no search, what's lined up, such as
 the selected step's) on the plan's standby shelf, under its steps. A click
 there lines it up and a second click or Enter shows it; ↓ past the last

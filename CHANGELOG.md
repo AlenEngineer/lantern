@@ -58,7 +58,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Sections still to come say when they're due, the header counts down to
   the start, and once the service runs it says how far behind or ahead of
   that schedule it is.
-- **Standby**: Ctrl+Shift+A keeps the result you're looking at ready under
+- **Standby**: Alt+Enter keeps the result you're looking at ready under
   the plan's steps without putting it in their order, for a spare song or
   a notice. A click lines it up, a second click or Enter shows it, and the
   plan keeps its place. ↓ past the last step reaches it; ✕ or Del takes
@@ -142,6 +142,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Opening another plan (or deleting the open one) no longer changes the
   font and colours of what's on stage. It keeps the look it went up with;
   the new plan's look starts with the next thing shown.
+- Ctrl+A in the search box only selects what's typed. It also added the
+  result to the plan, unnoticed. Adding is now Ctrl+Enter, and standby
+  Alt+Enter; both can be changed under Keys.
 
 ## [0.7.0] - 2026-11-13
 

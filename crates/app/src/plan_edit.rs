@@ -247,7 +247,7 @@ fn note<'a>(p: Palette, words: &'a str) -> Element<'a, Message> {
     text(words).size(META).color(p.on_surface_variant).into()
 }
 
-/// Where Ctrl+A puts the result: a `primary` line across the plan, between
+/// Where Ctrl+Enter puts the result: a `primary` line across the plan, between
 /// its rows. Drawn only while a search has a result to add.
 pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
     row![

@@ -1,5 +1,5 @@
 # Editing the plan in place, on the one screen: selecting a step opens its
-# strip, Ctrl+A adds the result right after it, Alt+↑ moves it, and with
+# strip, Ctrl+Enter adds the result right after it, Alt+↑ moves it, and with
 # the search empty Enter puts the selected step on stage.
 section 15 Alabanza
 add fixtures/video.mp4

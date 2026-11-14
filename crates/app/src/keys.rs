@@ -342,14 +342,14 @@ pub const ACTIONS: &[Action] = &[
     action("blackout", "ctrl+b", Op::Blackout, When::Always, "Blackout"),
     action(
         "add-to-plan",
-        "ctrl+a",
+        "ctrl+enter",
         Op::AddToPlan,
         When::Always,
         "Add the result to the plan",
     ),
     action(
         "standby",
-        "ctrl+shift+a",
+        "alt+enter",
         Op::Standby,
         When::Always,
         "Keep the result on standby: ready, but not in the plan's order",
@@ -682,13 +682,21 @@ mod tests {
     fn ctrl_keys_work_while_typing() {
         let ctrl = |c: &str| op(press(Key::Character(c.into()), CTRL, TYPING));
         assert_eq!(ctrl("b"), Some((Op::Blackout, false)));
-        assert_eq!(ctrl("A"), Some((Op::AddToPlan, false)));
+        // Ctrl+A is the search box's own: it selects what's typed.
+        assert_eq!(ctrl("A"), None);
+        assert_eq!(
+            op(press(Key::Named(Named::Enter), CTRL, TYPING)),
+            Some((Op::AddToPlan, false))
+        );
         assert_eq!(ctrl("s"), Some((Op::Save, false)));
         assert_eq!(ctrl("q"), None);
-        // Shift makes it standby; without it, the plan.
-        let shifted = CTRL | keyboard::Modifiers::SHIFT;
+        // Alt+Enter is standby; Ctrl+Enter, the plan.
         assert_eq!(
-            op(press(Key::Character("A".into()), shifted, TYPING)),
+            op(press(
+                Key::Named(Named::Enter),
+                keyboard::Modifiers::ALT,
+                TYPING
+            )),
             Some((Op::Standby, false))
         );
         assert_eq!(
