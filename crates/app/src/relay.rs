@@ -44,11 +44,19 @@ const REMEMBERED: usize = 512;
 /// Any byte that arrives starts the count again.
 const TRIES: usize = 3;
 
+/// How long to wait, in milliseconds, before each new try of a first
+/// piece that YouTube refused. An address `yt-dlp` has only just been
+/// given is refused about half the time for its first second or two
+/// (403 at once, fine two seconds later, in three fresh addresses of six;
+/// once for over five seconds), and without these the stream failed and
+/// the video was downloaded. They add up to under ten seconds.
+const REFUSED_WAITS: &[u64] = &[300, 500, 700, 1000, 1500, 2500, 3000];
+
 /// A local address that serves `url` in pieces, or `None` when the relay
 /// can't listen; the player then reads `url` itself, slower.
 pub fn through(url: &str) -> Option<String> {
     static RELAY: OnceLock<Option<Arc<Relay>>> = OnceLock::new();
-    let relay = RELAY.get_or_init(|| match Relay::start(PIECE) {
+    let relay = RELAY.get_or_init(|| match Relay::start(PIECE, REFUSED_WAITS) {
         Ok(relay) => Some(relay),
         Err(err) => {
             crate::log(format!(
@@ -63,6 +71,8 @@ pub fn through(url: &str) -> Option<String> {
 struct Relay {
     at: SocketAddr,
     piece: u64,
+    /// [`REFUSED_WAITS`], or shorter ones for a test.
+    refused_waits: &'static [u64],
     agent: ureq::Agent,
     /// The addresses served, by the name each is served under, oldest
     /// first. An address is replaced by where YouTube redirected it, so
@@ -73,7 +83,7 @@ struct Relay {
 impl Relay {
     /// Starts listening, on a thread of its own that lasts as long as
     /// the app.
-    fn start(piece: u64) -> io::Result<Arc<Relay>> {
+    fn start(piece: u64, refused_waits: &'static [u64]) -> io::Result<Arc<Relay>> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         let agent = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
@@ -84,6 +94,7 @@ impl Relay {
         let relay = Arc::new(Relay {
             at: listener.local_addr()?,
             piece,
+            refused_waits,
             agent,
             served: Mutex::new(VecDeque::new()),
         });
@@ -142,11 +153,13 @@ impl Relay {
             url: url.clone(),
             most: self.piece,
             asked: 0,
+            refused_waits: self.refused_waits,
         };
         let mut at = asked.from;
         let mut first = match upstream.first_piece(at, asked.to) {
             Ok(first) => first,
             Err(status) => {
+                crate::log(format!("relay: YouTube answered {status} at {at}"));
                 let _ = refuse(&mut player, status);
                 return;
             }
@@ -295,6 +308,7 @@ struct Upstream<'a> {
     most: u64,
     /// How many pieces were asked for so far.
     asked: usize,
+    refused_waits: &'static [u64],
 }
 
 /// One piece as it arrives.
@@ -306,20 +320,27 @@ struct Piece {
 }
 
 impl Upstream<'_> {
-    /// The piece an answer starts with. What YouTube refuses is refused;
-    /// a request that didn't get through is made again, since refusing
-    /// the player here fails the whole stream.
+    /// The piece an answer starts with, tried again when it may yet come:
+    /// a request that didn't get through, and one YouTube refused, which
+    /// it does to a new address for a moment ([`REFUSED_WAITS`]). Giving
+    /// up here fails the whole stream.
     fn first_piece(&mut self, from: u64, to: Option<u64>) -> Result<Piece, StatusCode> {
-        let mut tries = 0;
+        let mut unanswered = 0;
+        let mut waits = self.refused_waits.iter();
         loop {
-            match self.piece_from(from, to) {
-                Err(status) if status.is_server_error() && tries < TRIES => {
-                    tries += 1;
-                    self.asked = 0;
-                    std::thread::sleep(Duration::from_millis(300));
+            let wait = match self.piece_from(from, to) {
+                Err(status) if status.is_server_error() && unanswered < TRIES => {
+                    unanswered += 1;
+                    300
                 }
+                Err(StatusCode::FORBIDDEN) => match waits.next() {
+                    Some(wait) => *wait,
+                    None => return Err(StatusCode::FORBIDDEN),
+                },
                 piece => return piece,
-            }
+            };
+            self.asked = 0;
+            std::thread::sleep(Duration::from_millis(wait));
         }
     }
 
@@ -341,7 +362,10 @@ impl Upstream<'_> {
                 ureq::Error::StatusCode(code) => {
                     StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY)
                 }
-                _ => StatusCode::BAD_GATEWAY,
+                err => {
+                    crate::log(format!("relay: no answer from YouTube ({err})"));
+                    StatusCode::BAD_GATEWAY
+                }
             })?;
         let total = total_length(response.status(), response.headers(), from)
             .ok_or(StatusCode::BAD_GATEWAY)?;
@@ -384,6 +408,8 @@ mod tests {
     struct Quirks {
         /// Hangs up halfway through this many answers.
         cut_short: Mutex<usize>,
+        /// Refuses this many requests before it answers.
+        refused: Mutex<usize>,
         /// Says it is busy this many times before it answers.
         busy: Mutex<usize>,
         /// How many times it sent a request on from `/moved`.
@@ -424,6 +450,17 @@ mod tests {
                         return;
                     }
                     if !first.starts_with("GET /file ") {
+                        let head = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                        stream.write_all(head.as_bytes()).unwrap();
+                        return;
+                    }
+                    let refused = {
+                        let mut left = quirks.refused.lock().unwrap();
+                        let refused = *left > 0;
+                        *left = left.saturating_sub(1);
+                        refused
+                    };
+                    if refused {
                         let head = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                         stream.write_all(head.as_bytes()).unwrap();
                         return;
@@ -490,7 +527,7 @@ mod tests {
     fn a_request_is_answered_from_pieces() {
         let quirks = Arc::new(Quirks::default());
         let base = youtube(file(), Arc::clone(&quirks));
-        let relay = Relay::start(1000).unwrap();
+        let relay = Relay::start(1000, &[10, 10]).unwrap();
         let address = relay.serve(&format!("{base}/file"));
 
         let (status, range, body) = get(&address, Some(2500)).unwrap();
@@ -513,7 +550,7 @@ mod tests {
         let quirks = Arc::new(Quirks::default());
         *quirks.cut_short.lock().unwrap() = 2;
         let base = youtube(file(), Arc::clone(&quirks));
-        let relay = Relay::start(4000).unwrap();
+        let relay = Relay::start(4000, &[10, 10]).unwrap();
         let address = relay.serve(&format!("{base}/moved"));
 
         let (_, _, body) = get(&address, Some(0)).unwrap();
@@ -529,7 +566,7 @@ mod tests {
         let quirks = Arc::new(Quirks::default());
         let big: Vec<u8> = (0..1_500_000u32).map(|n| (n % 251) as u8).collect();
         let base = youtube(big.clone(), Arc::clone(&quirks));
-        let relay = Relay::start(PIECE).unwrap();
+        let relay = Relay::start(PIECE, &[10, 10]).unwrap();
         let address = relay.serve(&format!("{base}/moved"));
 
         let (_, _, body) = get(&address, Some(0)).unwrap();
@@ -550,7 +587,7 @@ mod tests {
         let quirks = Arc::new(Quirks::default());
         *quirks.busy.lock().unwrap() = 2;
         let base = youtube(file(), Arc::clone(&quirks));
-        let relay = Relay::start(1000).unwrap();
+        let relay = Relay::start(1000, &[10, 10]).unwrap();
         let address = relay.serve(&format!("{base}/file"));
         let (status, _, body) = get(&address, Some(9000)).unwrap();
         assert_eq!(status, 206);
@@ -558,9 +595,28 @@ mod tests {
     }
 
     #[test]
+    fn an_address_refused_at_first_is_asked_for_again() {
+        let quirks = Arc::new(Quirks::default());
+        *quirks.refused.lock().unwrap() = 2;
+        let base = youtube(file(), Arc::clone(&quirks));
+        let relay = Relay::start(1000, &[10, 10]).unwrap();
+        let address = relay.serve(&format!("{base}/file"));
+        let (status, _, body) = get(&address, Some(0)).unwrap();
+        assert_eq!(status, 206);
+        assert_eq!(body, file());
+
+        // Refused once more than it waits for, it is refused.
+        *quirks.refused.lock().unwrap() = 3;
+        assert!(matches!(
+            get(&address, Some(0)),
+            Err(ureq::Error::StatusCode(403))
+        ));
+    }
+
+    #[test]
     fn what_it_wasnt_given_or_youtube_refuses_is_refused() {
         let base = youtube(file(), Arc::new(Quirks::default()));
-        let relay = Relay::start(1000).unwrap();
+        let relay = Relay::start(1000, &[10, 10]).unwrap();
         let unknown = format!("http://{}/nothing", relay.at);
         assert!(matches!(
             get(&unknown, Some(0)),
