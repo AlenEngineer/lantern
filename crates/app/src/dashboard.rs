@@ -198,16 +198,27 @@ impl App {
         // leaves it beside the live picture.
         if self.search_open && self.settings.is_none() {
             let size = self.dashboard_size;
-            let panel = container(self.search_panel())
-                .width(self.search_width() + CARD_PADDING)
-                .height((size.height - EDGE - STRIP - EDGE).max(160.0))
+            // It hangs from the strip's straight underside, clear of its
+            // round end, and is as tall as what's in it up to the window's
+            // foot; past that its list scrolls.
+            let most = (size.height - EDGE - STRIP - EDGE).max(160.0);
+            let right = size.width - EDGE - STRIP / 2.0 - look::SHOULDER;
+            let left = size.width - EDGE - CARD_PADDING - self.search_width() + look::SHOULDER;
+            let top = EDGE + STRIP;
+            let colour = look::float_colour(p, glass);
+            let panel = container(self.search_panel(most - 2.0 * CARD_PADDING))
+                .width(right - left)
+                .max_height(most)
                 .padding(CARD_PADDING)
                 .style(look::panel(p, glass));
-            layers = layers.push(
-                pin(panel)
-                    .x(size.width - EDGE - self.search_width() - CARD_PADDING)
-                    .y(EDGE + STRIP),
-            );
+            layers = layers
+                .push(
+                    pin(look::shoulder(true, colour))
+                        .x(left - look::SHOULDER)
+                        .y(top),
+                )
+                .push(pin(look::shoulder(false, colour)).x(right).y(top))
+                .push(pin(panel).x(left).y(top));
         }
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
@@ -443,21 +454,32 @@ impl App {
             .height(STRIP)
             .padding([0, 8])
             .align_y(Alignment::Center)
-            .style(look::card(p, self.see_through(), look::PILL_RADIUS))
+            .style(look::strip(p, self.see_through()))
             .into()
     }
 
     /// The search, as the panel that drops from the strip: the box, what
     /// it found, and under them the result being looked at with what can
     /// be done with it.
-    fn search_panel(&self) -> Element<'_, Message> {
-        let mut panel = column![self.search_box(), self.results()].spacing(10);
+    ///
+    /// It's as tall as what's in it, up to `most`: the list takes what the
+    /// box and the picked result leave, and scrolls past that.
+    fn search_panel(&self, most: f32) -> Element<'_, Message> {
+        let roomy = self.dashboard_size.height >= 640.0;
+        // The box, and under the list the picked result: its picture (in
+        // a window with the room), its name, and its two buttons.
+        let picked = match (self.stage.preview.is_some(), roomy) {
+            (false, _) => 0.0,
+            (true, true) => 135.0 + 40.0 + 2.0 * PILL + 4.0 + 2.0 * 8.0 + 10.0,
+            (true, false) => 40.0 + 2.0 * PILL + 4.0 + 8.0 + 10.0,
+        };
+        let list = container(self.results()).max_height((most - 46.0 - 10.0 - picked).max(80.0));
+        let mut panel = column![self.search_box(), list].spacing(10);
         if self.stage.preview.is_some() {
             let mut preview = self.preview_section();
             // The picture small: the list above is what's being read. In
             // a short window it's left out, and the list keeps its room.
             let monitor = std::mem::replace(&mut preview[1], Space::new().into());
-            let roomy = self.dashboard_size.height >= 640.0;
             preview[1] = match roomy {
                 true => container(container(monitor).width(240).height(135))
                     .center_x(Fill)
@@ -466,7 +488,7 @@ impl App {
             };
             panel = panel.push(column(preview.into_iter().skip(1)).spacing(8));
         }
-        panel.height(Fill).into()
+        panel.into()
     }
 
     /// The config, the index and the colours, only when something is wrong
@@ -554,7 +576,8 @@ impl App {
                 container(text(note).size(BODY).color(p.on_surface_variant)).padding([8, 12]),
             );
         }
-        scrolling(list).id(RESULTS).into()
+        // As tall as its rows, up to the room it's given.
+        scrolling(list).height(Length::Shrink).id(RESULTS).into()
     }
 
     /// What to say when there are no results to show, or not yet.

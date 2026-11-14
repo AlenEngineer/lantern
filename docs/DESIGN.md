@@ -54,8 +54,13 @@ broadcast tally, because red is blackout's.
   (the strip is a pill), a hairline of light and a shadow, 10px from its
   neighbours and 12px from the window's edge. No lines divide a card.
 - With **Glass** on, the ground and the cards let the desktop show through,
-  the cards less than the ground so text on them reads. A panel that drops
-  from the strip stays nearly solid.
+  the cards less than the ground so text on them reads.
+- The strip floats over the cards: `surface_container`, a step lighter
+  than a card, with a shadow and no outline. A panel that drops from it is
+  the same colour and meets it without a seam, its two shoulders curving
+  from the strip's underside into its sides, like a drop leaving the water
+  it hangs from. It's as tall as what's in it, up to the window's foot;
+  past that its list scrolls.
 - Rows and monitors have 12px corners. Buttons and chips are pills.
 - Spacing steps by 4px: 4 between buttons, 8–12 inside rows and sections,
   16 around pane content.
