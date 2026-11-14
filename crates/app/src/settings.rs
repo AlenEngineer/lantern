@@ -31,6 +31,8 @@ const SAMPLE_WIDTH: f32 = 384.0;
 /// The list of the settings' parts, and the most a part's fields spread.
 const CATEGORIES: f32 = 132.0;
 const PART_WIDTH: f32 = 640.0;
+/// How tall the small picture of what's on stage is, in the header.
+const LIVE_HEIGHT: f32 = 54.0;
 
 /// The settings as they're being edited.
 #[derive(Debug, Clone, PartialEq)]
@@ -767,17 +769,50 @@ impl App {
             Some(home) => config::tilde(file, home).display().to_string(),
             None => file.display().to_string(),
         };
-        let header = row![
+        let mut header = row![
             look::icon(Icon::Settings, 20.0, p.primary),
             text("Settings").size(HEADING).font(BOLD).color(p.primary),
             Space::new().width(Fill),
-            text(format!("{} closes", keys::label(Op::ClearSearch)))
-                .size(META)
-                .color(p.on_surface_variant),
         ]
         .spacing(10)
         .align_y(Alignment::Center)
-        .height(36);
+        .height(match (&self.stage.program, self.stage.blackout) {
+            (Some(_), false) => LIVE_HEIGHT,
+            _ => 36.0,
+        });
+        // The settings take the stage pane's room, so what the audience
+        // sees is kept in sight here: its state, its name, a small picture.
+        match (&self.stage.program, self.stage.blackout) {
+            (_, true) => header = header.push(chip(p, "blackout", Tone::Danger)),
+            (Some(scene), false) => {
+                header = header
+                    .push(chip(p, "● live", Tone::Live))
+                    .push(
+                        iced::widget::container(
+                            crate::dashboard::single_line(scene.resource.title.clone())
+                                .size(META)
+                                .color(p.on_surface),
+                        )
+                        .max_width(220)
+                        .clip(true),
+                    )
+                    .push(
+                        iced::widget::container(self.monitor(
+                            scene,
+                            self.media.content(scene.id),
+                            None,
+                        ))
+                        .width(LIVE_HEIGHT * 16.0 / 9.0)
+                        .height(LIVE_HEIGHT),
+                    );
+            }
+            (None, false) => {}
+        }
+        header = header.push(
+            text(format!("{} closes", keys::label(Op::ClearSearch)))
+                .size(META)
+                .color(p.on_surface_variant),
+        );
 
         let mut folders = column![section(
             p,
@@ -1292,7 +1327,7 @@ impl App {
                     look::PILL_SMALL,
                     (!self.copying).then_some(Message::ExportPlan)
                 ),
-                note("One file in Documents with the plan and its media, for another computer.")
+                note("One file in Documents: the plan and its media.")
             ]
             .spacing(8)
             .align_y(Alignment::Center),
