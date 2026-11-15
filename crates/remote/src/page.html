@@ -83,6 +83,41 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
 #black.on { background: var(--danger); color: var(--ground); }
 #play:disabled { opacity: .4; }
 
+.icon { width: 40px; height: 40px; border-radius: 50%; background: var(--card); display: flex; align-items: center; justify-content: center; flex: none; }
+.icon svg { width: 20px; height: 20px; fill: currentColor; }
+.icon.on { background: var(--accent); color: var(--on-accent); }
+
+#search { flex: 1; overflow-y: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 10px; scrollbar-width: none; }
+#search::-webkit-scrollbar { display: none; }
+#search > * { flex: none; }
+#box { display: flex; align-items: center; gap: 8px; background: var(--card); border: 2px solid var(--accent); border-radius: 999px; padding: 0 6px 0 16px; height: 50px; }
+#query { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 17px; user-select: text; -webkit-user-select: text; }
+#query::placeholder { color: var(--dim); opacity: .7; }
+#query::-webkit-search-cancel-button { display: none; }
+#wipe { width: 38px; height: 38px; border-radius: 50%; color: var(--dim); font-size: 20px; }
+#bangs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
+#bangs::-webkit-scrollbar { display: none; }
+#bangs button { background: var(--card); color: var(--dim); border-radius: 999px; padding: 8px 14px; font-size: 14px; white-space: nowrap; flex: none; }
+#bangs button.on { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+#bangs b { font-weight: 700; color: var(--accent); margin-right: 6px; }
+#bangs button.on b { color: inherit; }
+#found { display: flex; flex-direction: column; gap: 10px; }
+#found .group { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+#found .name { color: var(--accent); font-weight: 700; font-size: 14px; padding: 6px 10px 2px; }
+#found .error { color: var(--danger); font-size: 14px; padding: 4px 10px; }
+.hit { display: flex; flex-direction: column; gap: 2px; padding: 9px 10px; border-radius: 14px; text-align: left; width: 100%; }
+.hit .title { font-weight: 600; }
+.hit .facts { color: var(--dim); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hit.picked { background: var(--raised); }
+.hit.picked .facts { -webkit-line-clamp: 6; }
+.hit .acts { display: flex; gap: 8px; padding-top: 8px; }
+.hit .acts span { flex: 1; text-align: center; border-radius: 999px; padding: 10px; font-weight: 700; background: var(--card); }
+.hit .acts .show { background: var(--accent); color: var(--on-accent); }
+#hint { color: var(--dim); text-align: center; padding: 20px 12px; }
+#ask { align-self: center; background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 12px 28px; }
+#said { position: fixed; left: 50%; bottom: calc(170px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--raised); color: var(--text); border-radius: 999px; padding: 10px 18px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; }
+#said.shown { opacity: 1; }
+
 #veil { position: fixed; inset: 0; background: var(--ground); display: none; align-items: center; justify-content: center; text-align: center; padding: 32px; color: var(--dim); }
 #veil.shown { display: flex; }
 #veil b { display: block; color: var(--text); font-size: 20px; margin-bottom: 8px; }
@@ -93,9 +128,18 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
   <div class="top">
     <div id="plan-name" class="one-line">Lantern</div>
     <div id="link" title="Connection"></div>
+    <button id="find" class="icon" aria-label="Search"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"/></svg></button>
   </div>
   <div id="notes"></div>
 </header>
+<section id="search" hidden>
+  <div id="box">
+    <input id="query" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="A verse, a hymn, a link…">
+    <button id="wipe" aria-label="Empty the search">✕</button>
+  </div>
+  <div id="bangs"></div>
+  <div id="found"></div>
+</section>
 <main>
   <section id="stage" class="card">
     <span class="tag" id="live-tag">Stage</span>
@@ -118,6 +162,7 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
   <button id="black">Blackout</button>
   <button id="clear">Clear</button>
 </footer>
+<div id="said"></div>
 <div id="veil"><div><b id="veil-title"></b><span id="veil-text"></span></div></div>
 <script>
 "use strict";
@@ -127,9 +172,18 @@ let state = null;     // the last snapshot
 let picked = null;    // the step tapped, waiting for "Show"
 let heard = 0;        // when the snapshot arrived, for counting a video on
 let dragging = null;  // seconds, while the time bar is held
+let finding = false;  // whether the search is open
+let hit = null;       // the result tapped, waiting for "Show now" or "Add"
+let typed = null;     // the timer that waits for typing to pause
 
-function send(command) {
-  if (navigator.vibrate) navigator.vibrate(8);
+function say(words) {
+  $("said").textContent = words;
+  $("said").classList.add("shown");
+  clearTimeout(say.timer);
+  say.timer = setTimeout(() => $("said").classList.remove("shown"), 1600);
+}
+function send(command, quiet) {
+  if (!quiet && navigator.vibrate) navigator.vibrate(8);
   fetch("/do?t=" + encodeURIComponent(token), { method: "POST", body: JSON.stringify(command) })
     .catch(() => link(false));
 }
@@ -206,6 +260,105 @@ function draw() {
     $("next").append(title);
   }
   drawSteps();
+  drawSearch();
+}
+
+/* The bang a search starts with, without its "!": "b" in "!b juan 3". */
+function bangOf(text) {
+  const found = /^!(\S+)\s/.exec(text);
+  return found ? found[1] : null;
+}
+function ask(enter) {
+  clearTimeout(typed);
+  hit = null;
+  send({ do: "search", text: $("query").value.trim() ? $("query").value : "", enter: !!enter }, true);
+}
+function drawSearch() {
+  $("search").hidden = !finding;
+  document.querySelector("main").hidden = finding;
+  $("find").classList.toggle("on", finding);
+  if (!finding || !state) return;
+  const text = $("query").value, mine = bangOf(text);
+  $("bangs").replaceChildren(...(state.bangs || []).map(bang => {
+    const chip = document.createElement("button");
+    chip.className = bang.bang === mine ? "on" : "";
+    const mark = document.createElement("b");
+    mark.textContent = "!" + bang.bang;
+    chip.append(mark, bang.name);
+    chip.onclick = () => {
+      const rest = text.replace(/^!\S*\s*/, "");
+      $("query").value = bang.bang === mine ? rest : `!${bang.bang} ${rest}`;
+      $("query").focus();
+      ask(false);
+      drawSearch();
+    };
+    return chip;
+  }));
+
+  const box = $("found"), found = state.search;
+  const hint = words => {
+    const note = document.createElement("div");
+    note.id = "hint";
+    note.textContent = words;
+    return note;
+  };
+  if (!text.trim()) { box.replaceChildren(hint("Type what to show: a verse (juan 3 16), a hymn, a file's name, a link. A button above searches one kind of thing.")); return; }
+  if (!found) { box.replaceChildren(hint("Searching…")); return; }
+  const parts = [];
+  for (const group of found.groups) {
+    if (!group.hits.length && !group.error) continue;
+    const card = document.createElement("div");
+    card.className = "card group";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = group.name;
+    card.append(name);
+    if (group.error) {
+      const error = document.createElement("div");
+      error.className = "error";
+      error.textContent = group.error;
+      card.append(error);
+    }
+    for (const result of group.hits) {
+      const row = document.createElement("button");
+      row.className = "hit" + (result.id === hit ? " picked" : "");
+      const title = document.createElement("span");
+      title.className = "title";
+      title.textContent = result.title;
+      const facts = document.createElement("span");
+      facts.className = "facts";
+      facts.textContent = result.facts;
+      row.append(title, facts);
+      if (result.id === hit) {
+        const acts = document.createElement("span");
+        acts.className = "acts";
+        const show = document.createElement("span");
+        show.className = "show";
+        show.textContent = "Show now";
+        show.onclick = event => { event.stopPropagation(); send({ do: "show", id: result.id }); say("On stage: " + result.title); hit = null; drawSearch(); };
+        const add = document.createElement("span");
+        add.textContent = "Add to plan";
+        add.onclick = event => { event.stopPropagation(); send({ do: "add", id: result.id }); say("Added to the plan"); hit = null; drawSearch(); };
+        acts.append(show, add);
+        row.append(acts);
+      }
+      row.onclick = () => { hit = result.id === hit ? null : result.id; drawSearch(); };
+      card.append(row);
+    }
+    parts.push(card);
+  }
+  if (found.waiting) {
+    const go = document.createElement("button");
+    go.id = "ask";
+    go.textContent = "Search";
+    go.onclick = () => ask(true);
+    parts.push(hint("Press Search to look this up."), go);
+  } else if (!parts.length) {
+    parts.push(hint(found.busy ? "Searching…" : "Nothing found."));
+  } else if (found.busy) {
+    parts.push(hint("Still searching…"));
+  }
+  box.replaceChildren(...parts);
 }
 
 function drawSteps() {
@@ -262,6 +415,22 @@ function drawSteps() {
   }
 }
 
+$("find").onclick = () => {
+  finding = !finding;
+  drawSearch();
+  if (finding) $("query").focus();
+  else $("query").blur();
+};
+$("query").oninput = () => {
+  clearTimeout(typed);
+  typed = setTimeout(() => ask(false), 350);
+  drawSearch();
+};
+$("query").onkeydown = event => {
+  if (event.key === "Enter") { ask(true); $("query").blur(); }
+};
+$("wipe").onclick = () => { $("query").value = ""; ask(false); drawSearch(); $("query").focus(); };
+
 $("prev").onclick = () => send({ do: "prev" });
 $("next-step").onclick = () => send({ do: "next" });
 $("play").onclick = () => send({ do: "play_pause" });
@@ -299,6 +468,14 @@ if (!token) {
     if (!ever) veil("Can't reach Lantern", "Check that the phone is on the same Wi-Fi as the computer, and that the remote is on in Lantern's settings.");
     else if (!state) veil("Reconnecting…", "");
   };
+  // An address ending in #q=juan 3 16 opens on that search.
+  const start = new URLSearchParams(location.hash.slice(1));
+  if (start.get("q")) {
+    finding = true;
+    $("query").value = start.get("q");
+    hit = start.get("hit");
+    events.addEventListener("open", () => send({ do: "search", text: $("query").value }, true), { once: true });
+  }
   // Keeps the screen on where the browser allows it.
   const awake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
   awake();

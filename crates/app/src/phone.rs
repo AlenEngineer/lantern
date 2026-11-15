@@ -19,12 +19,18 @@ use iced::widget::svg;
 use iced::{Color, Task};
 use lantern_engine::{Action, Media, Playback, Step, StepId, Timing};
 use lantern_remote::{
-    Colors, Command, Live, Place, Plan, Server, Slides, Snapshot, StepKind, Timed, Upcoming,
+    Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Server, Slides, Snapshot,
+    StepKind, Timed, Upcoming,
 };
 
 use crate::keys::Op;
 use crate::plan_pane::{section_status, slot_detail};
-use crate::{App, Message, length, log};
+use crate::search;
+use crate::{App, Message, length, live_search, log};
+
+/// How many results of one source a phone is sent: more than fit a few
+/// screens of a phone are better found by typing more.
+const MOST_HITS: usize = 25;
 
 /// The remote, running.
 pub struct Remote {
@@ -204,6 +210,45 @@ impl App {
                 Task::none()
             }
             Command::Seek { .. } => Task::none(),
+            Command::Search { text, enter } => {
+                let engine = self.engine.0.clone();
+                // The same text again, asked for outright: the search a
+                // bang like `!yt` was waiting to be asked for.
+                if enter && text == self.phone_asked {
+                    return match self.phone_search.start_on_enter(&engine) {
+                        Some(stream) => live_search(stream),
+                        None => Task::none(),
+                    };
+                }
+                self.phone_search.clear(&engine);
+                let edit = self.phone_search.edit(text.clone(), &engine);
+                self.phone_asked = text;
+                // The phone waited out the typing itself: no pause here.
+                let stream = match edit {
+                    Some(edit) => self.phone_search.start_live(edit, &engine),
+                    None if enter => self.phone_search.start_on_enter(&engine),
+                    None => None,
+                };
+                stream.map_or_else(Task::none, live_search)
+            }
+            Command::Show { id } => {
+                let Some(resource) = self.phone_found(&id) else {
+                    return Task::none();
+                };
+                self.engine.0.show_now(resource);
+                self.stepping = true;
+                self.preload()
+            }
+            Command::Add { id } => {
+                let Some(resource) = self.phone_found(&id) else {
+                    return Task::none();
+                };
+                // After the step the service is at, or at the plan's end.
+                let after = self.engine.0.current_step().map(|step| step.id);
+                self.remember(None);
+                self.engine.0.add_resource(after, &resource);
+                self.preload()
+            }
             Command::Go { step } => {
                 let plan = self.engine.0.plan();
                 let Some(step) = plan.steps().iter().find(|s| number(s.id) == step) else {
@@ -218,6 +263,46 @@ impl App {
                 Task::batch([self.preload(), self.arrive()])
             }
         }
+    }
+
+    /// The result a phone named, among what its search found.
+    fn phone_found(&self, id: &str) -> Option<Arc<lantern_engine::Resource>> {
+        self.phone_search
+            .groups()
+            .iter()
+            .flat_map(|group| &group.hits)
+            .find(|hit| hit.id.to_string() == id)
+            .cloned()
+    }
+
+    /// The phone's search and what it found so far.
+    fn found(&self) -> Option<Found> {
+        if self.phone_asked.trim().is_empty() {
+            return None;
+        }
+        let groups = self.phone_search.groups().iter().map(|group| Group {
+            name: group.name.clone(),
+            error: group.error.clone(),
+            hits: group
+                .hits
+                .iter()
+                .take(MOST_HITS)
+                .map(|hit| Hit {
+                    id: hit.id.to_string(),
+                    title: hit.title.clone(),
+                    facts: hit.subtitle.clone().unwrap_or_default(),
+                })
+                .collect(),
+        });
+        Some(Found {
+            text: self.phone_asked.clone(),
+            busy: matches!(
+                self.phone_search.live,
+                search::Live::Waiting(_) | search::Live::Running(_)
+            ),
+            waiting: self.phone_search.live == search::Live::OnEnter,
+            groups: groups.collect(),
+        })
     }
 
     /// Everything the page shows, as it stands now.
@@ -280,6 +365,18 @@ impl App {
             blackout: self.stage.blackout,
             off_plan: scene.is_some() && self.off_plan().is_some(),
             notes: self.standing(&timing),
+            bangs: self
+                .engine
+                .0
+                .searcher()
+                .bangs()
+                .into_iter()
+                .map(|bang| Bang {
+                    name: bang.sources.join(", "),
+                    bang: bang.bang,
+                })
+                .collect(),
+            search: self.found(),
         }
     }
 

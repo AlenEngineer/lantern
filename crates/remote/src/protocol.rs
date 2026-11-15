@@ -27,6 +27,27 @@ pub enum Command {
         /// The step's id, as in [`Step::id`].
         step: u64,
     },
+    /// Searches for something to show. The results come in the snapshot.
+    Search {
+        /// What was typed, bang and all: `juan 3 16`, `!yt himno 99`. Empty
+        /// ends the search.
+        text: String,
+        /// Whether the search was asked for outright, not just typed: a
+        /// source that is asked only on request (YouTube, images) waits
+        /// for this.
+        #[serde(default)]
+        enter: bool,
+    },
+    /// Puts a search result on stage.
+    Show {
+        /// The result's id, as in [`Hit::id`].
+        id: String,
+    },
+    /// Adds a search result to the plan, after the step it is at.
+    Add {
+        /// The result's id, as in [`Hit::id`].
+        id: String,
+    },
     /// Jumps in what is playing.
     Seek {
         /// Where to, in seconds from its start.
@@ -53,6 +74,55 @@ pub struct Snapshot {
     /// How the service stands, a few words each: "Escuela Sabática ·
     /// 4:10 / 30m", "4 min behind".
     pub notes: Vec<String>,
+    /// The bangs a search can start with, each for one kind of thing.
+    pub bangs: Vec<Bang>,
+    /// The search a phone asked for, while there is one.
+    pub search: Option<Found>,
+}
+
+/// A bang: `!b` asks the Bibles alone.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Bang {
+    /// Without its `!`.
+    pub bang: String,
+    /// What it searches, for its button.
+    pub name: String,
+}
+
+/// A search and what it found so far.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Found {
+    /// What was searched for, as the phone sent it.
+    pub text: String,
+    /// Whether sources are still answering.
+    pub busy: bool,
+    /// Whether the search waits to be asked for outright
+    /// ([`Command::Search`] with `enter`).
+    pub waiting: bool,
+    /// The results, by where they are from.
+    pub groups: Vec<Group>,
+}
+
+/// The results from one source.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Group {
+    /// The source's name.
+    pub name: String,
+    /// Why it couldn't answer, if it couldn't.
+    pub error: Option<String>,
+    /// What it found.
+    pub hits: Vec<Hit>,
+}
+
+/// One search result.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Hit {
+    /// What [`Command::Show`] and [`Command::Add`] take.
+    pub id: String,
+    /// Its title.
+    pub title: String,
+    /// A line under it.
+    pub facts: String,
 }
 
 /// The app's colours, as `#rrggbb`.
