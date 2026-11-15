@@ -78,6 +78,16 @@ impl Remote {
         })
     }
 
+    /// Whether a phone is showing the picture of the stage.
+    pub fn wants_picture(&self) -> bool {
+        self.server.picture_wanted()
+    }
+
+    /// Gives the phones a picture of the stage.
+    pub fn set_picture(&self, jpeg: Vec<u8>) {
+        self.server.set_picture(jpeg);
+    }
+
     /// Whether a phone has the page open.
     pub fn watched(&self) -> bool {
         self.server.watching() > 0
@@ -136,6 +146,29 @@ fn qr_svg(text: &str) -> Result<String, String> {
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {side} {side}\" shape-rendering=\"crispEdges\">\
          <rect width=\"{side}\" height=\"{side}\" fill=\"#ffffff\"/><path d=\"{squares}\" fill=\"#000000\"/></svg>"
     ))
+}
+
+/// The widest the picture of the stage is sent: enough for a phone held
+/// upright, and a few tens of kilobytes a second.
+const PICTURE_WIDTH: u32 = 640;
+
+/// A screenshot of the stage, `rgba` of `width` by `height`, as a small
+/// JPEG. Off the main thread: scaling and encoding take a moment.
+pub fn picture(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let shot = image::RgbaImage::from_raw(width, height, rgba.to_vec())
+        .ok_or("the screenshot is the wrong size")?;
+    let small = if width > PICTURE_WIDTH {
+        let scaled = (height as u64 * PICTURE_WIDTH as u64 / width as u64).max(1) as u32;
+        image::imageops::thumbnail(&shot, PICTURE_WIDTH, scaled)
+    } else {
+        shot
+    };
+    let rgb = image::DynamicImage::ImageRgba8(small).into_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 70)
+        .encode_image(&rgb)
+        .map_err(|err| err.to_string())?;
+    Ok(jpeg)
 }
 
 /// A step's id as the page knows it.
@@ -497,6 +530,22 @@ mod tests {
         let x: usize = first.split(' ').next().unwrap().parse().unwrap();
         assert!((4..side - 4).contains(&x), "{x}");
         assert!(svg.contains("fill=\"#ffffff\"") && svg.contains("fill=\"#000000\""));
+    }
+
+    #[test]
+    fn a_screenshot_becomes_a_small_jpeg() {
+        let (width, height) = (1920, 1080);
+        let rgba: Vec<u8> = (0..width * height)
+            .flat_map(|at| [(at % 255) as u8, 80, 160, 255])
+            .collect();
+        let jpeg = picture(&rgba, width, height).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8]), "a JPEG");
+        let read = image::load_from_memory(&jpeg).unwrap();
+        assert_eq!((read.width(), read.height()), (640, 360));
+        // One already small is left its size; a wrong size is an error.
+        let small = picture(&rgba[..320 * 180 * 4], 320, 180).unwrap();
+        assert_eq!(image::load_from_memory(&small).unwrap().width(), 320);
+        assert!(picture(&rgba[..100], 320, 180).is_err());
     }
 
     #[test]

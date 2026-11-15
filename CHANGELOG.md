@@ -119,6 +119,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   from a button for one kind of thing (`!b`, `!yt`, `!x` for text you
   type). Tap a result, then **Show now** or **Add to plan**. It is the
   phone's own search: nothing appears in the dashboard's box.
+- The phone remote shows the stage. The eye puts a picture of what the
+  audience sees above the title, new about once a second, video frames
+  included. Lantern makes the picture only while a phone is showing it.
 
 ### Fixed
 
