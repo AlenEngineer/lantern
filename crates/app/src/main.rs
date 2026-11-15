@@ -615,7 +615,7 @@ impl App {
                 return self.media.keep_more().map(Message::Loaded);
             }
             Message::Ended(scene) => {
-                self.engine.0.report(scene, MediaReport::Ended);
+                self.media.ended(scene, &self.engine.0);
                 // A step that goes on by itself has moved the plan.
                 return Task::batch([self.preload(), self.arrive()]);
             }

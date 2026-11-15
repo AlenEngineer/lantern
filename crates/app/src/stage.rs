@@ -252,9 +252,11 @@ const STREAM_VOLUME: &str = "lantern-volume";
 
 /// A player for a video straight from the net, paused and silent.
 ///
-/// A video's two streams are plain files over HTTPS, each decoded by its
-/// own branch of one pipeline, so they share a clock and stay together.
-/// Each reads through a ring buffer, which is what lets the player seek.
+/// A video's two streams are plain files over HTTPS. They play through a
+/// manifest the relay writes ([`open_indexed`]). Without one, each is
+/// decoded by its own branch of one pipeline, so they share a clock and
+/// stay together, and each reads through a ring buffer, which is what
+/// lets the player seek; there a jump walks the file to its place.
 ///
 /// A live video is its manifest, played by `playbin3` ([`open_live`]): its demuxer keeps
 /// picture and sound together, which two branches reading the two lists
@@ -264,6 +266,20 @@ fn open_stream(stream: &Stream) -> Result<Video, String> {
         Stream::Live(manifest) => {
             let uri = url::Url::parse(manifest).map_err(|err| format!("{manifest}: {err}"))?;
             return open_live(&uri);
+        }
+        Stream::Pair {
+            video,
+            audio,
+            seconds,
+        } => {
+            let files = vec![video.url.clone(), audio.url.clone()];
+            let Some(manifest) = crate::relay::manifest(video, audio, *seconds) else {
+                return open_stream(&Stream::Files(files));
+            };
+            return open_indexed(&manifest).or_else(|err| {
+                crate::log(format!("stage: the manifest wouldn't play ({err})"));
+                open_stream(&Stream::Files(files))
+            });
         }
         Stream::Files(urls) => urls,
     };
@@ -303,6 +319,18 @@ fn open_stream(stream: &Stream) -> Result<Video, String> {
     player
         .seek(Duration::ZERO, true)
         .map_err(|err| fail(&err))?;
+    Ok(player)
+}
+
+/// A player for a video's two files through the relay's manifest, at its
+/// start. `playbin3` plays it: its demuxer reads each file's index, so a
+/// jump goes straight to its place.
+fn open_indexed(manifest: &str) -> Result<Video, String> {
+    let uri = url::Url::parse(manifest).map_err(|err| format!("{manifest}: {err}"))?;
+    let mut player = open_playbin("playbin3", &uri, "", true)?;
+    player
+        .seek(Duration::ZERO, true)
+        .map_err(|err| format!("the stream: {err}"))?;
     Ok(player)
 }
 
@@ -354,6 +382,17 @@ pub fn position(player: &Video) -> Option<Duration> {
     pipeline
         .query_position::<gst::ClockTime>()
         .map(|at| Duration::from_nanos(at.nseconds()))
+}
+
+/// How far from its length a stream may say it ended and be believed:
+/// the length `yt-dlp` gives is to the second, and the last frame isn't
+/// the last instant.
+const END_MARGIN: Duration = Duration::from_secs(5);
+
+/// Whether a video of `length` that says it ended `at` stopped short. One
+/// with no length is live, and ends when it ends.
+fn stopped_short(at: Duration, length: Duration) -> bool {
+    !length.is_zero() && at + END_MARGIN < length
 }
 
 /// What the operator reads when a playing video stops on `why`.
@@ -693,6 +732,38 @@ impl Stage {
         crate::log(format!("stage: {scene} failed: {reason}"));
         engine.report(scene, MediaReport::Failed { reason });
         self.program = Program::Bare;
+    }
+
+    /// The program's player says it reached its end. A stream that says
+    /// so well short of its length didn't: its network went away, and the
+    /// player that takes a manifest ends there without an error. That is
+    /// a failure ([`broke`](Stage::broke)), not an end.
+    pub fn ended(&mut self, scene: SceneId, engine: &Engine) {
+        let short = match &self.program {
+            Program::Showing {
+                scene: shown,
+                content:
+                    Content::Video {
+                        player,
+                        streamed: true,
+                    },
+            } if *shown == scene => position(player)
+                .filter(|at| stopped_short(*at, player.duration()))
+                .map(|at| {
+                    format!(
+                        "it ended at {} of {}",
+                        crate::length::clock(at),
+                        crate::length::clock(player.duration())
+                    )
+                }),
+            _ => None,
+        };
+        match short {
+            Some(why) => self.broke(scene, &why, engine),
+            None => {
+                engine.report(scene, MediaReport::Ended);
+            }
+        }
     }
 
     /// Plays or pauses the player to match the engine.
@@ -1073,6 +1144,11 @@ mod tests {
             broke_reason(false, "Could not decode stream."),
             "the video stopped playing (Could not decode stream)"
         );
+        let secs = Duration::from_secs;
+        assert!(stopped_short(secs(50), secs(634)), "the network went");
+        assert!(!stopped_short(secs(633), secs(634)), "its real end");
+        assert!(!stopped_short(secs(8976), secs(8977)));
+        assert!(!stopped_short(secs(3600), Duration::ZERO), "live");
         // No stream to play is an error, not a panic.
         assert!(open_stream(&Stream::Files(Vec::new())).is_err());
     }

@@ -242,6 +242,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A video streamed from YouTube is heard. The sound server remembers when
   Lantern's sound was last muted, which a video loading ahead does to
   itself, and a stream could start under that mute and play in silence.
+- A jump in a long video streamed from YouTube lands in a second or two.
+  An hour's jump in a two-hour video left the picture still for over a
+  minute, long enough to look frozen. The stream's files each begin with
+  an index, and Lantern now plays them in a way that uses it. A stream
+  whose network goes away is still reported as failed, not ended.
 
 ## [0.7.0] - 2026-11-13
 

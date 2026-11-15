@@ -8,6 +8,13 @@
 //! ([`through`]), and each of its requests is answered by asking YouTube
 //! for one piece after another.
 //!
+//! It also writes the player a manifest for a video's two files
+//! ([`manifest`]). Each file starts with an index of where every few
+//! seconds of it begin; a player handed the files alone doesn't read it,
+//! and finds a place by walking the file a stretch at a time, a minute of
+//! frozen picture for a jump of an hour. The manifest says where the index
+//! is, and the player that takes one jumps straight there.
+//!
 //! It listens on the loopback address alone, on a port the system picks,
 //! and serves only the addresses it was given, each under a name of its
 //! own.
@@ -55,6 +62,11 @@ const REFUSED_WAITS: &[u64] = &[300, 500, 700, 1000, 1500, 2500, 3000];
 /// A local address that serves `url` in pieces, or `None` when the relay
 /// can't listen; the player then reads `url` itself, slower.
 pub fn through(url: &str) -> Option<String> {
+    relay().map(|relay| relay.serve(url))
+}
+
+/// The app's relay, started the first time it is needed.
+fn relay() -> Option<&'static Arc<Relay>> {
     static RELAY: OnceLock<Option<Arc<Relay>>> = OnceLock::new();
     let relay = RELAY.get_or_init(|| match Relay::start(PIECE, REFUSED_WAITS) {
         Ok(relay) => Some(relay),
@@ -65,7 +77,43 @@ pub fn through(url: &str) -> Option<String> {
             None
         }
     });
-    relay.as_ref().map(|relay| relay.serve(url))
+    relay.as_ref()
+}
+
+/// A manifest for a video kept as two files, its picture and its sound,
+/// that tells the player where each file's index is. `None` when the
+/// relay can't listen or a file isn't laid out as expected; the files
+/// then play without one.
+pub fn manifest(video: &Track, audio: &Track, seconds: f64) -> Option<String> {
+    let relay = relay()?;
+    match relay.manifest(video, audio, seconds) {
+        Ok(address) => Some(address),
+        Err(err) => {
+            crate::log(format!(
+                "relay: no manifest ({err}), the files play without"
+            ));
+            None
+        }
+    }
+}
+
+/// One of a video's two files, as `yt-dlp` describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Track {
+    pub url: String,
+    /// As in `avc1.4D401F` or `mp4a.40.2`.
+    pub codec: String,
+    /// Its bitrate, in bits a second.
+    pub bits: u64,
+}
+
+/// What the relay serves under a name.
+#[derive(Clone)]
+enum Served {
+    /// A file at YouTube, at this address.
+    File(String),
+    /// A manifest, which is this text.
+    Manifest(String),
 }
 
 struct Relay {
@@ -77,7 +125,7 @@ struct Relay {
     /// The addresses served, by the name each is served under, oldest
     /// first. An address is replaced by where YouTube redirected it, so
     /// the redirect is followed once and not for every piece.
-    served: Mutex<VecDeque<(String, String)>>,
+    served: Mutex<VecDeque<(String, Served)>>,
 }
 
 impl Relay {
@@ -110,31 +158,91 @@ impl Relay {
 
     /// The local address `url` is served at from now on.
     fn serve(&self, url: &str) -> String {
+        self.serve_as(Served::File(url.to_string()), "")
+    }
+
+    /// The local address `what` is served at from now on, its name ending
+    /// in `ending`.
+    fn serve_as(&self, what: Served, ending: &str) -> String {
         let mut served = self.served.lock().unwrap_or_else(PoisonError::into_inner);
         let name = format!(
-            "{:016x}{:x}",
+            "{:016x}{:x}{ending}",
             RandomState::new().build_hasher().finish(),
             served.len()
         );
         if served.len() == REMEMBERED {
             served.pop_front();
         }
-        served.push_back((name.clone(), url.to_string()));
+        served.push_back((name.clone(), what));
         format!("http://{}/{name}", self.at)
     }
 
-    fn url_of(&self, name: &str) -> Option<String> {
+    fn served_as(&self, name: &str) -> Option<Served> {
         let served = self.served.lock().unwrap_or_else(PoisonError::into_inner);
         let found = served.iter().find(|(served, _)| served == name);
-        found.map(|(_, url)| url.clone())
+        found.map(|(_, what)| what.clone())
     }
 
-    /// Remembers that what is served as `name` is at `url` now.
+    /// Remembers that the file served as `name` is at `url` now.
     fn moved(&self, name: &str, url: &str) {
         let mut served = self.served.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, old)) = served.iter_mut().find(|(served, _)| served == name) {
+        if let Some((_, Served::File(old))) = served.iter_mut().find(|(served, _)| served == name) {
             *old = url.to_string();
         }
+    }
+
+    fn upstream(&self, url: &str, bounded: bool) -> Upstream<'_> {
+        Upstream {
+            agent: &self.agent,
+            url: url.to_string(),
+            most: self.piece,
+            asked: 0,
+            bounded,
+            refused_waits: self.refused_waits,
+        }
+    }
+
+    /// Serves both files, reads where each keeps its index, and serves a
+    /// manifest that says so. Returns the manifest's address.
+    fn manifest(&self, video: &Track, audio: &Track, seconds: f64) -> Result<String, String> {
+        let mut sets = String::new();
+        for (kind, track) in [("video", video), ("audio", audio)] {
+            let address = self.serve(&track.url);
+            let name = address.rsplit('/').next().unwrap_or_default();
+            // The start of the file: its header, then its index.
+            let mut upstream = self.upstream(&track.url, true);
+            let mut head = Vec::new();
+            upstream
+                .first_piece(0, Some(HEAD - 1))
+                .map_err(|status| format!("YouTube answered {status}"))?
+                .body
+                .take()
+                .ok_or("no body")?
+                .read_to_end(&mut head)
+                .map_err(|err| err.to_string())?;
+            self.moved(name, &upstream.url);
+            let layout = Layout::of(&head).ok_or_else(|| format!("the {kind} has no index"))?;
+            sets.push_str(&format!(
+                "<AdaptationSet contentType=\"{kind}\" mimeType=\"{kind}/mp4\" subsegmentAlignment=\"true\">\
+                 <Representation id=\"{kind}\" bandwidth=\"{}\" codecs=\"{}\">\
+                 <BaseURL>{address}</BaseURL>\
+                 <SegmentBase indexRange=\"{}-{}\"><Initialization range=\"0-{}\"/></SegmentBase>\
+                 </Representation></AdaptationSet>",
+                track.bits.max(1),
+                xml(&track.codec),
+                layout.index.0,
+                layout.index.1,
+                layout.header_end,
+            ));
+        }
+        let text = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\
+             <MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\" \
+             mediaPresentationDuration=\"PT{seconds:.3}S\" minBufferTime=\"PT2S\" \
+             profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\">\
+             <Period>{sets}</Period></MPD>"
+        );
+        Ok(self.serve_as(Served::Manifest(text), ".mpd"))
     }
 
     /// Answers one request of the player's: the file from where it asked
@@ -144,17 +252,24 @@ impl Relay {
         let Some(asked) = Asked::read(&player) else {
             return;
         };
-        let Some(url) = self.url_of(&asked.name) else {
-            let _ = refuse(&mut player, StatusCode::NOT_FOUND);
-            return;
+        let url = match self.served_as(&asked.name) {
+            Some(Served::File(url)) => url,
+            Some(Served::Manifest(text)) => {
+                let _ = player.write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/dash+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                        text.len()
+                    )
+                    .as_bytes(),
+                );
+                return;
+            }
+            None => {
+                let _ = refuse(&mut player, StatusCode::NOT_FOUND);
+                return;
+            }
         };
-        let mut upstream = Upstream {
-            agent: &self.agent,
-            url: url.clone(),
-            most: self.piece,
-            asked: 0,
-            refused_waits: self.refused_waits,
-        };
+        let mut upstream = self.upstream(&url, asked.to.is_some());
         let mut at = asked.from;
         let mut first = match upstream.first_piece(at, asked.to) {
             Ok(first) => first,
@@ -238,6 +353,57 @@ impl Relay {
     }
 }
 
+/// How much of a file's start is read to find its index: the header and
+/// the index's own heading come well within it.
+const HEAD: u64 = 64 * 1024;
+
+/// Where a file keeps what a player needs to jump in it. A video file
+/// from YouTube opens with its type (`ftyp`), its header (`moov`) and
+/// then its index (`sidx`), one box after another.
+#[derive(Debug, PartialEq, Eq)]
+struct Layout {
+    /// The last byte of the header.
+    header_end: u64,
+    /// The index's first and last byte.
+    index: (u64, u64),
+}
+
+impl Layout {
+    /// Reads the boxes at the start of a file: each is its length in
+    /// four bytes, then its name in four. The index needn't be whole in
+    /// `head`, only its heading.
+    fn of(head: &[u8]) -> Option<Layout> {
+        let mut at = 0usize;
+        let mut header_end = None;
+        loop {
+            let heading = head.get(at..at + 8)?;
+            let size = u32::from_be_bytes(heading[..4].try_into().ok()?) as usize;
+            if size < 8 {
+                return None;
+            }
+            match (&heading[4..], header_end) {
+                (b"moov", _) => header_end = Some((at + size - 1) as u64),
+                (b"sidx", Some(header_end)) => {
+                    return Some(Layout {
+                        header_end,
+                        index: (at as u64, (at + size - 1) as u64),
+                    });
+                }
+                (b"moof" | b"mdat", _) => return None,
+                _ => {}
+            }
+            at += size;
+        }
+    }
+}
+
+/// `text` with what XML reserves written out.
+fn xml(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('"', "&quot;")
+}
+
 /// What the player asked for.
 struct Asked {
     name: String,
@@ -308,6 +474,10 @@ struct Upstream<'a> {
     most: u64,
     /// How many pieces were asked for so far.
     asked: usize,
+    /// The player asked for a stretch with an end, as it does with a
+    /// manifest: it wants all of it, so it is asked for in one piece when
+    /// it fits in one, not started small.
+    bounded: bool,
     refused_waits: &'static [u64],
 }
 
@@ -347,9 +517,10 @@ impl Upstream<'_> {
     /// Asks for the piece that starts at `from` and goes no further than
     /// `to`. `Err` is the status to pass on to the player.
     fn piece_from(&mut self, from: u64, to: Option<u64>) -> Result<Piece, StatusCode> {
-        let size = FIRST_PIECES
-            .get(self.asked)
-            .map_or(self.most, |first| self.most.min(*first));
+        let size = match FIRST_PIECES.get(self.asked) {
+            Some(first) if !self.bounded => self.most.min(*first),
+            _ => self.most,
+        };
         self.asked += 1;
         let end = from + size - 1;
         let end = to.map_or(end, |to| to.min(end));
@@ -504,6 +675,11 @@ mod tests {
         (0..10_000u32).map(|n| (n % 251) as u8).collect()
     }
 
+    /// [`file`], long enough to read a head from.
+    fn file_bytes() -> Vec<u8> {
+        (0..100_000u32).map(|n| (n % 251) as u8).collect()
+    }
+
     /// What the relay answers to a request from `from` on, or to one
     /// without a range.
     fn get(
@@ -611,6 +787,103 @@ mod tests {
             get(&address, Some(0)),
             Err(ureq::Error::StatusCode(403))
         ));
+    }
+
+    /// The start of a file as YouTube lays it out: a type, a header of
+    /// `header` bytes, an index of `index` bytes, then the video itself.
+    fn laid_out(header: u32, index: u32) -> Vec<u8> {
+        let mut file = Vec::new();
+        for (name, size) in [
+            (b"ftyp", 24),
+            (b"moov", header),
+            (b"sidx", index),
+            (b"moof", 100),
+        ] {
+            file.extend(size.to_be_bytes());
+            file.extend(name);
+            file.resize(file.len() + size as usize - 8, 7);
+        }
+        file.resize(200_000, 9);
+        file
+    }
+
+    #[test]
+    fn the_index_is_found_after_the_header() {
+        assert_eq!(
+            Layout::of(&laid_out(700, 3000)),
+            Some(Layout {
+                header_end: 723,
+                index: (724, 3723)
+            })
+        );
+        // The index's heading is enough: the rest of it may come later.
+        assert!(Layout::of(&laid_out(700, 3000)[..740]).is_some());
+        assert_eq!(Layout::of(&laid_out(700, 3000)[..726]), None);
+        // A file with no index before its video, or that isn't boxes.
+        let mut plain = laid_out(700, 3000);
+        plain[728..732].copy_from_slice(b"moof");
+        assert_eq!(Layout::of(&plain), None);
+        assert_eq!(Layout::of(&[0; 64]), None);
+        assert_eq!(Layout::of(&[]), None);
+    }
+
+    #[test]
+    fn a_manifest_says_where_each_files_index_is() {
+        let quirks = Arc::new(Quirks::default());
+        let base = youtube(laid_out(700, 3000), Arc::clone(&quirks));
+        let relay = Relay::start(PIECE, &[10, 10]).unwrap();
+        let track = |codec: &str| Track {
+            url: format!("{base}/file"),
+            codec: codec.into(),
+            bits: 1_101_000,
+        };
+        let address = relay
+            .manifest(&track("avc1.4D401F"), &track("mp4a.40.2"), 634.5)
+            .unwrap();
+        assert!(address.ends_with(".mpd"), "{address}");
+
+        let mut response = ureq::get(&address).call().unwrap();
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/dash+xml"
+        );
+        let text = response.body_mut().read_to_string().unwrap();
+        assert!(
+            text.contains("mediaPresentationDuration=\"PT634.500S\""),
+            "{text}"
+        );
+        assert_eq!(text.matches("indexRange=\"724-3723\"").count(), 2, "{text}");
+        assert_eq!(text.matches("<Initialization range=\"0-723\"/>").count(), 2);
+        assert!(text.contains("codecs=\"avc1.4D401F\"") && text.contains("codecs=\"mp4a.40.2\""));
+        assert!(text.contains("bandwidth=\"1101000\""));
+
+        // Each file is at an address of the relay's own, which answers a
+        // stretch with an end in one piece, not started small.
+        let file = text
+            .split("<BaseURL>")
+            .nth(1)
+            .unwrap()
+            .split('<')
+            .next()
+            .unwrap();
+        assert!(file.starts_with(&format!("http://{}/", relay.at)), "{file}");
+        quirks.asked.lock().unwrap().clear();
+        let mut response = ureq::get(file)
+            .header("Range", "bytes=1000-150999")
+            .call()
+            .unwrap();
+        let body = response.body_mut().read_to_vec().unwrap();
+        assert!(body == laid_out(700, 3000)[1000..151_000]);
+        assert_eq!(*quirks.asked.lock().unwrap(), [(1000, 150_999)]);
+
+        // A file laid out otherwise has no manifest.
+        let other = youtube(file_bytes(), Arc::new(Quirks::default()));
+        let plain = Track {
+            url: format!("{other}/file"),
+            codec: "avc1".into(),
+            bits: 1,
+        };
+        assert!(relay.manifest(&plain, &plain, 10.0).is_err());
     }
 
     #[test]
