@@ -88,6 +88,11 @@ impl Remote {
         self.server.set_picture(jpeg);
     }
 
+    /// How many other machines have reached the remote since it started.
+    pub fn reached(&self) -> usize {
+        self.server.reached()
+    }
+
     /// Whether a phone has the page open.
     pub fn watched(&self) -> bool {
         self.server.watching() > 0

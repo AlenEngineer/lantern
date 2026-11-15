@@ -23,8 +23,9 @@
 mod http;
 mod protocol;
 
-use std::io::{self, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::collections::HashSet;
+use std::io::{self, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -44,6 +45,14 @@ const HEARTBEAT: Duration = Duration::from_secs(15);
 /// How long after a phone last asked for the picture the app goes on
 /// making it. A phone showing it asks about once a second.
 const PICTURE_WANTED: Duration = Duration::from_secs(4);
+
+/// How long a connection may wait before it asks for anything. A phone's
+/// browser opens connections ahead of time and uses them later; closed
+/// under it, it gives up on the page after a few ("too many retries").
+const IDLE: Duration = Duration::from_secs(120);
+
+/// How long a request may take to arrive once it has started.
+const REQUEST: Duration = Duration::from_secs(10);
 
 /// The remote, listening. Dropping it stops it.
 pub struct Server {
@@ -72,6 +81,8 @@ struct State {
     picture: Option<Arc<Vec<u8>>>,
     /// When a phone last asked for it.
     picture_asked: Option<Instant>,
+    /// The other machines that asked for anything, by address.
+    reached: HashSet<IpAddr>,
 }
 
 impl Server {
@@ -135,6 +146,13 @@ impl Server {
         asked.is_some_and(|asked| asked.elapsed() < PICTURE_WANTED)
     }
 
+    /// How many other machines have asked this one for anything since it
+    /// started. None, when a phone can't open the page, means the network
+    /// keeps the phone from reaching this machine at all.
+    pub fn reached(&self) -> usize {
+        self.shared.state().reached.len()
+    }
+
     /// How many phones are listening. With none, there is no one to
     /// publish for.
     pub fn watching(&self) -> usize {
@@ -158,17 +176,36 @@ impl Shared {
     }
 
     fn answer(&self, mut phone: TcpStream) {
-        let _ = phone.set_read_timeout(Some(Duration::from_secs(10)));
+        // Its first byte may be long in coming; the rest follows at once.
+        let _ = phone.set_read_timeout(Some(IDLE));
+        if !matches!(phone.peek(&mut [0]), Ok(1)) {
+            return;
+        }
+        let _ = phone.set_read_timeout(Some(REQUEST));
         let Some(request) = http::Request::read(&phone) else {
+            // Not a request this speaks, such as a browser trying HTTPS
+            // first: said plainly, so it goes on to plain HTTP.
+            let _ = http::respond(
+                &mut phone,
+                "400 Bad Request",
+                "text/plain",
+                "plain HTTP only",
+            );
+            hang_up(phone);
             return;
         };
+        if let Ok(peer) = phone.peer_addr()
+            && !peer.ip().is_loopback()
+        {
+            self.state().reached.insert(peer.ip());
+        }
         let allowed = request.query("t") == Some(self.token.as_str());
         let _ = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => http::respond(&mut phone, "200 OK", "text/html; charset=utf-8", PAGE),
             (_, "/events" | "/do" | "/stage.jpg") if !allowed => {
                 http::respond(&mut phone, "403 Forbidden", "text/plain", "wrong token")
             }
-            ("GET", "/events") => self.events(phone),
+            ("GET", "/events") => self.events(&mut phone),
             ("GET", "/stage.jpg") => {
                 let picture = {
                     let mut state = self.state();
@@ -195,11 +232,12 @@ impl Shared {
             },
             _ => http::respond(&mut phone, "404 Not Found", "text/plain", "nothing here"),
         };
+        hang_up(phone);
     }
 
     /// Sends the snapshot now and again each time it changes, for as long
     /// as the phone stays.
-    fn events(&self, mut phone: TcpStream) -> io::Result<()> {
+    fn events(&self, phone: &mut TcpStream) -> io::Result<()> {
         phone.write_all(
             b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         )?;
@@ -251,6 +289,17 @@ impl Shared {
         }
         sent
     }
+}
+
+/// Ends a connection so that the answer arrives: says it is done sending,
+/// then waits a moment for the other end to finish. Closed outright with
+/// something of the phone's still unread, the answer can be thrown away
+/// with it.
+fn hang_up(mut phone: TcpStream) {
+    let _ = phone.shutdown(Shutdown::Write);
+    let _ = phone.set_read_timeout(Some(Duration::from_millis(500)));
+    let mut rest = [0; 1024];
+    while matches!(phone.read(&mut rest), Ok(read) if read > 0) {}
 }
 
 #[cfg(test)]
@@ -377,6 +426,34 @@ mod tests {
 
         let refused = ask(&server, "GET /stage.jpg HTTP/1.1\r\n\r\n");
         assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
+    }
+
+    #[test]
+    fn a_connection_opened_early_is_answered_when_it_asks() {
+        let (server, _commands) = server();
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        // Longer than a request may take, once started.
+        std::thread::sleep(Duration::from_millis(300));
+        stream.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer}");
+        assert!(answer.ends_with("</html>\n"), "the whole page arrived");
+    }
+
+    #[test]
+    fn what_isnt_http_is_told_so() {
+        let (server, _commands) = server();
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        // The start of a TLS greeting, as a browser trying HTTPS sends.
+        stream
+            .write_all(&[0x16, 0x03, 0x01, 0x02, 0x00, 0x01, 0xff, 0xfe, 0xfd, b'\n'])
+            .unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).unwrap();
+        assert!(answer.starts_with(b"HTTP/1.1 400"), "{answer:?}");
+        // Requests from this machine aren't a phone reaching it.
+        assert_eq!(server.reached(), 0);
     }
 
     #[test]
