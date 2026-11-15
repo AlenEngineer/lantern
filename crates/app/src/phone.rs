@@ -41,6 +41,9 @@ pub struct Remote {
     pub code: svg::Handle,
     /// What phones sent, until the app's subscription takes it.
     pub inbox: Arc<Inbox>,
+    token: String,
+    /// This machine's name in [`address`](Remote::address).
+    host: String,
 }
 
 /// The commands phones sent, waiting for the app.
@@ -63,19 +66,34 @@ impl Remote {
             let _ = sent.unbounded_send(command);
         })
         .map_err(|err| format!("port {port}: {err}"))?;
-        let host = lan_address().map_or_else(|| "localhost".to_string(), |ip| ip.to_string());
-        let address = format!("http://{host}:{}/?t={token}", server.port());
-        let code = svg::Handle::from_memory(qr_svg(&address)?.into_bytes());
-        log(format!(
-            "remote: listening at http://{host}:{}",
-            server.port()
-        ));
-        Ok(Remote {
+        let mut remote = Remote {
             server,
-            address,
-            code,
+            address: String::new(),
+            code: svg::Handle::from_memory(Vec::new()),
             inbox: Arc::new(Inbox(Mutex::new(Some(received)))),
-        })
+            token,
+            host: String::new(),
+        };
+        remote.follow_network()?;
+        Ok(remote)
+    }
+
+    /// Writes the address and its code again if this machine's address
+    /// on the network changed: it joined another Wi-Fi, or a hotspot.
+    /// The server listens on every address, so only what the phone is
+    /// told changes.
+    pub fn follow_network(&mut self) -> Result<(), String> {
+        let host = lan_address().map_or_else(|| "localhost".to_string(), |ip| ip.to_string());
+        if host == self.host {
+            return Ok(());
+        }
+        let port = self.server.port();
+        let address = format!("http://{host}:{port}/?t={}", self.token);
+        self.code = svg::Handle::from_memory(qr_svg(&address)?.into_bytes());
+        self.address = address;
+        log(format!("remote: listening at http://{host}:{port}"));
+        self.host = host;
+        Ok(())
     }
 
     /// Whether a phone is showing the picture of the stage.
@@ -86,6 +104,11 @@ impl Remote {
     /// Gives the phones a picture of the stage.
     pub fn set_picture(&self, jpeg: Vec<u8>) {
         self.server.set_picture(jpeg);
+    }
+
+    /// How many other machines have reached the remote since it started.
+    pub fn reached(&self) -> usize {
+        self.server.reached()
     }
 
     /// Whether a phone has the page open.
@@ -200,7 +223,17 @@ impl App {
             self.remote_failed = None;
             return;
         }
-        if self.remote.is_some() || self.remote_failed.is_some() {
+        if let Some(remote) = &mut self.remote {
+            // While the settings show the address, it is the one this
+            // machine has now.
+            if self.settings.is_some()
+                && let Err(err) = remote.follow_network()
+            {
+                log(format!("remote: {err}"));
+            }
+            return;
+        }
+        if self.remote_failed.is_some() {
             return;
         }
         let port = self

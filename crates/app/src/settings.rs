@@ -1537,6 +1537,18 @@ impl App {
         .spacing(8);
         match (&self.remote, &self.remote_failed) {
             (Some(remote), _) => {
+                // Whether a phone got through, which tells a problem of
+                // the network's from one of Lantern's.
+                let (reach, reach_colour) = if remote.watched() {
+                    ("A phone is connected.".to_string(), p.primary)
+                } else if remote.reached() > 0 {
+                    (
+                        "A phone has reached this computer, and isn't connected now.".to_string(),
+                        p.on_surface_variant,
+                    )
+                } else {
+                    ("No phone has reached this computer yet. If the page won't open on the phone, the network is keeping the two apart: a guest Wi-Fi, a VPN on the phone, or a router that isolates devices. This computer's hotspot gets around it.".to_string(), p.on_surface_variant)
+                };
                 let code = iced::widget::svg(remote.code.clone())
                     .width(QR_SIDE)
                     .height(QR_SIDE);
@@ -1549,6 +1561,7 @@ impl App {
                                 text("Scan this with the phone's camera.").size(BODY).font(MEDIUM),
                                 note("The phone and this computer must be on the same Wi-Fi. Anyone with this code can run the stage, so show it only to who should.".into()),
                                 text(remote.address.clone()).size(META).color(p.on_surface),
+                                text(reach).size(META).color(reach_colour),
                                 note("Save to keep the remote on the next time Lantern starts.".into()),
                             ]
                             .spacing(8)

@@ -266,6 +266,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
   result on the way. A result has to stay lined up for a moment before
   Lantern fetches it; each one passed used to start a `yt-dlp` of several
   seconds that nothing stopped.
+- The phone remote answers a browser that connects first and asks later.
+  Phone browsers open connections ahead of time; Lantern closed one that
+  waited ten seconds, and the browser gave up on the page ("too many
+  retries"). Settings › Phone now also says whether a phone has reached
+  the computer, which tells a problem of the network's from one of
+  Lantern's.
+- The phone remote's address and code follow the network. After the
+  computer joined another Wi-Fi or a hotspot, Settings › Phone went on
+  showing the address it had when the remote started.
 
 ## [0.7.0] - 2026-11-13
 
