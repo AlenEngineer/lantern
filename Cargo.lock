@@ -2341,6 +2341,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lantern-remote"
+version = "0.7.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lantern-resource"
 version = "0.7.0"
 dependencies = [

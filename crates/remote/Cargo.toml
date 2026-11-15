@@ -1,0 +1,15 @@
+[package]
+name = "lantern-remote"
+description = "A remote for lantern on a phone: a small web page served on the local network, the commands it sends and the state it is shown."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
