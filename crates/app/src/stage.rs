@@ -219,8 +219,31 @@ fn streamed(video: &YoutubeVideo) -> Result<Content, String> {
 fn unmute(player: &mut Video) {
     let pipeline = player.pipeline();
     match pipeline.by_name(STREAM_VOLUME) {
-        Some(volume) => volume.set_property("mute", false),
+        Some(volume) => {
+            volume.set_property("mute", false);
+            unmute_sinks(&pipeline);
+        }
         None => player.set_muted(false),
+    }
+}
+
+/// Opens the mute of the sound output itself, under a stream's pipeline.
+///
+/// A `playbin` mutes through its output, which the sound server sees as
+/// Lantern's stream being muted, and remembers for the next stream
+/// Lantern opens. A stream's pipeline never touched that mute, so it
+/// could start with its output muted by a preload of some other video
+/// and play in silence.
+fn unmute_sinks(pipeline: &gst::Pipeline) {
+    let mut elements = pipeline.iterate_recurse();
+    while let Ok(Some(element)) = elements.next() {
+        let is_sink = element.element_flags().contains(gst::ElementFlags::SINK);
+        let has_mute = element
+            .find_property("mute")
+            .is_some_and(|mute| mute.value_type() == bool::static_type());
+        if is_sink && has_mute {
+            element.set_property("mute", false);
+        }
     }
 }
 
