@@ -225,6 +225,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The time under a video stays where you dragged it while the video gets
   there. It used to fall to 0:00 until the picture came back, which on a
   stream is several seconds.
+- Jumping around in a video streamed from YouTube is quick: about a second
+  for a short jump and a few for a long one, where a jump of some minutes
+  took up to twenty. Lantern now reads the stream in pieces, the way
+  `yt-dlp` downloads, which YouTube doesn't slow down.
 
 ## [0.7.0] - 2026-11-13
 

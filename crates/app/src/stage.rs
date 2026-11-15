@@ -226,7 +226,13 @@ const STREAM_VOLUME: &str = "lantern-volume";
 /// branch of one pipeline, so they share a clock and stay together. Each
 /// reads through a ring buffer, which is what lets the player seek.
 fn open_stream(urls: &[String]) -> Result<Video, String> {
-    let (video, audio) = match urls {
+    // Read through the relay, which asks YouTube for a piece at a time:
+    // read in one go, YouTube slows a file to twice the speed it plays.
+    let urls: Vec<String> = urls
+        .iter()
+        .map(|url| crate::relay::through(url).unwrap_or_else(|| url.clone()))
+        .collect();
+    let (video, audio) = match urls.as_slice() {
         [both] => {
             let uri = url::Url::parse(both).map_err(|err| format!("{both}: {err}"))?;
             return open_video(&uri);
