@@ -438,7 +438,11 @@ mod tests {
         let mut answer = String::new();
         stream.read_to_string(&mut answer).unwrap();
         assert!(answer.starts_with("HTTP/1.1 200 OK"), "{answer}");
-        assert!(answer.ends_with("</html>\n"), "the whole page arrived");
+        // Whatever line endings the page was checked out with.
+        assert!(
+            answer.trim_end().ends_with("</html>"),
+            "the whole page arrived"
+        );
     }
 
     #[test]
