@@ -622,8 +622,11 @@ impl App {
                 self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
-                if let Some((scene, video)) = self.media.video() {
-                    let position = video.position();
+                // Nothing while the player is seeking: the time stays where
+                // the seek put it.
+                if let Some((scene, video)) = self.media.video()
+                    && let Some(position) = stage::position(video)
+                {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
             }

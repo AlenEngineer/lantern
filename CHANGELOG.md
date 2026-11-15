@@ -222,6 +222,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   used to look like a video that had reached its end, and a step set to go
   on by itself moved on; now the stage reports it failed, with the reason,
   and the plan stays where it is.
+- The time under a video stays where you dragged it while the video gets
+  there. It used to fall to 0:00 until the picture came back, which on a
+  stream is several seconds.
 
 ## [0.7.0] - 2026-11-13
 
