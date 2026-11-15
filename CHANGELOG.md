@@ -272,6 +272,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   retries"). Settings › Phone now also says whether a phone has reached
   the computer, which tells a problem of the network's from one of
   Lantern's.
+- The phone remote's address and code follow the network. After the
+  computer joined another Wi-Fi or a hotspot, Settings › Phone went on
+  showing the address it had when the remote started.
 
 ## [0.7.0] - 2026-11-13
 
