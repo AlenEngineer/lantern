@@ -1282,11 +1282,16 @@ impl App {
             }
             _ => Space::new().width(Fill).into(),
         };
-        let times = format!(
-            "{} / {}",
-            length::clock(Duration::from_secs_f64(position)),
-            timed.duration.map_or("?".into(), length::clock)
-        );
+        // Only a live video has no length, and its position is the time
+        // it has been live, which says nothing to who is showing it.
+        let times = match timed.duration {
+            Some(duration) => format!(
+                "{} / {}",
+                length::clock(Duration::from_secs_f64(position)),
+                length::clock(duration)
+            ),
+            None => "live".to_string(),
+        };
         row![
             play,
             timeline,

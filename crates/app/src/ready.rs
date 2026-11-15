@@ -51,7 +51,8 @@ pub fn check(
             }
             Ok(Needs::File(_)) => {}
             Ok(Needs::Youtube(video)) => match download(&video) {
-                Some(Download::Ready(_)) => {}
+                // A live video plays as it comes: nothing to wait for.
+                Some(Download::Ready(_) | Download::Live) => {}
                 Some(Download::Failed(why)) => {
                     issues.push(issue(Level::Problem, format!("download failed: {why}")))
                 }

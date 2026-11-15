@@ -31,7 +31,7 @@ use lantern_engine::{
     Engine, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId, StageState, Timed,
 };
 
-use crate::youtube::{Downloads, YoutubeVideo};
+use crate::youtube::{Download, Downloads, Stream, YoutubeVideo};
 
 /// What the stage has loaded for one resource.
 pub enum Content {
@@ -181,29 +181,37 @@ impl Loader {
                     return open_file(&path);
                 }
                 if stream {
-                    let streamed =
-                        crate::youtube::stream_urls(video).and_then(|urls| open_stream(&urls));
-                    match streamed {
-                        Ok(player) => {
-                            crate::log(format!("stage: streaming {}", video.id));
-                            return Ok(Content::Video {
-                                player,
-                                streamed: true,
-                            });
-                        }
+                    match streamed(video) {
+                        Ok(content) => return Ok(content),
                         Err(err) => crate::log(format!(
                             "stage: can't stream {} ({err}), downloading it",
                             video.id
                         )),
                     }
                 }
-                open_file(&downloads.ready(video)?)
+                match downloads.ready(video) {
+                    Ok(path) => open_file(&path),
+                    // A live video has nothing to download: it plays as
+                    // it comes, in a plan too.
+                    Err(_) if downloads.state(&video.id) == Some(Download::Live) => streamed(video),
+                    Err(reason) => Err(reason),
+                }
             }
             Loader::Pdf(path) => {
                 render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
             }
         }
     }
+}
+
+/// A player for `video` straight from YouTube.
+fn streamed(video: &YoutubeVideo) -> Result<Content, String> {
+    let player = crate::youtube::stream(video).and_then(|stream| open_stream(&stream))?;
+    crate::log(format!("stage: streaming {}", video.id));
+    Ok(Content::Video {
+        player,
+        streamed: true,
+    })
 }
 
 /// Lets a player be heard. A file's player is a `playbin`, which has its
@@ -219,13 +227,23 @@ fn unmute(player: &mut Video) {
 /// The name of the element that mutes a stream's sound.
 const STREAM_VOLUME: &str = "lantern-volume";
 
-/// A player for a video straight from the net: `urls` is its video stream
-/// and its audio stream, or one address with both. Paused and silent.
+/// A player for a video straight from the net, paused and silent.
 ///
-/// The two streams are plain files over HTTPS, each decoded by its own
-/// branch of one pipeline, so they share a clock and stay together. Each
-/// reads through a ring buffer, which is what lets the player seek.
-fn open_stream(urls: &[String]) -> Result<Video, String> {
+/// A video's two streams are plain files over HTTPS, each decoded by its
+/// own branch of one pipeline, so they share a clock and stay together.
+/// Each reads through a ring buffer, which is what lets the player seek.
+///
+/// A live video is its manifest, played by `playbin3` ([`open_live`]): its demuxer keeps
+/// picture and sound together, which two branches reading the two lists
+/// of pieces would not. It has no length and nowhere to seek.
+fn open_stream(stream: &Stream) -> Result<Video, String> {
+    let urls = match stream {
+        Stream::Live(manifest) => {
+            let uri = url::Url::parse(manifest).map_err(|err| format!("{manifest}: {err}"))?;
+            return open_live(&uri);
+        }
+        Stream::Files(urls) => urls,
+    };
     // Read through the relay, which asks YouTube for a piece at a time:
     // read in one go, YouTube slows a file to twice the speed it plays.
     let urls: Vec<String> = urls
@@ -817,12 +835,42 @@ pub(crate) fn download(url: &str, path: &Path) -> Result<(), String> {
 /// would start playing with sound while it prerolls. It may have played a
 /// moment: [`open_file`] seeks a file back to its start.
 pub(crate) fn open_video(uri: &url::Url) -> Result<Video, String> {
+    open_playbin("playbin", uri, "", false)
+}
+
+/// The picture a live video is shown at, whatever quality arrives.
+const LIVE_SIZE: (u32, u32) = (1280, 720);
+
+/// The line speed a live video's player is told, in kbit/s: it picks the
+/// best quality under it, which on YouTube is 720p, and stays there.
+const LIVE_SPEED: u32 = 3000;
+
+/// A player for a live video's manifest, with [`STREAM_START`] to show its
+/// first picture.
+///
+/// Left to itself the player starts at the lowest quality and changes as
+/// it measures the line, and a picture that changes size under the
+/// renderer froze. So it is told a line speed, which fixes the quality,
+/// and every picture is scaled to one size in case it changes anyway.
+fn open_live(uri: &url::Url) -> Result<Video, String> {
+    let (width, height) = LIVE_SIZE;
+    open_playbin(
+        &format!("playbin3 connection-speed={LIVE_SPEED}"),
+        uri,
+        &format!(",width={width},height={height}"),
+        true,
+    )
+}
+
+/// [`open_video`] with the player element named, and `size` added to the
+/// pictures it asks for. `patient`: it waits for the first picture.
+fn open_playbin(playbin: &str, uri: &url::Url, size: &str, patient: bool) -> Result<Video, String> {
     let fail = |err: &dyn fmt::Display| format!("{uri}: {err}");
     gst::init().map_err(|err| fail(&err))?;
     let pipeline = gst::parse::launch(&format!(
-        "playbin uri=\"{uri}\" mute=true video-sink=\"videoscale add-borders=true ! \
+        "{playbin} uri=\"{uri}\" mute=true video-sink=\"videoscale add-borders=true ! \
          videoconvert ! appsink name=sink drop=true \
-         caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1\""
+         caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1{size}\""
     ))
     .map_err(|err| fail(&err))?
     .downcast::<gst::Pipeline>()
@@ -834,6 +882,9 @@ pub(crate) fn open_video(uri: &url::Url) -> Result<Video, String> {
         .and_then(|bin| bin.by_name("sink"))
         .and_then(|sink| sink.downcast::<gstreamer_app::AppSink>().ok())
         .ok_or_else(|| fail(&"no video sink"))?;
+    if patient {
+        wait_to_start(&pipeline).map_err(|err| fail(&err))?;
+    }
     let mut video = Video::from_gst_pipeline(pipeline, sink, None).map_err(|err| fail(&err))?;
     video.set_paused(true);
     Ok(video)
@@ -991,7 +1042,7 @@ mod tests {
             "the video stopped playing (Could not decode stream)"
         );
         // No stream to play is an error, not a panic.
-        assert!(open_stream(&[]).is_err());
+        assert!(open_stream(&Stream::Files(Vec::new())).is_err());
     }
 
     #[test]

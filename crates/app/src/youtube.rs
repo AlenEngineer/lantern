@@ -1,6 +1,7 @@
 //! YouTube videos, downloaded ahead of time with `yt-dlp` into a cache
 //! folder and played from there like a local file. A video needed before
-//! its download is done waits for it.
+//! its download is done waits for it. One shown outside the plan, or live,
+//! plays straight from YouTube ([`stream`]).
 //!
 //! A video unused for [`KEEP`] is deleted when Lantern starts
 //! ([`forget_unused`]). Using one (in the plan, previewed or played) marks
@@ -39,12 +40,27 @@ const STREAM_FORMAT: &str = concat!(
     "/b[ext=mp4][protocol=https]",
 );
 
-/// The addresses to play `video` from without downloading it: its video
-/// stream then its audio stream, or one address with both. They last a
-/// few hours. Asks `yt-dlp`, which takes a few seconds.
-pub fn stream_urls(video: &YoutubeVideo) -> Result<Vec<String>, String> {
+/// What a live video plays from when nothing above is on offer, which is
+/// how a video that is live answers: it has no files, only manifests.
+const LIVE_FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba/b";
+
+/// What a video plays from without being downloaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stream {
+    /// The addresses of its video stream then its audio stream, or one
+    /// address with both. They last a few hours.
+    Files(Vec<String>),
+    /// A video that is live now: the address of its manifest, which lists
+    /// the pieces of picture and sound as they are made.
+    Live(String),
+}
+
+/// What to play `video` from without downloading it. Asks `yt-dlp`, which
+/// takes a few seconds.
+pub fn stream(video: &YoutubeVideo) -> Result<Stream, String> {
     let output = Command::new("yt-dlp")
-        .args(["-f", STREAM_FORMAT, "--get-url"])
+        .args(["-f", &format!("{STREAM_FORMAT}/{LIVE_FORMAT}")])
+        .args(["--print", STREAM_FACTS, "--print", "urls"])
         .args(["--no-playlist", "--no-warnings"])
         .arg(&video.url)
         .output()
@@ -53,16 +69,32 @@ pub fn stream_urls(video: &YoutubeVideo) -> Result<Vec<String>, String> {
         let errors = String::from_utf8_lossy(&output.stderr);
         return Err(failure(errors.lines(), output.status));
     }
-    let urls: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
+    parse_stream(&String::from_utf8_lossy(&output.stdout))
+        .ok_or_else(|| format!("yt-dlp gave no stream for {}", video.id))
+}
+
+/// The first line [`stream`] asks `yt-dlp` for: whether the video is live,
+/// a bar, and its manifest's address if it has one.
+const STREAM_FACTS: &str = "%(is_live)s|%(requested_formats.0.manifest_url,manifest_url|)s";
+
+/// Reads what [`stream`] asked for: the [`STREAM_FACTS`] line, then the
+/// addresses. A manifest is taken only from a video that is live: for any
+/// other its player changes quality as it goes, and such a video is
+/// better downloaded.
+fn parse_stream(printed: &str) -> Option<Stream> {
+    let mut lines = printed.lines().map(str::trim);
+    let (live, manifest) = lines.next()?.split_once('|')?;
+    if live == "True" {
+        return manifest
+            .starts_with("https://")
+            .then(|| Stream::Live(manifest.to_string()));
+    }
+    let urls: Vec<String> = lines
         .filter(|line| line.starts_with("https://"))
         .map(str::to_string)
         .collect();
-    match urls.len() {
-        1 | 2 => Ok(urls),
-        _ => Err(format!("yt-dlp gave no stream for {}", video.id)),
-    }
+    let files = urls.iter().all(|url| !url.contains("/manifest/"));
+    (files && matches!(urls.len(), 1 | 2)).then_some(Stream::Files(urls))
 }
 
 /// How long a downloaded video stays without being used.
@@ -135,6 +167,9 @@ pub enum Download {
     Running(f32),
     /// The finished file in the cache.
     Ready(PathBuf),
+    /// It is live now, so there is nothing to download: it plays as it
+    /// comes.
+    Live,
     Failed(String),
 }
 
@@ -144,6 +179,7 @@ impl fmt::Display for Download {
             Download::Queued => f.write_str("queued"),
             Download::Running(percent) => write!(f, "downloading {percent:.0}%"),
             Download::Ready(_) => f.write_str("ready"),
+            Download::Live => f.write_str("live"),
             Download::Failed(reason) => write!(f, "failed: {reason}"),
         }
     }
@@ -222,7 +258,8 @@ impl Downloads {
                 downloads.set(&video.id, Download::Running(percent));
             });
             let download = match result {
-                Ok(path) => Download::Ready(path),
+                Ok(Some(path)) => Download::Ready(path),
+                Ok(None) => Download::Live,
                 Err(reason) => Download::Failed(reason),
             };
             crate::log(format!("youtube: {} {download}", video.id));
@@ -246,6 +283,7 @@ impl Downloads {
             match state.get(&video.id) {
                 Some(Download::Ready(path)) => return Ok(path.clone()),
                 Some(Download::Failed(reason)) => return Err(reason.clone()),
+                Some(Download::Live) => return Err("it is live".into()),
                 None => return Err("the download was cancelled".into()),
                 Some(Download::Queued | Download::Running(_)) => {}
             }
@@ -305,17 +343,20 @@ fn failure<'a>(stderr: impl IntoIterator<Item = &'a str>, status: ExitStatus) ->
     format!("yt-dlp: {reason}")
 }
 
-/// Runs `yt-dlp`, calling `progress` with the overall percent.
+/// Runs `yt-dlp`, calling `progress` with the overall percent. `None` for
+/// a video that is live, which `yt-dlp` is told to leave alone: its
+/// download would go on for as long as it is live.
 fn download(
     dir: &Path,
     video: &YoutubeVideo,
     mut progress: impl FnMut(f32),
-) -> Result<PathBuf, String> {
+) -> Result<Option<PathBuf>, String> {
     std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     let partial = partial_path(dir, &video.id);
     let mut child = Command::new("yt-dlp")
         .args(["-f", FORMAT, "--merge-output-format", "mp4"])
         .args(["--newline", "--progress", "--no-playlist"])
+        .args(["--match-filter", "!is_live"])
         .arg("-o")
         .arg(dir.join(format!("{}.download.%(ext)s", video.id)))
         .arg(&video.url)
@@ -329,9 +370,11 @@ fn download(
         lines.map_while(Result::ok).collect::<Vec<String>>()
     });
     let mut tracker = Progress::default();
+    let mut live = false;
     if let Some(stdout) = child.stdout.take() {
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
+            live |= line.contains("does not pass filter (!is_live)");
             if let Some(percent) = tracker.line(&line) {
                 progress(percent);
             }
@@ -342,9 +385,12 @@ fn download(
     if !status.success() {
         return Err(failure(errors.iter().map(String::as_str), status));
     }
+    if live {
+        return Ok(None);
+    }
     let done = cache_path(dir, &video.id);
     std::fs::rename(&partial, &done).map_err(|err| format!("{}: {err}", partial.display()))?;
-    Ok(done)
+    Ok(Some(done))
 }
 
 /// Follows `yt-dlp --newline` output across its streams: a video and an
@@ -382,6 +428,37 @@ mod tests {
     use lantern_engine::{Kind, ResourceId, SourceId};
 
     use super::*;
+
+    #[test]
+    fn what_yt_dlp_prints_says_how_a_video_streams() {
+        let files = "False|\nhttps://a.googlevideo.com/v\nhttps://a.googlevideo.com/a\n";
+        assert_eq!(
+            parse_stream(files),
+            Some(Stream::Files(vec![
+                "https://a.googlevideo.com/v".into(),
+                "https://a.googlevideo.com/a".into()
+            ]))
+        );
+        assert_eq!(
+            parse_stream("NA|\nhttps://a.googlevideo.com/both\n"),
+            Some(Stream::Files(vec!["https://a.googlevideo.com/both".into()]))
+        );
+        // Live: its manifest, not the two lists of pieces under it.
+        let live = "True|https://manifest.googlevideo.com/api/manifest/hls_variant/x.m3u8\n\
+                    https://manifest.googlevideo.com/api/manifest/hls_playlist/v.m3u8\n\
+                    https://manifest.googlevideo.com/api/manifest/hls_playlist/a.m3u8\n";
+        assert_eq!(
+            parse_stream(live),
+            Some(Stream::Live(
+                "https://manifest.googlevideo.com/api/manifest/hls_variant/x.m3u8".into()
+            ))
+        );
+        // A manifest of a video that isn't live is no stream to play.
+        assert_eq!(parse_stream(&live.replacen("True", "False", 1)), None);
+        assert_eq!(parse_stream("True|\n"), None);
+        assert_eq!(parse_stream("False|\n"), None);
+        assert_eq!(parse_stream(""), None);
+    }
 
     #[test]
     fn a_stream_takes_stereo_sound_before_any_other() {
