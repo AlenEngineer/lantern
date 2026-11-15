@@ -67,11 +67,22 @@ impl Request {
 
 /// Writes a whole answer and ends the connection.
 pub fn respond(phone: &mut TcpStream, status: &str, kind: &str, body: &str) -> io::Result<()> {
+    respond_bytes(phone, status, kind, body.as_bytes())
+}
+
+/// [`respond`], for a body that isn't text.
+pub fn respond_bytes(
+    phone: &mut TcpStream,
+    status: &str,
+    kind: &str,
+    body: &[u8],
+) -> io::Result<()> {
     phone.write_all(
         format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .as_bytes(),
-    )
+    )?;
+    phone.write_all(body)
 }

@@ -47,6 +47,7 @@ main > * { flex: none; }
   border-radius: 999px; padding: 3px 10px; background: var(--raised); color: var(--dim); }
 #stage.on .tag { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
 #stage.black .tag { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
+#picture { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 12px; display: block; }
 #live-title { font-size: 19px; font-weight: 700; }
 #live-facts { color: var(--dim); font-size: 14px; min-height: 1em; }
 #live-failed { color: var(--danger); font-size: 14px; }
@@ -128,6 +129,7 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
   <div class="top">
     <div id="plan-name" class="one-line">Lantern</div>
     <div id="link" title="Connection"></div>
+    <button id="see" class="icon" aria-label="Show the stage's picture"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5M12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.240 5-5 5m0-8c-1.660 0-3 1.340-3 3s1.340 3 3 3 3-1.340 3-3-1.340-3-3-3"/></svg></button>
     <button id="find" class="icon" aria-label="Search"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"/></svg></button>
   </div>
   <div id="notes"></div>
@@ -142,6 +144,7 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
 </section>
 <main>
   <section id="stage" class="card">
+    <img id="picture" alt="What the audience sees" hidden>
     <span class="tag" id="live-tag">Stage</span>
     <div id="live-title">Nothing on stage</div>
     <div id="live-facts"></div>
@@ -175,6 +178,8 @@ let dragging = null;  // seconds, while the time bar is held
 let finding = false;  // whether the search is open
 let hit = null;       // the result tapped, waiting for "Show now" or "Add"
 let typed = null;     // the timer that waits for typing to pause
+let seeing = false;   // whether the stage's picture is shown
+try { seeing = localStorage.getItem("picture") === "1"; } catch (_) {}
 
 function say(words) {
   $("said").textContent = words;
@@ -415,6 +420,27 @@ function drawSteps() {
   }
 }
 
+/* The stage's picture: asked for again about once a second while it is
+   shown, which is also what has Lantern make it. */
+function drawPicture() {
+  $("see").classList.toggle("on", seeing);
+  if (!seeing) $("picture").hidden = true;
+}
+function fetchPicture() {
+  if (!seeing || finding || document.visibilityState !== "visible" || !token) return;
+  const next = new Image();
+  next.onload = () => { if (seeing) { $("picture").src = next.src; $("picture").hidden = false; } };
+  next.src = `/stage.jpg?t=${encodeURIComponent(token)}&n=${Date.now()}`;
+}
+$("see").onclick = () => {
+  seeing = !seeing;
+  try { localStorage.setItem("picture", seeing ? "1" : "0"); } catch (_) {}
+  drawPicture();
+  fetchPicture();
+};
+setInterval(fetchPicture, 1000);
+drawPicture();
+
 $("find").onclick = () => {
   finding = !finding;
   drawSearch();
@@ -470,6 +496,7 @@ if (!token) {
   };
   // An address ending in #q=juan 3 16 opens on that search.
   const start = new URLSearchParams(location.hash.slice(1));
+  if (start.get("see")) { seeing = true; drawPicture(); fetchPicture(); }
   if (start.get("q")) {
     finding = true;
     $("query").value = start.get("q");

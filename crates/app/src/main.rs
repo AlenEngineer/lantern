@@ -197,6 +197,10 @@ enum Message {
     Ended(SceneId),
     /// A phone asked for something through the remote.
     Remote(lantern_remote::Command),
+    /// Time to take a picture of the stage for the phones showing it.
+    Snap,
+    /// The picture, as a JPEG, or why there is none.
+    Snapped(Result<Arc<Vec<u8>>, String>),
     /// The program's video stopped on an error, which this says.
     Broke(SceneId, String),
     /// Time to report the playing video's position.
@@ -638,6 +642,23 @@ impl App {
                 return Task::batch([self.preload(), self.arrive()]);
             }
             Message::Remote(command) => return self.remote_command(command),
+            Message::Snap => {
+                return window::screenshot(self.stage_window).then(|shot| {
+                    Task::perform(
+                        in_thread(move || {
+                            phone::picture(&shot.rgba, shot.size.width, shot.size.height)
+                                .map(Arc::new)
+                        }),
+                        Message::Snapped,
+                    )
+                });
+            }
+            Message::Snapped(Ok(jpeg)) => {
+                if let Some(remote) = &self.remote {
+                    remote.set_picture(jpeg.to_vec());
+                }
+            }
+            Message::Snapped(Err(err)) => log(format!("remote: no picture: {err}")),
             Message::Broke(scene, why) => {
                 self.media.broke(scene, &why, &self.engine.0);
             }
@@ -2312,6 +2333,11 @@ impl App {
             if remote.watched() {
                 subscriptions
                     .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+            }
+            // A picture of the stage, while a phone is showing it.
+            if remote.wants_picture() {
+                subscriptions
+                    .push(iced::time::every(Duration::from_millis(700)).map(|_| Message::Snap));
             }
         }
         if let Some(script) = &self.script {

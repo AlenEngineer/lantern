@@ -14,7 +14,11 @@
 //! GET  /            the page
 //! GET  /events?t=…  the snapshot, again every time it changes (server-sent events)
 //! POST /do?t=…      a command, as JSON
+//! GET  /stage.jpg?t=…  a picture of the stage, when the app has one
 //! ```
+//!
+//! The picture costs the app something to make, so it makes one only
+//! while a phone keeps asking ([`Server::picture_wanted`]).
 
 mod http;
 mod protocol;
@@ -23,7 +27,7 @@ use std::io::{self, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use protocol::{
     Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Slides, Snapshot, Step, StepKind,
@@ -36,6 +40,10 @@ const PAGE: &str = include_str!("page.html");
 /// How long a phone that hears nothing waits for a sign of life. A phone
 /// that left without saying so is found out by the write that fails.
 const HEARTBEAT: Duration = Duration::from_secs(15);
+
+/// How long after a phone last asked for the picture the app goes on
+/// making it. A phone showing it asks about once a second.
+const PICTURE_WANTED: Duration = Duration::from_secs(4);
 
 /// The remote, listening. Dropping it stops it.
 pub struct Server {
@@ -60,6 +68,10 @@ struct State {
     snapshot: String,
     /// Goes up with every snapshot that differs from the one before.
     version: u64,
+    /// The last picture of the stage, as a JPEG.
+    picture: Option<Arc<Vec<u8>>>,
+    /// When a phone last asked for it.
+    picture_asked: Option<Instant>,
 }
 
 impl Server {
@@ -112,6 +124,17 @@ impl Server {
         }
     }
 
+    /// Gives every phone that shows it this picture of the stage, a JPEG.
+    pub fn set_picture(&self, jpeg: Vec<u8>) {
+        self.shared.state().picture = Some(Arc::new(jpeg));
+    }
+
+    /// Whether a phone is showing the picture, so one is worth making.
+    pub fn picture_wanted(&self) -> bool {
+        let asked = self.shared.state().picture_asked;
+        asked.is_some_and(|asked| asked.elapsed() < PICTURE_WANTED)
+    }
+
     /// How many phones are listening. With none, there is no one to
     /// publish for.
     pub fn watching(&self) -> usize {
@@ -142,10 +165,22 @@ impl Shared {
         let allowed = request.query("t") == Some(self.token.as_str());
         let _ = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => http::respond(&mut phone, "200 OK", "text/html; charset=utf-8", PAGE),
-            (_, "/events" | "/do") if !allowed => {
+            (_, "/events" | "/do" | "/stage.jpg") if !allowed => {
                 http::respond(&mut phone, "403 Forbidden", "text/plain", "wrong token")
             }
             ("GET", "/events") => self.events(phone),
+            ("GET", "/stage.jpg") => {
+                let picture = {
+                    let mut state = self.state();
+                    state.picture_asked = Some(Instant::now());
+                    state.picture.clone()
+                };
+                match picture {
+                    Some(jpeg) => http::respond_bytes(&mut phone, "200 OK", "image/jpeg", &jpeg),
+                    // Asking is what gets one made: the next try has it.
+                    None => http::respond(&mut phone, "503 Service Unavailable", "text/plain", ""),
+                }
+            }
             ("POST", "/do") => match serde_json::from_slice::<Command>(&request.body) {
                 Ok(command) => {
                     (self.act)(command);
@@ -210,7 +245,9 @@ impl Shared {
         // The last phone to leave takes the snapshot with it: the app stops
         // publishing with no one to see, so it would be stale for the next.
         if self.watching.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.state().snapshot.clear();
+            let mut state = self.state();
+            state.snapshot.clear();
+            state.picture = None;
         }
         sent
     }
@@ -316,6 +353,30 @@ mod tests {
         assert_eq!(commands.recv().unwrap(), Command::Hello);
         server.publish(&snapshot("now"));
         assert_eq!(title(&mut phone), "now");
+    }
+
+    #[test]
+    fn the_picture_is_made_only_while_asked_for() {
+        let (server, _commands) = server();
+        assert!(!server.picture_wanted());
+        let none = ask(&server, "GET /stage.jpg?t=secret HTTP/1.1\r\n\r\n");
+        assert!(none.starts_with("HTTP/1.1 503"), "{none}");
+        assert!(server.picture_wanted(), "asking is what gets one made");
+
+        server.set_picture(vec![0xff, 0xd8, 0xff, 0xd9]);
+        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+        stream
+            .write_all(b"GET /stage.jpg?t=secret HTTP/1.1\r\n\r\n")
+            .unwrap();
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).unwrap();
+        let head = String::from_utf8_lossy(&answer);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(head.contains("Content-Type: image/jpeg"));
+        assert!(answer.ends_with(&[0xff, 0xd8, 0xff, 0xd9]));
+
+        let refused = ask(&server, "GET /stage.jpg HTTP/1.1\r\n\r\n");
+        assert!(refused.starts_with("HTTP/1.1 403"), "{refused}");
     }
 
     #[test]
