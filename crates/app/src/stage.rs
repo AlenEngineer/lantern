@@ -291,9 +291,18 @@ const STREAM_START: Duration = Duration::from_secs(20);
 /// there and then fails, which a slow network doesn't always manage; one
 /// that is there already passes at once.
 fn wait_to_start(pipeline: &gst::Pipeline) -> Result<(), String> {
+    // Why it stopped, when the pipeline said: "Forbidden", "Not Found".
     let stop = |reason: &str| {
+        let said = pipeline
+            .bus()
+            .and_then(|bus| bus.pop_filtered(&[gst::MessageType::Error]));
         let _ = pipeline.set_state(gst::State::Null);
-        Err(reason.to_string())
+        Err(match said.as_ref().map(|said| said.view()) {
+            Some(gst::MessageView::Error(err)) => {
+                format!("{reason} ({})", err.error().message().trim_end_matches('.'))
+            }
+            _ => reason.to_string(),
+        })
     };
     if pipeline.set_state(gst::State::Paused).is_err() {
         return stop("it wouldn't start");

@@ -234,6 +234,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   for a short jump and a few for a long one, where a jump of some minutes
   took up to twenty. Lantern now reads the stream in pieces, the way
   `yt-dlp` downloads, which YouTube doesn't slow down.
+- A video YouTube refuses for its first moments still plays straight from
+  YouTube. About half the time a stream's address is refused for a second
+  or two after it is issued; Lantern used to give up at once and download
+  the video instead, and now asks again for up to ten seconds. When a
+  stream can't start, the log says what YouTube answered.
 
 ## [0.7.0] - 2026-11-13
 
