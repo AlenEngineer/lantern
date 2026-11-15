@@ -214,6 +214,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   closes the search; Backspace there still takes the chip away.
 - The strip and the search that drops from it are the cards' colour; a
   shadow sets the dropped search off from the card under it.
+- A YouTube video with surround sound plays straight from YouTube like any
+  other, with its stereo track; it used to fail to start and be downloaded
+  instead. A stream on a slow network gets twenty seconds to start, not
+  five, before Lantern falls back to downloading it.
 
 ## [0.7.0] - 2026-11-13
 

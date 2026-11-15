@@ -28,7 +28,16 @@ const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
 /// plain HTTPS files, or failing that one file with both. Not the HLS
 /// manifest: its player changes quality (and codec) as it goes, which
 /// froze the picture and dropped the sound.
-const STREAM_FORMAT: &str = "bv*[vcodec^=avc1][height<=720][protocol=https]+ba[ext=m4a][protocol=https]/b[ext=mp4][protocol=https]";
+///
+/// The sound is stereo when there is any. `ba` alone takes a surround
+/// track when the video has one, and YouTube serves that so slowly at
+/// first that the player gave up on it.
+const STREAM_FORMAT: &str = concat!(
+    "bv*[vcodec^=avc1][height<=720][protocol=https]",
+    "+ba[ext=m4a][audio_channels<=2][protocol=https]",
+    "/bv*[vcodec^=avc1][height<=720][protocol=https]+ba[ext=m4a][protocol=https]",
+    "/b[ext=mp4][protocol=https]",
+);
 
 /// The addresses to play `video` from without downloading it: its video
 /// stream then its audio stream, or one address with both. They last a
@@ -373,6 +382,15 @@ mod tests {
     use lantern_engine::{Kind, ResourceId, SourceId};
 
     use super::*;
+
+    #[test]
+    fn a_stream_takes_stereo_sound_before_any_other() {
+        let choices: Vec<&str> = STREAM_FORMAT.split('/').collect();
+        assert!(choices[0].contains("[audio_channels<=2]"), "{choices:?}");
+        assert!(!choices[1].contains("audio_channels"), "{choices:?}");
+        // Never the manifest, whose player changes quality as it goes.
+        assert!(choices.iter().all(|c| c.ends_with("[protocol=https]")));
+    }
 
     #[test]
     fn progress_spans_the_video_and_audio_streams() {
