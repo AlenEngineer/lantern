@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#141218">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Lantern</title>
+<style>
+:root {
+  --ground: #141218; --card: #211f26; --raised: #36343b; --text: #e6e0e9; --dim: #cac4d0;
+  --accent: #d0bcff; --on-accent: #381e72; --live: #efb8c8; --danger: #f2b8b5;
+  --gap: 12px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--ground); color: var(--text);
+  font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex; flex-direction: column; overflow: hidden;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
+}
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
+.one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+header { padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 8px; }
+.top { display: flex; align-items: center; gap: 10px; }
+#plan-name { font-size: 20px; font-weight: 700; color: var(--accent); flex: 1; min-width: 0; }
+#link { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; }
+#link.up { background: var(--accent); }
+#notes { display: flex; gap: 6px; flex-wrap: wrap; }
+#notes span { background: var(--card); color: var(--dim); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+#notes span:first-child { color: var(--live); }
+
+main { flex: 1; overflow-y: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: var(--gap); -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+main::-webkit-scrollbar { display: none; }
+main > * { flex: none; }
+.card { background: var(--card); border-radius: 22px; padding: 14px 16px; }
+
+#stage { display: flex; flex-direction: column; gap: 8px; border: 2px solid transparent; }
+#stage.on { border-color: var(--live); }
+#stage.black { border-color: var(--danger); }
+.tag { align-self: flex-start; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  border-radius: 999px; padding: 3px 10px; background: var(--raised); color: var(--dim); }
+#stage.on .tag { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
+#stage.black .tag { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
+#live-title { font-size: 19px; font-weight: 700; }
+#live-facts { color: var(--dim); font-size: 14px; min-height: 1em; }
+#live-failed { color: var(--danger); font-size: 14px; }
+#timeline { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+#bar { flex: 1; height: 28px; display: flex; align-items: center; touch-action: none; }
+#bar div { width: 100%; height: 6px; border-radius: 3px; background: var(--raised); position: relative; }
+#bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
+#bar b { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); }
+#times { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+#next { color: var(--dim); font-size: 14px; padding: 0 6px; }
+#next b { color: var(--text); font-weight: 600; }
+#resume { align-self: stretch; background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 12px; }
+
+#steps { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.section { color: var(--accent); font-weight: 700; padding: 12px 10px 4px; }
+.step { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; border-radius: 14px; text-align: left; width: 100%; }
+.step .dot { width: 16px; flex: none; text-align: center; color: var(--dim); font-size: 12px; }
+.step .label { flex: 1; min-width: 0; }
+.step .detail { color: var(--dim); font-size: 13px; flex: none; }
+.step.done { color: var(--dim); }
+.step.current { background: color-mix(in srgb, var(--live) 18%, transparent); color: var(--live); font-weight: 700; }
+.step.current .dot, .step.current .detail { color: var(--live); }
+.step.picked { background: var(--raised); }
+.step .problem { color: var(--danger); }
+.step .go { background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 8px 16px; flex: none; }
+#empty { color: var(--dim); text-align: center; padding: 28px 12px; }
+
+footer { padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: var(--ground); }
+footer button { background: var(--card); border-radius: 18px; height: 52px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
+footer button:active, .step:active { filter: brightness(1.25); }
+footer svg { width: 22px; height: 22px; fill: currentColor; }
+#prev { grid-column: 1; height: 76px; }
+#next-step { grid-column: 2 / 4; height: 76px; background: var(--accent); color: var(--on-accent); font-size: 20px; font-weight: 700; }
+#black.on { background: var(--danger); color: var(--ground); }
+#play:disabled { opacity: .4; }
+
+#veil { position: fixed; inset: 0; background: var(--ground); display: none; align-items: center; justify-content: center; text-align: center; padding: 32px; color: var(--dim); }
+#veil.shown { display: flex; }
+#veil b { display: block; color: var(--text); font-size: 20px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div id="plan-name" class="one-line">Lantern</div>
+    <div id="link" title="Connection"></div>
+  </div>
+  <div id="notes"></div>
+</header>
+<main>
+  <section id="stage" class="card">
+    <span class="tag" id="live-tag">Stage</span>
+    <div id="live-title">Nothing on stage</div>
+    <div id="live-facts"></div>
+    <div id="live-failed" hidden></div>
+    <div id="timeline" hidden>
+      <div id="bar"><div><i></i><b></b></div></div>
+      <span id="times"></span>
+    </div>
+  </section>
+  <button id="resume" hidden>Back to the plan</button>
+  <div id="next" class="one-line" hidden></div>
+  <section id="steps" class="card"></section>
+</main>
+<footer>
+  <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button>
+  <button id="next-step">Next<svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4L13.2 12z"/></svg></button>
+  <button id="play" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path id="play-icon" d="M8 5v14l11-7z"/></svg></button>
+  <button id="black">Blackout</button>
+  <button id="clear">Clear</button>
+</footer>
+<div id="veil"><div><b id="veil-title"></b><span id="veil-text"></span></div></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const token = new URLSearchParams(location.search).get("t") || "";
+let state = null;     // the last snapshot
+let picked = null;    // the step tapped, waiting for "Show"
+let heard = 0;        // when the snapshot arrived, for counting a video on
+let dragging = null;  // seconds, while the time bar is held
+
+function send(command) {
+  if (navigator.vibrate) navigator.vibrate(8);
+  fetch("/do?t=" + encodeURIComponent(token), { method: "POST", body: JSON.stringify(command) })
+    .catch(() => link(false));
+}
+function clock(seconds) {
+  seconds = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(seconds / 3600), m = Math.floor(seconds / 60) % 60, s = seconds % 60;
+  const two = n => String(n).padStart(2, "0");
+  return h ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
+}
+function veil(title, text) {
+  $("veil").classList.toggle("shown", !!title);
+  $("veil-title").textContent = title || "";
+  $("veil-text").textContent = text || "";
+}
+function link(up) { $("link").classList.toggle("up", up); }
+
+/* Where a playing video is now: the page counts on from what it was told. */
+function position() {
+  const t = state && state.live && state.live.timed;
+  if (!t) return 0;
+  const on = t.playing ? (Date.now() - heard) / 1000 : 0;
+  const at = t.position + on;
+  return t.length == null ? at : Math.min(at, t.length);
+}
+function drawTime() {
+  const t = state && state.live && state.live.timed;
+  $("timeline").hidden = !t;
+  if (!t) return;
+  const at = dragging == null ? position() : dragging;
+  const bar = $("bar");
+  bar.style.visibility = t.length ? "visible" : "hidden";
+  if (t.length) {
+    const part = Math.min(1, at / t.length) * 100 + "%";
+    bar.querySelector("i").style.width = part;
+    bar.querySelector("b").style.left = part;
+  }
+  $("times").textContent = t.length == null ? "live" : `${clock(at)} / ${clock(t.length)}`;
+}
+
+function draw() {
+  const s = state;
+  for (const [name, value] of Object.entries(s.colors || {}))
+    if (value) document.documentElement.style.setProperty("--" + name.replace("_", "-"), value);
+  $("plan-name").textContent = s.plan ? s.plan.name || "Untitled plan" : "Lantern";
+
+  const notes = $("notes");
+  notes.replaceChildren(...(s.notes || []).map(note => {
+    const chip = document.createElement("span");
+    chip.textContent = note;
+    return chip;
+  }));
+
+  const live = s.live, stage = $("stage");
+  stage.classList.toggle("black", s.blackout);
+  stage.classList.toggle("on", !!live && !s.blackout);
+  $("live-tag").textContent = s.blackout ? "Blackout" : live ? "Live" : "Stage";
+  $("live-title").textContent = live ? live.title : "Nothing on stage";
+  const facts = live ? [live.facts, live.slides ? `slide ${live.slides.at}${live.slides.of ? " of " + live.slides.of : ""}` : ""].filter(Boolean) : [];
+  $("live-facts").textContent = facts.join(" · ");
+  $("live-failed").hidden = !(live && live.failed);
+  $("live-failed").textContent = live && live.failed ? "Can't show this: " + live.failed : "";
+  drawTime();
+
+  const timed = live && live.timed;
+  $("play").disabled = !timed;
+  $("play-icon").setAttribute("d", timed && timed.playing ? "M6 5h4v14H6zm8 0h4v14h-4z" : "M8 5v14l11-7z");
+  $("black").classList.toggle("on", s.blackout);
+  $("resume").hidden = !s.off_plan;
+  $("next").hidden = !s.next;
+  if (s.next) {
+    $("next").replaceChildren("Next: ");
+    const title = document.createElement("b");
+    title.textContent = s.next.title;
+    $("next").append(title);
+  }
+  drawSteps();
+}
+
+function drawSteps() {
+  const box = $("steps"), plan = state.plan;
+  if (!plan || !plan.steps.length) {
+    const empty = document.createElement("div");
+    empty.id = "empty";
+    empty.textContent = plan ? "This plan has no steps yet." : "No plan is open. Next and Previous still move through what is on stage.";
+    box.replaceChildren(empty);
+    return;
+  }
+  if (!plan.steps.some(step => step.id === picked)) picked = null;
+  let number = 0, current = null;
+  box.replaceChildren(...plan.steps.map(step => {
+    if (step.kind === "section") {
+      const head = document.createElement("div");
+      head.className = "section one-line";
+      head.textContent = step.label;
+      return head;
+    }
+    number += 1;
+    const row = document.createElement("button");
+    row.className = `step ${step.place}${step.id === picked ? " picked" : ""}`;
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.textContent = step.place === "current" ? "●" : number;
+    const label = document.createElement("span");
+    label.className = "label one-line";
+    label.textContent = step.label;
+    row.append(dot, label);
+    if (step.id === picked) {
+      const go = document.createElement("span");
+      go.className = "go";
+      go.textContent = "Show";
+      row.append(go);
+    } else {
+      const detail = document.createElement("span");
+      detail.className = "detail" + (step.problem ? " problem" : "");
+      detail.textContent = step.problem || step.detail;
+      row.append(detail);
+    }
+    row.onclick = () => {
+      if (step.id === picked) { picked = null; send({ do: "go", step: step.id }); }
+      else picked = step.id;
+      drawSteps();
+    };
+    if (step.place === "current") current = row;
+    return row;
+  }));
+  // The step on stage stays in sight as the service moves on.
+  if (current && current.dataset.seen !== "1" && drawSteps.last !== current.textContent) {
+    drawSteps.last = current.textContent;
+    current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+$("prev").onclick = () => send({ do: "prev" });
+$("next-step").onclick = () => send({ do: "next" });
+$("play").onclick = () => send({ do: "play_pause" });
+$("black").onclick = () => send({ do: "blackout" });
+$("clear").onclick = () => send({ do: "clear" });
+$("resume").onclick = () => send({ do: "resume" });
+
+/* The time bar: hold and slide, let go to jump. */
+const bar = $("bar");
+function held(event) {
+  const t = state && state.live && state.live.timed;
+  if (!t || !t.length) return null;
+  const box = bar.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)) * t.length;
+}
+bar.onpointerdown = event => { bar.setPointerCapture(event.pointerId); dragging = held(event); drawTime(); };
+bar.onpointermove = event => { if (dragging != null) { dragging = held(event); drawTime(); } };
+bar.onpointerup = () => {
+  if (dragging != null) send({ do: "seek", seconds: dragging });
+  dragging = null;
+};
+bar.onpointercancel = () => { dragging = null; drawTime(); };
+setInterval(drawTime, 500);
+
+if (!token) {
+  veil("Scan the code again", "This page needs the address from Lantern's settings, under Phone.");
+} else {
+  veil("Connecting…", "");
+  const events = new EventSource("/events?t=" + encodeURIComponent(token));
+  let ever = false;
+  events.onopen = () => { ever = true; link(true); veil(); };
+  events.onmessage = event => { state = JSON.parse(event.data); heard = Date.now(); link(true); veil(); draw(); };
+  events.onerror = () => {
+    link(false);
+    if (!ever) veil("Can't reach Lantern", "Check that the phone is on the same Wi-Fi as the computer, and that the remote is on in Lantern's settings.");
+    else if (!state) veil("Reconnecting…", "");
+  };
+  // Keeps the screen on where the browser allows it.
+  const awake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
+  awake();
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && awake());
+}
+</script>
+</body>
+</html>

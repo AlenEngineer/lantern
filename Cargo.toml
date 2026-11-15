@@ -16,6 +16,7 @@ lantern-searcher = { path = "crates/searcher" }
 lantern-orchestrator = { path = "crates/orchestrator" }
 lantern-showman = { path = "crates/showman" }
 lantern-engine = { path = "crates/engine" }
+lantern-remote = { path = "crates/remote" }
 lantern-source-local = { path = "sources/local" }
 lantern-source-link = { path = "sources/link" }
 lantern-source-clock = { path = "sources/clock" }
