@@ -5,10 +5,45 @@
 use std::sync::mpsc;
 
 use lantern_remote::{
-    Colors, Command, Live, Place, Plan, Server, Slides, Snapshot, Step, StepKind, Timed, Upcoming,
+    Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Server, Slides, Snapshot, Step,
+    StepKind, Timed, Upcoming,
 };
 
-fn snapshot(at: usize, blackout: bool, playing: bool) -> Snapshot {
+/// What a search for `text` finds: the same few verses whatever it is.
+fn found(text: &str) -> Option<Found> {
+    let hit = |title: &str, facts: &str| Hit {
+        id: title.into(),
+        title: title.into(),
+        facts: facts.into(),
+    };
+    (!text.is_empty()).then(|| Found {
+        text: text.into(),
+        busy: false,
+        waiting: text.starts_with("!yt "),
+        groups: if text.starts_with("!yt ") {
+            Vec::new()
+        } else {
+            vec![
+                Group {
+                    name: "RVG".into(),
+                    error: None,
+                    hits: vec![
+                        hit("Juan 3:16", "Porque de tal manera amó Dios al mundo, que ha dado a su Hijo unigénito, para que todo aquel que en Él cree, no se pierda, mas tenga vida eterna."),
+                        hit("1 Juan 3:16", "En esto conocemos el amor de Dios, en que Él puso su vida por nosotros."),
+                        hit("Juan 16:3", "Y esto os harán, porque no han conocido al Padre, ni a mí."),
+                    ],
+                },
+                Group {
+                    name: "Music".into(),
+                    error: None,
+                    hits: vec![hit("Himno 316 Divino pastor", "Himnario · video · 2:48")],
+                },
+            ]
+        },
+    })
+}
+
+fn snapshot(at: usize, blackout: bool, playing: bool, text: &str) -> Snapshot {
     let rows = [
         (StepKind::Section, "Servicio de Canto", ""),
         (
@@ -85,6 +120,21 @@ fn snapshot(at: usize, blackout: bool, playing: bool) -> Snapshot {
             "Escuela Sabática · 4:10 / 30m".into(),
             "4 min behind".into(),
         ],
+        bangs: [
+            ("b", "RVG, RVG 2004"),
+            ("yt", "YouTube"),
+            ("h", "Music"),
+            ("x", "Text"),
+            ("t", "Time"),
+            ("gi", "Images"),
+        ]
+        .iter()
+        .map(|(bang, name)| Bang {
+            bang: (*bang).into(),
+            name: (*name).into(),
+        })
+        .collect(),
+        search: found(text),
     }
 }
 
@@ -96,7 +146,8 @@ fn main() -> std::io::Result<()> {
     })?;
     println!("http://localhost:{}/?t=demo", server.port());
     let (mut at, mut blackout, mut playing) = (4, false, true);
-    server.publish(&snapshot(at, blackout, playing));
+    let mut text = String::new();
+    server.publish(&snapshot(at, blackout, playing, &text));
     for command in commands {
         println!("{command:?}");
         match command {
@@ -104,9 +155,10 @@ fn main() -> std::io::Result<()> {
             Command::Prev => at = at.saturating_sub(1),
             Command::Blackout => blackout = !blackout,
             Command::PlayPause => playing = !playing,
+            Command::Search { text: asked, .. } => text = asked,
             _ => {}
         }
-        server.publish(&snapshot(at, blackout, playing));
+        server.publish(&snapshot(at, blackout, playing, &text));
     }
     Ok(())
 }

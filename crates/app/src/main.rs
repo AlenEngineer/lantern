@@ -382,6 +382,11 @@ struct App {
     stage: StageState,
     media: Stage,
     search: Search,
+    /// The search a phone asked for through the remote: its own, so it
+    /// neither shows in the dashboard's box nor disturbs what is typed
+    /// there. What it was sent is kept to say back with the results.
+    phone_search: Search,
+    phone_asked: String,
     /// The selected plan step: where new steps go, and what Enter puts on
     /// stage while the search box is empty.
     selected: Option<StepId>,
@@ -500,6 +505,8 @@ impl App {
             dashboard_size: iced::Size::new(1280.0, 720.0),
             stage: StageState::default(),
             search: Search::default(),
+            phone_search: Search::default(),
+            phone_asked: String::new(),
             selected: None,
             last_click: None,
             hovered: None,
@@ -771,9 +778,14 @@ impl App {
                 }
             }
             Message::Searched(ticket, event) => {
+                // Each search hears only the ticket it is waiting on.
                 self.search.live_event(ticket, &event, &self.engine.0);
+                self.phone_search.live_event(ticket, &event, &self.engine.0);
             }
-            Message::SearchDone(ticket) => self.search.live_done(ticket),
+            Message::SearchDone(ticket) => {
+                self.search.live_done(ticket);
+                self.phone_search.live_done(ticket);
+            }
             Message::Hover(row) => {
                 self.hovered = row;
                 self.aim();

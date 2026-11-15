@@ -26,7 +26,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 pub use protocol::{
-    Colors, Command, Live, Place, Plan, Slides, Snapshot, Step, StepKind, Timed, Upcoming,
+    Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Slides, Snapshot, Step, StepKind,
+    Timed, Upcoming,
 };
 
 /// The page, whole: its style and script are inside it.

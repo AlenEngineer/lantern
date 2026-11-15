@@ -114,6 +114,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   time bar, Blackout, Clear, and any step of the plan two taps away. The
   phone and the computer must be on the same network. Off until you turn
   it on; `remote_port` in the config changes its port from 7373.
+- The phone remote searches. The magnifier opens a search of everything
+  Lantern has: type a verse, a hymn, a file's name or a link, or start
+  from a button for one kind of thing (`!b`, `!yt`, `!x` for text you
+  type). Tap a result, then **Show now** or **Add to plan**. It is the
+  phone's own search: nothing appears in the dashboard's box.
 
 ### Fixed
 
