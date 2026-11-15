@@ -21,7 +21,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -440,17 +440,70 @@ impl fmt::Debug for Loaded {
     }
 }
 
-/// Starts loading on a worker thread.
+/// What the stage wants loaded right now, shared with the loads that wait
+/// before they start ([`worth_loading`]).
+#[derive(Default)]
+struct Wanted {
+    /// What the last [`preload`](Stage::preload) asked for.
+    upcoming: HashSet<ResourceId>,
+    /// What the program is waiting for.
+    program: Option<ResourceId>,
+}
+
+/// How long a YouTube video must stay lined up before Lantern asks
+/// YouTube for it. Going down a list of results lines each one up in
+/// passing, and asking for each started a `yt-dlp` of several seconds for
+/// every result passed, none of them stopped.
+const DWELL: Duration = Duration::from_millis(400);
+
+/// What a load answers when its video was passed over before it started.
+const PASSED_OVER: &str = "passed over";
+
+/// Waits `dwell`, then says whether `id` is still lined up. The program
+/// waiting for it ends the wait at once.
+fn worth_loading(wanted: &Mutex<Wanted>, id: &ResourceId, dwell: Duration) -> bool {
+    let until = Instant::now() + dwell;
+    loop {
+        {
+            let wanted = wanted
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if wanted.program.as_ref() == Some(id) {
+                return true;
+            }
+            if Instant::now() >= until {
+                return wanted.upcoming.contains(id);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Starts loading on a worker thread. `dwell`: a YouTube video that isn't
+/// on disk waits [`DWELL`] first, and isn't loaded if by then it is no
+/// longer wanted.
 fn spawn(
     resource: ResourceId,
     loader: Loader,
     downloads: Arc<Downloads>,
     stream: bool,
+    dwell: Option<Arc<Mutex<Wanted>>>,
 ) -> iced::Task<Arc<Loaded>> {
     iced::Task::future(async move {
         let (done, result) = iced::futures::channel::oneshot::channel();
+        let id = resource.clone();
         std::thread::spawn(move || {
-            let _ = done.send(loader.load(&downloads, stream));
+            let passed_over = match (&loader, &dwell) {
+                (Loader::Youtube(video), Some(wanted)) => {
+                    downloads.cached(video).is_none() && !worth_loading(wanted, &id, DWELL)
+                }
+                _ => false,
+            };
+            let _ = done.send(if passed_over {
+                Err(PASSED_OVER.to_string())
+            } else {
+                loader.load(&downloads, stream)
+            });
         });
         let result = result
             .await
@@ -486,6 +539,12 @@ pub struct Stage {
     loading: HashSet<ResourceId>,
     /// What the last [`preload`](Stage::preload) asked for.
     upcoming: HashSet<ResourceId>,
+    /// The same, and what the program waits for, where the loads that
+    /// wait before starting can see it.
+    wanted: Arc<Mutex<Wanted>>,
+    /// The loads that are waiting, or were, with what they load: one
+    /// passed over and then wanted after all is started again.
+    dwelling: HashMap<ResourceId, Loader>,
     /// The open plan's pictures and pages, loaded once and kept while the
     /// plan is open, so they show at once in any order.
     kept: HashMap<ResourceId, Content>,
@@ -524,7 +583,22 @@ impl Stage {
             to_keep: VecDeque::new(),
             keep_loading: HashSet::new(),
             lengths: HashMap::new(),
+            wanted: Arc::default(),
+            dwelling: HashMap::new(),
         }
+    }
+
+    /// Tells the waiting loads what is wanted now.
+    fn sync_wanted(&self) {
+        let mut wanted = self
+            .wanted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        wanted.upcoming = self.upcoming.clone();
+        wanted.program = match &self.program {
+            Program::Loading { resource, .. } => Some(resource.clone()),
+            _ => None,
+        };
     }
 
     /// Says which YouTube videos the open plan shows, and whether the
@@ -587,6 +661,7 @@ impl Stage {
     ) -> iced::Task<Arc<Loaded>> {
         let task = self.show(stage, engine);
         self.ready.retain(|id, _| self.upcoming.contains(id));
+        self.sync_wanted();
         task
     }
 
@@ -623,7 +698,7 @@ impl Stage {
         };
         if self.loading.insert(resource.clone()) {
             let stream = self.streams(&loader);
-            spawn(resource, loader, self.downloads.clone(), stream)
+            spawn(resource, loader, self.downloads.clone(), stream, None)
         } else {
             iced::Task::none()
         }
@@ -631,12 +706,33 @@ impl Stage {
 
     /// A load finished: it goes on program if the program is waiting for
     /// it, into `ready` if it is still upcoming, and is dropped otherwise.
-    pub fn loaded(&mut self, loaded: &Loaded, stage: &StageState, engine: &Engine) {
+    ///
+    /// A load that was passed over before it started, and is wanted after
+    /// all, starts again: the task returned.
+    pub fn loaded(
+        &mut self,
+        loaded: &Loaded,
+        stage: &StageState,
+        engine: &Engine,
+    ) -> iced::Task<Arc<Loaded>> {
         self.loading.remove(&loaded.resource);
         self.keep_loading.remove(&loaded.resource);
+        let dwelt = self.dwelling.remove(&loaded.resource);
         let Some(result) = loaded.result.lock().ok().and_then(|mut slot| slot.take()) else {
-            return;
+            return iced::Task::none();
         };
+        if matches!(&result, Err(why) if why == PASSED_OVER) {
+            let waited_for = matches!(&self.program, Program::Loading { resource, .. } if *resource == loaded.resource);
+            let Some(loader) =
+                dwelt.filter(|_| waited_for || self.upcoming.contains(&loaded.resource))
+            else {
+                return iced::Task::none();
+            };
+            let id = loaded.resource.clone();
+            self.loading.insert(id.clone());
+            let stream = self.streams(&loader);
+            return spawn(id, loader, self.downloads.clone(), stream, None);
+        }
         if let Ok(Content::Video { player, .. }) = &result
             && !player.duration().is_zero()
         {
@@ -673,6 +769,7 @@ impl Stage {
                 }
             }
         }
+        iced::Task::none()
     }
 
     fn install(
@@ -843,7 +940,7 @@ impl Stage {
                 continue;
             }
             self.keep_loading.insert(id.clone());
-            tasks.push(spawn(id, loader, self.downloads.clone(), false));
+            tasks.push(spawn(id, loader, self.downloads.clone(), false, None));
         }
         iced::Task::batch(tasks)
     }
@@ -871,8 +968,13 @@ impl Stage {
                 continue;
             }
             let stream = self.streams(&loader);
-            tasks.push(spawn(id, loader, self.downloads.clone(), stream));
+            if matches!(loader, Loader::Youtube(_)) {
+                self.dwelling.insert(id.clone(), loader.clone());
+            }
+            let dwell = Some(self.wanted.clone());
+            tasks.push(spawn(id, loader, self.downloads.clone(), stream, dwell));
         }
+        self.sync_wanted();
         iced::Task::batch(tasks)
     }
 }
@@ -1088,15 +1190,15 @@ mod tests {
             "a player each is too much"
         );
 
-        stage.loaded(&finished(&picture, Ok(pixels(4))), &state, &engine);
-        stage.loaded(
+        let _again = stage.loaded(&finished(&picture, Ok(pixels(4))), &state, &engine);
+        let _again = stage.loaded(
             &finished(&other, Err("file not found".into())),
             &state,
             &engine,
         );
         let _loads = stage.keep_more();
         assert!(stage.loading.contains(&huge.id), "then the next");
-        stage.loaded(&finished(&huge, Ok(pixels(KEEP_BUDGET))), &state, &engine);
+        let _again = stage.loaded(&finished(&huge, Ok(pixels(KEEP_BUDGET))), &state, &engine);
         assert!(stage.kept.contains_key(&picture.id));
         // What failed or didn't fit isn't loaded again on every change.
         assert!(stage.unkept.contains(&other.id) && stage.unkept.contains(&huge.id));
@@ -1151,6 +1253,49 @@ mod tests {
         assert!(!stopped_short(secs(3600), Duration::ZERO), "live");
         // No stream to play is an error, not a panic.
         assert!(open_stream(&Stream::Files(Vec::new())).is_err());
+    }
+
+    #[test]
+    fn a_video_passed_over_isnt_loaded_and_one_taken_doesnt_wait() {
+        let id = |name: &str| {
+            let source = SourceId::new("link").unwrap();
+            lantern_source_link::youtube_video(&source, name).id
+        };
+        let (passed, stayed, taken) = (id("aaaaaaaaaaa"), id("bbbbbbbbbbb"), id("ccccccccccc"));
+        let wanted = Mutex::new(Wanted {
+            upcoming: HashSet::from([stayed.clone()]),
+            program: Some(taken.clone()),
+        });
+        let dwell = Duration::from_millis(60);
+        let start = Instant::now();
+        assert!(worth_loading(&wanted, &taken, Duration::from_secs(30)));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "no wait for the program"
+        );
+        let start = Instant::now();
+        assert!(!worth_loading(&wanted, &passed, dwell));
+        assert!(worth_loading(&wanted, &stayed, dwell));
+        assert!(start.elapsed() >= dwell * 2, "each waited its dwell");
+    }
+
+    #[test]
+    fn preloading_says_what_is_wanted_now() {
+        let source = SourceId::new("link").unwrap();
+        let video = |name: &str| lantern_source_link::youtube_video(&source, name);
+        // The videos are "on disk", so nothing waits or asks YouTube.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["aaaaaaaaaaa", "bbbbbbbbbbb"] {
+            std::fs::write(dir.path().join(format!("{name}.mp4")), b"").unwrap();
+        }
+        let mut stage = Stage::new(Downloads::new(dir.path().to_path_buf()));
+        let (first, second) = (video("aaaaaaaaaaa"), video("bbbbbbbbbbb"));
+        let _loads = stage.preload([first.clone()]);
+        let _loads = stage.preload([second.clone()]);
+        let wanted = stage.wanted.lock().unwrap();
+        assert_eq!(wanted.upcoming, HashSet::from([second.id.clone()]));
+        assert_eq!(wanted.program, None);
+        assert!(stage.dwelling.contains_key(&first.id));
     }
 
     #[test]

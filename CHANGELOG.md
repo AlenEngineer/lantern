@@ -247,6 +247,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   minute, long enough to look frozen. The stream's files each begin with
   an index, and Lantern now plays them in a way that uses it. A stream
   whose network goes away is still reported as failed, not ended.
+- Going down a list of YouTube results no longer asks YouTube for every
+  result on the way. A result has to stay lined up for a moment before
+  Lantern fetches it; each one passed used to start a `yt-dlp` of several
+  seconds that nothing stopped.
 
 ## [0.7.0] - 2026-11-13
 

@@ -610,9 +610,9 @@ impl App {
                 return task;
             }
             Message::Loaded(loaded) => {
-                self.media.loaded(&loaded, &self.stage, &self.engine.0);
+                let again = self.media.loaded(&loaded, &self.stage, &self.engine.0);
                 // The next of the plan's pictures to keep loaded.
-                return self.media.keep_more().map(Message::Loaded);
+                return Task::batch([again, self.media.keep_more()]).map(Message::Loaded);
             }
             Message::Ended(scene) => {
                 self.media.ended(scene, &self.engine.0);
