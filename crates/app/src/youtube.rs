@@ -21,6 +21,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use lantern_engine::{Location, Resource};
 
+use crate::relay::Track;
+
 /// H.264 up to 720p with AAC, which GStreamer plays without extra plugins.
 const FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4]";
 
@@ -45,11 +47,19 @@ const STREAM_FORMAT: &str = concat!(
 const LIVE_FORMAT: &str = "bv*[vcodec^=avc1][height<=720]+ba/b";
 
 /// What a video plays from without being downloaded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Stream {
     /// The addresses of its video stream then its audio stream, or one
     /// address with both. They last a few hours.
     Files(Vec<String>),
+    /// Its video stream and its audio stream with what a manifest for
+    /// them needs, and its length in seconds. The player jumps in these
+    /// at once, where in [`Files`](Stream::Files) it walks to the place.
+    Pair {
+        video: Track,
+        audio: Track,
+        seconds: f64,
+    },
     /// A video that is live now: the address of its manifest, which lists
     /// the pieces of picture and sound as they are made.
     Live(String),
@@ -73,9 +83,15 @@ pub fn stream(video: &YoutubeVideo) -> Result<Stream, String> {
         .ok_or_else(|| format!("yt-dlp gave no stream for {}", video.id))
 }
 
-/// The first line [`stream`] asks `yt-dlp` for: whether the video is live,
-/// a bar, and its manifest's address if it has one.
-const STREAM_FACTS: &str = "%(is_live)s|%(requested_formats.0.manifest_url,manifest_url|)s";
+/// The first line [`stream`] asks `yt-dlp` for, its parts between bars:
+/// whether the video is live, its manifest's address if it has one, its
+/// length in seconds, then the codec and bitrate (kbit/s) of its video
+/// stream and of its audio stream. A part `yt-dlp` doesn't know is empty.
+const STREAM_FACTS: &str = concat!(
+    "%(is_live)s|%(requested_formats.0.manifest_url,manifest_url|)s|%(duration|)s",
+    "|%(requested_formats.0.vcodec|)s|%(requested_formats.0.tbr|)s",
+    "|%(requested_formats.1.acodec|)s|%(requested_formats.1.tbr|)s",
+);
 
 /// Reads what [`stream`] asked for: the [`STREAM_FACTS`] line, then the
 /// addresses. A manifest is taken only from a video that is live: for any
@@ -83,18 +99,43 @@ const STREAM_FACTS: &str = "%(is_live)s|%(requested_formats.0.manifest_url,manif
 /// better downloaded.
 fn parse_stream(printed: &str) -> Option<Stream> {
     let mut lines = printed.lines().map(str::trim);
-    let (live, manifest) = lines.next()?.split_once('|')?;
+    let facts: Vec<&str> = lines.next()?.split('|').collect();
+    let (live, manifest) = (*facts.first()?, *facts.get(1)?);
     if live == "True" {
         return manifest
             .starts_with("https://")
             .then(|| Stream::Live(manifest.to_string()));
     }
-    let urls: Vec<String> = lines
+    let mut urls: Vec<String> = lines
         .filter(|line| line.starts_with("https://"))
         .map(str::to_string)
         .collect();
-    let files = urls.iter().all(|url| !url.contains("/manifest/"));
-    (files && matches!(urls.len(), 1 | 2)).then_some(Stream::Files(urls))
+    if urls.iter().any(|url| url.contains("/manifest/")) || !matches!(urls.len(), 1 | 2) {
+        return None;
+    }
+    // Two streams, and everything a manifest for them needs.
+    let track = |url: String, codec: usize| {
+        let bits = facts.get(codec + 1)?.parse::<f64>().ok()? * 1000.0;
+        let codec = facts.get(codec).filter(|codec| !codec.is_empty())?;
+        Some(Track {
+            url,
+            codec: codec.to_string(),
+            bits: bits as u64,
+        })
+    };
+    let seconds = facts.get(2).and_then(|seconds| seconds.parse::<f64>().ok());
+    if let (2, Some(seconds)) = (urls.len(), seconds)
+        && let Some(audio) = track(urls[1].clone(), 5)
+        && let Some(video) = track(urls[0].clone(), 3)
+    {
+        urls.clear();
+        return Some(Stream::Pair {
+            video,
+            audio,
+            seconds,
+        });
+    }
+    Some(Stream::Files(urls))
 }
 
 /// How long a downloaded video stays without being used.
@@ -431,7 +472,27 @@ mod tests {
 
     #[test]
     fn what_yt_dlp_prints_says_how_a_video_streams() {
-        let files = "False|\nhttps://a.googlevideo.com/v\nhttps://a.googlevideo.com/a\n";
+        let pair = "False||634.5|avc1.4D401F|1101.2|mp4a.40.2|129.5\n\
+                    https://a.googlevideo.com/v\nhttps://a.googlevideo.com/a\n";
+        assert_eq!(
+            parse_stream(pair),
+            Some(Stream::Pair {
+                video: Track {
+                    url: "https://a.googlevideo.com/v".into(),
+                    codec: "avc1.4D401F".into(),
+                    bits: 1_101_200,
+                },
+                audio: Track {
+                    url: "https://a.googlevideo.com/a".into(),
+                    codec: "mp4a.40.2".into(),
+                    bits: 129_500,
+                },
+                seconds: 634.5,
+            })
+        );
+        // Without all a manifest needs, the two files as they are.
+        let files = "False||634.5|avc1.4D401F||mp4a.40.2|129.5\n\
+                     https://a.googlevideo.com/v\nhttps://a.googlevideo.com/a\n";
         assert_eq!(
             parse_stream(files),
             Some(Stream::Files(vec![
@@ -440,11 +501,11 @@ mod tests {
             ]))
         );
         assert_eq!(
-            parse_stream("NA|\nhttps://a.googlevideo.com/both\n"),
+            parse_stream("NA||19|||||\nhttps://a.googlevideo.com/both\n"),
             Some(Stream::Files(vec!["https://a.googlevideo.com/both".into()]))
         );
         // Live: its manifest, not the two lists of pieces under it.
-        let live = "True|https://manifest.googlevideo.com/api/manifest/hls_variant/x.m3u8\n\
+        let live = "True|https://manifest.googlevideo.com/api/manifest/hls_variant/x.m3u8|||||\n\
                     https://manifest.googlevideo.com/api/manifest/hls_playlist/v.m3u8\n\
                     https://manifest.googlevideo.com/api/manifest/hls_playlist/a.m3u8\n";
         assert_eq!(
