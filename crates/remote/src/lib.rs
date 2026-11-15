@@ -171,7 +171,15 @@ impl Shared {
         // A phone that has just arrived: the app may have had no one to
         // publish for.
         (self.act)(Command::Hello);
-        let mut seen = 0;
+        // With no snapshot kept, the one that greeting brings is awaited.
+        let mut seen = {
+            let state = self.state();
+            if state.snapshot.is_empty() {
+                state.version
+            } else {
+                0
+            }
+        };
         let sent = loop {
             let mut state = self.state();
             if state.version == seen && !self.stopped.load(Ordering::SeqCst) {
@@ -198,7 +206,11 @@ impl Shared {
                 break Err(err);
             }
         };
-        self.watching.fetch_sub(1, Ordering::SeqCst);
+        // The last phone to leave takes the snapshot with it: the app stops
+        // publishing with no one to see, so it would be stale for the next.
+        if self.watching.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.state().snapshot.clear();
+        }
         sent
     }
 }
@@ -264,6 +276,45 @@ mod tests {
         }
         assert!(ask(&server, "GET /elsewhere HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 404"));
         assert!(commands.try_recv().is_err(), "nothing was carried out");
+    }
+
+    #[test]
+    fn a_phone_that_arrives_later_isnt_shown_what_the_last_one_saw() {
+        let (server, commands) = server();
+        let watch = || {
+            let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+            stream
+                .write_all(b"GET /events?t=secret HTTP/1.1\r\n\r\n")
+                .unwrap();
+            BufReader::new(stream).lines()
+        };
+        let title = |lines: &mut std::io::Lines<BufReader<TcpStream>>| loop {
+            let line = lines.next().unwrap().unwrap();
+            if let Some(json) = line.strip_prefix("data: ") {
+                let event: serde_json::Value = serde_json::from_str(json).unwrap();
+                return event["live"]["title"].as_str().unwrap().to_string();
+            }
+        };
+        server.publish(&snapshot("first"));
+        let mut phone = watch();
+        assert_eq!(title(&mut phone), "first");
+        assert_eq!(commands.recv().unwrap(), Command::Hello);
+        drop(phone);
+        // The server finds out it left when a write to it fails, which
+        // takes one or two.
+        for unseen in 0.. {
+            if server.watching() == 0 {
+                break;
+            }
+            server.publish(&snapshot(&format!("unseen {unseen}")));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // The app answers the next phone's greeting with how things are.
+        let mut phone = watch();
+        assert_eq!(commands.recv().unwrap(), Command::Hello);
+        server.publish(&snapshot("now"));
+        assert_eq!(title(&mut phone), "now");
     }
 
     #[test]

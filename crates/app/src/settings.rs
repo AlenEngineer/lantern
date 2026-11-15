@@ -23,6 +23,8 @@ use crate::paths::{self, Suggestion, Want};
 use crate::{App, Message};
 
 const LABEL_FIELD: f32 = 160.0;
+/// The side of the remote's QR code.
+const QR_SIDE: f32 = 196.0;
 const SMALL_FIELD: f32 = 110.0;
 const BANG_FIELD: f32 = 80.0;
 /// The settings' scrolling body.
@@ -48,6 +50,10 @@ pub struct Draft {
     /// A YouTube video shown outside the plan plays straight from
     /// YouTube; off, it's downloaded first like the plan's.
     pub stream: bool,
+    /// Whether the phone remote is on.
+    pub remote: bool,
+    /// The remote's port as the config has it; not edited here.
+    remote_port: Option<u16>,
     /// The screen for the stage; `None` leaves it to the compositor.
     pub output: Option<String>,
     /// The screens connected when the settings opened, or why they can't
@@ -92,6 +98,8 @@ pub enum Category {
     /// The dashboard's colours.
     Appearance,
     Keys,
+    /// The remote for a phone.
+    Phone,
 }
 
 impl Category {
@@ -103,6 +111,7 @@ impl Category {
             Category::Library => "Library",
             Category::Appearance => "Appearance",
             Category::Keys => "Keys",
+            Category::Phone => "Phone",
         }
     }
 }
@@ -266,6 +275,8 @@ pub enum Edit {
     Blur(bool),
     /// Stream a YouTube video shown outside the plan, or download it.
     Stream(bool),
+    /// Turn the phone remote on or off.
+    Remote(bool),
     /// The path of the open plan's own folder N, a new one, or one less.
     PlanFolderPath(usize, String),
     AddPlanFolder,
@@ -334,6 +345,8 @@ impl Draft {
             see_through: config.see_through.min(config::MOST_SEE_THROUGH),
             blur: !config.no_blur,
             stream: !config.always_download,
+            remote: config.remote,
+            remote_port: config.remote_port,
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
@@ -378,7 +391,7 @@ impl Draft {
                 &self.bibles,
                 &self.brave_key,
                 &self.colors,
-                (self.see_through, self.blur, self.stream),
+                (self.see_through, self.blur, self.stream, self.remote),
                 &self.output,
                 &self.stage,
                 &self.plan,
@@ -610,6 +623,7 @@ impl Draft {
             }
             Edit::Blur(on) => self.blur = on,
             Edit::Stream(on) => self.stream = on,
+            Edit::Remote(on) => self.remote = on,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -676,6 +690,8 @@ impl Draft {
             see_through: self.see_through,
             no_blur: !self.blur,
             always_download: !self.stream,
+            remote: self.remote,
+            remote_port: self.remote_port,
             folders,
             bibles,
             stage,
@@ -1385,6 +1401,7 @@ impl App {
             Category::Library => column![folders, bibles, youtube, images],
             Category::Appearance => column![colors, glass],
             Category::Keys => column![keys],
+            Category::Phone => column![self.phone_section(draft.remote)],
         };
         let mut parts = vec![
             Category::Stage,
@@ -1392,6 +1409,7 @@ impl App {
             Category::Library,
             Category::Appearance,
             Category::Keys,
+            Category::Phone,
         ];
         if draft.plan_title().is_some() {
             parts.insert(0, Category::Plan);
@@ -1485,6 +1503,73 @@ impl App {
     /// The open plan itself: its name, whether it's a template, a copy of
     /// it, and deleting it. These act on the plan at once; its Save keeps
     /// the name and the template mark.
+    /// The remote for a phone: its switch and, while it is on, the address
+    /// to open, as text and as a code for the phone's camera.
+    fn phone_section(&self, on: bool) -> Element<'_, Message> {
+        let p = self.palette;
+        let note = |words: String| text(words).size(META).color(p.on_surface_variant);
+        let mut section = column![
+            section(
+                p,
+                "Phone remote",
+                "Run the service from a phone: the plan, what is on stage, next and previous, play, blackout. The phone opens a page; there is nothing to install."
+            ),
+            row![
+                text("Remote").size(BODY).font(MEDIUM).width(LABEL_FIELD),
+                pill(
+                    p,
+                    if on { "✓ On" } else { "On" },
+                    if on { Tone::Selected } else { Tone::Plain },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Remote(true))),
+                ),
+                pill(
+                    p,
+                    if on { "Off" } else { "✓ Off" },
+                    if on { Tone::Plain } else { Tone::Selected },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Remote(false))),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8);
+        match (&self.remote, &self.remote_failed) {
+            (Some(remote), _) => {
+                let code = iced::widget::svg(remote.code.clone())
+                    .width(QR_SIDE)
+                    .height(QR_SIDE);
+                section = section
+                    .push(Space::new().height(6))
+                    .push(
+                        row![
+                            code,
+                            column![
+                                text("Scan this with the phone's camera.").size(BODY).font(MEDIUM),
+                                note("The phone and this computer must be on the same Wi-Fi. Anyone with this code can run the stage, so show it only to who should.".into()),
+                                text(remote.address.clone()).size(META).color(p.on_surface),
+                                note("Save to keep the remote on the next time Lantern starts.".into()),
+                            ]
+                            .spacing(8)
+                            .width(Fill),
+                        ]
+                        .spacing(16)
+                        .align_y(Alignment::Center),
+                    );
+            }
+            (None, Some(why)) => {
+                section = section.push(
+                    text(format!("The remote couldn't start: {why}"))
+                        .size(BODY)
+                        .color(p.error),
+                );
+            }
+            (None, None) => {}
+        }
+        section.into()
+    }
+
     fn plan_section<'a>(&self) -> Element<'a, Message> {
         let p = self.palette;
         let plan = self.engine.0.plan();

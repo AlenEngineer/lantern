@@ -107,6 +107,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
   show, and the time under it says `live`. It can't be scrubbed, and it
   isn't downloaded. Live videos used to fail with "Requested format is not
   available".
+- **A remote on your phone.** Settings › Phone turns it on and shows a QR
+  code; the phone's camera opens a page, with nothing to install. It shows
+  the plan, what is on stage and what is next, the section's time and how
+  the service stands, and it has Next and Previous, play or pause, the
+  time bar, Blackout, Clear, and any step of the plan two taps away. The
+  phone and the computer must be on the same network. Off until you turn
+  it on; `remote_port` in the config changes its port from 7373.
 
 ### Fixed
 

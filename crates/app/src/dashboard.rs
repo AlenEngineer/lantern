@@ -280,7 +280,7 @@ impl App {
     // The launcher
 
     /// The plan's timing now, with the lengths of the videos loaded so far.
-    fn timing(&self) -> Timing {
+    pub(crate) fn timing(&self) -> Timing {
         self.engine.0.timing(&|step| self.loaded_length(step))
     }
 
