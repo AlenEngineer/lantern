@@ -239,6 +239,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   or two after it is issued; Lantern used to give up at once and download
   the video instead, and now asks again for up to ten seconds. When a
   stream can't start, the log says what YouTube answered.
+- A video streamed from YouTube is heard. The sound server remembers when
+  Lantern's sound was last muted, which a video loading ahead does to
+  itself, and a stream could start under that mute and play in silence.
 
 ## [0.7.0] - 2026-11-13
 
