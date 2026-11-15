@@ -193,6 +193,8 @@ enum Message {
     Loaded(Arc<Loaded>),
     /// The program's video reached its end.
     Ended(SceneId),
+    /// The program's video stopped on an error, which this says.
+    Broke(SceneId, String),
     /// Time to report the playing video's position.
     Tick,
     /// Time to redraw download or indexing progress.
@@ -615,6 +617,9 @@ impl App {
                 self.engine.0.report(scene, MediaReport::Ended);
                 // A step that goes on by itself has moved the plan.
                 return Task::batch([self.preload(), self.arrive()]);
+            }
+            Message::Broke(scene, why) => {
+                self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
                 if let Some((scene, video)) = self.media.video() {
@@ -2191,6 +2196,10 @@ impl App {
                             .height(Fill)
                             .content_fit(ContentFit::Contain)
                             .on_end_of_stream(Message::Ended(scene.id))
+                            .on_error({
+                                let id = scene.id;
+                                move |err| Message::Broke(id, err.message().to_string())
+                            })
                             .into(),
                         Over::Media,
                     ),

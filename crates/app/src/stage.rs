@@ -37,8 +37,9 @@ use crate::youtube::{Downloads, YoutubeVideo};
 pub enum Content {
     /// A decoded still image.
     Image(Handle),
-    /// A player, paused and muted until it goes on program.
-    Video { player: Video },
+    /// A player, paused and muted until it goes on program. `streamed`:
+    /// it plays from the net, not from a file.
+    Video { player: Video, streamed: bool },
     /// Rendered PDF pages, in order. Never empty.
     Pages(Vec<Handle>),
 }
@@ -185,7 +186,10 @@ impl Loader {
                     match streamed {
                         Ok(player) => {
                             crate::log(format!("stage: streaming {}", video.id));
-                            return Ok(Content::Video { player });
+                            return Ok(Content::Video {
+                                player,
+                                streamed: true,
+                            });
                         }
                         Err(err) => crate::log(format!(
                             "stage: can't stream {} ({err}), downloading it",
@@ -278,6 +282,16 @@ fn wait_to_start(pipeline: &gst::Pipeline) -> Result<(), String> {
     }
 }
 
+/// What the operator reads when a playing video stops on `why`.
+fn broke_reason(streamed: bool, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    if streamed {
+        format!("the stream from YouTube stopped, is the network up? ({why})")
+    } else {
+        format!("the video stopped playing ({why})")
+    }
+}
+
 /// A player for a video file, at its start.
 fn open_file(path: &Path) -> Result<Content, String> {
     let uri = url::Url::from_file_path(existing(path)?)
@@ -286,7 +300,10 @@ fn open_file(path: &Path) -> Result<Content, String> {
     player
         .seek(Duration::ZERO, true)
         .map_err(|err| format!("{}: {err}", path.display()))?;
-    Ok(Content::Video { player })
+    Ok(Content::Video {
+        player,
+        streamed: false,
+    })
 }
 
 fn existing(path: &Path) -> Result<&Path, String> {
@@ -581,6 +598,27 @@ impl Stage {
             }
             self.sync_playback(timed, engine);
         }
+    }
+
+    /// The program's player stopped on an error: the scene has failed and
+    /// says why, and the player is let go. A stream whose network went
+    /// away stops like this, and then says it ended; the engine takes no
+    /// end from a scene that failed.
+    pub fn broke(&mut self, scene: SceneId, why: &str, engine: &Engine) {
+        let Program::Showing {
+            scene: shown,
+            content: Content::Video { streamed, .. },
+        } = &self.program
+        else {
+            return;
+        };
+        if *shown != scene {
+            return;
+        }
+        let reason = broke_reason(*streamed, why);
+        crate::log(format!("stage: {scene} failed: {reason}"));
+        engine.report(scene, MediaReport::Failed { reason });
+        self.program = Program::Bare;
     }
 
     /// Plays or pauses the player to match the engine.
@@ -920,6 +958,14 @@ mod tests {
         assert!(!stage.streams(&Loader::Video("/v.mp4".into())), "a file");
         stage.plan_videos(HashSet::new(), false);
         assert!(!stage.streams(&loader("bbbbbbbbbbb")), "switched off");
+        assert_eq!(
+            broke_reason(true, "Internal data stream error."),
+            "the stream from YouTube stopped, is the network up? (Internal data stream error)"
+        );
+        assert_eq!(
+            broke_reason(false, "Could not decode stream."),
+            "the video stopped playing (Could not decode stream)"
+        );
         // No stream to play is an error, not a panic.
         assert!(open_stream(&[]).is_err());
     }

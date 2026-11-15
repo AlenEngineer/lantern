@@ -568,6 +568,29 @@ mod tests {
     }
 
     #[test]
+    fn a_video_that_failed_takes_no_end() {
+        let mut stage = Showman::new();
+        stage.show(video());
+        let id = program_id(&stage);
+        stage.report(
+            id,
+            MediaReport::Timeline {
+                duration: Some(secs(30)),
+            },
+        );
+        stage.play();
+        // A stream that lost its network errors, then says it ended.
+        let reason = "the stream stopped".to_string();
+        assert!(stage.report(id, MediaReport::Failed { reason }));
+        assert!(!stage.report(id, MediaReport::Ended));
+        assert!(!stage.report(id, MediaReport::Position(secs(12))));
+        assert!(matches!(
+            stage.state().program.as_ref().map(|scene| &scene.media),
+            Some(Media::Failed { .. })
+        ));
+    }
+
+    #[test]
     fn ended_is_sticky_until_play_or_seek() {
         let mut stage = Showman::new();
         stage.show(video());
