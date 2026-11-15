@@ -50,6 +50,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # An exported plan is one zip file. Stored only: media is compressed already.
 zip = { version = "9", default-features = false }
 
+# The QR code that gives a phone the remote's address. Pure Rust, no
+# image support: Lantern draws the squares itself.
+qrcode = { version = "0.14", default-features = false }
+
 # Dev-only
 tempfile = "3"
 

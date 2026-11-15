@@ -58,6 +58,12 @@ pub struct Config {
     /// the plan's are downloaded.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub always_download: bool,
+    /// Serve the remote for a phone on the local network.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remote: bool,
+    /// The port the remote listens on, when not [`REMOTE_PORT`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_port: Option<u16>,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
@@ -284,6 +290,10 @@ pub fn env(key: &str) -> Option<String> {
 
 /// Lantern's folder in an XDG base directory: `$var/lantern`, else
 /// `~/fallback/lantern`. An empty variable counts as unset.
+/// The port the phone remote listens on unless the config says another.
+/// Fixed, so the address on a phone's home screen keeps working.
+pub const REMOTE_PORT: u16 = 7373;
+
 pub fn xdg_dir(env: impl Fn(&str) -> Option<String>, var: &str, fallback: &str) -> PathBuf {
     match (env(var), env("HOME")) {
         (Some(dir), _) if !dir.is_empty() => PathBuf::from(dir),
@@ -421,6 +431,8 @@ mod tests {
             see_through: 40,
             no_blur: true,
             always_download: true,
+            remote: true,
+            remote_port: Some(8080),
             keys: [("new".to_string(), "ctrl+t".to_string())].into(),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),

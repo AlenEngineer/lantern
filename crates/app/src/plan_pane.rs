@@ -665,7 +665,7 @@ impl App {
 
     /// How long a step takes: `4:00` when known, `~4 min` when guessed,
     /// nothing for a step that shows nothing.
-    fn step_length(&self, step: &Step) -> String {
+    pub(crate) fn step_length(&self, step: &Step) -> String {
         let estimate = lantern_engine::timing::estimate(step, self.loaded_length(step));
         match estimate.basis {
             Basis::Guess if estimate.length.is_zero() => String::new(),

@@ -21,6 +21,7 @@ mod look;
 mod outputs;
 mod palette;
 mod paths;
+mod phone;
 mod plan_edit;
 mod plan_pane;
 mod plans;
@@ -194,6 +195,8 @@ enum Message {
     Loaded(Arc<Loaded>),
     /// The program's video reached its end.
     Ended(SceneId),
+    /// A phone asked for something through the remote.
+    Remote(lantern_remote::Command),
     /// The program's video stopped on an error, which this says.
     Broke(SceneId, String),
     /// Time to report the playing video's position.
@@ -341,6 +344,10 @@ struct App {
     config: Config,
     /// The settings being edited, while the view is open.
     settings: Option<settings::Draft>,
+    /// The remote for a phone, while it is on.
+    remote: Option<phone::Remote>,
+    /// Why the remote couldn't start, when it couldn't.
+    remote_failed: Option<String>,
     home: Option<PathBuf>,
     downloads: Shared<Downloads>,
     plans: Plans,
@@ -477,6 +484,8 @@ impl App {
             look: config.stage.clone(),
             look_held: false,
             blur_told: None,
+            remote: None,
+            remote_failed: None,
             dashboard_open: false,
             output_watch: outputs::Watch::default(),
             index_changes: 0,
@@ -548,6 +557,8 @@ impl App {
         let task = self.handle(message);
         self.sync_look();
         self.sync_blur();
+        self.sync_remote();
+        self.tell_remote();
         task
     }
 
@@ -619,6 +630,7 @@ impl App {
                 // A step that goes on by itself has moved the plan.
                 return Task::batch([self.preload(), self.arrive()]);
             }
+            Message::Remote(command) => return self.remote_command(command),
             Message::Broke(scene, why) => {
                 self.media.broke(scene, &why, &self.engine.0);
             }
@@ -2278,6 +2290,18 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
         }
+        if let Some(remote) = &self.remote {
+            subscriptions.push(Subscription::run_with(
+                Shared(remote.inbox.clone()),
+                remote_feed,
+            ));
+            // What the page shows moves with the clock (a section's time,
+            // how far behind the service is), also when nothing else does.
+            if remote.watched() {
+                subscriptions
+                    .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+            }
+        }
         if let Some(script) = &self.script {
             subscriptions.push(Subscription::run_with(
                 (
@@ -2454,6 +2478,21 @@ fn cursor_event(event: iced::Event, _: iced::event::Status, window: window::Id) 
 
 /// Runs the script on its own thread, since its commands block (`wait`,
 /// `shot`). Reports each command and the end.
+/// What phones send through the remote, as messages.
+fn remote_feed(inbox: &Shared<phone::Inbox>) -> impl Stream<Item = Message> + use<> {
+    let commands = inbox.0.take();
+    iced::stream::channel(64, async move |mut out| {
+        let Some(mut commands) = commands else {
+            return;
+        };
+        while let Some(command) = commands.next().await {
+            if out.send(Message::Remote(command)).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
 fn run_script(
     (engine, library, downloads, script): &(
         Shared<Engine>,
