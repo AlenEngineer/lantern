@@ -256,6 +256,13 @@ impl Showman {
         self.emit(StageEvent::Preview { scene: Some(scene) });
     }
 
+    /// [`preview`](Self::preview), at `frame`: a slide of a deck looked
+    /// at before it is shown.
+    pub fn preview_at(&mut self, resource: Arc<Resource>, frame: usize) {
+        let scene = Scene::new_at(self.next_id(), resource, frame);
+        self.emit(StageEvent::Preview { scene: Some(scene) });
+    }
+
     /// Empties the preview.
     pub fn clear_preview(&mut self) {
         self.emit(StageEvent::Preview { scene: None });

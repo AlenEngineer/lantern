@@ -287,6 +287,11 @@ impl Engine {
         self.control(|stage| stage.preview(resource));
     }
 
+    /// Lines a resource up in preview at one of its frames.
+    pub fn preview_at(&self, resource: Arc<Resource>, frame: usize) {
+        self.control(|stage| stage.preview_at(resource, frame));
+    }
+
     /// Empties the preview.
     pub fn clear_preview(&self) {
         self.control(Showman::clear_preview);
