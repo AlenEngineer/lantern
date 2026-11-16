@@ -21,6 +21,19 @@ pub struct Store {
     layout: PathBuf,
     /// Where the media of imported plans is kept, a folder each.
     bundles: PathBuf,
+    /// Where a running service's place is kept.
+    running: PathBuf,
+}
+
+/// Where a service is: kept while it runs, so that one cut short by a
+/// crash or a restart can be picked up.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Running {
+    /// The plan's file.
+    pub plan: PathBuf,
+    /// The step it is at, and the slide of that step.
+    pub step: lantern_engine::StepId,
+    pub frame: usize,
 }
 
 /// A saved plan, as the open list shows it.
@@ -50,6 +63,30 @@ impl Store {
             last: data.join("last-plan"),
             layout: data.join("layout"),
             bundles: data.join("bundles"),
+            running: data.join("running"),
+        }
+    }
+
+    /// Where a service was, if one was running when Lantern last stopped.
+    pub fn running(&self) -> Option<Running> {
+        serde_json::from_str(&std::fs::read_to_string(&self.running).ok()?).ok()
+    }
+
+    /// Keeps where the service is, or with `None` forgets it: the service
+    /// ended.
+    pub fn set_running(&self, running: Option<&Running>) -> io::Result<()> {
+        match running {
+            Some(running) => {
+                if let Some(dir) = self.running.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                let text = serde_json::to_string(running).map_err(io::Error::other)?;
+                std::fs::write(&self.running, text)
+            }
+            None => match std::fs::remove_file(&self.running) {
+                Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+                _ => Ok(()),
+            },
         }
     }
 

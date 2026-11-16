@@ -516,6 +516,11 @@ struct App {
     pub(crate) unlocked: Option<Option<StepId>>,
     /// "End the service" was pressed once, and when.
     pub(crate) ending: Option<Instant>,
+    /// A service was running when Lantern last stopped: the step and the
+    /// slide it was at, until it is picked up there or ended.
+    pub(crate) resuming: Option<(StepId, usize)>,
+    /// The place of the running service as it was last written down.
+    kept: Option<plans::Running>,
     /// What the decks in the plan play or link to, a list for each slide,
     /// by the deck's resource: read once, when the deck joins the plan.
     pub(crate) parts: HashMap<ResourceId, Vec<Vec<Arc<lantern_engine::Resource>>>>,
@@ -628,6 +633,8 @@ impl App {
             mode: mode::Mode::Plan,
             unlocked: None,
             ending: None,
+            resuming: None,
+            kept: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
             parts: HashMap::new(),
@@ -641,6 +648,7 @@ impl App {
             scrub: None,
         };
         app.check_palette();
+        app.find_running();
         // The plan reopened at start may bring folders of its own.
         app.sync_library();
         // Dashboard first: on a single monitor, Hyprland drops a fullscreen
@@ -683,6 +691,7 @@ impl App {
         }
         self.sync_parts();
         self.sync_shelf();
+        self.keep_running();
         self.sync_look();
         self.sync_blur();
         self.sync_remote();
@@ -1690,6 +1699,17 @@ impl App {
         };
         match op {
             Op::Unlock => self.toggle_unlock(),
+            // A service cut short is picked up where it was: its step
+            // goes on, at its slide.
+            Op::Next if self.resuming.is_some() => {
+                if let Some((step, frame)) = self.resuming.take()
+                    && let Err(err) = engine.go_to_at(step, frame)
+                {
+                    log(format!("mode: can't pick the service up: {err}"));
+                }
+                self.stepping = true;
+                return Task::batch([self.preload(), self.arrive()]);
+            }
             // In Live there is no plan to step through: Next and Prev
             // turn the slides of what is on stage, and no more.
             Op::Next | Op::Prev if self.mode == mode::Mode::Live && !self.left_for_program() => {
@@ -2388,6 +2408,67 @@ impl App {
             .flatten()
             .and_then(|step| plan.position(step.id));
         reached.is_none_or(|reached| at > reached).then_some(at)
+    }
+
+    /// Writes down where the running service is, when it has moved, and
+    /// forgets it once the service has ended. A service cut short by a
+    /// crash or a restart is found here at the next start.
+    fn keep_running(&mut self) {
+        if self.mode != mode::Mode::Run {
+            if self.kept.take().is_some() {
+                let _ = self.plans.store().set_running(None);
+            }
+            return;
+        }
+        // Reached a step: whatever was waiting to be picked up is behind.
+        let Some(step) = self.engine.0.current_step() else {
+            return;
+        };
+        self.resuming = None;
+        let Some(plan) = self.plans.file().map(std::path::Path::to_path_buf) else {
+            return;
+        };
+        let frame = match &step.action {
+            Action::Show { resource } => self
+                .stage
+                .picture()
+                .filter(|scene| scene.resource.id == resource.id)
+                .map_or(0, lantern_engine::Scene::frame),
+            _ => 0,
+        };
+        let now = plans::Running {
+            plan,
+            step: step.id,
+            frame,
+        };
+        if self.kept.as_ref() != Some(&now) {
+            if let Err(err) = self.plans.store().set_running(Some(&now)) {
+                log(format!("mode: can't keep the service's place: {err}"));
+            }
+            self.kept = Some(now);
+        }
+    }
+
+    /// At startup: if a service was running when Lantern last stopped, and
+    /// its plan is the one open, Lantern comes back in Run with the plan
+    /// waiting at that step. Nothing is shown until the operator says so.
+    fn find_running(&mut self) {
+        let Some(running) = self.plans.store().running() else {
+            return;
+        };
+        let plan = self.engine.0.plan();
+        if self.plans.file() == Some(running.plan.as_path()) && plan.get(running.step).is_some() {
+            self.mode = mode::Mode::Run;
+            self.resuming = Some((running.step, running.frame));
+            self.selected = Some(running.step);
+            log(format!(
+                "mode: a service was running, at step {}",
+                running.step
+            ));
+            self.kept = Some(running);
+        } else {
+            let _ = self.plans.store().set_running(None);
+        }
     }
 
     /// Whether what is on stage is something a slide played or linked to,

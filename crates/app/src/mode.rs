@@ -290,6 +290,7 @@ impl App {
         self.engine.0.rewind();
         self.selected = None;
         self.unlocked = None;
+        self.resuming = None;
         self.mode = Mode::Plan;
         log("mode: the service ended");
         self.preload()
@@ -415,6 +416,51 @@ impl App {
     /// won't do.
     pub(crate) fn mode_note(&self) -> Element<'_, Message> {
         let p = self.palette;
+        // A service cut short: where it was, and the way back to it.
+        if let Some((step, frame)) = self.resuming {
+            let label = self
+                .engine
+                .0
+                .plan()
+                .get(step)
+                .map_or_else(String::new, |step| step.label.clone());
+            let slide = match frame {
+                0 => String::new(),
+                frame => format!(", slide {}", frame + 1),
+            };
+            return container(
+                column![
+                    text(format!("The service was at “{label}”{slide}."))
+                        .size(META)
+                        .color(p.on_surface),
+                    text("Nothing is on the projector until you pick it up.")
+                        .size(META)
+                        .color(p.on_surface_variant),
+                    pill(
+                        p,
+                        &keys::with_key("Pick up there", Op::Next),
+                        Tone::Live,
+                        PILL,
+                        Some(Message::Key {
+                            op: Op::Next,
+                            only_if_empty: false,
+                        }),
+                    )
+                    .width(Fill),
+                ]
+                .spacing(6),
+            )
+            .padding([8, 10])
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.into()),
+                border: iced::Border {
+                    radius: 12.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            })
+            .into();
+        }
         let (words, tone) = match self.mode {
             Mode::Plan => ("Nothing here reaches the projector", Tone::Plain),
             Mode::Run if self.unlocked.is_some() => ("Changing what is ahead", Tone::Selected),
