@@ -30,6 +30,20 @@ use crate::{App, Clicked, Message};
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
 
+/// About how tall a step's row is, and each line under it, and the gap a
+/// drag opens: for what is cut to a height on its way open or closed. A
+/// little over is right; under would cut a row that should show whole.
+const ROW_TALL: f32 = 44.0;
+const PART_TALL: f32 = 22.0;
+const GAP_TALL: f32 = 48.0;
+
+/// A section's steps, cut to as much of their height as is in sight.
+fn cut<'a>(
+    (steps, tall, open): (iced::widget::Column<'a, Message>, f32, f32),
+) -> Element<'a, Message> {
+    container(steps).max_height(tall * open).clip(true).into()
+}
+
 /// Where a step is in the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Place {
@@ -209,15 +223,22 @@ impl App {
         let landing = moving
             .and_then(|drag| drag.landing)
             .or_else(|| self.carry_landing(plan));
+        // It opens as it comes, so the rows under it are moved aside and
+        // not thrown there.
+        let opening = self.motion.gap();
         let gap = |indent: f32| {
-            container(drop_gap(
+            let gap = container(drop_gap(
                 p,
                 moving
                     .map(|d| d.label(plan))
                     .or_else(|| held.map(|held| held.file.title.clone()))
                     .unwrap_or_default(),
             ))
-            .padding(iced::Padding::default().left(indent))
+            .padding(iced::Padding::default().left(indent));
+            match opening {
+                Some(open) => gap.max_height(GAP_TALL * open).clip(true),
+                None => gap,
+            }
         };
         // The pink line is there only while a search has a result for
         // Ctrl+Enter to add.
@@ -260,6 +281,10 @@ impl App {
         let mut in_section = false;
         let mut folded = false;
         let mut rest = 0;
+        // The steps of a section that is closing or opening, kept apart
+        // to be cut to the height they have so far: with how tall they
+        // are in all, and how much of that is in sight.
+        let mut folding: Option<(iced::widget::Column<'_, Message>, f32, f32)> = None;
         for (index, step) in plan.steps().iter().enumerate() {
             if carried.contains(&step.id) {
                 continue;
@@ -270,6 +295,9 @@ impl App {
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
             if step.is_section() {
+                if let Some(steps) = folding.take() {
+                    rows = rows.push(cut(steps));
+                }
                 in_section = true;
                 folded = self.folded.contains(&step.id);
                 let section = timing.sections.iter().find(|s| s.id == step.id);
@@ -294,12 +322,16 @@ impl App {
                 if selected && adds {
                     rows = rows.push(insertion_mark(p, INDENT));
                 }
+                if let Some(open) = self.motion.open(step.id) {
+                    folding = Some((column![].spacing(2), 0.0, open));
+                }
                 continue;
             }
             number += 1;
             // Folded away with its section, unless it is the step the
-            // service is at or the one being worked on.
-            if folded && in_section && Some(step.id) != current && !selected {
+            // service is at or the one being worked on. On its way there
+            // it is still drawn, under the cut.
+            if folded && in_section && folding.is_none() && Some(step.id) != current && !selected {
                 continue;
             }
             let place = if Some(step.id) == current {
@@ -323,11 +355,30 @@ impl App {
             }
             // Inside the step: what its slides play or link to, and the
             // sound that plays with it.
-            for part in self.step_parts(step, place == Place::Current) {
+            let parts = self.step_parts(step, place == Place::Current);
+            let tall = ROW_TALL + parts.len() as f32 * PART_TALL;
+            for part in parts {
                 row = row.push(part);
             }
             let indent = if in_section { INDENT } else { 0.0 };
-            rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
+            let row = container(row).padding(iced::Padding::default().left(indent));
+            // A step that stays in sight when its section is folded (the
+            // one the service is at, the one being worked on) stays put
+            // while the others close around it.
+            let stays = Some(step.id) == current || selected;
+            match folding.take() {
+                Some((steps, so_far, open)) if stays => {
+                    rows = rows.push(cut((steps, so_far, open))).push(row);
+                    folding = Some((column![].spacing(2), 0.0, open));
+                }
+                Some((steps, so_far, open)) => {
+                    folding = Some((steps.push(row), so_far + tall, open));
+                }
+                None => rows = rows.push(row),
+            }
+        }
+        if let Some(steps) = folding.take() {
+            rows = rows.push(cut(steps));
         }
         if landing == Some(rest) {
             rows = rows.push(gap(gap_indent(moving, in_section)));

@@ -712,6 +712,14 @@ impl App {
         self.motion
             .stage_shows(self.stage.program.as_ref().map(|scene| scene.id));
         self.sync_lock();
+        self.motion.mode_is(self.mode);
+        // The gap opens where what is held would land, as that moves.
+        let landing = match (&self.drag, &self.carried) {
+            (Some(drag), _) if drag.moving => drag.landing,
+            (_, Some(_)) => self.carry_landing(&self.engine.0.plan()),
+            _ => None,
+        };
+        self.motion.lands_at(landing);
         if self.mode == mode::Mode::Plan {
             self.plans.relist();
         }
@@ -1318,9 +1326,11 @@ impl App {
                 return self.preload();
             }
             Message::Fold(section) => {
-                if !self.folded.remove(&section) {
+                let closed = !self.folded.remove(&section);
+                if closed {
                     self.folded.insert(section);
                 }
+                self.motion.folded(section, closed);
             }
             Message::SetMode(to) => return self.set_mode(to),
             Message::StartService => return self.start_service(),

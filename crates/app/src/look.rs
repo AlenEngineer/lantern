@@ -95,6 +95,21 @@ pub fn row(p: Palette, tone: Tone) -> impl Fn(&iced::Theme, button::Status) -> b
     }
 }
 
+/// The fill and the text of a pill of `tone`, as [`pill`] draws it.
+pub fn pill_colours(p: Palette, tone: Tone) -> (Color, Color) {
+    tone.colors(p)
+}
+
+/// A pill with nothing behind its label: what lights it is drawn under
+/// it, and may be on its way from somewhere else.
+pub fn pill_clear(text: Color) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_, _| button::Style {
+        background: None,
+        text_color: text,
+        ..button::Style::default()
+    }
+}
+
 /// A list row filled with `fill`, whatever its tone: for a row whose
 /// colour is on its way somewhere.
 pub fn row_filled(
