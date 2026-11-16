@@ -409,6 +409,29 @@ impl App {
             ),
             None => (place(self.mode), fill),
         };
+        // Until the light arrives, the mode it is going to keeps a plain
+        // pill's ground and takes its ink as the light comes: dark ink on
+        // the dark strip, it was gone for the length of the slide.
+        let (plain_fill, plain_ink) = look::pill_colours(p, Tone::Plain);
+        let (ink, waiting) = match self.motion.slide() {
+            Some((_, along)) => (
+                crate::motion::blend(plain_ink, ink, along),
+                Some(plain_fill),
+            ),
+            None => (ink, None),
+        };
+        let ground = row![
+            Space::new().width(place(self.mode)),
+            container(Space::new().width(WIDE).height(TALL)).style(move |_| container::Style {
+                background: waiting.map(Into::into),
+                border: iced::Border {
+                    radius: (TALL / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            }),
+        ]
+        .height(TALL);
         let lit = row![
             Space::new().width(aside),
             container(Space::new().width(WIDE).height(TALL)).style(move |_| container::Style {
@@ -457,7 +480,7 @@ impl App {
                 tooltip::Position::Bottom,
             )
         });
-        let mut switch = row![iced::widget::stack![lit, row(buttons).spacing(GAP)]]
+        let mut switch = row![iced::widget::stack![ground, lit, row(buttons).spacing(GAP)]]
             .spacing(8)
             .align_y(Alignment::Center);
         let plan = self.engine.0.plan();
@@ -558,10 +581,31 @@ impl App {
         }
         // Something was just refused: the note says why, lit, and shakes
         // its head once. A refusal with nothing to see reads as a fault.
-        let refused = self.motion.why();
-        if refused.is_none() && self.mode != Mode::Run {
+        // Outside a run it has no room of its own: a refusal is said
+        // over the pane ([`Self::refusal_over`]), so nothing under it moves.
+        if self.mode != Mode::Run {
             return Space::new().height(0).into();
         }
+        self.note_line(false)
+    }
+
+    /// Why something was just refused, laid over the top of the pane
+    /// outside a run. In the pane it pushed every row down as it came and
+    /// let them back up as it went. Nothing, in a run or with nothing
+    /// refused.
+    pub(crate) fn refusal_over(&self) -> Element<'_, Message> {
+        if self.mode == Mode::Run || self.motion.why().is_none() {
+            return Space::new().height(0).into();
+        }
+        container(self.note_line(true)).padding([10, 12]).into()
+    }
+
+    /// The note's line: why something was refused, lit, shaking its head
+    /// once, and Unlock in a run. `over` what is under it, its ground
+    /// hides that; in its own room it is clear at rest.
+    fn note_line(&self, over: bool) -> Element<'_, Message> {
+        let p = self.palette;
+        let refused = self.motion.why();
         let at_rest = p.on_surface_variant;
         let words = match refused {
             Some((why, _)) => capitalised(why),
@@ -573,10 +617,16 @@ impl App {
             None => rest,
         };
         let colour = lit(at_rest, p.tertiary);
-        let ground = lit(
-            iced::Color::TRANSPARENT,
-            crate::palette::Palette::tint(p.tertiary, 0.3),
-        );
+        let ground = match over {
+            true => lit(
+                p.surface_container_highest,
+                crate::motion::blend(p.surface_container_highest, p.tertiary, 0.3),
+            ),
+            false => lit(
+                iced::Color::TRANSPARENT,
+                crate::palette::Palette::tint(p.tertiary, 0.3),
+            ),
+        };
         let aside = self.motion.nudge();
         let mut line = row![
             container(
@@ -673,7 +723,7 @@ impl App {
             scrollable(rows).height(Fill).into()
         };
         let count = shown.len();
-        column![
+        let pane = column![
             self.mode_note(),
             row![
                 text("Shown this session")
@@ -697,8 +747,10 @@ impl App {
         ]
         .spacing(8)
         .padding([16, 12])
-        .width(self.plan_width())
-        .height(Fill)
-        .into()
+        .height(Fill);
+        iced::widget::stack![pane, self.refusal_over()]
+            .width(self.plan_width())
+            .height(Fill)
+            .into()
     }
 }
