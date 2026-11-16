@@ -154,6 +154,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   reaches the projector. A running plan is locked, and **Unlock** (Ctrl+E)
   lets what is still ahead be changed until the service moves on. Live has
   no plan, lists what was shown, and can save it as one.
+- **The plan pane is a tree while planning**: the open plan, its sections
+  (an arrow folds one away) and their steps, and under them the other plans
+  and the templates, a click from being opened in its place.
 
 ### Fixed
 

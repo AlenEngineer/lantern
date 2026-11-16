@@ -304,6 +304,10 @@ pub struct Plans {
     saved: Plan,
     pub mode: Mode,
     pub notice: Option<Notice>,
+    /// The saved plans, for the tree that lists them under the open one,
+    /// and when they were last read.
+    pub entries: Vec<Entry>,
+    listed: Option<std::time::Instant>,
     /// The plan just deleted and the file it had, until another plan is
     /// opened or saved: what Ctrl+Z brings back.
     deleted: Option<(PathBuf, Plan)>,
@@ -319,6 +323,8 @@ impl Plans {
             saved: engine.plan(),
             mode: Mode::Steps,
             notice: None,
+            entries: Vec::new(),
+            listed: None,
             deleted: None,
         };
         // Media of imported plans that no saved plan uses any more: a
@@ -394,6 +400,19 @@ impl Plans {
         self.saved = plan;
         self.deleted = None;
         true
+    }
+
+    /// Reads the saved plans for the tree, unless that was just done: a
+    /// plan saved, renamed or deleted shows within a moment.
+    pub fn relist(&mut self) {
+        const FRESH: std::time::Duration = std::time::Duration::from_secs(1);
+        if self.listed.is_some_and(|at| at.elapsed() < FRESH) {
+            return;
+        }
+        self.listed = Some(std::time::Instant::now());
+        if let Ok(entries) = self.store.list() {
+            self.entries = entries;
+        }
     }
 
     /// Reads the list of saved plans again, when it's showing.
