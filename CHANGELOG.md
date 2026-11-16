@@ -157,6 +157,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - **The plan pane is a tree while planning**: the open plan, its sections
   (an arrow folds one away) and their steps, and under them the other plans
   and the templates, a click from being opened in its place.
+- A step shows what is inside it, under its row: the videos, sounds and
+  pictures on a deck's slides, by slide, and the sound that plays with the
+  step. In a run, the slide the service is on is lit.
 
 ### Fixed
 
