@@ -27,6 +27,8 @@ const WORKERS: usize = 2;
 enum Source {
     Image(PathBuf),
     Pdf(PathBuf),
+    /// A deck, which carries a picture of its first slide.
+    Deck(PathBuf),
     Video(PathBuf),
     /// Image links, tried in order (a YouTube video's still, a search
     /// result's picture and then its thumbnail).
@@ -51,6 +53,9 @@ impl Source {
             {
                 Some(Source::Pdf(path.clone()))
             }
+            (Location::File(path), Kind::Presentation) if crate::deck::is_deck(path) => {
+                Some(Source::Deck(path.clone()))
+            }
             (Location::Url(url), Kind::Image) => Some(Source::Links(
                 thumbnail.into_iter().chain([url.clone()]).collect(),
             )),
@@ -62,6 +67,10 @@ impl Source {
         match self {
             Source::Image(path) => shrink(open(path)?),
             Source::Pdf(path) => first_page(path),
+            Source::Deck(path) => {
+                let picture = crate::deck::thumbnail(path)?;
+                shrink(image::load_from_memory(&picture).map_err(|e| e.to_string())?)
+            }
             Source::Video(path) => video_still(path),
             Source::Links(links) => {
                 let dir = stage::cache_dir().join("images");

@@ -86,6 +86,9 @@ enum Loader {
     RemoteImage(Vec<String>),
     Video(PathBuf),
     Pdf(PathBuf),
+    /// A PowerPoint file or its like, shown as the pages of the PDF
+    /// LibreOffice makes of it.
+    Deck(PathBuf),
     Youtube(YoutubeVideo),
 }
 
@@ -107,7 +110,9 @@ pub enum Needs {
 pub fn needs(resource: &Resource) -> Result<Needs, String> {
     Ok(match Loader::for_resource(resource)? {
         None => Needs::Nothing,
-        Some(Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path)) => Needs::File(path),
+        Some(
+            Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path) | Loader::Deck(path),
+        ) => Needs::File(path),
         Some(Loader::Youtube(video)) => Needs::Youtube(video),
         Some(Loader::RemoteImage(urls)) => Needs::Images(urls),
     })
@@ -152,6 +157,7 @@ impl Loader {
             Kind::Image => Ok(Some(Loader::Image(path))),
             Kind::Video => Ok(Some(Loader::Video(path))),
             Kind::Document if is_pdf => Ok(Some(Loader::Pdf(path))),
+            Kind::Presentation if crate::deck::is_deck(&path) => Ok(Some(Loader::Deck(path))),
             kind => Err(format!("the stage can't show {} files", kind.name())),
         }
     }
@@ -161,12 +167,12 @@ impl Loader {
     fn is_still(&self) -> bool {
         matches!(
             self,
-            Loader::Image(_) | Loader::RemoteImage(_) | Loader::Pdf(_)
+            Loader::Image(_) | Loader::RemoteImage(_) | Loader::Pdf(_) | Loader::Deck(_)
         )
     }
 
-    /// Blocks: decodes, builds a player, runs `pdftoppm`, or waits for or
-    /// makes a download.
+    /// Blocks: decodes, builds a player, runs `pdftoppm` (after LibreOffice,
+    /// for a deck), or waits for or makes a download.
     /// `stream`: a YouTube video that isn't downloaded plays straight from
     /// YouTube, and is downloaded only if that fails.
     fn load(&self, downloads: &Arc<Downloads>, stream: bool) -> Result<Content, String> {
@@ -199,6 +205,10 @@ impl Loader {
             }
             Loader::Pdf(path) => {
                 render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
+            }
+            Loader::Deck(path) => {
+                let pdf = crate::deck::to_pdf(existing(path)?, &cache_dir().join("decks"))?;
+                render_pdf(&pdf, &cache_dir().join("pdf")).map(Content::Pages)
             }
         }
     }

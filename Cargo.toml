@@ -48,7 +48,8 @@ walkdir = "2.5"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # An exported plan is one zip file. Stored only: media is compressed already.
-zip = { version = "9", default-features = false }
+# Deflate, to read a PowerPoint file: a zip, packed.
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # The QR code that gives a phone the remote's address. Pure Rust, no
 # image support: Lantern draws the squares itself.

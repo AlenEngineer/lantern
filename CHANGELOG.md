@@ -127,6 +127,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   sin cesar`). Set it under the folder's path in Settings, or with
   `names = "…"` in the config, and the files are shown and found by
   their titles.
+- **PowerPoint files show as slides.** A `.pptx`, `.ppt`, `.ppsx`, `.pps`
+  or `.odp` is stepped through like a PDF, with its first slide as its
+  thumbnail. It needs LibreOffice, which turns the file into pages the
+  first time it is shown; animations and transitions don't play.
 
 ### Fixed
 
