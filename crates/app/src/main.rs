@@ -309,6 +309,13 @@ enum Message {
     GotoFrame(usize),
     /// Back to the plan: shows its current step again.
     Resume,
+    /// Shows what the slide on stage plays or links to: the Nth of them.
+    Attachment(usize),
+    /// Back to the deck that was left for one of its attachments: at the
+    /// slide after the one it was left at, or at that one.
+    BackToSlides {
+        next: bool,
+    },
     /// Writes the settings to the config file and applies them.
     SaveSettings,
     /// A saved plan in the open list was clicked.
@@ -338,6 +345,15 @@ enum Message {
     Scrub(f64),
     /// The timeline was let go.
     Scrubbed,
+}
+
+/// A deck left for something one of its slides plays or links to.
+pub(crate) struct Left {
+    deck: Arc<lantern_engine::Resource>,
+    /// The slide it was at, counted from 0.
+    pub(crate) frame: usize,
+    /// What it was left for.
+    pub(crate) shown: lantern_engine::ResourceId,
 }
 
 struct App {
@@ -375,6 +391,14 @@ struct App {
     index_changes: u64,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
+    /// What the deck on stage plays or links to that the stage can show,
+    /// a list for each of its slides.
+    pub(crate) attached: Option<(
+        lantern_engine::ResourceId,
+        Vec<Vec<Arc<lantern_engine::Resource>>>,
+    )>,
+    /// The deck that was left to show one of its attachments.
+    pub(crate) left: Option<Left>,
     /// The roles file the palette follows, if the config names one.
     colors: Option<palette::Source>,
     /// Why the roles file couldn't be read, while it can't.
@@ -500,6 +524,8 @@ impl App {
             output_watch: outputs::Watch::default(),
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
+            attached: None,
+            left: None,
             config,
             settings: None,
             home: config::env("HOME").map(PathBuf::from),
@@ -968,6 +994,41 @@ impl App {
                 self.engine.0.clear_preview();
                 self.selected = None;
                 return Task::batch([self.preload(), self.arrive()]);
+            }
+            Message::Attachment(n) => {
+                let Some(scene) = self.stage.program.clone() else {
+                    return Task::none();
+                };
+                let Some(resource) = self
+                    .attached
+                    .as_ref()
+                    .and_then(|(_, slides)| slides.get(scene.frame())?.get(n).cloned())
+                else {
+                    return Task::none();
+                };
+                // A video inside the deck came out when the deck loaded.
+                // If it didn't, it does now, or the stage says why not.
+                if let (Some(entry), lantern_engine::Location::File(deck)) =
+                    (resource.meta.get(deck::ENTRY), &scene.resource.location)
+                    && let Err(err) = deck::take_out(deck, entry, &stage::cache_dir().join("decks"))
+                {
+                    log(format!("deck: {err}"));
+                }
+                self.left = Some(Left {
+                    deck: Arc::clone(&scene.resource),
+                    frame: scene.frame(),
+                    shown: resource.id.clone(),
+                });
+                self.engine.0.show_now(resource);
+                self.stepping = true;
+            }
+            Message::BackToSlides { next } => {
+                if let Some(left) = self.left.take() {
+                    self.engine
+                        .0
+                        .show_now_at(left.deck, left.frame + usize::from(next));
+                    self.stepping = true;
+                }
             }
             Message::GotoFrame(frame) => {
                 self.engine.0.goto_frame(frame);
@@ -1457,6 +1518,13 @@ impl App {
                     }
                     return self.preload();
                 }
+            }
+            // From what a slide played, Next and Prev go back to the
+            // slides: on to the one after, or back to the one it was on.
+            Op::Next | Op::Prev if self.left_for_program() => {
+                return self.update(Message::BackToSlides {
+                    next: op == Op::Next,
+                });
             }
             Op::Next | Op::Prev => {
                 let moved = if op == Op::Next {
@@ -1975,7 +2043,42 @@ impl App {
         }
     }
 
+    /// Whether what is on stage is something a slide played or linked to,
+    /// with its deck to go back to.
+    pub(crate) fn left_for_program(&self) -> bool {
+        match (&self.left, &self.stage.program) {
+            (Some(left), Some(scene)) => scene.resource.id == left.shown,
+            _ => false,
+        }
+    }
+
+    /// Keeps up with a deck on stage: reads what its slides play or link
+    /// to when it goes on, and forgets the deck that was left once the
+    /// stage has gone on to something else.
+    fn follow_deck(&mut self) {
+        let program = self.stage.program.as_ref().map(|scene| &scene.resource);
+        if let Some(left) = &self.left
+            && program.is_none_or(|on| on.id != left.shown && on.id != left.deck.id)
+        {
+            self.left = None;
+        }
+        let deck = program.filter(|on| {
+            on.kind == lantern_engine::Kind::Presentation
+                && matches!(&on.location, lantern_engine::Location::File(path) if deck::is_deck(path))
+        });
+        match deck {
+            Some(on) => {
+                if self.attached.as_ref().is_none_or(|(id, _)| *id != on.id) {
+                    let slides = deck::attached(on, &stage::cache_dir().join("decks"));
+                    self.attached = Some((on.id.clone(), slides));
+                }
+            }
+            None => self.attached = None,
+        }
+    }
+
     fn program_changed(&mut self) -> Task<Message> {
+        self.follow_deck();
         let load = self
             .media
             .program_changed(&self.stage, &self.engine.0)

@@ -67,6 +67,13 @@ of how it ends: animations and transitions don't play. Fonts the computer
 doesn't have are replaced, so a deck made elsewhere can shift a little; a
 PDF exported from PowerPoint itself is always exact.
 
+A `.pptx` also says what each slide plays or links to. When the slide on
+stage has a video kept in the deck, a YouTube video or a link to a picture,
+a button for it appears under the slides (**On this slide**). It shows on
+stage in the deck's place; from there Next goes on to the following slide
+and Prev goes back to the one it was on. Sounds and links to web pages
+have no button: the stage can't show them.
+
 ```sh
 cargo run --release -p lantern-app
 ```

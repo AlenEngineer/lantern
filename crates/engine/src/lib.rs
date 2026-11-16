@@ -295,6 +295,12 @@ impl Engine {
         self.control(|stage| stage.show(resource));
     }
 
+    /// [`show_now`](Self::show_now), starting at `frame` of something
+    /// shown in frames.
+    pub fn show_now_at(&self, resource: Arc<Resource>, frame: usize) {
+        self.control(|stage| stage.show_at(resource, frame));
+    }
+
     /// Empties the stage. The plan cursor doesn't move.
     pub fn clear(&self) {
         self.control(Showman::clear);

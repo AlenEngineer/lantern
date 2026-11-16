@@ -54,6 +54,8 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 # The QR code that gives a phone the remote's address. Pure Rust, no
 # image support: Lantern draws the squares itself.
 qrcode = { version = "0.14", default-features = false }
+# Reads what a PowerPoint file's slides point to.
+roxmltree = "0.20"
 
 # Dev-only
 tempfile = "3"

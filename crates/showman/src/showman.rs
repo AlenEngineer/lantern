@@ -196,6 +196,14 @@ impl Showman {
         self.start_timed();
     }
 
+    /// [`show`](Self::show), starting at `frame`: back to the slide of a
+    /// deck that was left for something else.
+    pub fn show_at(&mut self, resource: Arc<Resource>, frame: usize) {
+        let scene = Scene::new_at(self.next_id(), resource, frame);
+        self.emit(StageEvent::Program { scene: Some(scene) });
+        self.start_timed();
+    }
+
     /// Lines a resource up in preview as a new scene.
     pub fn preview(&mut self, resource: Arc<Resource>) {
         let scene = Scene::new(self.next_id(), resource);
@@ -565,6 +573,29 @@ mod tests {
         let id = program_id(&stage);
         assert!(!stage.report(id, pages(1)));
         assert!(stage.play());
+    }
+
+    #[test]
+    fn a_document_shown_at_a_frame_starts_there() {
+        let mut stage = Showman::new();
+        stage.show_at(document(), 4);
+        let id = program_id(&stage);
+        assert_eq!(stage.program().unwrap().frame(), 4);
+        assert!(stage.report(id, pages(10)));
+        assert_eq!(stage.program().unwrap().frame(), 4);
+        assert!(stage.next_frame());
+        assert_eq!(stage.program().unwrap().frame(), 5);
+
+        // Past its end is its last frame, once the count is known.
+        stage.show_at(document(), 40);
+        let id = program_id(&stage);
+        assert!(stage.report(id, pages(10)));
+        assert_eq!(stage.program().unwrap().frame(), 9);
+
+        // A video has no frames to start at: it plays from its start.
+        stage.show_at(video(), 3);
+        assert_eq!(stage.program().unwrap().frame(), 0);
+        assert_eq!(timed(&stage).playback, Playback::Playing);
     }
 
     #[test]
