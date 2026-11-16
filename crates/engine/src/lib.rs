@@ -251,6 +251,22 @@ impl Engine {
         })
     }
 
+    /// [`go_to`](Self::go_to), with what the step shows starting at
+    /// `frame`: back to where a service was when it was interrupted.
+    pub fn go_to_at(&self, id: StepId, frame: usize) -> Result<(), EngineError> {
+        self.operate(true, |session, stage| {
+            let step = session
+                .goto(id)
+                .cloned()
+                .ok_or(EngineError::UnknownStep(id))?;
+            match &step.action {
+                Action::Show { resource } => stage.show_at(Arc::new(resource.clone()), frame),
+                _ => perform(stage, &step),
+            }
+            Ok(())
+        })
+    }
+
     /// Performs the current step again: back to the plan after showing
     /// things on the fly. Returns the step, if the session has started.
     pub fn resume(&self) -> Option<StepId> {

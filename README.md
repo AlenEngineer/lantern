@@ -207,8 +207,17 @@ the templates, each a click from being opened in its place. A step shows
 what is inside it: the videos, sounds and pictures on a deck's slides, by
 slide, and the sound that plays with the step. Beside the preview is the
 **library**, the media folders as a tree: a click looks at a file on this
-screen, and a double click or Enter adds it to the plan after the selected
-step. A folder lists its first 200 files; search finds the rest.
+screen, a double click or Enter adds it to the plan after the selected
+step, and it can be dragged to where it should go. Folders nest as on disk,
+and the filter at the top narrows the tree to what you type. With a step
+selected and something else picked, **Replace** puts the pick in the step's
+place. The lines inside a step go to their slide: on the projector in a
+run, in the preview while planning.
+
+Lantern writes down where a running service is. If it is closed or
+crashes mid-service, it comes back in Run with the plan waiting at that
+step and slide, and nothing on the projector until **Pick up there**
+(PgDn) puts it back. Ending the service forgets the place.
 
 The limits hold for keys, scripts and the phone remote alike. The phone
 runs a service or shows in Live; it does nothing while planning.

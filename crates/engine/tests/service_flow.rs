@@ -573,3 +573,25 @@ fn a_steps_sound_from_the_first_slide_starts_with_the_step() {
     let back = Plan::from_json(&json).unwrap();
     assert_eq!(back.steps()[0].sound, engine.plan().steps()[0].sound);
 }
+
+#[test]
+fn a_service_is_picked_up_at_its_step_and_slide() {
+    let source = SourceId::new("test").unwrap();
+    let engine = Engine::new();
+    let (first, second) = engine.edit_plan(|plan| {
+        let first = plan.show(hymn(&source, "1", "Santo", "Uno\n\nDos\n\nTres"));
+        let second = plan.show(hymn(&source, "2", "Grande", "Uno\n\nDos"));
+        (first, second)
+    });
+    // Nothing has started; the place it was at is gone to directly.
+    engine.go_to_at(second, 1).unwrap();
+    let on = engine.stage().program.unwrap();
+    assert_eq!((on.resource.title.as_str(), on.frame()), ("Grande", 1));
+    assert_eq!(engine.current_step().map(|step| step.id), Some(second));
+    // The plan goes on from there as ever.
+    assert_eq!(engine.prev(), Moved::Frame(0));
+    assert_eq!(engine.prev(), Moved::Step(first));
+    // A slide past the end is the last one.
+    engine.go_to_at(second, 9).unwrap();
+    assert_eq!(engine.stage().program.unwrap().frame(), 1);
+}

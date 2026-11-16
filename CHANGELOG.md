@@ -174,6 +174,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   A folder shows all its files, not the first 200.
 - **Drag a file from the library into the plan.** A gap opens where it
   will land, above or below the step under the pointer.
+- **A service cut short is picked up.** Closed or crashed mid-service,
+  Lantern comes back in Run with the plan waiting at the step and slide it
+  was at; nothing is shown until **Pick up there** (PgDn).
 
 ### Fixed
 
