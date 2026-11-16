@@ -1014,7 +1014,16 @@ impl App {
             // started over.
             _ if self.stage.picture().is_some() => {
                 let seen = self.stage.picture().expect("checked just above");
-                self.monitor(seen, self.media.content(seen.id), Some(p.tertiary))
+                match self.media.content(seen.id) {
+                    // A video on the projector plays here too, as it
+                    // plays there.
+                    Some(Content::Video { player, .. })
+                        if scene.is_some_and(|scene| scene.id == seen.id) =>
+                    {
+                        self.playing(seen.id, player, p.tertiary)
+                    }
+                    content => self.monitor(seen, content, Some(p.tertiary)),
+                }
             }
             // What the audience sees with nothing on: the look's image.
             _ if self.look.image.is_some() => framed_with(
@@ -1352,6 +1361,55 @@ impl App {
             self.thumbs.get(&scene.resource),
             loading,
             ring,
+        )
+    }
+
+    /// The video on the projector, playing in the live monitor: the same
+    /// player the stage draws, so it costs no second decode. It carries
+    /// the stage's own end and error messages, because whichever of the
+    /// two is drawn first hears of them, and with the stage window closed
+    /// this is the only one there is.
+    fn playing<'a>(
+        &'a self,
+        scene: lantern_engine::SceneId,
+        player: &'a iced_video_player::Video,
+        ring: Color,
+    ) -> Element<'a, Message> {
+        let mark = container(
+            row![
+                look::icon(Icon::Play, 14.0, Color::WHITE),
+                text("video")
+                    .size(META)
+                    .color(Color::WHITE)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([3, 8])
+        .style(|_| container::Style {
+            background: Some(Color::BLACK.scale_alpha(0.7).into()),
+            border: iced::Border {
+                radius: look::PILL_RADIUS.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        });
+        framed_with(
+            stack![
+                iced_video_player::VideoPlayer::new(player)
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(iced::ContentFit::Contain)
+                    .on_end_of_stream(Message::Ended(scene))
+                    .on_error(move |err| Message::Broke(scene, err.message().to_string())),
+                container(mark)
+                    .align_left(Fill)
+                    .align_bottom(Fill)
+                    .padding(8),
+            ],
+            Some(ring),
+            2,
         )
     }
 

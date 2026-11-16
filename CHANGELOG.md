@@ -242,6 +242,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Unlock. The preview is headed just "Preview", the empty preview and the
   empty Live list say nothing, and what each Settings section is about
   shows when the pointer rests on its title.
+- A video on the projector plays in the dashboard's live picture too,
+  not as a still: it is the same player, drawn twice. With the stage
+  window closed the video still plays there and its end is still noticed.
 
 ### Fixed
 
