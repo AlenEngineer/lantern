@@ -1,7 +1,8 @@
 //! The keyboard. Typing goes to the search box while the search is open,
 //! so every shortcut is a key that doesn't type: Ctrl combinations, Enter,
 //! Tab, the arrows, Page Up/Down (what presentation clickers send), Escape
-//! and media keys.
+//! and media keys. Space is the one that does both: it types in an open
+//! search, and with the search closed it is the big key that goes on.
 //!
 //! One table, [`ACTIONS`], names what keys do and gives each its key; the
 //! config's `[keys]` table can give any of them another ([`Keymap`]). A
@@ -226,6 +227,8 @@ enum When {
     /// Only while the box is empty: left and right move the cursor
     /// otherwise.
     EmptySearch,
+    /// Only while the search is closed: open, the key types.
+    Closed,
 }
 
 /// Something a key does: its name in the config's `[keys]` table, the key
@@ -314,6 +317,13 @@ pub const ACTIONS: &[Action] = &[
         "Back, while the search is empty",
     ),
     action(
+        "go",
+        "space",
+        Op::Next,
+        When::Closed,
+        "Next, while the search is closed",
+    ),
+    action(
         "close",
         "escape",
         Op::ClearSearch,
@@ -342,6 +352,13 @@ pub const ACTIONS: &[Action] = &[
         "Play or pause (media key)",
     ),
     action("blackout", "ctrl+b", Op::Blackout, When::Always, "Blackout"),
+    action(
+        "clear",
+        "ctrl+shift+b",
+        Op::Clear,
+        When::Always,
+        "Clear the stage: take what's on it off the projector",
+    ),
     action(
         "add-to-plan",
         "ctrl+enter",
@@ -599,6 +616,9 @@ pub fn with_key(what: &str, op: Op) -> String {
 /// A key press as a message: an op, or text typed while the search box
 /// didn't have focus, which goes into it. Held keys don't repeat (except
 /// picking), so holding Ctrl+B can't flicker the projector.
+///
+/// A key that acts only with the search closed is sent as both the op and
+/// what it types, since only the app knows whether the search is open.
 pub fn key_event(
     event: iced::Event,
     status: event::Status,
@@ -631,6 +651,20 @@ pub fn key_event(
     if let Some((op, when)) = keymap().lookup(&key, ctrl, alt, modifiers.shift()) {
         if when == When::Unused && used {
             return None;
+        }
+        if when == When::Closed {
+            // A field typed it; held down, it only ever types.
+            let typed = text
+                .filter(|text| !text.chars().any(char::is_control))
+                .map(|text| text.to_string());
+            return match (used, repeat, typed) {
+                (true, ..) => None,
+                (false, true, typed) => typed.map(Message::Type),
+                (false, false, typed) => Some(Message::KeyIfClosed {
+                    op,
+                    typed: typed.unwrap_or_default(),
+                }),
+            };
         }
         let repeats = matches!(op, Op::PickNext | Op::PickPrev);
         return (repeats || !repeat).then_some(Message::Key {
@@ -722,6 +756,31 @@ mod tests {
             "the box typed it"
         );
         assert!(op(press(Key::Named(Named::Space), NONE, FREE)).is_none());
+    }
+
+    #[test]
+    fn space_goes_on_only_where_it_cannot_type() {
+        // Outside a field it is sent as both: the app knows whether the
+        // search is open.
+        assert!(matches!(
+            press(Key::Character(" ".into()), NONE, FREE),
+            Some(Message::KeyIfClosed { op: Op::Next, typed }) if typed == " "
+        ));
+        assert!(
+            press(Key::Character(" ".into()), NONE, TYPING).is_none(),
+            "the box typed it"
+        );
+        assert_eq!(op_named("space"), Some(Op::Next));
+        assert_eq!(op_named("ctrl+shift+b"), Some(Op::Clear));
+        assert_eq!(
+            op(press(
+                Key::Character("B".into()),
+                CTRL | keyboard::Modifiers::SHIFT,
+                TYPING
+            )),
+            Some((Op::Clear, false)),
+            "beside blackout, and not blackout"
+        );
     }
 
     #[test]

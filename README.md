@@ -149,12 +149,14 @@ on a result or step only lines it up; a double click shows it at once.
 | ↑ ↓ | pick a result (previews it) |
 | ↑ ↓ with no search | move through the plan's steps, or your plans in the list; Enter shows the step or opens the plan |
 | PgDn, PgUp | next / back: slide, page, or plan step (what clickers send) |
+| Space | next, while the search is closed (open, it types) |
 | click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
 | Ctrl+Enter | add the result you're looking at after the selected step |
 | Alt+Enter | keep it on standby instead: ready under the plan, not in its order |
 | Ctrl+Space, play key | play / pause |
 | Ctrl+B | blackout |
+| Ctrl+Shift+B | clear the stage: take what's on it off the projector |
 | Ctrl+K | open the search |
 | Esc | clear the search box, keeping its bang chip for the next search; again closes the search |
 | Del | with no search, remove the selected step |
