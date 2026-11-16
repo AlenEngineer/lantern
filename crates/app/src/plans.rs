@@ -213,7 +213,7 @@ fn parse_layout(text: &str) -> (Option<f32>, Option<f32>) {
 
 /// Today's date, `2026-11-15`, in local time: the system's `date` when it
 /// has one, else UTC.
-fn today() -> String {
+pub fn today() -> String {
     let local = std::process::Command::new("date")
         .arg("+%F")
         .output()
