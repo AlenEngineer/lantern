@@ -2307,6 +2307,7 @@ dependencies = [
  "lantern-source-youtube",
  "notify",
  "qrcode",
+ "roxmltree",
  "serde",
  "serde_json",
  "tempfile",

@@ -207,7 +207,17 @@ impl Loader {
                 render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
             }
             Loader::Deck(path) => {
-                let pdf = crate::deck::to_pdf(existing(path)?, &cache_dir().join("decks"))?;
+                let decks = cache_dir().join("decks");
+                let pdf = crate::deck::to_pdf(existing(path)?, &decks)?;
+                // Its videos come out now, so one plays the moment it is
+                // asked for. One that won't come out is said when it is.
+                for attachment in crate::deck::attachments(path).into_iter().flatten() {
+                    if let crate::deck::Attachment::Inside(entry) = attachment
+                        && let Err(err) = crate::deck::take_out(path, &entry, &decks)
+                    {
+                        crate::log(format!("stage: {err}"));
+                    }
+                }
                 render_pdf(&pdf, &cache_dir().join("pdf")).map(Content::Pages)
             }
         }

@@ -36,6 +36,7 @@ ureq.workspace = true
 chrono.workspace = true
 zip.workspace = true
 qrcode.workspace = true
+roxmltree.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

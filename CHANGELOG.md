@@ -131,6 +131,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   or `.odp` is stepped through like a PDF, with its first slide as its
   thumbnail. It needs LibreOffice, which turns the file into pages the
   first time it is shown; animations and transitions don't play.
+- **A deck's videos.** When the slide on stage has a video kept in the
+  `.pptx`, a YouTube video or a link to a picture, a button under the
+  slides shows it. Next then goes on to the following slide, and Prev back
+  to the one it was on.
 
 ### Fixed
 

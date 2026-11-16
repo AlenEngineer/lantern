@@ -881,8 +881,14 @@ impl App {
             if let Some(strip) = self.slide_strip(scene) {
                 section.push(strip);
             }
+            if let Some(attachments) = self.attachments(scene) {
+                section.push(attachments);
+            }
             if let Some(timed) = scene.timed() {
                 section.push(self.transport(timed));
+            }
+            if let Some(back) = self.back_to_slides() {
+                section.push(back);
             }
         }
         // Blackout is in the strip; what's left here empties the stage.
@@ -1254,6 +1260,86 @@ impl App {
         .into()
     }
 
+    /// A button for each thing the slide on stage plays or links to: a
+    /// video kept in the deck, a YouTube video, a picture.
+    fn attachments<'a>(&self, scene: &Scene) -> Option<Element<'a, Message>> {
+        let p = self.palette;
+        let (deck, slides) = self.attached.as_ref()?;
+        let on_slide = slides
+            .get(scene.frame())
+            .filter(|_| *deck == scene.resource.id)?;
+        if on_slide.is_empty() {
+            return None;
+        }
+        let buttons = on_slide.iter().enumerate().map(|(n, resource)| {
+            let (icon, what) = match resource.kind {
+                _ if YoutubeVideo::of(resource).is_some() => (Icon::Play, "YouTube video"),
+                lantern_engine::Kind::Video => (Icon::Play, "Video"),
+                lantern_engine::Kind::Image => (Icon::Image, "Picture"),
+                _ => (Icon::Link, "Link"),
+            };
+            // Numbered only when the slide has several.
+            let label = if on_slide.len() > 1 {
+                format!("{what} {}", n + 1)
+            } else {
+                what.to_string()
+            };
+            button(
+                container(
+                    row![
+                        look::icon(icon, 16.0, p.primary),
+                        text(label).size(BODY).font(BOLD),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .center_y(Fill),
+            )
+            .height(PILL)
+            .padding([0, 16])
+            .on_press(Message::Attachment(n))
+            .style(look::pill(p, Tone::Selected))
+            .into()
+        });
+        Some(
+            row![
+                text("On this slide").size(META).color(p.on_surface_variant),
+                row(buttons).spacing(6).wrap(),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into(),
+        )
+    }
+
+    /// The way back to the deck, while what one of its slides played or
+    /// linked to is on stage.
+    fn back_to_slides<'a>(&self) -> Option<Element<'a, Message>> {
+        let p = self.palette;
+        let left = self.left.as_ref().filter(|_| self.left_for_program())?;
+        Some(
+            row![
+                pill(
+                    p,
+                    &format!("Back to slide {}", left.frame + 1),
+                    Tone::Selected,
+                    PILL,
+                    Some(Message::BackToSlides { next: false }),
+                ),
+                text(format!(
+                    "{} goes on to slide {}",
+                    keys::label(Op::Next),
+                    left.frame + 2
+                ))
+                .size(META)
+                .color(p.on_surface_variant),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into(),
+        )
+    }
+
     fn transport(&self, timed: &Timed) -> Element<'_, Message> {
         let p = self.palette;
         let icon = match timed.playback {
@@ -1311,7 +1397,7 @@ pub(crate) fn op(op: Op) -> Message {
     }
 }
 
-/// "slide" for text, "page" for documents, "frame" for anything else.
+/// "slide" for text and decks, "page" for documents, "frame" for anything else.
 /// The tint for an issue: amber for what may sort itself out, red for what
 /// won't, plain when ready.
 pub(crate) fn level_tone(level: Option<Level>) -> Tone {
@@ -1388,7 +1474,8 @@ const STRIP_HEIGHT: f32 = 96.0;
 pub(crate) fn unit(resource: &Resource) -> &'static str {
     match resource.kind {
         lantern_engine::Kind::Text => "slide",
-        lantern_engine::Kind::Document | lantern_engine::Kind::Presentation => "page",
+        lantern_engine::Kind::Presentation => "slide",
+        lantern_engine::Kind::Document => "page",
         _ => "frame",
     }
 }

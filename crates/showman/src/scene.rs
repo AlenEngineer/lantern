@@ -154,6 +154,20 @@ impl Scene {
         }
     }
 
+    /// A scene that starts at `frame`, for a resource shown in frames: one
+    /// gone back to where it was left. Past its last frame is its last, as
+    /// soon as the count is known.
+    pub(crate) fn new_at(id: SceneId, resource: Arc<Resource>, frame: usize) -> Self {
+        let mut scene = Self::new(id, resource);
+        if let Media::Frames { frame: at, count } = &mut scene.media {
+            *at = match count {
+                Some(count) => frame.min(count.get() - 1),
+                None => frame,
+            };
+        }
+        scene
+    }
+
     /// The current frame. 0 for timed and failed scenes.
     pub fn frame(&self) -> usize {
         match self.media {
