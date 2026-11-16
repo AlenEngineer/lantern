@@ -233,6 +233,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   closes on the way back to Plan. A screen button in the strip, and F7,
   open or close it by hand until the mode changes. Closing the stage
   window no longer closes Lantern.
+- Closing the dashboard while the projector is in use asks first: it has
+  to be closed twice within four seconds. With a service or Live going and
+  the stage window closed, its button is red and the live picture says
+  "the stage is closed".
 
 ### Fixed
 

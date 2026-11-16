@@ -180,6 +180,10 @@ impl<T> Hash for Shared<T> {
 /// Two clicks on the same thing this close together are a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
+/// How long a close of the dashboard, asked for mid-service, waits to be
+/// asked again.
+const SURE_QUIT: Duration = Duration::from_secs(4);
+
 /// How long after a letter typed into a closed search Space is taken for
 /// part of what was being typed, and not for "go on".
 const STRAY: Duration = Duration::from_millis(1500);
@@ -236,6 +240,8 @@ enum Message {
     /// A dashboard command from the script.
     Script(Ui),
     Closed(window::Id),
+    /// A window was asked to close: by its button, or by the desktop.
+    CloseAsked(window::Id),
     /// A window's size, at the start and on every resize.
     Resized(window::Id, iced::Size),
     /// The search box changed.
@@ -472,6 +478,9 @@ struct App {
     stage_wish: Option<bool>,
     /// The mode the stage window was last matched to.
     stage_mode: mode::Mode,
+    /// When the dashboard was asked to close with the projector in use:
+    /// asked again soon after, it closes.
+    quitting: Option<Instant>,
     /// The dashboard window's size, to lay out for the room there is.
     dashboard_size: iced::Size,
     /// The stage window's mirror, built only from the engine's feed.
@@ -617,6 +626,9 @@ impl App {
             transparent: true,
             blur: !config.no_blur,
             platform_specific: platform(DASHBOARD_APP_ID),
+            // Asked first: with a service in front of people, one stray
+            // close must not empty the projector.
+            exit_on_close_request: false,
             ..window::Settings::default()
         });
         // The stage feed's first message preloads the reopened plan.
@@ -652,6 +664,7 @@ impl App {
             stage_window: None,
             stage_wish: None,
             stage_mode: mode::Mode::Plan,
+            quitting: None,
             dashboard_size: iced::Size::new(1280.0, 720.0),
             stage: StageState::default(),
             search: Search::default(),
@@ -1867,6 +1880,27 @@ impl App {
                     self.engine.0.seek(Duration::from_secs_f64(seconds));
                 }
             }
+            // Closing the dashboard ends Lantern, and with it whatever is
+            // on the projector: with something there, it is asked twice.
+            Message::CloseAsked(window) if window == self.dashboard_window => {
+                let showing = match self.mode {
+                    mode::Mode::Run => true,
+                    mode::Mode::Live => self.stage.program.is_some(),
+                    mode::Mode::Plan => false,
+                };
+                let sure = self
+                    .quitting
+                    .is_some_and(|asked| asked.elapsed() < SURE_QUIT);
+                if showing && !sure {
+                    self.quitting = Some(Instant::now());
+                    self.motion.refuse("close again to quit");
+                    log("the dashboard was asked to close mid-service: asking again");
+                } else {
+                    log("the dashboard closed, exiting");
+                    return iced::exit();
+                }
+            }
+            Message::CloseAsked(window) => return window::close(window),
             // The dashboard closing ends Lantern. The stage closing ends
             // only the stage: closed from outside, it stays closed until
             // it is opened again, like one closed by hand.
@@ -3190,6 +3224,7 @@ impl App {
         let mut subscriptions = vec![
             Subscription::run_with(self.engine.clone(), stage_feed),
             window::close_events().map(Message::Closed),
+            window::close_requests().map(Message::CloseAsked),
             window::resize_events().map(|(window, size)| Message::Resized(window, size)),
             iced::event::listen_with(keys::key_event),
             iced::event::listen_with(pointer_event),

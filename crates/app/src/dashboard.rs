@@ -556,14 +556,21 @@ impl App {
                 )),
             ));
         }
-        // The stage window: lit while it is open.
+        // The stage window: lit while it is open. Closed with a service
+        // or Live going, nothing reaches the projector: it is the alarm's
+        // colour, and the picture's label says so in words.
         let open = self.stage_window.is_some();
+        let missing = !open && self.mode != crate::mode::Mode::Plan;
         strip = strip.push(hinted(
             p,
             tool(
                 Icon::Screen,
                 "",
-                if open { Tone::Selected } else { Tone::Plain },
+                match (open, missing) {
+                    (true, _) => Tone::Selected,
+                    (false, true) => Tone::Alarm,
+                    (false, false) => Tone::Plain,
+                },
                 op(Op::Stage),
             ),
             keys::with_key(
@@ -961,7 +968,10 @@ impl App {
         let p = self.palette;
         let scene = self.stage.program.as_ref();
         let blackout = self.stage.blackout;
+        // With the stage window closed nothing here is in front of anyone.
+        let unseen = self.stage_window.is_none() && self.mode != crate::mode::Mode::Plan;
         let state = match (scene, blackout) {
+            _ if unseen => chip(p, "the stage is closed", Tone::Alarm),
             (_, true) => chip(p, "blackout", Tone::Danger),
             (Some(_), false) if self.off_plan().is_some() => {
                 chip(p, "● live · off the plan", Tone::Live)

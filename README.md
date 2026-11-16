@@ -103,7 +103,10 @@ fullscreen **stage** for the audience. Lantern starts with the dashboard
 alone. The stage opens when something can reach it, with **Start the
 service** or in Live, and closes on the way back to Plan; the screen button
 in the strip (F7) opens or closes it by hand, which holds until the mode
-changes. Closing the stage never closes Lantern. The dashboard is three cards on one
+changes. Closing the stage never closes Lantern: with a service or Live
+going, its button turns red and the live picture says the stage is closed.
+Closing the dashboard quits; while the projector is in use it has to be
+closed twice within a few seconds. The dashboard is three cards on one
 ground. Across the top, a **strip**: the plan's name and its buttons, the
 running section's time and how the service stands against its schedule,
 the time of day, then Search, what isn't ready, the stage's screen, Blackout
