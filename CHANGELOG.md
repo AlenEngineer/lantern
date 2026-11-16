@@ -163,6 +163,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - **The library is a tree beside the plan** while planning: the media
   folders and their files. A click looks at one on this screen; a double
   click or Enter adds it to the plan after the selected step.
+- **Replace a step with what is picked.** With a step selected and a
+  search result or a library file picked, a button puts the pick in the
+  step's place: it keeps its position and its sound, and takes the new
+  name unless you had named it yourself.
 
 ### Fixed
 

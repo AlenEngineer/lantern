@@ -1033,7 +1033,43 @@ impl App {
             }
             _ => show.into(),
         });
+        // With a step selected and something else picked: the pick takes
+        // the step's place, keeping where it is and how long it has.
+        if let Some((step, _)) = self.replaceable() {
+            section.push(
+                pill(
+                    p,
+                    &format!("Replace “{}” with it", step.label),
+                    Tone::Plain,
+                    PILL,
+                    Some(Message::ReplaceStep(step.id)),
+                )
+                .width(Fill)
+                .into(),
+            );
+        }
         section
+    }
+
+    /// The selected step and what is picked to put in its place: a search
+    /// result or a file of the library, other than what the step shows
+    /// already. Nothing when the mode wouldn't let the step change.
+    pub(crate) fn replaceable(&self) -> Option<(Step, std::sync::Arc<Resource>)> {
+        let plan = self.engine.0.plan();
+        let step = plan.get(self.selected?)?.clone();
+        let Action::Show { resource: shown } = &step.action else {
+            return None;
+        };
+        let running = self.mode == crate::mode::Mode::Run;
+        if !self.can_edit() || (running && !self.ahead(&plan, step.id)) {
+            return None;
+        }
+        let pick = self
+            .search
+            .picked()
+            .cloned()
+            .or_else(|| self.shelf_pick.as_ref().and_then(|id| self.shelf_file(id)))?;
+        (pick.id != shown.id).then_some((step, pick))
     }
 
     fn next_section(&self) -> Vec<Element<'_, Message>> {
