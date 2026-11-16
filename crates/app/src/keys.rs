@@ -51,6 +51,8 @@ pub enum Op {
     Out,
     /// Gives the arrows to the library beside the plan, or back.
     Pane,
+    /// Opens the stage window, or closes it.
+    Stage,
     /// Empties the search box, keeping it focused.
     ClearSearch,
     /// Saves the plan to its file, or a new one named after it.
@@ -448,6 +450,13 @@ pub const ACTIONS: &[Action] = &[
         "Move the selected step down",
     ),
     action("settings", "ctrl+,", Op::Settings, When::Always, "Settings"),
+    action(
+        "stage",
+        "f7",
+        Op::Stage,
+        When::Always,
+        "Open or close the stage window",
+    ),
     action("search", "ctrl+k", Op::Search, When::Always, "Search"),
     action(
         "remove-step",

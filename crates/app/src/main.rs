@@ -463,7 +463,15 @@ struct App {
     /// Why the roles file couldn't be read, while it can't.
     palette_error: Option<String>,
     script: Option<Script>,
-    stage_window: window::Id,
+    dashboard_window: window::Id,
+    /// The stage window, while it is open: with a service or in Live, or
+    /// opened by hand.
+    pub(crate) stage_window: Option<window::Id>,
+    /// The operator opened or closed the stage by hand: it stays so until
+    /// the mode changes, whatever the mode would have it be.
+    stage_wish: Option<bool>,
+    /// The mode the stage window was last matched to.
+    stage_mode: mode::Mode,
     /// The dashboard window's size, to lay out for the room there is.
     dashboard_size: iced::Size,
     /// The stage window's mirror, built only from the engine's feed.
@@ -611,12 +619,6 @@ impl App {
             platform_specific: platform(DASHBOARD_APP_ID),
             ..window::Settings::default()
         });
-        let (stage_window, open_stage) = window::open(window::Settings {
-            fullscreen: true,
-            decorations: false,
-            platform_specific: platform(STAGE_APP_ID),
-            ..window::Settings::default()
-        });
         // The stage feed's first message preloads the reopened plan.
         let layout = store.layout();
         let plans = Plans::start(store, &engine.0);
@@ -646,7 +648,10 @@ impl App {
             palette_error: None,
             downloads,
             script,
-            stage_window,
+            dashboard_window,
+            stage_window: None,
+            stage_wish: None,
+            stage_mode: mode::Mode::Plan,
             dashboard_size: iced::Size::new(1280.0, 720.0),
             stage: StageState::default(),
             search: Search::default(),
@@ -706,15 +711,15 @@ impl App {
         app.find_running();
         // The plan reopened at start may bring folders of its own.
         app.sync_library();
-        // Dashboard first: on a single monitor, Hyprland drops a fullscreen
-        // window back to tiled when another window maps on its workspace.
-        // Then the keyboard goes back to the dashboard, into the search box.
+        // Only the dashboard: the stage opens when something can reach
+        // it. A service picked up from before this start is one already.
+        app.stage_mode = app.mode;
+        let stage = app.sync_stage();
         let open = open_dashboard
             .discard()
-            .chain(open_stage.discard())
+            .chain(stage)
             .chain(window::gain_focus(dashboard_window))
             .chain(operation::focus(SEARCH_BOX))
-            .chain(window::size(stage_window).map(move |size| Message::Resized(stage_window, size)))
             .chain(
                 window::size(dashboard_window)
                     .map(move |size| Message::Resized(dashboard_window, size)),
@@ -722,8 +727,44 @@ impl App {
         (app, open)
     }
 
+    /// Opens or closes the stage window to match the mode: open with a
+    /// service or in Live, closed while planning. What the operator did
+    /// by hand holds until the mode changes.
+    fn sync_stage(&mut self) -> Task<Message> {
+        if self.mode != self.stage_mode {
+            self.stage_mode = self.mode;
+            self.stage_wish = None;
+        }
+        let wanted = self.stage_wish.unwrap_or(self.mode != mode::Mode::Plan);
+        match (wanted, self.stage_window) {
+            (true, None) => {
+                // The dashboard is mapped first: on a single monitor,
+                // Hyprland drops a fullscreen window back to tiled when
+                // another window maps on its workspace. Then the keyboard
+                // goes back to the dashboard.
+                let (stage, open) = window::open(window::Settings {
+                    fullscreen: true,
+                    decorations: false,
+                    platform_specific: platform(STAGE_APP_ID),
+                    ..window::Settings::default()
+                });
+                self.stage_window = Some(stage);
+                log("stage: the window opens");
+                open.discard()
+                    .chain(window::gain_focus(self.dashboard_window))
+                    .chain(window::size(stage).map(move |size| Message::Resized(stage, size)))
+            }
+            (false, Some(stage)) => {
+                self.stage_window = None;
+                log("stage: the window closes");
+                window::close(stage)
+            }
+            _ => Task::none(),
+        }
+    }
+
     fn title(&self, window: window::Id) -> String {
-        if window == self.stage_window {
+        if Some(window) == self.stage_window {
             "lantern stage".into()
         } else {
             "lantern".into()
@@ -780,7 +821,7 @@ impl App {
         self.sync_blur();
         self.sync_remote();
         self.tell_remote();
-        task
+        Task::batch([task, self.sync_stage()])
     }
 
     /// Has the desktop blur behind the dashboard, or not, as the settings
@@ -853,7 +894,11 @@ impl App {
             }
             Message::Remote(command) => return self.remote_command(command),
             Message::Snap => {
-                return window::screenshot(self.stage_window).then(|shot| {
+                // With the stage closed there is no picture to send.
+                let Some(stage) = self.stage_window else {
+                    return Task::none();
+                };
+                return window::screenshot(stage).then(|shot| {
                     Task::perform(
                         in_thread(move || {
                             phone::picture(&shot.rgba, shot.size.width, shot.size.height)
@@ -1045,7 +1090,7 @@ impl App {
                 }
             }
             Message::Pointer(window, _) | Message::Cursor(window, _)
-                if window == Some(self.stage_window) => {}
+                if window.is_some() && window == self.stage_window => {}
             Message::ResizePane(side) => {
                 let now = Instant::now();
                 let double = self.seam_pressed.take().is_some_and(|(last, at)| {
@@ -1822,11 +1867,21 @@ impl App {
                     self.engine.0.seek(Duration::from_secs_f64(seconds));
                 }
             }
-            Message::Closed(window) => {
-                log(format!("window {window:?} closed, exiting"));
+            // The dashboard closing ends Lantern. The stage closing ends
+            // only the stage: closed from outside, it stays closed until
+            // it is opened again, like one closed by hand.
+            Message::Closed(window) if window == self.dashboard_window => {
+                log("the dashboard closed, exiting");
                 return iced::exit();
             }
-            Message::Resized(window, size) if window != self.stage_window => {
+            Message::Closed(window) => {
+                if Some(window) == self.stage_window {
+                    log("stage: the window was closed");
+                    self.stage_window = None;
+                    self.stage_wish = Some(false);
+                }
+            }
+            Message::Resized(window, size) if Some(window) != self.stage_window => {
                 self.dashboard_open = true;
                 self.dashboard_size = size;
             }
@@ -1896,6 +1951,8 @@ impl App {
                 };
             }
             Op::Unlock => self.toggle_unlock(),
+            // By hand: it holds until the mode changes.
+            Op::Stage => self.stage_wish = Some(self.stage_window.is_none()),
             Op::Pane => return self.switch_pane(),
             // The library has the arrows: they walk its tree.
             Op::PickNext | Op::PickPrev | Op::PickFirst | Op::PickLast
@@ -3072,7 +3129,7 @@ impl App {
     }
 
     fn view(&self, window: window::Id) -> Element<'_, Message> {
-        if window == self.stage_window {
+        if Some(window) == self.stage_window {
             self.stage_view()
         } else {
             self.dashboard_view()

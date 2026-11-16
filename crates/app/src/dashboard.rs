@@ -555,6 +555,26 @@ impl App {
                 )),
             ));
         }
+        // The stage window: lit while it is open.
+        let open = self.stage_window.is_some();
+        strip = strip.push(hinted(
+            p,
+            tool(
+                Icon::Screen,
+                "",
+                if open { Tone::Selected } else { Tone::Plain },
+                op(Op::Stage),
+            ),
+            keys::with_key(
+                if open {
+                    "Close the stage window"
+                } else {
+                    "Open the stage window"
+                },
+                Op::Stage,
+            ),
+            tooltip::Position::Bottom,
+        ));
         // Blackout: solid while the projector is black.
         let blackout = self.stage.blackout;
         strip = strip.push(hinted(

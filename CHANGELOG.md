@@ -228,6 +228,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   once the pointer rests on them, like the rest. A key stays in sight
   where the words are the instruction ("Ctrl+Enter adds here"), and on
   **Next step**, which now names Space.
+- **The stage opens when it is needed.** Lantern starts with the dashboard
+  alone; the stage window opens with **Start the service** or in Live and
+  closes on the way back to Plan. A screen button in the strip, and F7,
+  open or close it by hand until the mode changes. Closing the stage
+  window no longer closes Lantern.
 
 ### Fixed
 
