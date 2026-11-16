@@ -85,7 +85,8 @@ impl App {
             status = status.push(notice);
         }
         pane = pane.push(container(status).padding([0, 8]));
-        pane.padding([16, 12])
+        let pane = pane.padding([16, 12]).height(Fill);
+        iced::widget::stack![pane, self.refusal_over()]
             .width(self.plan_width())
             .height(Fill)
             .into()
@@ -933,12 +934,14 @@ impl App {
                 .padding([4, 8])
                 .style(look::tip(p))
         };
+        // No taller than the name beside them: a row that grew under the
+        // pointer pushed every row below it down.
         let mut actions = row![].spacing(2).align_y(Alignment::Center);
         if let Some((_, pick)) = self.replaceable_at(id) {
             actions = actions.push(
                 tooltip(
                     button(text("Replace").size(META).font(BOLD).color(p.primary))
-                        .padding([2, 8])
+                        .padding([0, 8])
                         .on_press(Message::ReplaceStep(id))
                         .style(look::pill(p, Tone::Selected)),
                     tip(format!("Put “{}” here instead", pick.title)),
@@ -951,7 +954,7 @@ impl App {
             .push(
                 tooltip(
                     button(text("✕").size(META).color(p.on_surface_variant))
-                        .padding([2, 6])
+                        .padding([0, 6])
                         .on_press(Message::Remove(id))
                         .style(look::row(p, Tone::Plain)),
                     tip(keys::with_key("Remove", Op::RemoveStep)),

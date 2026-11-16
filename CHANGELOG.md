@@ -418,6 +418,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   was picked up, and as it moves the one it left closes while the new one
   opens, so the rows between slide over. Let go where it was picked up,
   nothing moves and nothing is added to undo.
+- Three small jumps in the dashboard. A refusal outside a run ("Nothing
+  reaches the projector while planning") is said over the top of the pane
+  and no longer pushes the plan down and back. The mode switch keeps the
+  mode it is going to in sight while its light slides there. A row no
+  longer grows under the pointer and nudges the rows below it.
 
 ## [0.7.0] - 2026-11-13
 
