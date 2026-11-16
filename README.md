@@ -56,7 +56,16 @@ Linux builds are attached to each
 [release](https://github.com/AlenEngineer/lantern/releases). Building from
 source needs Rust 1.99 or newer. Either way, the app needs GStreamer with
 its base and good plugins (and `gst-libav` for H.264), `pdftoppm` (poppler)
-for PDFs, and `yt-dlp` for YouTube links.
+for PDFs, and `yt-dlp` for YouTube links. Showing PowerPoint files needs
+LibreOffice as well.
+
+A PowerPoint file (`.pptx`, `.ppt`, `.ppsx`, `.pps`, or LibreOffice's
+`.odp`) is shown as slides you step through, like a PDF. LibreOffice turns
+it into one the first time it is shown, which takes some seconds, and
+Lantern keeps the result until the file changes. Each slide is a picture
+of how it ends: animations and transitions don't play. Fonts the computer
+doesn't have are replaced, so a deck made elsewhere can shift a little; a
+PDF exported from PowerPoint itself is always exact.
 
 ```sh
 cargo run --release -p lantern-app
@@ -89,7 +98,8 @@ saved ones. A new plan starts on its name, and with no plan to reopen
 Lantern starts on that list. **Save** shows while the plan has unsaved
 changes.
 
-Results show a thumbnail: a picture, a PDF's first page or a video's still
+Results show a thumbnail: a picture, a PDF's or a deck's first page or a
+video's still
 (YouTube too). A passage has a book instead, and its result says how it
 starts. A plan step is one line: its mark (● on stage, ○ next, else its
 number), its name, and at its end the one thing worth saying of it: what's

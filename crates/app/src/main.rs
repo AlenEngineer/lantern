@@ -12,6 +12,7 @@ mod bundle;
 mod config;
 mod cut;
 mod dashboard;
+mod deck;
 mod drag;
 mod fit;
 mod keys;
