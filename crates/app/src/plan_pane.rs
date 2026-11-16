@@ -473,11 +473,11 @@ impl App {
             for entry in plans {
                 rows = rows.push(saved_plan(p, entry, when(entry), false));
             }
-            rows = rows.push(list_action(
+            rows = rows.push(crate::dashboard::hinted(
                 p,
-                "+",
-                keys::with_key("New plan", Op::New),
-                op(Op::New),
+                list_action(p, "+", "New plan".to_string(), op(Op::New)),
+                keys::with_key("Start an empty plan", Op::New),
+                tooltip::Position::Bottom,
             ));
             let templates: Vec<&&Entry> = others.iter().filter(|e| is_template(e)).collect();
             if !templates.is_empty() {
@@ -1076,11 +1076,11 @@ impl App {
             .filter(|e| !is_template(e) && Some(e.path.as_path()) != self.plans.file())
             .collect();
         list = list.push(heading("Your plans"));
-        list = list.push(list_action(
+        list = list.push(crate::dashboard::hinted(
             p,
-            "+",
-            keys::with_key("New plan", Op::New),
-            op(Op::New),
+            list_action(p, "+", "New plan".to_string(), op(Op::New)),
+            keys::with_key("Start an empty plan", Op::New),
+            tooltip::Position::Bottom,
         ));
         for entry in plans {
             list = list.push(saved_plan(p, entry, when(entry), picked(entry)));

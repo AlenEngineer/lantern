@@ -596,11 +596,12 @@ impl App {
         .spacing(8)
         .align_y(Alignment::Center);
         if self.mode == Mode::Run {
-            let (label, tone) = match self.unlocked {
-                Some(_) => (keys::with_key("Done", Op::Unlock), Tone::Solid),
-                None => (keys::with_key("Unlock", Op::Unlock), Tone::Selected),
+            let (label, does, tone) = match self.unlocked {
+                Some(_) => ("Done", "Lock the plan again", Tone::Solid),
+                None => ("Unlock", "Change what is still ahead", Tone::Selected),
             };
-            line = line.push(
+            line = line.push(hinted(
+                p,
                 button(text(label).size(META).font(BOLD))
                     .padding([4, 10])
                     .on_press(Message::Key {
@@ -608,7 +609,9 @@ impl App {
                         only_if_empty: false,
                     })
                     .style(look::pill(p, tone)),
-            );
+                keys::with_key(does, Op::Unlock),
+                tooltip::Position::Bottom,
+            ));
         }
         container(line)
             .padding(

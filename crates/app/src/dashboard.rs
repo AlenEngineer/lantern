@@ -1075,38 +1075,40 @@ impl App {
                 (None, Some(_)) => true,
                 _ => false,
             };
-        let add = if in_plan {
-            keys::with_key("Add again", Op::AddToPlan)
-        } else {
-            keys::with_key("Add", Op::AddToPlan)
-        };
+        let add = if in_plan { "Add again" } else { "Add" };
         // What each mode lets be done with it: planning adds it, a run or
         // Live shows it, and a run unlocked for a change does either.
-        let show = pill(
+        // Each says its key once the pointer rests on it.
+        let show = hinted(
             p,
-            &keys::with_key("Show now", Op::Enter),
-            Tone::Selected,
-            PILL,
-            has.then_some(op(Op::Take)),
-        )
-        .width(Fill);
-        let adds = |tone, label: &str| {
-            pill(p, label, tone, PILL, has.then_some(op(Op::AddToPlan))).width(Fill)
+            pill(
+                p,
+                "Show now",
+                Tone::Selected,
+                PILL,
+                has.then_some(op(Op::Take)),
+            )
+            .width(Fill),
+            keys::with_key("Put it on the projector", Op::Enter),
+            tooltip::Position::Top,
+        );
+        let adds = |tone, label: &str, key: Op| {
+            hinted(
+                p,
+                pill(p, label, tone, PILL, has.then_some(op(Op::AddToPlan))).width(Fill),
+                keys::with_key("After the selected step", key),
+                tooltip::Position::Top,
+            )
         };
-        // One under the other: side by side their keys didn't fit.
         section.push(match (mode, self.can_edit()) {
-            (crate::mode::Mode::Plan, _) => {
-                let label = if in_plan {
-                    keys::with_key("Add again", Op::AddToPlan)
-                } else {
-                    keys::with_key("Add to the plan", Op::Enter)
-                };
-                adds(Tone::Selected, &label).into()
+            (crate::mode::Mode::Plan, _) if in_plan => {
+                adds(Tone::Selected, "Add again", Op::AddToPlan)
             }
-            (crate::mode::Mode::Run, true) => {
-                column![show, adds(Tone::Plain, &add)].spacing(4).into()
-            }
-            _ => show.into(),
+            (crate::mode::Mode::Plan, _) => adds(Tone::Selected, "Add to the plan", Op::Enter),
+            (crate::mode::Mode::Run, true) => column![show, adds(Tone::Plain, add, Op::AddToPlan)]
+                .spacing(4)
+                .into(),
+            _ => show,
         });
         // With a step selected and something else picked: the pick takes
         // the step's place, keeping where it is and how long it has.

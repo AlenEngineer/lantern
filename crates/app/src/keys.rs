@@ -303,6 +303,14 @@ pub const ACTIONS: &[Action] = &[
         When::Unused,
         "The result before; without a search, the step or plan before",
     ),
+    // First of the keys that go on: it is the one buttons name.
+    action(
+        "go",
+        "space",
+        Op::Next,
+        When::Closed,
+        "Next, while the search is closed",
+    ),
     action(
         "next",
         "pagedown",
@@ -351,13 +359,6 @@ pub const ACTIONS: &[Action] = &[
         Op::Pane,
         When::Always,
         "Planning, move the arrows between the plan and the library",
-    ),
-    action(
-        "go",
-        "space",
-        Op::Next,
-        When::Closed,
-        "Next, while the search is closed",
     ),
     action(
         "close",
