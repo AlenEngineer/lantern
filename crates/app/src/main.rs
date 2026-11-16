@@ -2030,7 +2030,7 @@ impl App {
     /// need with the current look and stage shape, so stepping goes through
     /// every piece of a text too long for one slide.
     fn report_slides(&self) {
-        for scene in [&self.stage.program, &self.stage.preview]
+        for scene in [&self.stage.program, &self.stage.preview, &self.stage.under]
             .into_iter()
             .flatten()
         {

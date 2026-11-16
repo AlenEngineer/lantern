@@ -200,7 +200,8 @@ impl Engine {
     // ----- Running the plan ----------------------------------------------
 
     /// The "next" button: the next frame of what's on stage if there is one,
-    /// otherwise the next step of the plan.
+    /// otherwise the next step of the plan. Under a sound, the frames are
+    /// those of the picture it plays over.
     pub fn next(&self) -> Moved {
         self.operate(true, |session, stage| {
             if stage.next_frame() {
@@ -430,7 +431,7 @@ fn perform(stage: &mut Showman, step: &Step) {
 }
 
 fn current_frame(stage: &Showman) -> usize {
-    stage.program().map_or(0, Scene::frame)
+    stage.state().picture().map_or(0, Scene::frame)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

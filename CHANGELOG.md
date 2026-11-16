@@ -142,6 +142,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   stage like anything else, with a timeline, and what was on stage stays up
   while it plays: slides, a passage, a picture. A sound kept in a `.pptx`
   gets a button on its slide.
+- Slides go on turning under a sound: with a sound playing over a deck, a
+  PDF or a passage, Next and Prev step its slides, and the plan moves on
+  only after the last one. The slide strip stays, and the sound's line
+  says what it plays over.
 
 ### Fixed
 

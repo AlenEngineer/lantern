@@ -379,6 +379,18 @@ impl App {
         let timing = self.timing();
         let scene = self.stage.program.as_ref();
         let live = scene.map(|scene| {
+            // Under a sound, the slides are the picture's.
+            let pictured = self.stage.picture().filter(|_| scene.sounds_only());
+            let under = pictured.and_then(|picture| match &picture.media {
+                Media::Frames {
+                    frame,
+                    count: Some(count),
+                } if count.get() > 1 => Some(Slides {
+                    at: frame + 1,
+                    of: Some(count.get()),
+                }),
+                _ => None,
+            });
             let (timed, slides, failed) = match &scene.media {
                 Media::Timed(timed) => (
                     Some(Timed {
@@ -387,7 +399,7 @@ impl App {
                         position: timed.position.as_secs(),
                         length: timed.duration.map(|length| length.as_secs()),
                     }),
-                    None,
+                    under,
                     None,
                 ),
                 Media::Frames { frame, count } => {

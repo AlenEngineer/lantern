@@ -792,7 +792,9 @@ impl App {
             (true, 36.0 + PILL),
             (scene.is_some(), 36.0),
             (
-                scene.is_some_and(|s| self.slide_strip(s).is_some()),
+                self.stage
+                    .picture()
+                    .is_some_and(|s| self.slide_strip(s).is_some()),
                 STRIP_HEIGHT,
             ),
             (scene.is_some_and(|s| s.timed().is_some()), PILL),
@@ -887,7 +889,9 @@ impl App {
         });
         if let Some(scene) = scene {
             section.push(self.caption(scene));
-            if let Some(strip) = self.slide_strip(scene) {
+            // Under a sound, the slides are those of the picture it plays
+            // over: they go on turning.
+            if let Some(strip) = self.stage.picture().and_then(|s| self.slide_strip(s)) {
                 section.push(strip);
             }
             if let Some(attachments) = self.attachments(scene) {
@@ -1067,7 +1071,7 @@ impl App {
             };
             return (keys::with_key(&label, Op::Next), true);
         }
-        match self.stage.program.as_ref().filter(|s| s.has_next_frame()) {
+        match self.stage.picture().filter(|s| s.has_next_frame()) {
             Some(scene) => (
                 keys::with_key(&format!("Next {}", unit(&scene.resource)), Op::Next),
                 true,
@@ -1275,6 +1279,25 @@ impl App {
         }
         if let Some(download) = self.download_state(resource) {
             facts.push(download);
+        }
+        // A sound says what it plays over, and where in it the stage is.
+        if let Some(under) = self.stage.under.as_ref().filter(|_| scene.sounds_only())
+            && self
+                .stage
+                .program
+                .as_ref()
+                .is_some_and(|on| on.id == scene.id)
+        {
+            let at = match &under.media {
+                Media::Frames {
+                    frame,
+                    count: Some(count),
+                } if count.get() > 1 => {
+                    format!(" · {} {} of {count}", unit(&under.resource), frame + 1)
+                }
+                _ => String::new(),
+            };
+            facts.push(format!("over {}{at}", under.resource.title));
         }
         column![
             single_line(&resource.title).size(BODY).font(BOLD),
