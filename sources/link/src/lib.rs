@@ -11,10 +11,16 @@
 //!   that kind.
 //! - Anything else is a [`Kind::Web`] page.
 //!
+//! The same goes for a file on this computer that is in none of the media
+//! folders, like something just downloaded: its path (`/home/ana/x.mp4`,
+//! `~/Downloads/x.mp4`) or what a file manager puts on the clipboard when
+//! the file is copied (`file:///home/ana/x.mp4`) becomes a resource at
+//! that file, if the file is there and of a kind Lantern shows.
+//!
 //! Anything that doesn't look like a link returns no results, so this source
 //! is cheap to leave enabled.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use lantern_resource::{
     Capabilities, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -33,8 +39,12 @@ impl LinkSource {
         Self { id }
     }
 
-    /// Turns `text` into a resource, if it is a link.
+    /// Turns `text` into a resource, if it is a link or the path of a
+    /// file that is there.
     pub fn resolve(&self, text: &str) -> Option<Resource> {
+        if let Some(file) = self.file(text) {
+            return Some(file);
+        }
         let url = parse(text)?;
 
         if let Some(video) = youtube_id(&url) {
@@ -70,6 +80,57 @@ impl LinkSource {
             .with_subtitle(host),
         )
     }
+}
+
+impl LinkSource {
+    /// The file `text` is the path of, as a resource: a file that is
+    /// there, of a kind its extension says Lantern shows.
+    fn file(&self, text: &str) -> Option<Resource> {
+        let path = path_in(text, std::env::var_os("HOME").map(PathBuf::from).as_deref())?;
+        let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+        let kind = Kind::from_extension(&extension)?;
+        if !path.is_file() {
+            return None;
+        }
+        let title = path.file_stem()?.to_string_lossy().into_owned();
+        let folder = path
+            .parent()
+            .map(|folder| folder.display().to_string())
+            .unwrap_or_default();
+        Some(
+            Resource::new(
+                ResourceId::new(&self.id, &path.to_string_lossy()),
+                title,
+                kind,
+                Location::File(path),
+            )
+            .with_subtitle(folder)
+            .with_meta("extension", extension),
+        )
+    }
+}
+
+/// The path `text` names, if it is written as one: absolute, from `~/`
+/// with `home` known, or a `file://` link. Several lines (several files
+/// copied at once) give the first; quotes around it are taken off.
+fn path_in(text: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let line = text.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let line = line
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .or_else(|| {
+            line.strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        })
+        .unwrap_or(line);
+    if line.to_ascii_lowercase().starts_with("file://") {
+        return Url::parse(line).ok()?.to_file_path().ok();
+    }
+    if let Some(rest) = line.strip_prefix("~/") {
+        return Some(home?.join(rest));
+    }
+    let path = Path::new(line);
+    path.is_absolute().then(|| path.to_path_buf())
 }
 
 impl Source for LinkSource {
@@ -187,6 +248,52 @@ mod tests {
 
     fn links() -> LinkSource {
         LinkSource::new(SourceId::new("link").unwrap())
+    }
+
+    // How a path is written is the system's: these are Unix's.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_is_read_however_it_is_written() {
+        let home = Path::new("/home/ana");
+        let path = |text| path_in(text, Some(home));
+        let file = Some(PathBuf::from("/home/ana/Downloads/Mi canto.mp4"));
+        assert_eq!(path("/home/ana/Downloads/Mi canto.mp4"), file);
+        assert_eq!(path("~/Downloads/Mi canto.mp4"), file);
+        assert_eq!(path("  '/home/ana/Downloads/Mi canto.mp4' "), file);
+        // As a file manager copies it, spaces and all; the first of many.
+        assert_eq!(
+            path("file:///home/ana/Downloads/Mi%20canto.mp4\nfile:///home/ana/b.mp4"),
+            file
+        );
+    }
+
+    #[test]
+    fn what_is_not_written_as_a_path_is_not_one() {
+        let home = Path::new("home");
+        assert_eq!(path_in("Downloads/Mi canto.mp4", Some(home)), None);
+        assert_eq!(path_in("juan 3:16", Some(home)), None);
+        assert_eq!(path_in("", Some(home)), None);
+        assert_eq!(path_in("~/x.mp4", None), None, "no home to start from");
+    }
+
+    #[test]
+    fn a_file_that_is_there_is_a_resource_and_one_that_is_not_is_nothing() {
+        let dir = std::env::temp_dir().join(format!("lantern-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("Mi canto.mp4");
+        std::fs::write(&video, b"x").unwrap();
+        std::fs::write(dir.join("notes.xyz"), b"x").unwrap();
+
+        let found = links().resolve(&video.to_string_lossy()).unwrap();
+        assert_eq!(found.title, "Mi canto");
+        assert_eq!(found.kind, Kind::Video);
+        assert_eq!(found.location, Location::File(video.clone()));
+
+        let missing = dir.join("gone.mp4");
+        assert!(links().resolve(&missing.to_string_lossy()).is_none());
+        let unknown = dir.join("notes.xyz");
+        assert!(links().resolve(&unknown.to_string_lossy()).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

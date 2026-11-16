@@ -255,6 +255,14 @@ them. A YouTube result previews and downloads like a pasted link. An image
 is downloaded into `~/.cache/lantern/images`, so pasted image links work
 too. Image search uses SafeSearch strict.
 
+A file that is in none of your media folders, like something you just
+downloaded, doesn't have to be moved into one. Paste or type its path in
+the search (`~/Downloads/video.mp4`), or copy the file in your file
+manager and paste that, and it is a result like any other. A plan that
+shows such a file depends on it staying where it is, so the step offers
+**keep a copy**: the file is copied to where Lantern keeps plans' media,
+and the step shows the copy from then on.
+
 Give a folder its own bang in Settings (the field after its path) or with
 `bang = "h"` in `config.toml`, and `!h himno` searches only that folder;
 folders may share a bang. `!f` still searches every folder. A bang Lantern

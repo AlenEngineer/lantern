@@ -240,6 +240,16 @@ impl App {
                 );
             }
         }
+        // A file from outside the media folders may move or be deleted:
+        // a copy kept with the plan won't.
+        if self.loose(step).is_some() {
+            actions = actions.push(small(
+                text("keep a copy").size(META).color(p.tertiary).into(),
+                Tone::Plain,
+                "This file is outside your media folders. Copy it to where Lantern keeps plans' media, so the plan still has it if the original moves".into(),
+                Message::KeepCopy(id),
+            ));
+        }
         actions
             .push(small(
                 look::icon(Icon::Pencil, 13.0, p.primary).into(),

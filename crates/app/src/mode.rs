@@ -89,6 +89,7 @@ fn does(message: &Message) -> Does {
         | M::Rename(id, _)
         | M::SetAdvance(id, _)
         | M::StepSound(id, _)
+        | M::KeepCopy(id)
         | M::SoundFrom(id, _)
         | M::SlotSearch(id, _)
         | M::Length(id, _)
