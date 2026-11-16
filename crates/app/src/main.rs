@@ -354,6 +354,8 @@ pub(crate) struct Left {
     pub(crate) frame: usize,
     /// What it was left for.
     pub(crate) shown: lantern_engine::ResourceId,
+    /// Whether the deck has a slide after that one, for Next to go on to.
+    pub(crate) more: bool,
 }
 
 struct App {
@@ -1018,6 +1020,7 @@ impl App {
                     deck: Arc::clone(&scene.resource),
                     frame: scene.frame(),
                     shown: resource.id.clone(),
+                    more: scene.has_next_frame(),
                 });
                 self.engine.0.show_now(resource);
                 self.stepping = true;
