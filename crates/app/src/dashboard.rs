@@ -1075,13 +1075,7 @@ impl App {
             .cued()
             .filter(|step| !matches!(step.action, Action::Show { .. }));
         let mode = self.mode;
-        let mut section: Vec<Element<'_, Message>> = vec![heading(
-            p,
-            match mode {
-                crate::mode::Mode::Plan => "Preview · only on this screen",
-                _ => "Preview",
-            },
-        )];
+        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Preview")];
         match (scene, &cued) {
             (Some(scene), _) => {
                 let content = self.media.preloaded(&scene.resource.id);
@@ -1092,7 +1086,7 @@ impl App {
                 section.push(self.step_picture(step));
                 section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
             }
-            (None, None) => section.push(empty_monitor(p, "Pick a result to preview it here")),
+            (None, None) => section.push(empty_monitor(p, "")),
         }
         let has = scene.is_some() || cued.is_some();
         // Looking at a step of the plan (not a search result): adding it
@@ -1913,8 +1907,10 @@ pub(crate) fn hinted<'a>(
 ) -> Element<'a, Message> {
     tooltip(
         control,
+        // A long one wraps: it never runs off the window.
         container(text(words).size(META))
             .padding([4, 8])
+            .max_width(380)
             .style(look::tip(p)),
         position,
     )

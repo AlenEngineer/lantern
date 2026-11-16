@@ -1837,13 +1837,15 @@ fn settings(edit: Edit) -> Message {
 }
 
 /// A section's heading and one line on what it's for.
+/// A section's title. What it is about shows once the pointer rests on
+/// the title, not under it.
 fn section<'a>(p: Palette, title: &'a str, about: &'a str) -> Element<'a, Message> {
-    column![
+    hinted(
+        p,
         text(title).size(HEADING).font(BOLD).color(p.primary),
-        text(about).size(META).color(p.on_surface_variant),
-    ]
-    .spacing(2)
-    .into()
+        about.to_string(),
+        iced::widget::tooltip::Position::Bottom,
+    )
 }
 
 fn field<'a>(

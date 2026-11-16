@@ -505,8 +505,10 @@ impl App {
         switch.into()
     }
 
-    /// One line under the strip's switch, for the pane: what this mode
-    /// won't do.
+    /// The line at the top of the pane. It has no standing words: it says
+    /// why something was just refused, and in a run it holds Unlock. With
+    /// neither, it takes no room, but it is always there, so the pane's
+    /// other children keep their places.
     pub(crate) fn mode_note(&self) -> Element<'_, Message> {
         let p = self.palette;
         // A service cut short: where it was, and the way back to it.
@@ -554,23 +556,16 @@ impl App {
             })
             .into();
         }
-        let (words, tone) = match self.mode {
-            Mode::Plan => ("Nothing here reaches the projector", Tone::Plain),
-            Mode::Run if self.unlocked.is_some() => ("Changing what is ahead", Tone::Selected),
-            Mode::Run => ("The plan is locked while it runs", Tone::Plain),
-            Mode::Live => ("No plan: what you show goes straight out", Tone::Plain),
-        };
-        let at_rest = if tone == Tone::Selected {
-            p.primary
-        } else {
-            p.on_surface_variant
-        };
         // Something was just refused: the note says why, lit, and shakes
         // its head once. A refusal with nothing to see reads as a fault.
         let refused = self.motion.why();
+        if refused.is_none() && self.mode != Mode::Run {
+            return Space::new().height(0).into();
+        }
+        let at_rest = p.on_surface_variant;
         let words = match refused {
             Some((why, _)) => capitalised(why),
-            None => words.to_string(),
+            None => String::new(),
         };
         let lit = |rest: iced::Color, lit: iced::Color| match refused {
             Some((_, Some(faded))) => crate::motion::blend(lit, rest, faded * faded),
@@ -579,7 +574,7 @@ impl App {
         };
         let colour = lit(at_rest, p.tertiary);
         let ground = lit(
-            p.surface_container_highest,
+            iced::Color::TRANSPARENT,
             crate::palette::Palette::tint(p.tertiary, 0.3),
         );
         let aside = self.motion.nudge();
@@ -673,13 +668,7 @@ impl App {
             );
         }
         let body: Element<'_, Message> = if shown.is_empty() {
-            container(
-                text("What you show goes in a list here. It can be saved as a plan.")
-                    .size(BODY)
-                    .color(p.on_surface_variant),
-            )
-            .padding([6, 8])
-            .into()
+            Space::new().into()
         } else {
             scrollable(rows).height(Fill).into()
         };
