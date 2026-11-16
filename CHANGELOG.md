@@ -138,6 +138,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The phone remote shows a deck's videos: the slide on stage lists what it
   plays or links to, a button each, and **Back to slide N** returns from
   it. Next and the back arrow do as they do on the computer.
+- **Sound files play.** An `.mp3`, `.wav` or other sound file goes on
+  stage like anything else, with a timeline, and what was on stage stays up
+  while it plays: slides, a passage, a picture. A sound kept in a `.pptx`
+  gets a button on its slide.
 
 ### Fixed
 

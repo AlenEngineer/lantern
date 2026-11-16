@@ -158,9 +158,9 @@ pub fn thumbnail(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// What each slide of the deck `deck` plays or links to that the stage can
-/// show, as resources: a list for each slide. A video inside the deck is a
-/// file under `cache`, where [`take_out`] puts it; a YouTube link is the
-/// video; a link to a picture is the picture. Sounds and plain web pages
+/// show, as resources: a list for each slide. A video or sound inside the
+/// deck is a file under `cache`, where [`take_out`] puts it; a YouTube
+/// link is the video; a link to a picture is the picture. Plain web pages
 /// are left out: the stage has no way to show them.
 pub fn attached(deck: &Resource, cache: &Path) -> Vec<Vec<Arc<Resource>>> {
     let Location::File(path) = &deck.location else {
