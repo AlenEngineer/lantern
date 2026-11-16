@@ -1,0 +1,161 @@
+//! The dashboard's motion: what moves for a moment to say that something
+//! happened, and then stops.
+//!
+//! Every one is short and plays once. Nothing loops: the booth is dark, and
+//! a screen that keeps pulsing pulls the eye from the stage. None delays
+//! what it follows either; the projector has changed before its ring is
+//! drawn.
+//!
+//! Each is kept as the moment it started. The view asks how far along it
+//! is, and the app asks for frames only while one is running.
+
+use std::time::{Duration, Instant};
+
+use lantern_engine::SceneId;
+
+/// The ring around a step's dot as it goes on the projector.
+pub const RING: Duration = Duration::from_millis(700);
+/// How long the stage says the phone moved it.
+pub const PHONE: Duration = Duration::from_secs(2);
+/// The phone's press and what it put on stage are this close together.
+const SOON: Duration = Duration::from_millis(1500);
+
+pub struct Motion {
+    /// Nothing moves: every change is drawn as it ends up.
+    pub still: bool,
+    /// Every length is this many times longer, to look at one closely.
+    slow: f32,
+    /// What is on the projector, and when a new thing last went up.
+    program: Option<SceneId>,
+    went_up: Option<Instant>,
+    /// When the phone last did something to the stage.
+    phone: Option<Instant>,
+}
+
+impl Motion {
+    pub fn new() -> Motion {
+        let slow = std::env::var("LANTERN_MOTION_SLOW")
+            .ok()
+            .and_then(|times| times.parse::<f32>().ok())
+            .filter(|times| times.is_finite() && *times > 0.0)
+            .unwrap_or(1.0);
+        Motion {
+            still: false,
+            slow,
+            program: None,
+            went_up: None,
+            phone: None,
+        }
+    }
+
+    fn length(&self, of: Duration) -> Duration {
+        of.mul_f32(self.slow)
+    }
+
+    /// How far along something that started at `since` and takes `length`
+    /// is, eased so it starts fast and settles: 0 at its start, and `None`
+    /// once it is over, or with motion off.
+    fn along(&self, since: Option<Instant>, length: Duration) -> Option<f32> {
+        if self.still {
+            return None;
+        }
+        let length = self.length(length);
+        let passed = since?.elapsed();
+        (passed < length).then(|| ease(passed.as_secs_f32() / length.as_secs_f32()))
+    }
+
+    fn running(&self, since: Option<Instant>, length: Duration) -> bool {
+        since.is_some_and(|since| since.elapsed() < self.length(length))
+    }
+
+    /// The projector shows `program` now. Something new going up rings.
+    pub fn stage_shows(&mut self, program: Option<SceneId>) {
+        if program != self.program {
+            self.program = program;
+            self.went_up = program.map(|_| Instant::now());
+        }
+    }
+
+    /// The ring of what just went on the projector.
+    pub fn ring(&self) -> Option<f32> {
+        self.along(self.went_up, RING)
+    }
+
+    /// The phone did something to the stage.
+    pub fn phone_acted(&mut self) {
+        self.phone = Some(Instant::now());
+    }
+
+    /// The stage was last moved from the phone, a moment ago. Said with
+    /// motion off too: it is something to know, not something moving.
+    pub fn by_phone(&self) -> bool {
+        self.running(self.phone, PHONE)
+    }
+
+    /// What just went up was put there by the phone.
+    pub fn rung_by_phone(&self) -> bool {
+        match (self.phone, self.went_up) {
+            (Some(phone), Some(up)) => up.saturating_duration_since(phone) < SOON,
+            _ => false,
+        }
+    }
+
+    /// Something is moving: every frame is drawn.
+    pub fn moving(&self) -> bool {
+        !self.still && self.running(self.went_up, RING)
+    }
+
+    /// Something that shows for a while is up: looked at now and then, to
+    /// take it down on time.
+    pub fn showing(&self) -> bool {
+        self.by_phone()
+    }
+}
+
+/// Fast at first, settling at the end.
+fn ease(t: f32) -> f32 {
+    let left = 1.0 - t.clamp(0.0, 1.0);
+    1.0 - left * left * left
+}
+
+/// `from` to `to`, `t` of the way.
+pub fn between(from: f32, to: f32, t: f32) -> f32 {
+    from + (to - from) * t
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn easing_starts_fast_and_ends_at_rest() {
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
+        assert!(ease(0.5) > 0.5, "more than half done at half time");
+        assert_eq!(ease(2.0), 1.0, "never past the end");
+    }
+
+    #[test]
+    fn what_went_up_rings_once_and_then_is_over() {
+        let mut motion = Motion::new();
+        assert!(motion.ring().is_none());
+        motion.went_up = Some(Instant::now());
+        assert!(motion.ring().is_some());
+        assert!(motion.moving());
+        motion.went_up = Instant::now().checked_sub(RING * 2);
+        assert!(motion.ring().is_none());
+        assert!(!motion.moving());
+    }
+
+    #[test]
+    fn with_motion_off_nothing_moves_but_the_phone_is_still_named() {
+        let mut motion = Motion::new();
+        motion.still = true;
+        motion.phone_acted();
+        motion.went_up = Some(Instant::now());
+        assert!(motion.ring().is_none());
+        assert!(!motion.moving());
+        assert!(motion.by_phone());
+        assert!(motion.rung_by_phone());
+    }
+}

@@ -20,6 +20,7 @@ mod length;
 mod library;
 mod look;
 mod mode;
+mod motion;
 mod outputs;
 mod palette;
 mod paths;
@@ -212,6 +213,8 @@ enum Message {
     Tick,
     /// Time to redraw download or indexing progress.
     Progress,
+    /// Time to draw what is moving a little further along.
+    Frame,
     /// The script performed a command. The plan may have changed, which the
     /// stage feed doesn't announce.
     Acted,
@@ -543,6 +546,8 @@ struct App {
     pub(crate) live_from: usize,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
+    /// What is moving for a moment, to say something happened.
+    pub(crate) motion: motion::Motion,
 }
 
 impl App {
@@ -646,7 +651,9 @@ impl App {
             carried: None,
             shelf_pick: None,
             scrub: None,
+            motion: motion::Motion::new(),
         };
+        app.motion.still = app.config.no_motion;
         app.check_palette();
         app.find_running();
         // The plan reopened at start may bring folders of its own.
@@ -676,6 +683,10 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // A frame changes nothing: the view is drawn again, further along.
+        if matches!(message, Message::Frame) {
+            return Task::none();
+        }
         // The modes' limits, for whatever asks: a click, a key, a script,
         // the phone.
         let task = match self.refused(&message) {
@@ -685,6 +696,9 @@ impl App {
             }
             None => self.handle(message),
         };
+        // Whatever put it there: something new on the projector rings.
+        self.motion
+            .stage_shows(self.stage.program.as_ref().map(|scene| scene.id));
         self.sync_lock();
         if self.mode == mode::Mode::Plan {
             self.plans.relist();
@@ -800,6 +814,7 @@ impl App {
                 }
             }
             Message::Progress => return self.go_on(),
+            Message::Frame => {}
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
@@ -2200,6 +2215,7 @@ impl App {
                     self.check_palette();
                 }
                 self.config = config;
+                self.motion.still = self.config.no_motion;
                 self.config_status = Arc::new(config::Status::Read(path));
             }
             Err(err) => draft.notice = Some(Err(err)),
@@ -2855,6 +2871,14 @@ impl App {
         if self.downloads.0.busy() || self.library.0.indexing() || self.thumbs.busy() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
+        }
+        // What moves is drawn every frame, and only while it moves; what
+        // shows for a while is looked at often enough to come down on time.
+        if self.motion.moving() {
+            subscriptions.push(window::frames().map(|_| Message::Frame));
+        } else if self.motion.showing() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(200)).map(|_| Message::Frame));
         }
         if let Some(remote) = &self.remote {
             subscriptions.push(Subscription::run_with(
