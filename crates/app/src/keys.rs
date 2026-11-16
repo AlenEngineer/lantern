@@ -64,6 +64,8 @@ pub enum Op {
     Rename,
     /// Takes back the last edit of the plan.
     Undo,
+    /// Unlocks the running plan for a change, or locks it again.
+    Unlock,
 }
 
 /// A key with its modifiers, as the config writes it (`ctrl+n`, `alt+up`,
@@ -399,6 +401,13 @@ pub const ACTIONS: &[Action] = &[
         Op::Rename,
         When::Always,
         "Rename the selected step",
+    ),
+    action(
+        "unlock",
+        "ctrl+e",
+        Op::Unlock,
+        When::Always,
+        "Change the plan while it runs; again to lock it",
     ),
 ];
 

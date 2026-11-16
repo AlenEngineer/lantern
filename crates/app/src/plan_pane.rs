@@ -50,7 +50,7 @@ impl App {
         // same child of the pane: iced keeps a widget's state, like which
         // field has focus, by its place among its siblings.
         // The plan's name and its buttons are in the strip, over the pane.
-        let mut pane = column![].spacing(8);
+        let mut pane = column![self.mode_note()].spacing(8);
         pane = pane.push(match &self.plans.mode {
             plans::Mode::Steps | plans::Mode::Renaming(_) => self.steps(&plan, timing, &issues),
             plans::Mode::Browsing(entries) => self.saved_plans(entries),
@@ -132,7 +132,13 @@ impl App {
             .0
             .current_step()
             .and_then(|current| items.iter().position(|s| s.id == current.id));
-        let mut header = row![plans_button, name];
+        // In a run the plan can't be left or managed: the way back to the
+        // list and the plan's menu come back when the service ends.
+        let running = self.mode == crate::mode::Mode::Run;
+        let mut header = match running {
+            true => row![name],
+            false => row![plans_button, name],
+        };
         if let Some(at) = at {
             header = header.push(
                 text(format!("{} of {}", at + 1, items.len()))
@@ -141,16 +147,18 @@ impl App {
             );
         }
         // Everything about the plan that isn't its steps.
-        header = header.push(tooltip(
-            button(text("⋯").size(HEADING).color(p.on_surface_variant))
-                .padding([2, 10])
-                .on_press(Message::PlanSettings)
-                .style(look::row(p, Tone::Plain)),
-            container(text("This plan: name, look, template, copy, delete").size(META))
-                .padding([4, 8])
-                .style(look::tip(p)),
-            tooltip::Position::Bottom,
-        ));
+        if !running {
+            header = header.push(tooltip(
+                button(text("⋯").size(HEADING).color(p.on_surface_variant))
+                    .padding([2, 10])
+                    .on_press(Message::PlanSettings)
+                    .style(look::row(p, Tone::Plain)),
+                container(text("This plan: name, look, template, copy, delete").size(META))
+                    .padding([4, 8])
+                    .style(look::tip(p)),
+                tooltip::Position::Bottom,
+            ));
+        }
         if self.plans.is_dirty(plan) {
             header = header.push(pill(
                 p,
@@ -281,7 +289,7 @@ impl App {
         }
         // The last row adds a step that isn't a search result; it opens
         // on the kinds there are.
-        if moving.is_none() {
+        if moving.is_none() && self.can_edit() {
             rows = rows.push(list_action(
                 p,
                 if self.adding.is_some() { "−" } else { "+" },

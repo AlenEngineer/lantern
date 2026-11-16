@@ -181,6 +181,29 @@ new = "ctrl+t"
 blackout = "f9"
 ```
 
+### Plan, Run, Live
+
+Lantern is always in one of three modes, switched at the top:
+
+- **Plan**: making and managing plans. Nothing reaches the projector: a
+  step or a search result is looked at on this screen only, and Enter adds
+  a result to the plan. **Start the service** is the way out to the
+  projector.
+- **Run**: a plan in front of people. The plan is locked: its steps can't
+  be renamed, moved, removed or added to, and no other plan can be opened.
+  Search still shows things on the fly. **Unlock** (Ctrl+E) lets what is
+  still ahead be changed, for the hymn that is swapped at the last minute;
+  what the service has reached or passed stays as it was, the projector is
+  untouched meanwhile, and the plan locks again when the service moves to
+  its next step. **End the service**, pressed twice, empties the projector
+  and goes back to Plan.
+- **Live**: no plan. What is picked is shown, PgDn and PgUp turn its
+  slides, and the pane lists what was shown this session. **Save these as
+  a plan** makes one of them and opens it in Plan.
+
+The limits hold for keys, scripts and the phone remote alike. The phone
+runs a service or shows in Live; it does nothing while planning.
+
 ### Running a plan
 
 The plan moves when you move it: PgDn (or a clicker) goes to the next

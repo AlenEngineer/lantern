@@ -183,9 +183,13 @@ impl App {
                 .interaction(iced::mouse::Interaction::ResizingHorizontally)
         };
         let timing = self.timing();
-        let plan = container(self.plan_pane(&timing))
-            .height(Fill)
-            .style(look::card(p, glass, look::CARD_RADIUS));
+        // In Live there is no plan: its place lists what was shown.
+        let plan = container(match self.mode {
+            crate::mode::Mode::Live => self.session_pane(),
+            _ => self.plan_pane(&timing),
+        })
+        .height(Fill)
+        .style(look::card(p, glass, look::CARD_RADIUS));
         // The settings take the stage's card while they're open.
         let middle: Element<'_, Message> = match &self.settings {
             Some(draft) => container(self.settings_view(draft))
@@ -341,9 +345,25 @@ impl App {
                 .on_press(message)
                 .style(look::strip_item(p, tone))
         };
-        let mut strip = row![container(self.plan_header(&plan)).width(self.plan_width() - 8.0)]
-            .spacing(4)
-            .align_y(Alignment::Center);
+        // Over the plan pane: the plan's name and buttons, or in Live,
+        // where there is none, the app's.
+        let header: Element<'_, Message> = match self.mode {
+            crate::mode::Mode::Live => container(
+                text("Lantern")
+                    .size(HEADING)
+                    .font(BOLD)
+                    .color(p.on_surface_variant),
+            )
+            .padding([4, 8])
+            .into(),
+            _ => self.plan_header(&plan),
+        };
+        let mut strip = row![
+            container(header).width(self.plan_width() - 8.0),
+            self.mode_switch()
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
         strip = strip.push(Space::new().width(Fill));
         // The running section and how the service stands against its
         // schedule: behind or ahead with a start time, else when it ends.
@@ -423,14 +443,15 @@ impl App {
         // Each only opens the search on its bang, as typing `!b ` would;
         // a folder's own bang, which has no picture, shows as it's typed.
         // The one being searched is lit.
-        if wide >= 1100.0 && self.settings.is_none() {
+        if wide >= 1280.0 && self.settings.is_none() {
             let mut bangs = self.engine.0.searcher().bangs();
             bangs.sort_by_key(|bang| {
                 let place = BANG_ORDER.iter().position(|known| *known == bang.bang);
                 (place.unwrap_or(BANG_ORDER.len()), bang.bang.clone())
             });
             // Only as many as the strip has room for beside the rest.
-            let room = ((wide - 1100.0) / 40.0) as usize + 4;
+            // The mode switch and the service's time come first.
+            let room = ((wide - 1280.0).max(0.0) / 40.0) as usize + 2;
             for bang in bangs.into_iter().take(room) {
                 let lit = self.search_open && self.search.bang() == Some(bang.bang.as_str());
                 let tone = if lit { Tone::Selected } else { Tone::Plain };
@@ -784,7 +805,14 @@ impl App {
         seam: &dyn Fn(Side, f32) -> iced::widget::MouseArea<'a, Message>,
     ) -> Element<'a, Message> {
         let p = self.palette;
-        let mut live = self.on_stage_section();
+        // While planning, nothing is on the projector: the picture here is
+        // what is being looked at, seen on this screen only.
+        let planning = self.mode == crate::mode::Mode::Plan;
+        let mut live = if planning {
+            self.preview_section()
+        } else {
+            self.on_stage_section()
+        };
         // The picture is 16:9 of its column where the card is tall enough
         // for the rest too; in a shorter one it takes what the rest leaves.
         let scene = self.stage.program.as_ref();
@@ -823,6 +851,10 @@ impl App {
         // plan's next step).
         let side: Element<'_, Message> = if self.search_open {
             Space::new().width(self.search_width()).into()
+        } else if planning || (self.mode == crate::mode::Mode::Live && self.stage.preview.is_none())
+        {
+            // No plan to say what is next.
+            Space::new().into()
         } else {
             let mut next = if self.stage.preview.is_some() {
                 self.preview_section()
@@ -932,7 +964,14 @@ impl App {
         let cued = self
             .cued()
             .filter(|step| !matches!(step.action, Action::Show { .. }));
-        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Preview")];
+        let mode = self.mode;
+        let mut section: Vec<Element<'_, Message>> = vec![heading(
+            p,
+            match mode {
+                crate::mode::Mode::Plan => "Preview · only on this screen",
+                _ => "Preview",
+            },
+        )];
         match (scene, &cued) {
             (Some(scene), _) => {
                 let content = self.media.preloaded(&scene.resource.id);
@@ -962,22 +1001,34 @@ impl App {
         } else {
             keys::with_key("Add", Op::AddToPlan)
         };
+        // What each mode lets be done with it: planning adds it, a run or
+        // Live shows it, and a run unlocked for a change does either.
+        let show = pill(
+            p,
+            &keys::with_key("Show now", Op::Enter),
+            Tone::Selected,
+            PILL,
+            has.then_some(op(Op::Take)),
+        )
+        .width(Fill);
+        let adds = |tone, label: &str| {
+            pill(p, label, tone, PILL, has.then_some(op(Op::AddToPlan))).width(Fill)
+        };
         // One under the other: side by side their keys didn't fit.
-        section.push(
-            column![
-                pill(
-                    p,
-                    &keys::with_key("Show now", Op::Enter),
-                    Tone::Selected,
-                    PILL,
-                    has.then_some(op(Op::Take))
-                )
-                .width(Fill),
-                pill(p, &add, Tone::Plain, PILL, has.then_some(op(Op::AddToPlan))).width(Fill),
-            ]
-            .spacing(4)
-            .into(),
-        );
+        section.push(match (mode, self.can_edit()) {
+            (crate::mode::Mode::Plan, _) => {
+                let label = if in_plan {
+                    keys::with_key("Add again", Op::AddToPlan)
+                } else {
+                    keys::with_key("Add to the plan", Op::Enter)
+                };
+                adds(Tone::Selected, &label).into()
+            }
+            (crate::mode::Mode::Run, true) => {
+                column![show, adds(Tone::Plain, &add)].spacing(4).into()
+            }
+            _ => show.into(),
+        });
         section
     }
 

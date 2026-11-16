@@ -133,6 +133,12 @@ impl App {
     pub(crate) fn step_actions(&self, step: &Step) -> Element<'_, Message> {
         let p = self.palette;
         let id = step.id;
+        // Nothing to do to a step the mode won't let change: a locked
+        // plan, or in a run a step the service has reached or passed.
+        let running = self.mode == crate::mode::Mode::Run;
+        if !self.can_edit() || (running && !self.ahead(&self.engine.0.plan(), id)) {
+            return Space::new().into();
+        }
         let tip = |about: String| {
             container(text(about).size(META))
                 .padding([4, 8])

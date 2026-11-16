@@ -150,6 +150,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   last slides of a deck. Select the step, pick the sound in search, click
   the note on the step's row, and set the slide it starts at. It plays over
   the step's slides as they turn and stops with the step.
+- **Three modes: Plan, Run, Live**, switched at the top. Planning never
+  reaches the projector. A running plan is locked, and **Unlock** (Ctrl+E)
+  lets what is still ahead be changed until the service moves on. Live has
+  no plan, lists what was shown, and can save it as one.
 
 ### Fixed
 

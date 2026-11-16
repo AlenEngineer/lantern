@@ -146,6 +146,8 @@ pub enum Command {
     FromTemplate(String),
     /// `drop`: let go of what `drag` holds, moving it to where it's over.
     Drop,
+    /// Changes mode: `plan`, `live`, or `start` and `end` for a run.
+    Mode(String),
     /// `press KEY`: a dashboard key, as if pressed with the search box empty
     /// (see [`keys::op_named`] for the names). `press ctrl+s` saves
     /// the plan, `ctrl+o` lists saved plans, `ctrl+n` starts a new one.
@@ -270,6 +272,10 @@ impl Command {
                 _ => return Err(format!("drag needs N M above|below, got {rest:?}")),
             },
             "drop" => Command::Drop,
+            "mode" if ["plan", "live", "start", "end"].contains(&rest) => {
+                Command::Mode(rest.to_string())
+            }
+            "mode" => return Err(format!("mode needs plan, live, start or end, got {rest:?}")),
             "template" if !rest.is_empty() => Command::Template(rest.to_string()),
             "from-template" if !rest.is_empty() => Command::FromTemplate(rest.to_string()),
             "template" | "from-template" => return Err(format!("{word} needs a plan's name")),
@@ -364,6 +370,8 @@ pub enum Ui {
     Click(usize),
     Drag(usize, usize, Half),
     Drop,
+    /// Changes mode: `plan`, `live`, or `start` and `end` for a run.
+    Mode(String),
     Length(usize, String),
     GoOn(usize),
     PlanLook(String),
@@ -435,6 +443,7 @@ impl Script {
                 Command::Click(n) => ui(Ui::Click(*n)),
                 Command::Drag(from, to, half) => ui(Ui::Drag(*from, *to, *half)),
                 Command::Drop => ui(Ui::Drop),
+                Command::Mode(to) => ui(Ui::Mode(to.clone())),
                 Command::Slide(n) => ui(Ui::Slide(*n)),
                 Command::Template(name) => ui(Ui::Template(name.clone())),
                 Command::FromTemplate(name) => ui(Ui::FromTemplate(name.clone())),
@@ -509,6 +518,7 @@ impl Script {
             | Command::Click(_)
             | Command::Drag(..)
             | Command::Drop
+            | Command::Mode(_)
             | Command::Length(..)
             | Command::GoOn(_)
             | Command::PlanLook(_)

@@ -19,6 +19,7 @@ mod keys;
 mod length;
 mod library;
 mod look;
+mod mode;
 mod outputs;
 mod palette;
 mod paths;
@@ -349,6 +350,14 @@ enum Message {
     Scrub(f64),
     /// The timeline was let go.
     Scrubbed,
+    /// The Plan or Live button of the mode switch.
+    SetMode(mode::Mode),
+    /// From planning to running the plan.
+    StartService,
+    /// From running back to planning: asked twice.
+    EndService,
+    /// Makes a plan of what was shown in Live.
+    SaveSession,
 }
 
 /// A deck left for something one of its slides plays or links to.
@@ -483,6 +492,17 @@ struct App {
     /// The slide a step's sound starts at, as it is being typed: it may
     /// be empty for a moment, on the way from one number to another.
     pub(crate) from_typed: Option<(StepId, String)>,
+    /// What Lantern is being used for: planning, running a plan, or
+    /// showing with none.
+    pub(crate) mode: mode::Mode,
+    /// The running plan is unlocked for a change, and the step the service
+    /// was at when it was: it locks again when the service moves on.
+    pub(crate) unlocked: Option<Option<StepId>>,
+    /// "End the service" was pressed once, and when.
+    pub(crate) ending: Option<Instant>,
+    /// How much had been shown when Live was entered: its session is what
+    /// was shown since.
+    pub(crate) live_from: usize,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
 }
@@ -572,6 +592,10 @@ impl App {
             shown_since: None,
             drafts: HashMap::new(),
             from_typed: None,
+            mode: mode::Mode::Plan,
+            unlocked: None,
+            ending: None,
+            live_from: 0,
             scrub: None,
         };
         app.check_palette();
@@ -602,7 +626,16 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        let task = self.handle(message);
+        // The modes' limits, for whatever asks: a click, a key, a script,
+        // the phone.
+        let task = match self.refused(&message) {
+            Some(why) => {
+                log(format!("mode: {why}"));
+                Task::none()
+            }
+            None => self.handle(message),
+        };
+        self.sync_lock();
         self.sync_look();
         self.sync_blur();
         self.sync_remote();
@@ -768,6 +801,16 @@ impl App {
                         }
                     }
                     Ui::Drop => self.update(Message::Pointer(None, false)),
+                    Ui::Mode(to) => match (to.as_str(), mode::Mode::parse(&to)) {
+                        ("start", _) => self.update(Message::StartService),
+                        // Ending asks twice.
+                        ("end", _) => {
+                            let _ = self.update(Message::EndService);
+                            self.update(Message::EndService)
+                        }
+                        (_, Some(to)) => self.update(Message::SetMode(to)),
+                        _ => Task::none(),
+                    },
                     Ui::Slide(n) => self.update(Message::GotoFrame(n)),
                     Ui::Output(name) => {
                         let output = (name != "automatic").then_some(name);
@@ -900,10 +943,26 @@ impl App {
             }
             Message::Pointer(_, true) => {
                 let plan = self.engine.0.plan();
-                self.drag = self.hovered.map(|(step, _)| Drag::new(&plan, step));
+                // Only a step the mode lets change is picked up: in a run,
+                // one still ahead, once the plan is unlocked.
+                let running = self.mode == mode::Mode::Run;
+                self.drag = self
+                    .hovered
+                    .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
+                    .map(|(step, _)| Drag::new(&plan, step));
             }
             Message::Pointer(_, false) => {
                 let dropped = self.drag.take().filter(|drag| drag.moving);
+                // In a run it lands after the step the service is at, or
+                // not at all.
+                let reached = (self.mode == mode::Mode::Run)
+                    .then(|| self.engine.0.current_step())
+                    .flatten()
+                    .and_then(|step| self.engine.0.plan().position(step.id));
+                let dropped = dropped.filter(|drag| {
+                    drag.landing
+                        .is_none_or(|at| reached.is_none_or(|reached| at > reached))
+                });
                 if let Some((drag, at)) = dropped.and_then(|d| d.landing.map(|at| (d, at))) {
                     self.remember(None);
                     self.engine
@@ -1043,6 +1102,10 @@ impl App {
                     self.stepping = true;
                 }
             }
+            Message::SetMode(to) => return self.set_mode(to),
+            Message::StartService => return self.start_service(),
+            Message::EndService => return self.end_service(),
+            Message::SaveSession => return self.save_session(),
             Message::GotoFrame(frame) => {
                 self.engine.0.goto_frame(frame);
                 self.stepping = true;
@@ -1339,10 +1402,17 @@ impl App {
                 self.drafts.insert(id, typed);
             }
             Message::Move(id, by) => {
+                // In a run, never up past the step the service is at.
+                let reached = (self.mode == mode::Mode::Run)
+                    .then(|| self.engine.0.current_step())
+                    .flatten();
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {
+                    let floor = reached
+                        .and_then(|step| plan.position(step.id))
+                        .map_or(0, |reached| reached + 1);
                     if let Some(at) = plan.position(id) {
-                        plan.move_to(id, at.saturating_add_signed(by));
+                        plan.move_to(id, at.saturating_add_signed(by).max(floor));
                     }
                 });
                 return self.preload();
@@ -1444,7 +1514,29 @@ impl App {
 
     fn op(&mut self, op: Op) -> Task<Message> {
         let engine = self.engine.0.clone();
+        let op = match self.op_in_mode(op) {
+            Ok(op) => op,
+            Err(why) => {
+                log(format!("mode: {why}"));
+                return Task::none();
+            }
+        };
         match op {
+            Op::Unlock => self.toggle_unlock(),
+            // In Live there is no plan to step through: Next and Prev
+            // turn the slides of what is on stage, and no more.
+            Op::Next | Op::Prev if self.mode == mode::Mode::Live && !self.left_for_program() => {
+                let at = self.stage.picture().map(lantern_engine::Scene::frame);
+                let to = match (at, op == Op::Next) {
+                    (Some(at), true) => Some(at + 1),
+                    (Some(at), false) => at.checked_sub(1),
+                    (None, _) => None,
+                };
+                if let Some(to) = to {
+                    engine.goto_frame(to);
+                    self.stepping = true;
+                }
+            }
             // Without a search, Enter takes what the arrows are on in the
             // plan pane: a kind of step, or a saved plan.
             Op::Enter if !self.searching() && self.adding.is_some() => {
