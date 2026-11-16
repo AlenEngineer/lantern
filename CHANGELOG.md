@@ -169,6 +169,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   name unless you had named it yourself.
 - The lines inside a step go to their slide: in a run the slide goes on
   the projector, and while planning it is looked at in the preview.
+- The library's folders nest as they do on disk, and a **filter** box at
+  its top narrows it to the files whose name or folder has what you type.
+  A folder shows all its files, not the first 200.
 
 ### Fixed
 

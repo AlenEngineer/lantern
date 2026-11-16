@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{Space, button, column, container, row, text};
+use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 use lantern_engine::{Location, Query, Resource};
 
@@ -13,9 +13,18 @@ use crate::dashboard::{scrolling, single_line};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::{App, Clicked, Message};
 
-/// The most files a folder lists. Past it the search is the way in: a
-/// folder of six hundred hymns is found by number, not by scrolling.
-const MOST: usize = 200;
+/// The most rows the tree draws at once. A folder of six hundred hymns
+/// is all there, a filter away; past this many, the filter is the way.
+const MOST: usize = 1000;
+
+/// The id of the library's filter box, to focus it.
+pub const FILTER: &str = "library-filter";
+
+/// The folders between a file and its library folder, as a path:
+/// `Hymns/Kids`. Empty for a file right in the folder.
+fn within(file: &Resource) -> String {
+    file.tags.get(1..).unwrap_or_default().join("/")
+}
 
 /// One folder of the library and the files in it.
 pub struct Folder {
@@ -69,20 +78,15 @@ impl App {
             .cloned()
     }
 
-    /// The library as a tree: each folder, and under the open one its
-    /// files.
+    /// The library as a tree: each folder, the folders inside it, and
+    /// its files. With something typed in the filter, the files whose
+    /// name or folder has it, wherever they are.
     pub(crate) fn shelf_pane(&self) -> Element<'_, Message> {
         let p = self.palette;
-        let mut rows = column![
-            container(
-                text("LIBRARY")
-                    .size(META)
-                    .font(BOLD)
-                    .color(p.on_surface_variant)
-            )
-            .padding([4, 8])
-        ]
-        .spacing(2);
+        let filter = lantern_engine::fold(self.shelf_filter.trim());
+        let mut rows = column![].spacing(2);
+        let mut drawn = 0;
+        let mut left_out = 0;
         if self.shelf.is_empty() {
             rows = rows.push(
                 container(
@@ -93,92 +97,240 @@ impl App {
                 .padding([4, 8]),
             );
         }
-        for folder in &self.shelf {
-            let open = self.shelf_open.as_deref() == Some(folder.label.as_str());
-            rows = rows.push(
-                button(
-                    row![
-                        text(if open { "▾" } else { "▸" })
-                            .size(META)
-                            .color(p.on_surface_variant),
-                        look::icon(Icon::Folder, 14.0, p.on_surface_variant),
-                        container(
-                            single_line(folder.label.clone())
-                                .size(BODY)
-                                .font(BOLD)
-                                .color(if open { p.primary } else { p.on_surface })
-                        )
-                        .width(Fill)
+        let folder_row = |label: String, path: String, count: usize, depth: usize, open: bool| {
+            button(
+                row![
+                    text(if open { "▾" } else { "▸" })
+                        .size(META)
+                        .color(p.on_surface_variant),
+                    look::icon(Icon::Folder, 14.0, p.on_surface_variant),
+                    container(single_line(label).size(BODY).font(BOLD).color(if open {
+                        p.primary
+                    } else {
+                        p.on_surface
+                    }))
+                    .width(Fill)
+                    .clip(true),
+                    text(count.to_string())
+                        .size(META)
+                        .color(p.on_surface_variant),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding(
+                iced::Padding::default()
+                    .left(8.0 + 18.0 * depth as f32)
+                    .right(8.0)
+                    .top(6.0)
+                    .bottom(6.0),
+            )
+            .on_press(Message::ShelfFold(path))
+            .style(look::row(p, Tone::Plain))
+        };
+        let file_row = |file: &Arc<Resource>, depth: usize, note: String| {
+            let picked = self.shelf_pick.as_ref() == Some(&file.id);
+            let colour = if picked { p.primary } else { p.on_surface };
+            let mut line = row![
+                look::icon(Icon::of(&file.kind), 13.0, colour),
+                container(single_line(file.title.clone()).size(BODY).color(colour))
+                    .width(Fill)
+                    .clip(true),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            if !note.is_empty() {
+                line = line.push(
+                    container(single_line(note).size(META).color(p.on_surface_variant))
+                        .max_width(120)
                         .clip(true),
-                        text(folder.files.len().to_string())
-                            .size(META)
-                            .color(p.on_surface_variant),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
+                );
+            }
+            button(line)
                 .width(Fill)
-                .padding([6, 8])
-                .on_press(Message::ShelfFold(folder.label.clone()))
-                .style(look::row(p, Tone::Plain)),
-            );
+                .padding(
+                    iced::Padding::default()
+                        .left(12.0 + 18.0 * depth as f32)
+                        .right(8.0)
+                        .top(5.0)
+                        .bottom(5.0),
+                )
+                .on_press(Message::Click(Clicked::Shelf(file.id.clone())))
+                .style(look::row(
+                    p,
+                    if picked { Tone::Selected } else { Tone::Plain },
+                ))
+        };
+        for folder in &self.shelf {
+            // Filtering: the files that have it, flat under their folder,
+            // each saying where in it they are.
+            if !filter.is_empty() {
+                let found: Vec<&Arc<Resource>> = folder
+                    .files
+                    .iter()
+                    .filter(|file| {
+                        lantern_engine::fold(&file.title).contains(&filter)
+                            || lantern_engine::fold(&within(file)).contains(&filter)
+                    })
+                    .collect();
+                if found.is_empty() {
+                    continue;
+                }
+                rows = rows.push(folder_row(
+                    folder.label.clone(),
+                    folder.label.clone(),
+                    found.len(),
+                    0,
+                    true,
+                ));
+                for file in found {
+                    if drawn >= MOST {
+                        left_out += 1;
+                        continue;
+                    }
+                    drawn += 1;
+                    rows = rows.push(file_row(file, 1, within(file)));
+                }
+                continue;
+            }
+            let open = self.shelf_open.contains(&folder.label);
+            rows = rows.push(folder_row(
+                folder.label.clone(),
+                folder.label.clone(),
+                folder.files.len(),
+                0,
+                open,
+            ));
             if !open {
                 continue;
             }
-            for file in folder.files.iter().take(MOST) {
-                let picked = self.shelf_pick.as_ref() == Some(&file.id);
-                let colour = if picked { p.primary } else { p.on_surface };
-                // Where in the folder it is, when it is in a sub-folder.
-                let within = file.tags[1..].join(" / ");
-                let mut line = row![
-                    look::icon(Icon::of(&file.kind), 13.0, colour),
-                    container(single_line(file.title.clone()).size(BODY).color(colour))
-                        .width(Fill)
-                        .clip(true),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center);
-                if !within.is_empty() {
-                    line = line.push(
-                        container(single_line(within).size(META).color(p.on_surface_variant))
-                            .max_width(90)
-                            .clip(true),
-                    );
+            // The folders inside it, each with what is under it, in the
+            // order their paths sort; then the files right in it.
+            let mut paths: Vec<String> = folder
+                .files
+                .iter()
+                .map(|file| within(file))
+                .filter(|path| !path.is_empty())
+                .collect();
+            paths.sort();
+            paths.dedup();
+            // Every folder on the way to a file is a folder too.
+            let mut folders: Vec<String> = Vec::new();
+            for path in &paths {
+                let mut at = String::new();
+                for part in path.split('/') {
+                    if !at.is_empty() {
+                        at.push('/');
+                    }
+                    at.push_str(part);
+                    if !folders.contains(&at) {
+                        folders.push(at.clone());
+                    }
                 }
-                rows = rows.push(
-                    button(line)
-                        .width(Fill)
-                        .padding(
-                            iced::Padding::default()
-                                .left(30.0)
-                                .right(8.0)
-                                .top(5.0)
-                                .bottom(5.0),
-                        )
-                        .on_press(Message::Click(Clicked::Shelf(file.id.clone())))
-                        .style(look::row(
-                            p,
-                            if picked { Tone::Selected } else { Tone::Plain },
-                        )),
-                );
             }
-            if folder.files.len() > MOST {
-                rows = rows.push(
-                    container(
-                        text(format!(
-                            "and {} more: search finds them",
-                            folder.files.len() - MOST
-                        ))
-                        .size(META)
-                        .color(p.on_surface_variant),
-                    )
-                    .padding(iced::Padding::default().left(30.0).top(4.0).bottom(4.0)),
-                );
+            folders.sort();
+            let files_in = |path: &str| -> Vec<&Arc<Resource>> {
+                folder
+                    .files
+                    .iter()
+                    .filter(|file| within(file) == path)
+                    .collect()
+            };
+            for path in &folders {
+                // In sight only if every folder above it is open.
+                let key = format!("{}/{path}", folder.label);
+                let parent_open = path.rsplit_once('/').is_none_or(|(above, _)| {
+                    let mut at = String::new();
+                    above.split('/').all(|part| {
+                        if !at.is_empty() {
+                            at.push('/');
+                        }
+                        at.push_str(part);
+                        self.shelf_open.contains(&format!("{}/{at}", folder.label))
+                    })
+                });
+                if !parent_open {
+                    continue;
+                }
+                let depth = path.matches('/').count() + 1;
+                let under = folder
+                    .files
+                    .iter()
+                    .filter(|file| {
+                        let at = within(file);
+                        at == *path || at.starts_with(&format!("{path}/"))
+                    })
+                    .count();
+                let open = self.shelf_open.contains(&key);
+                let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                rows = rows.push(folder_row(name, key, under, depth, open));
+                if !open {
+                    continue;
+                }
+                for file in files_in(path) {
+                    if drawn >= MOST {
+                        left_out += 1;
+                        continue;
+                    }
+                    drawn += 1;
+                    rows = rows.push(file_row(file, depth + 1, String::new()));
+                }
+            }
+            for file in files_in("") {
+                if drawn >= MOST {
+                    left_out += 1;
+                    continue;
+                }
+                drawn += 1;
+                rows = rows.push(file_row(file, 1, String::new()));
             }
         }
-        column![scrolling(rows), Space::new().height(4)]
-            .width(Fill)
-            .height(Fill)
-            .into()
+        if !filter.is_empty() && drawn == 0 && !self.shelf.is_empty() {
+            rows = rows.push(
+                container(
+                    text(format!(
+                        "Nothing in the library has “{}”.",
+                        self.shelf_filter.trim()
+                    ))
+                    .size(BODY)
+                    .color(p.on_surface_variant),
+                )
+                .padding([4, 8]),
+            );
+        }
+        if left_out > 0 {
+            rows = rows.push(
+                container(
+                    text(format!("and {left_out} more: type above to narrow it"))
+                        .size(META)
+                        .color(p.on_surface_variant),
+                )
+                .padding([4, 8]),
+            );
+        }
+        column![
+            row![
+                text("LIBRARY")
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.on_surface_variant),
+                text_input("Filter…", &self.shelf_filter)
+                    .id(FILTER)
+                    .on_input(Message::ShelfFilter)
+                    .size(BODY)
+                    .padding([5, 10])
+                    .style(look::input(p)),
+            ]
+            .spacing(10)
+            .padding([0, 8])
+            .align_y(Alignment::Center),
+            scrolling(rows),
+            Space::new().height(4)
+        ]
+        .spacing(8)
+        .width(Fill)
+        .height(Fill)
+        .into()
     }
 }

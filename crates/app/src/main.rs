@@ -362,6 +362,8 @@ enum Message {
     Fold(StepId),
     /// Opens a folder of the library tree, or closes it.
     ShelfFold(String),
+    /// What is typed in the library's filter.
+    ShelfFilter(String),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -520,7 +522,9 @@ struct App {
     pub(crate) shelf: Vec<shelf::Folder>,
     pub(crate) shelf_read: Option<u64>,
     /// The folder of the tree that is open, and the file being looked at.
-    pub(crate) shelf_open: Option<String>,
+    pub(crate) shelf_open: std::collections::HashSet<String>,
+    /// What is typed in the library's filter.
+    pub(crate) shelf_filter: String,
     pub(crate) shelf_pick: Option<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
@@ -624,7 +628,8 @@ impl App {
             parts: HashMap::new(),
             shelf: Vec::new(),
             shelf_read: None,
-            shelf_open: None,
+            shelf_open: std::collections::HashSet::new(),
+            shelf_filter: String::new(),
             shelf_pick: None,
             scrub: None,
         };
@@ -1148,7 +1153,12 @@ impl App {
                 }
             }
             Message::ShelfFold(folder) => {
-                self.shelf_open = (self.shelf_open.as_ref() != Some(&folder)).then_some(folder);
+                if !self.shelf_open.remove(&folder) {
+                    self.shelf_open.insert(folder);
+                }
+            }
+            Message::ShelfFilter(typed) => {
+                self.shelf_filter = typed;
             }
             Message::ReplaceStep(id) => {
                 let Some((step, pick)) = self.replaceable().filter(|(step, _)| step.id == id)
