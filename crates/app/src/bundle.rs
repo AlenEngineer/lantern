@@ -120,9 +120,34 @@ pub fn media(plan: &Plan) -> Vec<PathBuf> {
     paths
 }
 
+/// Copies `file` into `dir`, to keep it with a plan, and says where the
+/// copy is. A file of that name and size already there is the copy; one
+/// of that name that differs is left alone, and the copy named apart.
+pub fn keep(file: &Path, dir: &Path) -> io::Result<PathBuf> {
+    let name = file
+        .file_name()
+        .ok_or_else(|| io::Error::other("the file has no name"))?
+        .to_string_lossy()
+        .into_owned();
+    std::fs::create_dir_all(dir)?;
+    let size = std::fs::metadata(file)?.len();
+    let mut taken = Vec::new();
+    loop {
+        let to = free(dir, &name, &mut taken);
+        match std::fs::metadata(&to) {
+            Ok(there) if there.len() == size => return Ok(to),
+            Ok(_) => {}
+            Err(_) => {
+                std::fs::copy(file, &to)?;
+                return Ok(to);
+            }
+        }
+    }
+}
+
 /// A name that's safe as a file's on any system: the title without the
 /// characters a path can't hold.
-fn file_safe(title: &str) -> String {
+pub(crate) fn file_safe(title: &str) -> String {
     let name: String = title
         .trim()
         .chars()

@@ -198,6 +198,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A section's heading under the pointer shows **✕** too. Every button
   with a key says it when the pointer rests there: Search, Blackout,
   Settings, Save, Clear the stage and play/pause now do, like the rest.
+- A file outside the media folders can go in a plan: paste or type its
+  path in the search, or paste a file copied in the file manager. The
+  step then offers **keep a copy**, which copies the file to where Lantern
+  keeps plans' media so the plan doesn't depend on the original.
 
 ### Fixed
 

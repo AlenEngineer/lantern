@@ -41,7 +41,7 @@ mod youtube;
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -280,6 +280,11 @@ enum Message {
     SetAdvance(StepId, bool),
     /// Gives a step a sound to play with it, or takes it away.
     StepSound(StepId, Option<Arc<lantern_engine::Resource>>),
+    /// Copies what a step shows, a file outside the media folders, to
+    /// where Lantern keeps plans' media, so the plan has it from then on.
+    KeepCopy(StepId),
+    /// The copy is made, and where; or why it couldn't be.
+    KeptCopy(StepId, Result<PathBuf, String>),
     /// The slide a step's sound starts from, as typed: counted from 1.
     SoundFrom(StepId, String),
     /// Open the settings on this plan: its name, look, template, copy, delete.
@@ -1587,6 +1592,64 @@ impl App {
                     }
                 })
             }
+            Message::KeepCopy(id) => {
+                let plan = self.engine.0.plan();
+                let Some(file) = plan
+                    .get(id)
+                    .and_then(|step| self.loose(step))
+                    .map(Path::to_path_buf)
+                else {
+                    return Task::none();
+                };
+                let dir = self
+                    .plans
+                    .store()
+                    .bundles()
+                    .join(bundle::file_safe(&plan.title));
+                self.copying = true;
+                self.plans.notice = Some(plans::Notice::Done("Copying…".into()));
+                return Task::perform(
+                    in_thread(move || {
+                        bundle::keep(&file, &dir)
+                            .map_err(|err| format!("Couldn't copy {}: {err}", file.display()))
+                    }),
+                    move |kept| Message::KeptCopy(id, kept),
+                );
+            }
+            Message::KeptCopy(id, kept) => {
+                self.copying = false;
+                match kept {
+                    Ok(copy) => {
+                        self.remember(None);
+                        let title = self.engine.0.edit_plan(|plan| {
+                            let step = plan.get_mut(id)?;
+                            let Action::Show { resource } = &mut step.action else {
+                                return None;
+                            };
+                            // The same thing, at the copy: the step keeps
+                            // its name, its length and its sound.
+                            resource.id = ResourceId::new(
+                                &lantern_engine::SourceId::new("link").expect("a valid source id"),
+                                &copy.to_string_lossy(),
+                            );
+                            resource.location = lantern_engine::Location::File(copy.clone());
+                            resource.subtitle = Some("Kept with the plan".into());
+                            Some(resource.title.clone())
+                        });
+                        if let Some(title) = title {
+                            log(format!(
+                                "plan: kept a copy of {title} at {}",
+                                copy.display()
+                            ));
+                            self.plans.notice = Some(plans::Notice::Done(format!(
+                                "“{title}” is kept with the plan now"
+                            )));
+                        }
+                        return self.preload();
+                    }
+                    Err(why) => self.plans.notice = Some(plans::Notice::Failed(why)),
+                }
+            }
             Message::StepSound(id, sound) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {
@@ -2436,7 +2499,7 @@ impl App {
     /// step, in the plan that was open already: opening another plan or
     /// taking back several edits flashes nothing.
     fn sync_changed(&mut self) {
-        let file = self.plans.file().map(std::path::Path::to_path_buf);
+        let file = self.plans.file().map(Path::to_path_buf);
         let steps: HashMap<StepId, Option<ResourceId>> = self.engine.0.edit_plan(|plan| {
             plan.steps()
                 .iter()
@@ -2463,6 +2526,21 @@ impl App {
             self.motion.changed(step);
         }
         self.seen = (file, steps);
+    }
+
+    /// The file `step` shows, when it is one that was named by its path
+    /// and is in none of the media folders: a download, a file on a USB
+    /// stick. It may move or go, and the plan with it, until a copy is
+    /// kept.
+    pub(crate) fn loose<'a>(&self, step: &'a Step) -> Option<&'a Path> {
+        let Action::Show { resource } = &step.action else {
+            return None;
+        };
+        let lantern_engine::Location::File(path) = &resource.location else {
+            return None;
+        };
+        (resource.id.source() == "link" && !path.starts_with(self.plans.store().bundles()))
+            .then_some(path.as_path())
     }
 
     fn sync_parts(&mut self) {
