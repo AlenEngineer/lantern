@@ -182,6 +182,26 @@ Give a folder its own bang in Settings (the field after its path) or with
 folders may share a bang. `!f` still searches every folder. A bang Lantern
 already uses (`b`, `f`, `gi`, `t`, `x`, `yt`) can't be taken.
 
+A folder whose files are named by number or code (`004.mp4`) can have a
+**names file**: a text file with a line for each file, its name, a tab and
+its title.
+
+```text
+004<tab>Himno 4 · Alabanzas sin cesar
+005.mp4<tab>Himno 5 · A ti, glorioso Dios
+```
+
+Point the folder at it in Settings (**Names file**, under its path) or with
+`names = "~/himnos.tsv"`, and each file is shown and found by its title. A
+file's extension can be left out, a file in a sub-folder is named by its
+path from the folder (`coros/005.mp4`), lines starting with `#` are
+skipped, and a file the list leaves out keeps its own name. The list is
+read when the folder is indexed: after editing it, save Settings or start
+Lantern again.
+
+A number finds the file numbered so whatever zeros it is written with:
+`4` finds `004` first, then `040`, `041`, `400`.
+
 Every source declares its own bangs (`Source::bangs`), so a new source
 brings its own.
 
@@ -398,6 +418,7 @@ stage_output = "HDMI-A-1"  # optional: the stage's screen, see below
 path = "~/Videos"
 label = "Videos"          # optional
 bang = "v"                # optional: !v searches only this folder
+names = "~/videos.tsv"    # optional: titles for its files, see Search
 
 [[folders]]
 path = "/media/church/Music"

@@ -122,6 +122,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The phone remote shows the stage. The eye puts a picture of what the
   audience sees above the title, new about once a second, video frames
   included. Lantern makes the picture only while a phone is showing it.
+- A folder can have a **names file**, for files named by number or code: a
+  line for each, its name, a tab, its title (`004<tab>Himno 4 · Alabanzas
+  sin cesar`). Set it under the folder's path in Settings, or with
+  `names = "…"` in the config, and the files are shown and found by
+  their titles.
 
 ### Fixed
 
