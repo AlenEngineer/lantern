@@ -55,6 +55,8 @@ pub struct Motion {
     fold: Option<(StepId, bool, Instant)>,
     /// Where what is carried would land, and since when.
     gap: Option<(usize, Instant)>,
+    /// Where it would have landed before that, closing since then.
+    closing: Option<(usize, Instant)>,
 }
 
 impl Motion {
@@ -76,6 +78,7 @@ impl Motion {
             left: None,
             fold: None,
             gap: None,
+            closing: None,
         }
     }
 
@@ -200,11 +203,42 @@ impl Motion {
         Some(if closed { 1.0 - along } else { along })
     }
 
-    /// What is carried would land at `landing` now.
+    /// What is carried would land at `landing` now. The gap it leaves
+    /// closes as the new one opens, so between them the rows slide and the
+    /// list keeps its height.
     pub fn lands_at(&mut self, landing: Option<usize>) {
         if landing != self.gap.map(|(at, _)| at) {
-            self.gap = landing.map(|at| (at, Instant::now()));
+            let now = Instant::now();
+            self.closing = self.gap.take().map(|(at, _)| (at, now));
+            self.gap = landing.map(|at| (at, now));
         }
+    }
+
+    /// A row was just picked up from `home`: its gap is there, open, with
+    /// nothing to wait for.
+    pub fn lands_open(&mut self, home: usize) {
+        let now = Instant::now();
+        let before = now.checked_sub(self.length(GAP) * 2).unwrap_or(now);
+        self.gap = Some((home, before));
+        self.closing = None;
+    }
+
+    /// Nothing is held: no gap, and none closing. What was dropped takes
+    /// the gap's place as it is.
+    pub fn nothing_held(&mut self) {
+        self.gap = None;
+        self.closing = None;
+    }
+
+    /// No gap is open or closing: a drag that starts now starts fresh.
+    pub fn no_gap(&self) -> bool {
+        self.gap.is_none() && self.closing.is_none()
+    }
+
+    /// The gap that is closing: where, and how much of it is left.
+    pub fn closing_gap(&self) -> Option<(usize, f32)> {
+        let (at, since) = self.closing?;
+        Some((at, 1.0 - self.along(Some(since), GAP)?))
     }
 
     /// How far open the gap is, while it opens.
@@ -219,6 +253,7 @@ impl Motion {
                 || self.running(self.left.map(|(_, at)| at), SLIDE)
                 || self.running(self.fold.map(|(_, _, at)| at), FOLD)
                 || self.running(self.gap.map(|(_, at)| at), GAP)
+                || self.running(self.closing.map(|(_, at)| at), GAP)
                 || self.running(self.refused.map(|(_, at)| at), WHY)
                 || self.running(self.changed.map(|(_, at)| at), FLASH))
     }
@@ -327,8 +362,18 @@ mod tests {
         assert_eq!(motion.gap, since);
         motion.lands_at(Some(3));
         assert_eq!(motion.gap.map(|(at, _)| at), Some(3));
+        // The one it left closes as the new one opens.
+        assert!(matches!(motion.closing_gap(), Some((2, left)) if left > 0.5));
         motion.lands_at(None);
         assert!(motion.gap().is_none());
+        assert!(matches!(motion.closing_gap(), Some((3, _))));
+        // Let go: what was dropped is there, with no gap closing beside it.
+        motion.nothing_held();
+        assert!(motion.no_gap());
+        // Picked up: the gap is where the row was, open already.
+        motion.lands_open(4);
+        assert!(motion.gap().is_none() && motion.closing_gap().is_none());
+        assert!(!motion.no_gap());
     }
 
     #[test]
