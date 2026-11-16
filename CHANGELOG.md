@@ -245,6 +245,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A video on the projector plays in the dashboard's live picture too,
   not as a still: it is the same player, drawn twice. With the stage
   window closed the video still plays there and its end is still noticed.
+- **The stage knows where to go.** A preferred screen is kept by its make
+  and model, and while it is connected the stage is open on it, from the
+  moment it is plugged in. Otherwise the stage opens with a service on a
+  screen the dashboard isn't on, and a stage moved by hand is remembered
+  for that set of screens. With one screen there is no stage window: the
+  live picture is the stage. A stage whose screen is unplugged mid-service
+  closes, and the live picture says the projector is gone.
 
 ### Fixed
 

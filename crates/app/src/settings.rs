@@ -1358,7 +1358,7 @@ impl App {
             section(
                 p,
                 "Output",
-                "The screen the stage goes on. Picking one moves it there now; Save keeps it."
+                "The screen the stage prefers. While it is connected the stage is open on it, from the moment it is plugged in. Automatic: the stage opens with a service on a screen the dashboard isn't on, and stays where you last moved it. With one screen and no preference there is no stage window: the live picture shows it."
             ),
             output_row(p, draft),
         ]
@@ -1911,29 +1911,31 @@ fn output_row<'a>(p: Palette, draft: &Draft) -> Element<'a, Message> {
     let choices: Element<'a, Message> = match &draft.outputs {
         Err(why) => note(why.clone()).into(),
         Ok(outputs) => {
-            let choice = |label: String, output: Option<String>| {
-                let tone = if draft.output == output {
-                    Tone::Selected
-                } else {
-                    Tone::Plain
-                };
+            let choice = |label: String, output: Option<String>, lit: bool| {
                 pill(
                     p,
                     &label,
-                    tone,
+                    if lit { Tone::Selected } else { Tone::Plain },
                     look::PILL_SMALL,
                     Some(settings(Edit::Output(output))),
                 )
             };
-            let mut list = column![choice("Automatic".into(), None)].spacing(6);
+            let mut list =
+                column![choice("Automatic".into(), None, draft.output.is_none())].spacing(6);
+            // A screen is kept by its make and model, so it is the same
+            // screen whichever plug it is on.
             for output in outputs {
-                list = list.push(choice(output.label(), Some(output.name.clone())));
+                let lit = draft
+                    .output
+                    .as_deref()
+                    .is_some_and(|wanted| output.is(wanted));
+                list = list.push(choice(output.label(), Some(output.id().to_string()), lit));
             }
             if let Some(wanted) = &draft.output
-                && !outputs.iter().any(|o| &o.name == wanted)
+                && !outputs.iter().any(|o| o.is(wanted))
             {
                 list = list.push(note(format!(
-                    "{wanted} isn't connected: the stage moves there when it is."
+                    "{wanted} isn't connected: the stage opens there when it is."
                 )));
             }
             list.into()

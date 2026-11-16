@@ -4,7 +4,7 @@
 //! # Settings come before the first [[table]], or TOML files them under it.
 //! brave_api_key = "…"   # optional, for !gi image search
 //! colors = "~/.config/amane/colors.json"  # optional, see crate::palette
-//! stage_output = "HDMI-A-1"  # optional: the screen for the stage
+//! stage_output = "Epson EB-X41"  # optional: the screen the stage prefers
 //!
 //! [[folders]]
 //! path = "~/Videos"

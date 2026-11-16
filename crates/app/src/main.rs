@@ -452,6 +452,17 @@ struct App {
     look_held: bool,
     /// What the stage's screen was last seen as, to move it only on change.
     output_watch: outputs::Watch,
+    /// Where the stage was last put by hand, for each set of screens.
+    screens: outputs::Memory,
+    /// Where the stage goes with the screens connected now; `None` until
+    /// they have been listed, or where they can't be.
+    place: Option<outputs::Place>,
+    /// The screens connected at the last look, as one name.
+    setup: String,
+    /// The screen the stage window was on at the last look.
+    stage_seen_on: Option<String>,
+    /// The stage's screen went away with a service or Live going.
+    pub(crate) stage_lost: bool,
     /// The library's change count the search last followed.
     index_changes: u64,
     /// Thumbnails for results and plan steps.
@@ -633,6 +644,7 @@ impl App {
         });
         // The stage feed's first message preloads the reopened plan.
         let layout = store.layout();
+        let screens = outputs::Memory::new(&store.data());
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
@@ -650,6 +662,11 @@ impl App {
             remote_failed: None,
             dashboard_open: false,
             output_watch: outputs::Watch::default(),
+            screens,
+            place: None,
+            setup: String::new(),
+            stage_seen_on: None,
+            stage_lost: false,
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
             attached: None,
@@ -727,6 +744,7 @@ impl App {
         // Only the dashboard: the stage opens when something can reach
         // it. A service picked up from before this start is one already.
         app.stage_mode = app.mode;
+        app.check_outputs();
         let stage = app.sync_stage();
         let open = open_dashboard
             .discard()
@@ -747,8 +765,9 @@ impl App {
         if self.mode != self.stage_mode {
             self.stage_mode = self.mode;
             self.stage_wish = None;
+            self.stage_lost = false;
         }
-        let wanted = self.stage_wish.unwrap_or(self.mode != mode::Mode::Plan);
+        let wanted = self.stage_wish.unwrap_or(self.stage_expected());
         match (wanted, self.stage_window) {
             (true, None) => {
                 // The dashboard is mapped first: on a single monitor,
@@ -762,17 +781,39 @@ impl App {
                     ..window::Settings::default()
                 });
                 self.stage_window = Some(stage);
+                self.stage_lost = false;
                 log("stage: the window opens");
+                // Once it is there, it is put on its screen at once, not
+                // at the next look round.
                 open.discard()
                     .chain(window::gain_focus(self.dashboard_window))
                     .chain(window::size(stage).map(move |size| Message::Resized(stage, size)))
+                    .chain(Task::done(Message::CheckOutputs))
             }
             (false, Some(stage)) => {
                 self.stage_window = None;
+                // Closed because its screen went, mid-service: that is
+                // worth an alarm, where closing it for planning is not.
+                self.stage_lost = self.stage_wish.is_none() && self.mode != mode::Mode::Plan;
                 log("stage: the window closes");
                 window::close(stage)
             }
             _ => Task::none(),
+        }
+    }
+
+    /// Whether the stage window should be open, by the mode and the
+    /// screens: on the preferred screen whenever that is connected; on
+    /// another screen with a service or in Live; and not at all with
+    /// nowhere to put it. Where the screens can't be listed, the mode
+    /// alone decides.
+    pub(crate) fn stage_expected(&self) -> bool {
+        let showing = self.mode != mode::Mode::Plan;
+        match &self.place {
+            Some(outputs::Place::Preferred(_)) => true,
+            Some(outputs::Place::Remembered(_) | outputs::Place::Spare(_)) => showing,
+            Some(outputs::Place::Nowhere) => false,
+            None => showing,
         }
     }
 
@@ -2458,19 +2499,58 @@ impl App {
     /// Writes the settings to the config file and applies them: the library
     /// swaps its sources and the colours follow the new file. What happened
     /// shows under the settings.
-    /// Moves the stage to its screen when it first appears, when the
-    /// screen asked for changes, or when that screen is plugged in.
+    /// Looks at the screens: decides where the stage goes with those
+    /// connected, remembers a stage moved by hand, and moves the stage to
+    /// its screen when it first appears, when its screen changes, or when
+    /// that screen is plugged in.
     fn check_outputs(&mut self) {
-        let wanted = self.config.stage_output.as_deref();
         let (Ok(connected), Ok(stage)) = (outputs::list(), outputs::stage_on()) else {
             return;
         };
+        let setup = outputs::setup(&connected);
+        if setup != self.setup {
+            log(format!("outputs: connected: {setup}"));
+            // Other screens: what was done by hand was for the old ones.
+            self.stage_wish = None;
+            self.stage_seen_on = None;
+            self.setup = setup;
+        }
+        // Seen on one screen and now on another, with nothing here having
+        // moved it: the operator did, and that is where it goes from now
+        // on with these screens.
+        if let (Some(before), Some(now)) = (&self.stage_seen_on, &stage)
+            && before != now
+            && let Some(screen) = connected.iter().find(|output| &output.name == now)
+        {
+            log(format!("outputs: the stage was moved to {now}: remembered"));
+            if let Err(err) = self.screens.keep(&self.setup, screen.id()) {
+                log(format!("outputs: can't remember it: {err}"));
+            }
+        }
+        self.stage_seen_on = stage.clone();
+        let remembered = self.screens.of(&self.setup);
+        let dashboard = outputs::dashboard_on().ok().flatten();
+        let place = outputs::choose(
+            &connected,
+            self.config.stage_output.as_deref(),
+            remembered.as_deref(),
+            dashboard.as_deref(),
+        );
+        if self.place.as_ref() != Some(&place) {
+            log(format!("outputs: the stage goes {place:?}"));
+        }
+        let wanted = place.output().map(str::to_string);
+        self.place = Some(place);
         let names = connected.into_iter().map(|o| o.name);
-        if self.output_watch.check(names, wanted, stage.is_some())
-            && let Some(output) = wanted
+        if self
+            .output_watch
+            .check(names, wanted.as_deref(), stage.is_some())
+            && let Some(output) = wanted.as_deref()
             && stage.as_deref() != Some(output)
         {
             move_stage(output);
+            // Moved from here: the next look is not a move by hand.
+            self.stage_seen_on = None;
         }
     }
 
@@ -3244,7 +3324,7 @@ impl App {
         }
         // The stage's screen, when one is asked for: at startup, and when
         // it's plugged in later.
-        if self.config.stage_output.is_some() && outputs::supported() {
+        if outputs::supported() {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckOutputs));
         }

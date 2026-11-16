@@ -67,6 +67,14 @@ impl Store {
         }
     }
 
+    /// The folder all of this is kept in.
+    pub fn data(&self) -> PathBuf {
+        self.layout
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
     /// Where a service was, if one was running when Lantern last stopped.
     pub fn running(&self) -> Option<Running> {
         serde_json::from_str(&std::fs::read_to_string(&self.running).ok()?).ok()
