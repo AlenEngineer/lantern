@@ -207,6 +207,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   after letters typed into a closed search it is let go, so a search typed
   by mistake never moves the service.
 - Ctrl+Shift+B clears the stage. It had a button and no key.
+- The modes have keys: Ctrl+1 is Plan, Ctrl+2 starts the service, Ctrl+3 is
+  Live. In a run, Ctrl+1 pressed twice ends the service. A key that can't
+  go where it points says why, as the buttons do.
 
 ### Fixed
 

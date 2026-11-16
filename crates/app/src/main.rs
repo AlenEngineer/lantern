@@ -1857,6 +1857,15 @@ impl App {
             }
         };
         match op {
+            // Behind the settings nothing of the switch is in sight.
+            Op::Mode(_) if self.settings.is_some() => {}
+            Op::Mode(to) => {
+                return match (self.mode, to) {
+                    (mode::Mode::Plan, mode::Mode::Run) => self.start_service(),
+                    (mode::Mode::Run, mode::Mode::Plan) => self.end_service(),
+                    (_, to) => self.set_mode(to),
+                };
+            }
             Op::Unlock => self.toggle_unlock(),
             // A service cut short is picked up where it was: its step
             // goes on, at its slide.
