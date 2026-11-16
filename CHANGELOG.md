@@ -364,6 +364,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - While a slide's video plays, the Next button says what it does, **Next
   slide** or **Back to slide N** after the deck's last slide, where it read
   "Next step" and looked switched off though the key worked.
+- Dragging a step: the rows no longer jump. The gap starts where the step
+  was picked up, and as it moves the one it left closes while the new one
+  opens, so the rows between slide over. Let go where it was picked up,
+  nothing moves and nothing is added to undo.
 
 ## [0.7.0] - 2026-11-13
 

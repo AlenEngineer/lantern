@@ -719,12 +719,21 @@ impl App {
         self.sync_lock();
         self.motion.mode_is(self.mode);
         // The gap opens where what is held would land, as that moves.
-        let landing = match (&self.drag, &self.carried) {
-            (Some(drag), _) if drag.moving => drag.landing,
-            (_, Some(_)) => self.carry_landing(&self.engine.0.plan()),
-            _ => None,
-        };
-        self.motion.lands_at(landing);
+        match (&self.drag, &self.carried) {
+            // Just picked up: its gap is where it was, open already.
+            (Some(drag), _) if drag.moving && self.motion.no_gap() => {
+                match drag.landing == Some(drag.home) {
+                    true => self.motion.lands_open(drag.home),
+                    false => self.motion.lands_at(drag.landing),
+                }
+            }
+            (Some(drag), _) if drag.moving => self.motion.lands_at(drag.landing),
+            (_, Some(held)) if held.moving => {
+                let landing = self.carry_landing(&self.engine.0.plan());
+                self.motion.lands_at(landing);
+            }
+            _ => self.motion.nothing_held(),
+        }
         if self.mode == mode::Mode::Plan {
             self.plans.relist();
         }
@@ -1110,7 +1119,11 @@ impl App {
                     drag.landing
                         .is_none_or(|at| reached.is_none_or(|reached| at > reached))
                 });
-                if let Some((drag, at)) = dropped.and_then(|d| d.landing.map(|at| (d, at))) {
+                // Let go where it was picked up, nothing moved.
+                let dropped = dropped
+                    .and_then(|d| d.landing.map(|at| (d, at)))
+                    .filter(|(drag, at)| *at != drag.home);
+                if let Some((drag, at)) = dropped {
                     self.remember(None);
                     self.engine
                         .0

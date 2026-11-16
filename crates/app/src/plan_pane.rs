@@ -225,6 +225,10 @@ impl App {
         // It opens as it comes, so the rows under it are moved aside and
         // not thrown there.
         let opening = self.motion.gap();
+        // The gap it just left closes at the same pace, so the rows in
+        // between slide over instead of jumping.
+        let closing = self.motion.closing_gap();
+        let closing_gap = |left: f32| Space::new().height(GAP_TALL * left);
         let gap = |indent: f32| {
             let gap = container(drop_gap(
                 p,
@@ -290,6 +294,9 @@ impl App {
             }
             if landing == Some(rest) {
                 rows = rows.push(gap(gap_indent(moving, in_section)));
+            }
+            if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
+                rows = rows.push(closing_gap(left));
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
@@ -381,6 +388,9 @@ impl App {
         }
         if landing == Some(rest) {
             rows = rows.push(gap(gap_indent(moving, in_section)));
+        }
+        if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
+            rows = rows.push(closing_gap(left));
         }
         if adds
             && self.selected.is_none()
@@ -1520,8 +1530,11 @@ fn gap_indent(moving: Option<&Drag>, in_section: bool) -> f32 {
 
 /// Where a drag would land: a highlighted slot naming what it carries.
 fn drop_gap<'a>(p: Palette, label: String) -> Element<'a, Message> {
-    container(text(label).size(BODY).font(MEDIUM).color(p.primary))
+    // On one line whatever its length: the gap is as tall for every
+    // row, so one closing and one opening add up to the same height.
+    container(single_line(label).size(BODY).font(MEDIUM).color(p.primary))
         .width(Fill)
+        .clip(true)
         .padding([12, 12])
         .style(move |_| container::Style {
             background: Some(Palette::tint(p.primary, 0.12).into()),

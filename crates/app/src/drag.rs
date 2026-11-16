@@ -23,6 +23,9 @@ pub struct Drag {
     pub carried: Vec<StepId>,
     /// Whether the row is a section's header.
     section: bool,
+    /// Where it was picked up from, as an index in the rest: let go
+    /// there, nothing has moved.
+    pub home: usize,
     /// Where the pointer was when it first moved after the press.
     origin: Option<Point>,
     /// Where the pointer is, in the dashboard window.
@@ -48,6 +51,7 @@ impl Drag {
                 .iter()
                 .find(|s| s.id == step)
                 .is_some_and(|s| s.is_section()),
+            home: plan.position(step).unwrap_or(0),
             origin: None,
             at: Point::ORIGIN,
             moving: false,
@@ -79,7 +83,12 @@ impl Drag {
     pub fn to(&mut self, at: Point) {
         let origin = *self.origin.get_or_insert(at);
         self.at = at;
-        self.moving |= origin.distance(at) > SLOP;
+        if !self.moving && origin.distance(at) > SLOP {
+            self.moving = true;
+            // It starts over the place it left, so the gap is there and
+            // the rows under it don't jump up to fill it.
+            self.landing.get_or_insert(self.home);
+        }
     }
 
     /// Where the carried rows land with the pointer over `half` of row
