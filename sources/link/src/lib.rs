@@ -250,6 +250,8 @@ mod tests {
         LinkSource::new(SourceId::new("link").unwrap())
     }
 
+    // How a path is written is the system's: these are Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_path_is_read_however_it_is_written() {
         let home = Path::new("/home/ana");
@@ -263,8 +265,14 @@ mod tests {
             path("file:///home/ana/Downloads/Mi%20canto.mp4\nfile:///home/ana/b.mp4"),
             file
         );
-        assert_eq!(path("Downloads/Mi canto.mp4"), None, "not from anywhere");
-        assert_eq!(path("juan 3:16"), None);
+    }
+
+    #[test]
+    fn what_is_not_written_as_a_path_is_not_one() {
+        let home = Path::new("home");
+        assert_eq!(path_in("Downloads/Mi canto.mp4", Some(home)), None);
+        assert_eq!(path_in("juan 3:16", Some(home)), None);
+        assert_eq!(path_in("", Some(home)), None);
         assert_eq!(path_in("~/x.mp4", None), None, "no home to start from");
     }
 
