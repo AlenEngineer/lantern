@@ -195,6 +195,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The mode switch's lit pill slides to the mode and takes its colour. A
   section's steps close under its heading and open again, and the gap
   where something dragged would land opens instead of appearing.
+- A section's heading under the pointer shows **✕** too. Every button
+  with a key says it when the pointer rests there: Search, Blackout,
+  Settings, Save, Clear the stage and play/pause now do, like the rest.
 
 ### Fixed
 
