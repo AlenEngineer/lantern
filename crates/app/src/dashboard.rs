@@ -867,14 +867,23 @@ impl App {
                     keys::label(Op::Blackout)
                 ),
             ),
-            Some(scene) => self.monitor(scene, self.media.content(scene.id), Some(p.tertiary)),
+            // A sound that can't play says why where its picture would be.
+            Some(scene) if matches!(scene.media, Media::Failed { .. }) => {
+                self.monitor(scene, None, Some(p.tertiary))
+            }
+            // What the audience sees: under a sound, the picture it was
+            // started over.
+            _ if self.stage.picture().is_some() => {
+                let seen = self.stage.picture().expect("checked just above");
+                self.monitor(seen, self.media.content(seen.id), Some(p.tertiary))
+            }
             // What the audience sees with nothing on: the look's image.
-            None if self.look.image.is_some() => framed_with(
+            _ if self.look.image.is_some() => framed_with(
                 crate::backdrop(&self.look, Space::new(), crate::Over::Nothing),
                 None,
                 2,
             ),
-            None => empty_monitor(p, "Nothing on the projector"),
+            _ => empty_monitor(p, "Nothing on the projector"),
         });
         if let Some(scene) = scene {
             section.push(self.caption(scene));
@@ -1220,6 +1229,13 @@ impl App {
             .spacing(6)
             .align_y(Alignment::Center)
             .into(),
+            (None, Some(Content::Sound(_))) => row![
+                look::icon(Icon::Music, 18.0, p.on_surface_variant),
+                text("sound").size(BODY).color(p.on_surface_variant),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
             (None, None) => text(loading).size(BODY).color(p.on_surface_variant).into(),
         };
         framed(picture, ring)
@@ -1481,6 +1497,7 @@ pub(crate) fn attachment_name(resource: &Resource, n: usize, of: usize) -> (Icon
         _ if YoutubeVideo::of(resource).is_some() => (Icon::Play, "YouTube video"),
         lantern_engine::Kind::Video => (Icon::Play, "Video"),
         lantern_engine::Kind::Image => (Icon::Image, "Picture"),
+        lantern_engine::Kind::Audio => (Icon::Music, "Sound"),
         _ => (Icon::Link, "Link"),
     };
     // Numbered only when the slide has several.

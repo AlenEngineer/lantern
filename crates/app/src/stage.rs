@@ -42,6 +42,8 @@ pub enum Content {
     Video { player: Video, streamed: bool },
     /// Rendered PDF pages, in order. Never empty.
     Pages(Vec<Handle>),
+    /// A player for a sound file: heard, with nothing to show.
+    Sound(Sound),
 }
 
 impl Content {
@@ -51,7 +53,7 @@ impl Content {
         match self {
             Content::Image(handle) => Some(Content::Image(handle.clone())),
             Content::Pages(pages) => Some(Content::Pages(pages.clone())),
-            Content::Video { .. } => None,
+            Content::Video { .. } | Content::Sound(_) => None,
         }
     }
 
@@ -66,7 +68,7 @@ impl Content {
         match self {
             Content::Image(handle) => of(handle),
             Content::Pages(pages) => pages.iter().map(of).sum(),
-            Content::Video { .. } => 0,
+            Content::Video { .. } | Content::Sound(_) => 0,
         }
     }
 }
@@ -85,6 +87,8 @@ enum Loader {
     /// An image at a link, then the links to try if it fails.
     RemoteImage(Vec<String>),
     Video(PathBuf),
+    /// A sound file: it plays over what is on stage.
+    Audio(PathBuf),
     Pdf(PathBuf),
     /// A PowerPoint file or its like, shown as the pages of the PDF
     /// LibreOffice makes of it.
@@ -111,7 +115,11 @@ pub fn needs(resource: &Resource) -> Result<Needs, String> {
     Ok(match Loader::for_resource(resource)? {
         None => Needs::Nothing,
         Some(
-            Loader::Image(path) | Loader::Video(path) | Loader::Pdf(path) | Loader::Deck(path),
+            Loader::Image(path)
+            | Loader::Video(path)
+            | Loader::Audio(path)
+            | Loader::Pdf(path)
+            | Loader::Deck(path),
         ) => Needs::File(path),
         Some(Loader::Youtube(video)) => Needs::Youtube(video),
         Some(Loader::RemoteImage(urls)) => Needs::Images(urls),
@@ -156,6 +164,7 @@ impl Loader {
         match &resource.kind {
             Kind::Image => Ok(Some(Loader::Image(path))),
             Kind::Video => Ok(Some(Loader::Video(path))),
+            Kind::Audio => Ok(Some(Loader::Audio(path))),
             Kind::Document if is_pdf => Ok(Some(Loader::Pdf(path))),
             Kind::Presentation if crate::deck::is_deck(&path) => Ok(Some(Loader::Deck(path))),
             kind => Err(format!("the stage can't show {} files", kind.name())),
@@ -182,6 +191,7 @@ impl Loader {
                 fetch_image(urls, &cache_dir().join("images")).map(Content::Image)
             }
             Loader::Video(path) => open_file(path),
+            Loader::Audio(path) => Sound::open(existing(path)?).map(Content::Sound),
             Loader::Youtube(video) => {
                 if let Some(path) = downloads.cached(video) {
                     return open_file(&path);
@@ -386,6 +396,125 @@ fn wait_to_start(pipeline: &gst::Pipeline) -> Result<(), String> {
     }
 }
 
+/// A player for a sound file, paused and silent until it goes on program.
+///
+/// A sound has no picture, and the video player is built around one, so
+/// this is its own: a `playbin` whose pictures (an album's cover) go
+/// nowhere.
+pub struct Sound {
+    player: gst::Element,
+    duration: Duration,
+}
+
+/// How long a sound file may take to be ready to play.
+const SOUND_START: gst::ClockTime = gst::ClockTime::from_seconds(15);
+
+impl Sound {
+    fn open(path: &Path) -> Result<Sound, String> {
+        let fail = |err: &dyn fmt::Display| format!("{}: {err}", path.display());
+        gst::init().map_err(|err| fail(&err))?;
+        let uri = url::Url::from_file_path(path).map_err(|()| fail(&"not an absolute path"))?;
+        let nowhere = gst::ElementFactory::make("fakesink")
+            .build()
+            .map_err(|err| fail(&err))?;
+        let player = gst::ElementFactory::make("playbin")
+            .property("uri", uri.as_str())
+            .property("mute", true)
+            .property("video-sink", &nowhere)
+            .build()
+            .map_err(|err| fail(&err))?;
+        let mut sound = Sound {
+            player,
+            duration: Duration::ZERO,
+        };
+        sound
+            .player
+            .set_state(gst::State::Paused)
+            .map_err(|err| fail(&err))?;
+        // Paused is reached once the file is read far enough to play.
+        if sound.player.state(SOUND_START).0.is_err() {
+            let why = match sound.event() {
+                Some(Err(why)) => why,
+                _ => "it can't be played".to_string(),
+            };
+            return Err(fail(&why));
+        }
+        sound.duration = sound
+            .player
+            .query_duration::<gst::ClockTime>()
+            .map_or(Duration::ZERO, |length| {
+                Duration::from_nanos(length.nseconds())
+            });
+        Ok(sound)
+    }
+
+    /// Its length; zero when it couldn't say.
+    pub fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    fn set_paused(&self, paused: bool) {
+        let state = if paused {
+            gst::State::Paused
+        } else {
+            gst::State::Playing
+        };
+        if let Err(err) = self.player.set_state(state) {
+            crate::log(format!("stage: sound: {err}"));
+        }
+    }
+
+    fn unmute(&self) {
+        self.player.set_property("mute", false);
+    }
+
+    /// Where it is, or `None` while it is settling after a jump.
+    fn position(&self) -> Option<Duration> {
+        let settling = matches!(
+            self.player.state(gst::ClockTime::ZERO).0,
+            Ok(gst::StateChangeSuccess::Async)
+        );
+        if settling {
+            return None;
+        }
+        self.player
+            .query_position::<gst::ClockTime>()
+            .map(|at| Duration::from_nanos(at.nseconds()))
+    }
+
+    fn seek(&self, position: Duration) -> Result<(), String> {
+        // An end said before the jump is no longer true.
+        if let Some(bus) = self.player.bus() {
+            while bus.pop_filtered(&[gst::MessageType::Eos]).is_some() {}
+        }
+        self.player
+            .seek_simple(
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                gst::ClockTime::from_nseconds(position.as_nanos() as u64),
+            )
+            .map_err(|err| err.to_string())
+    }
+
+    /// What it has said since it was last asked: that it reached its end
+    /// (`Ok`), or why it stopped (`Err`).
+    fn event(&self) -> Option<Result<(), String>> {
+        let message = self
+            .player
+            .bus()?
+            .pop_filtered(&[gst::MessageType::Eos, gst::MessageType::Error])?;
+        Some(match message.view() {
+            gst::MessageView::Error(err) => Err(err.error().to_string()),
+            _ => Ok(()),
+        })
+    }
+}
+
+impl Drop for Sound {
+    fn drop(&mut self) {
+        let _ = self.player.set_state(gst::State::Null);
+    }
+}
+
 /// Where `player` is, or `None` while it can't say. A player in the middle
 /// of a seek answers nothing, which [`Video::position`] turns into zero:
 /// on a stream that lasts seconds, and the time on the dashboard fell to
@@ -553,6 +682,9 @@ enum Program {
 /// authority on what is shown; this only holds what it takes to draw it.
 pub struct Stage {
     program: Program,
+    /// What is loaded for the picture a sound plays over
+    /// ([`StageState::under`]): it was the program when the sound went on.
+    under: Option<(SceneId, Content)>,
     /// Loaded ahead of time for the preview or the next plan step.
     ready: HashMap<ResourceId, Content>,
     /// Loads in flight, for the program or a preload.
@@ -592,6 +724,7 @@ impl Stage {
         Stage {
             downloads,
             program: Program::Bare,
+            under: None,
             ready: HashMap::new(),
             loading: HashSet::new(),
             upcoming: HashSet::new(),
@@ -637,15 +770,50 @@ impl Stage {
         }
     }
 
-    /// The content for the program scene, once it has loaded.
+    /// The content for the program scene, or for the picture under a
+    /// sound, once it has loaded.
     pub fn content(&self, scene: SceneId) -> Option<&Content> {
-        match &self.program {
-            Program::Showing {
-                scene: shown,
-                content,
-            } if *shown == scene => Some(content),
+        match (&self.program, &self.under) {
+            (
+                Program::Showing {
+                    scene: shown,
+                    content,
+                },
+                _,
+            ) if *shown == scene => Some(content),
+            (_, Some((under, content))) if *under == scene => Some(content),
             _ => None,
         }
+    }
+
+    /// The program's player, while a sound is on program.
+    fn sound(&self) -> Option<(SceneId, &Sound)> {
+        match &self.program {
+            Program::Showing {
+                scene,
+                content: Content::Sound(sound),
+            } => Some((*scene, sound)),
+            _ => None,
+        }
+    }
+
+    /// Where what is playing on program is, for the dashboard's time.
+    /// Nothing while a player is seeking: the time stays where the seek
+    /// put it.
+    pub fn playhead(&mut self) -> Option<(SceneId, Duration)> {
+        if let Some((scene, sound)) = self.sound() {
+            return Some((scene, sound.position()?));
+        }
+        let (scene, video) = self.video()?;
+        Some((scene, position(video)?))
+    }
+
+    /// What the sound on program has said since it was last asked: that
+    /// it reached its end, or why it stopped. A video says these through
+    /// its picture; a sound has to be asked.
+    pub fn sound_event(&self) -> Option<(SceneId, Result<(), String>)> {
+        let (scene, sound) = self.sound()?;
+        Some((scene, sound.event()?))
     }
 
     /// A video's real length, once it has loaded.
@@ -686,7 +854,16 @@ impl Stage {
     }
 
     fn show(&mut self, stage: &StageState, engine: &Engine) -> iced::Task<Arc<Loaded>> {
-        self.program = Program::Bare;
+        // A sound went on over what was on program: that picture stays,
+        // and what was loaded for it with it.
+        let was = std::mem::replace(&mut self.program, Program::Bare);
+        self.under = match (&stage.under, was, self.under.take()) {
+            (Some(under), Program::Showing { scene, content }, _) if scene == under.id => {
+                Some((scene, content))
+            }
+            (Some(under), _, Some(kept)) if kept.0 == under.id => Some(kept),
+            _ => None,
+        };
         let Some(scene) = &stage.program else {
             return iced::Task::none();
         };
@@ -753,11 +930,25 @@ impl Stage {
             let stream = self.streams(&loader);
             return spawn(id, loader, self.downloads.clone(), stream, None);
         }
-        if let Ok(Content::Video { player, .. }) = &result
-            && !player.duration().is_zero()
+        let length = match &result {
+            Ok(Content::Video { player, .. }) => player.duration(),
+            Ok(Content::Sound(sound)) => sound.duration(),
+            _ => Duration::ZERO,
+        };
+        if !length.is_zero() {
+            self.lengths.insert(loaded.resource.clone(), length);
+        }
+        // The picture a sound was started over, which was still loading
+        // when the sound went on: it is shown under it after all.
+        if let Some(under) = &stage.under
+            && under.resource.id == loaded.resource
+            && self.under.is_none()
+            && result
+                .as_ref()
+                .is_ok_and(|content| content.still().is_some())
         {
-            self.lengths
-                .insert(loaded.resource.clone(), player.duration());
+            self.under = result.ok().map(|content| (under.id, content));
+            return iced::Task::none();
         }
         // One of the plan's pictures: a copy stays for the next time.
         if self.keeping.contains(&loaded.resource) {
@@ -819,6 +1010,11 @@ impl Stage {
                 engine.report(scene, MediaReport::Timeline { duration });
                 unmute(player);
             }
+            Content::Sound(sound) => {
+                let duration = Some(sound.duration()).filter(|d| !d.is_zero());
+                engine.report(scene, MediaReport::Timeline { duration });
+                sound.unmute();
+            }
         }
         crate::log(format!("stage: {scene} ready"));
         self.program = Program::Showing { scene, content };
@@ -835,17 +1031,18 @@ impl Stage {
     /// away stops like this, and then says it ended; the engine takes no
     /// end from a scene that failed.
     pub fn broke(&mut self, scene: SceneId, why: &str, engine: &Engine) {
-        let Program::Showing {
-            scene: shown,
-            content: Content::Video { streamed, .. },
-        } = &self.program
-        else {
-            return;
+        let streamed = match &self.program {
+            Program::Showing {
+                scene: shown,
+                content: Content::Video { streamed, .. },
+            } if *shown == scene => *streamed,
+            Program::Showing {
+                scene: shown,
+                content: Content::Sound(_),
+            } if *shown == scene => false,
+            _ => return,
         };
-        if *shown != scene {
-            return;
-        }
-        let reason = broke_reason(*streamed, why);
+        let reason = broke_reason(streamed, why);
         crate::log(format!("stage: {scene} failed: {reason}"));
         engine.report(scene, MediaReport::Failed { reason });
         self.program = Program::Bare;
@@ -885,6 +1082,14 @@ impl Stage {
 
     /// Plays or pauses the player to match the engine.
     pub fn sync_playback(&mut self, timed: &Timed, engine: &Engine) {
+        if let Some((scene, sound)) = self.sound() {
+            let paused = timed.playback != Playback::Playing;
+            sound.set_paused(paused);
+            if paused && let Some(position) = sound.position() {
+                engine.report(scene, MediaReport::Position(position));
+            }
+            return;
+        }
         let Some((scene, video)) = self.video() else {
             return;
         };
@@ -900,6 +1105,13 @@ impl Stage {
 
     /// Jumps the player and reports where it landed.
     pub fn seek(&mut self, position: Duration, engine: &Engine) {
+        if let Some((scene, sound)) = self.sound() {
+            if let Err(err) = sound.seek(position) {
+                crate::log(format!("stage: seek failed: {err}"));
+            }
+            engine.report(scene, MediaReport::Position(position));
+            return;
+        }
         let Some((scene, video)) = self.video() else {
             return;
         };
@@ -1325,6 +1537,10 @@ mod tests {
         assert_eq!(
             Loader::for_resource(&file(Kind::Video, "video.mp4")),
             Ok(Some(Loader::Video(fixture("video.mp4"))))
+        );
+        assert_eq!(
+            Loader::for_resource(&file(Kind::Audio, "song.mp3")),
+            Ok(Some(Loader::Audio(fixture("song.mp3"))))
         );
         assert_eq!(
             Loader::for_resource(&file(Kind::Document, "pages.pdf")),

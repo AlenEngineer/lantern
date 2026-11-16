@@ -692,12 +692,14 @@ impl App {
                 self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
-                // Nothing while the player is seeking: the time stays where
-                // the seek put it.
-                if let Some((scene, video)) = self.media.video()
-                    && let Some(position) = stage::position(video)
-                {
+                if let Some((scene, position)) = self.media.playhead() {
                     self.engine.0.report(scene, MediaReport::Position(position));
+                }
+                // A sound has no picture to say it ended or broke through.
+                match self.media.sound_event() {
+                    Some((scene, Ok(()))) => return self.update(Message::Ended(scene)),
+                    Some((scene, Err(why))) => self.media.broke(scene, &why, &self.engine.0),
+                    None => {}
                 }
             }
             Message::Progress => return self.go_on(),
@@ -2326,7 +2328,8 @@ impl App {
     /// look.
     fn stage_view(&self) -> Element<'_, Message> {
         let look = &self.look;
-        let Some(scene) = &self.stage.program else {
+        // Under a sound, the picture it was started over.
+        let Some(scene) = self.stage.picture() else {
             // Blackout is black even with nothing on: not the look's image.
             if self.stage.blackout {
                 return black(Space::new());
@@ -2346,6 +2349,7 @@ impl App {
                         let page = &pages[scene.frame().min(pages.len() - 1)];
                         (fit(image(page.clone())), Over::Media)
                     }
+                    Some(Content::Sound(_)) => nothing(),
                     Some(Content::Video { player, .. }) => (
                         VideoPlayer::new(player)
                             .width(Fill)

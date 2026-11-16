@@ -16,6 +16,11 @@ pub struct StageState {
     pub preview: Option<Scene>,
     /// When `true`, the stage is black regardless of `program`.
     pub blackout: bool,
+    /// The picture left on stage while a sound is on program: what was
+    /// there when the sound went on. A sound has nothing to show, so it
+    /// plays over what the audience was looking at.
+    #[serde(default)]
+    pub under: Option<Scene>,
 }
 
 impl StageState {
@@ -30,7 +35,26 @@ impl StageState {
     /// the last known position.
     pub fn apply(&mut self, event: &StageEvent) -> bool {
         match event {
-            StageEvent::Program { scene } => set_if_different(&mut self.program, scene),
+            StageEvent::Program { scene } => {
+                if self.program == *scene {
+                    return false;
+                }
+                let was = self.program.take();
+                self.under = match (scene, was) {
+                    // A sound after a sound plays over the same picture.
+                    (Some(sound), Some(was)) if sound.sounds_only() && was.sounds_only() => {
+                        self.under.take()
+                    }
+                    // Slides, a picture, pages: they stay. A video would
+                    // have to go on playing, so it goes.
+                    (Some(sound), Some(was)) if sound.sounds_only() && was.timed().is_none() => {
+                        Some(was)
+                    }
+                    _ => None,
+                };
+                self.program.clone_from(scene);
+                true
+            }
             StageEvent::Preview { scene } => set_if_different(&mut self.preview, scene),
             StageEvent::Frame { frame } => match self.program_media() {
                 Some(Media::Frames { frame: current, .. }) => set_if_different(current, frame),
@@ -51,6 +75,15 @@ impl StageState {
             StageEvent::Media { scene, media } => self
                 .scene_mut(*scene)
                 .is_some_and(|scene| set_if_different(&mut scene.media, media)),
+        }
+    }
+
+    /// What the audience sees: the program, or under a sound the picture
+    /// it was started over.
+    pub fn picture(&self) -> Option<&Scene> {
+        match &self.program {
+            Some(sound) if sound.sounds_only() => self.under.as_ref(),
+            program => program.as_ref(),
         }
     }
 
@@ -573,6 +606,43 @@ mod tests {
         let id = program_id(&stage);
         assert!(!stage.report(id, pages(1)));
         assert!(stage.play());
+    }
+
+    #[test]
+    fn a_sound_plays_over_the_picture_that_was_on() {
+        let sound = || resource(Kind::Audio, Location::File("/a.mp3".into()));
+        let mut stage = Showman::new();
+        stage.show(document());
+        let id = program_id(&stage);
+        stage.report(id, pages(5));
+        stage.goto_frame(2);
+
+        stage.show(sound());
+        assert_eq!(timed(&stage).playback, Playback::Playing);
+        let picture = stage.state().picture().unwrap();
+        assert_eq!((picture.id, picture.frame()), (id, 2));
+
+        // Another sound: the same picture.
+        stage.show(sound());
+        assert_eq!(stage.state().picture().unwrap().id, id);
+
+        // Anything else takes the picture's place.
+        stage.show(hymn());
+        assert_eq!(stage.state().under, None);
+        assert_eq!(stage.state().picture().unwrap().id, program_id(&stage));
+
+        // A video can't stay under a sound: it would go on playing.
+        stage.show(video());
+        stage.show(sound());
+        assert_eq!(stage.state().picture(), None);
+
+        // Clearing the stage clears the picture with the sound.
+        stage.show(document());
+        stage.show(sound());
+        assert!(stage.state().picture().is_some());
+        stage.clear();
+        assert_eq!(stage.state().picture(), None);
+        assert_eq!(stage.state().under, None);
     }
 
     #[test]

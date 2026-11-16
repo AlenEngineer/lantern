@@ -168,6 +168,11 @@ impl Scene {
         scene
     }
 
+    /// Whether it is a sound: something heard, with nothing to show.
+    pub fn sounds_only(&self) -> bool {
+        self.resource.kind == Kind::Audio && self.resource.location.as_text().is_none()
+    }
+
     /// The current frame. 0 for timed and failed scenes.
     pub fn frame(&self) -> usize {
         match self.media {

@@ -68,11 +68,19 @@ doesn't have are replaced, so a deck made elsewhere can shift a little; a
 PDF exported from PowerPoint itself is always exact.
 
 A `.pptx` also says what each slide plays or links to. When the slide on
-stage has a video kept in the deck, a YouTube video or a link to a picture,
-a button for it appears under the slides (**On this slide**). It shows on
-stage in the deck's place; from there Next goes on to the following slide
-and Prev goes back to the one it was on. Sounds and links to web pages
-have no button: the stage can't show them.
+stage has a video or a sound kept in the deck, a YouTube video or a link to
+a picture, a button for it appears under the slides (**On this slide**). It
+shows on stage in the deck's place (a sound plays over the slide); from
+there Next goes on to the following slide and Prev goes back to the one it
+was on. Links to web pages have no button: the stage can't show them.
+
+A sound file (`.mp3`, `.wav`, `.ogg`, `.flac`, `.m4a`…) is shown like
+anything else: lined up, taken, a step in a plan, played and paused and
+jumped in from its timeline, and the plan moves on when it ends. It has no
+picture, so what was on stage stays there while it plays: slides, a
+passage, a picture or pages. A video doesn't stay under a sound, since it
+would go on playing. Whatever goes on stage next takes the sound's place,
+and clearing the stage stops it.
 
 ```sh
 cargo run --release -p lantern-app
