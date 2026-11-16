@@ -187,7 +187,12 @@ impl App {
         );
         let manages = matches!(op, Op::New | Op::Open);
         match self.mode {
-            Mode::Plan if op == Op::Take && self.search.picked().is_some() => Ok(Op::AddToPlan),
+            Mode::Plan
+                if op == Op::Take
+                    && (self.search.picked().is_some() || self.shelf_pick.is_some()) =>
+            {
+                Ok(Op::AddToPlan)
+            }
             Mode::Plan if shows => Err("nothing reaches the projector while planning"),
             Mode::Plan if op == Op::Unlock => Err("nothing is locked while planning"),
             Mode::Plan => Ok(op),

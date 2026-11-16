@@ -32,6 +32,7 @@ mod relay;
 mod script;
 mod search;
 mod settings;
+mod shelf;
 mod stage;
 mod thumbs;
 mod watch;
@@ -187,6 +188,8 @@ enum Clicked {
     Step(StepId),
     /// Something on the plan's standby shelf.
     Standby(ResourceId),
+    /// A file in the library tree.
+    Shelf(ResourceId),
 }
 
 #[derive(Debug, Clone)]
@@ -352,6 +355,8 @@ enum Message {
     Scrubbed,
     /// Folds a section of the plan away, or opens it again.
     Fold(StepId),
+    /// Opens a folder of the library tree, or closes it.
+    ShelfFold(String),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -505,6 +510,13 @@ struct App {
     /// What the decks in the plan play or link to, a list for each slide,
     /// by the deck's resource: read once, when the deck joins the plan.
     pub(crate) parts: HashMap<ResourceId, Vec<Vec<Arc<lantern_engine::Resource>>>>,
+    /// The library's folders and their files, for its tree, and the
+    /// state of the index they were read at.
+    pub(crate) shelf: Vec<shelf::Folder>,
+    pub(crate) shelf_read: Option<u64>,
+    /// The folder of the tree that is open, and the file being looked at.
+    pub(crate) shelf_open: Option<String>,
+    pub(crate) shelf_pick: Option<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
@@ -605,6 +617,10 @@ impl App {
             live_from: 0,
             folded: std::collections::HashSet::new(),
             parts: HashMap::new(),
+            shelf: Vec::new(),
+            shelf_read: None,
+            shelf_open: None,
+            shelf_pick: None,
             scrub: None,
         };
         app.check_palette();
@@ -649,6 +665,7 @@ impl App {
             self.plans.relist();
         }
         self.sync_parts();
+        self.sync_shelf();
         self.sync_look();
         self.sync_blur();
         self.sync_remote();
@@ -996,6 +1013,16 @@ impl App {
                     Clicked::Result(id) => self.update(Message::Pick(id)),
                     Clicked::Step(step) => self.update(Message::Select(step)),
                     Clicked::Standby(id) => self.line_up_standby(&id),
+                    // Looked at on this screen; the plan's selection
+                    // stays, so it is added after the selected step.
+                    Clicked::Shelf(id) => {
+                        if let Some(file) = self.shelf_file(&id) {
+                            self.search.unpick();
+                            self.shelf_pick = Some(id);
+                            self.engine.0.preview(file);
+                        }
+                        self.preload()
+                    }
                 };
                 if double {
                     return Task::batch([lined_up, self.op(Op::Take)]);
@@ -1115,6 +1142,9 @@ impl App {
                     self.stepping = true;
                 }
             }
+            Message::ShelfFold(folder) => {
+                self.shelf_open = (self.shelf_open.as_ref() != Some(&folder)).then_some(folder);
+            }
             Message::Fold(section) => {
                 if !self.folded.remove(&section) {
                     self.folded.insert(section);
@@ -1143,6 +1173,7 @@ impl App {
                     self.from_typed = None;
                 }
                 self.selected = Some(step);
+                self.shelf_pick = None;
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
                     self.search.unpick();
                     self.engine.0.preview(Arc::new(resource));

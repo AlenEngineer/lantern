@@ -201,6 +201,15 @@ Lantern is always in one of three modes, switched at the top:
   slides, and the pane lists what was shown this session. **Save these as
   a plan** makes one of them and opens it in Plan.
 
+While planning, the plan pane is a tree: the open plan, its sections (an
+arrow folds one away) and their steps, and under them the other plans and
+the templates, each a click from being opened in its place. A step shows
+what is inside it: the videos, sounds and pictures on a deck's slides, by
+slide, and the sound that plays with the step. Beside the preview is the
+**library**, the media folders as a tree: a click looks at a file on this
+screen, and a double click or Enter adds it to the plan after the selected
+step. A folder lists its first 200 files; search finds the rest.
+
 The limits hold for keys, scripts and the phone remote alike. The phone
 runs a service or shows in Live; it does nothing while planning.
 
