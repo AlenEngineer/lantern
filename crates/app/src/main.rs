@@ -1213,8 +1213,7 @@ impl App {
                 self.shelf_filter = typed;
             }
             Message::ReplaceStep(id) => {
-                let Some((step, pick)) = self.replaceable().filter(|(step, _)| step.id == id)
-                else {
+                let Some((step, pick)) = self.replaceable_at(id) else {
                     return Task::none();
                 };
                 self.remember(None);

@@ -97,7 +97,8 @@ impl App {
                 .padding([4, 8])
                 .style(look::tip(p)),
             tooltip::Position::Bottom,
-        );
+        )
+        .delay(look::TIP_DELAY);
         let name: Element<'_, Message> = match &self.plans.mode {
             plans::Mode::Renaming(draft) => text_input("Plan name", draft)
                 .id(NAME_BOX)
@@ -148,16 +149,19 @@ impl App {
         }
         // Everything about the plan that isn't its steps.
         if !running {
-            header = header.push(tooltip(
-                button(text("⋯").size(HEADING).color(p.on_surface_variant))
-                    .padding([2, 10])
-                    .on_press(Message::PlanSettings)
-                    .style(look::row(p, Tone::Plain)),
-                container(text("This plan: name, look, template, copy, delete").size(META))
-                    .padding([4, 8])
-                    .style(look::tip(p)),
-                tooltip::Position::Bottom,
-            ));
+            header = header.push(
+                tooltip(
+                    button(text("⋯").size(HEADING).color(p.on_surface_variant))
+                        .padding([2, 10])
+                        .on_press(Message::PlanSettings)
+                        .style(look::row(p, Tone::Plain)),
+                    container(text("This plan: name, look, template, copy, delete").size(META))
+                        .padding([4, 8])
+                        .style(look::tip(p)),
+                    tooltip::Position::Bottom,
+                )
+                .delay(look::TIP_DELAY),
+            );
         }
         if self.plans.is_dirty(plan) {
             header = header.push(pill(
@@ -778,13 +782,26 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        let line = row![
+        let mut line = row![
             text(marker).size(META).color(label_color).width(16),
             container(label).width(Fill).clip(true),
-            end,
         ]
         .spacing(8)
         .align_y(Alignment::Center);
+        // Under the pointer, a row that can change says so: what would
+        // replace it, and the way to take it out. The selected row has
+        // all of that on its second line already.
+        let pointed = self.hovered.is_some_and(|(over, _)| over == step.id)
+            && self.selected != Some(step.id)
+            && !self.drag.as_ref().is_some_and(|drag| drag.moving)
+            && !self.carried.as_ref().is_some_and(|held| held.moving)
+            && self.editing.is_none()
+            && self.can_edit()
+            && (self.mode != crate::mode::Mode::Run || self.ahead(&self.engine.0.plan(), step.id));
+        if pointed {
+            line = line.push(self.pointed_actions(step.id));
+        }
+        let line = line.push(end);
         let row = button(line)
             .width(Fill)
             .padding([10, 10])
@@ -802,6 +819,44 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// What the row under the pointer offers: Replace, when something
+    /// else is picked, and ✕ to take the step out.
+    fn pointed_actions(&self, id: StepId) -> Element<'_, Message> {
+        let p = self.palette;
+        let tip = |about: String| {
+            container(text(about).size(META))
+                .padding([4, 8])
+                .style(look::tip(p))
+        };
+        let mut actions = row![].spacing(2).align_y(Alignment::Center);
+        if let Some((_, pick)) = self.replaceable_at(id) {
+            actions = actions.push(
+                tooltip(
+                    button(text("Replace").size(META).font(BOLD).color(p.primary))
+                        .padding([2, 8])
+                        .on_press(Message::ReplaceStep(id))
+                        .style(look::pill(p, Tone::Selected)),
+                    tip(format!("Put “{}” here instead", pick.title)),
+                    tooltip::Position::Top,
+                )
+                .delay(look::TIP_DELAY),
+            );
+        }
+        actions
+            .push(
+                tooltip(
+                    button(text("✕").size(META).color(p.on_surface_variant))
+                        .padding([2, 6])
+                        .on_press(Message::Remove(id))
+                        .style(look::row(p, Tone::Plain)),
+                    tip(keys::with_key("Remove", Op::RemoveStep)),
+                    tooltip::Position::Top,
+                )
+                .delay(look::TIP_DELAY),
+            )
+            .into()
     }
 
     /// Something on standby: its picture and name. A click lines it up,
@@ -835,7 +890,8 @@ impl App {
                 .padding([4, 8])
                 .style(look::tip(p)),
             tooltip::Position::Top,
-        );
+        )
+        .delay(look::TIP_DELAY);
         let line = row![
             Space::new().width(16),
             container(label).width(Fill).clip(true),
@@ -1285,7 +1341,8 @@ fn saved_plan(p: Palette, entry: &Entry, when: String, picked: bool) -> Element<
         .style(look::tip(p)),
         // Above the star: to its left it covered the Edit button.
         tooltip::Position::Top,
-    );
+    )
+    .delay(look::TIP_DELAY);
     let mut line = row![main].spacing(4).align_y(Alignment::Center);
     if template {
         line = line.push(pill(
