@@ -275,6 +275,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The phone remote's address and code follow the network. After the
   computer joined another Wi-Fi or a hotspot, Settings › Phone went on
   showing the address it had when the remote started.
+- A video taken while it was still loading starts by itself: double-clicking
+  a file showed it held at 0:00 until it was paused and played again.
 
 ## [0.7.0] - 2026-11-13
 
