@@ -186,6 +186,16 @@ const STRAY: Duration = Duration::from_millis(1500);
 /// How many plan edits Ctrl+Z can take back.
 const UNDO_DEPTH: usize = 50;
 
+/// Where an arrow, Home or End takes a list's selection.
+fn go(op: Op) -> shelf::Go {
+    match op {
+        Op::PickPrev => shelf::Go::Prev,
+        Op::PickFirst => shelf::Go::First,
+        Op::PickLast => shelf::Go::Last,
+        _ => shelf::Go::Next,
+    }
+}
+
 /// What a click lands on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Clicked {
@@ -555,6 +565,11 @@ struct App {
     pub(crate) shelf_filter: String,
     /// The file of the library under the pointer, and the one it holds.
     shelf_hover: Option<ResourceId>,
+    /// The folder of the library the keyboard is on, when it is on one
+    /// and not on a file.
+    pub(crate) shelf_folder: Option<String>,
+    /// The arrows are the library's, not the plan's.
+    pub(crate) in_library: bool,
     pub(crate) carried: Option<shelf::Carried>,
     pub(crate) shelf_pick: Option<ResourceId>,
     /// The sections of the plan that are folded away.
@@ -673,6 +688,8 @@ impl App {
             shelf_open: std::collections::HashSet::new(),
             shelf_filter: String::new(),
             shelf_hover: None,
+            shelf_folder: None,
+            in_library: false,
             carried: None,
             shelf_pick: None,
             scrub: None,
@@ -1166,6 +1183,8 @@ impl App {
                         if let Some(file) = self.shelf_file(&id) {
                             self.search.unpick();
                             self.shelf_pick = Some(id);
+                            self.shelf_folder = None;
+                            self.in_library = true;
                             self.engine.0.preview(file);
                         }
                         self.preload()
@@ -1304,8 +1323,12 @@ impl App {
             }
             Message::ShelfFold(folder) => {
                 if !self.shelf_open.remove(&folder) {
-                    self.shelf_open.insert(folder);
+                    self.shelf_open.insert(folder.clone());
                 }
+                // The arrows go on from where the click was.
+                self.shelf_folder = Some(folder);
+                self.shelf_pick = None;
+                self.in_library = true;
             }
             Message::ShelfHover(file) => self.shelf_hover = file,
             Message::ShelfFilter(typed) => {
@@ -1401,6 +1424,8 @@ impl App {
                 }
                 self.selected = Some(step);
                 self.shelf_pick = None;
+                self.shelf_folder = None;
+                self.in_library = false;
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
                     self.search.unpick();
                     self.engine.0.preview(Arc::new(resource));
@@ -1867,6 +1892,48 @@ impl App {
                 };
             }
             Op::Unlock => self.toggle_unlock(),
+            Op::Pane => return self.switch_pane(),
+            // The library has the arrows: they walk its tree.
+            Op::PickNext | Op::PickPrev | Op::PickFirst | Op::PickLast
+                if !self.searching() && self.keys_in_library() =>
+            {
+                return self.shelf_move(go(op));
+            }
+            Op::In | Op::Out if !self.searching() && self.keys_in_library() => {
+                return self.shelf_side(op == Op::In);
+            }
+            Op::Enter if !self.searching() && self.keys_in_library() && self.shelf_enter() => {}
+            // In the plan, → opens a section and then steps into it; ←
+            // closes it, and from a step goes up to its heading.
+            Op::In | Op::Out => {
+                let plan = engine.plan();
+                let steps = plan.steps();
+                let in_plan = !matches!(self.plans.mode, plans::Mode::Browsing(_));
+                let at = self
+                    .selected
+                    .filter(|_| in_plan && !self.searching())
+                    .and_then(|id| plan.position(id));
+                let Some(at) = at else {
+                    return Task::none();
+                };
+                let into = op == Op::In;
+                let step = &steps[at];
+                if step.is_section() {
+                    let folded = self.folded.contains(&step.id);
+                    let inside = steps.get(at + 1).filter(|s| !s.is_section());
+                    match (into, folded, inside) {
+                        (true, true, _) | (false, false, _) => {
+                            return self.update(Message::Fold(step.id));
+                        }
+                        (true, false, Some(inside)) => {
+                            return self.update(Message::Select(inside.id));
+                        }
+                        _ => {}
+                    }
+                } else if !into && let Some(above) = steps[..at].iter().rfind(|s| s.is_section()) {
+                    return self.update(Message::Select(above.id));
+                }
+            }
             // A service cut short is picked up where it was: its step
             // goes on, at its slide.
             Op::Next if self.resuming.is_some() => {
@@ -2045,14 +2112,18 @@ impl App {
             // Without a search the arrows are the plan pane's: the kinds
             // of step while Add step is open, the saved plans in the list,
             // the steps in a plan.
-            Op::PickNext | Op::PickPrev if !self.searching() => {
-                let down = op == Op::PickNext;
-                let around = |at: Option<usize>, len: usize| match (at, down) {
-                    _ if len == 0 => None,
-                    (None, true) => Some(0),
-                    (None, false) => Some(len - 1),
-                    (Some(at), true) => Some((at + 1) % len),
-                    (Some(at), false) => Some((at + len - 1) % len),
+            Op::PickNext | Op::PickPrev | Op::PickFirst | Op::PickLast if !self.searching() => {
+                let go = go(op);
+                let around = |at: Option<usize>, len: usize| go.from(at, len);
+                // Home and End bring their end of the pane into sight.
+                let ends = match go {
+                    shelf::Go::First => {
+                        operation::snap_to(plan_pane::ROWS, scrollable::RelativeOffset::START)
+                    }
+                    shelf::Go::Last => {
+                        operation::snap_to(plan_pane::ROWS, scrollable::RelativeOffset::END)
+                    }
+                    _ => Task::none(),
                 };
                 if let Some(kind) = self.adding {
                     self.adding = around(Some(kind), plan_edit::NewStep::ALL.len());
@@ -2064,18 +2135,41 @@ impl App {
                         .and_then(|pick| order.iter().position(|entry| &entry.path == pick));
                     self.list_pick = around(at, order.len()).map(|at| order[at].path.clone());
                 } else {
-                    // The steps, then what's on standby under them.
+                    // The steps in sight, then what's on standby under
+                    // them. A folded section's steps are passed over.
                     let plan = engine.plan();
-                    let steps = plan.len();
-                    let at = match self.selected.and_then(|id| plan.position(id)) {
+                    let current = engine.current_step().map(|step| step.id);
+                    let mut folded = false;
+                    let seen: Vec<StepId> = plan
+                        .steps()
+                        .iter()
+                        .filter(|step| {
+                            if step.is_section() {
+                                folded = self.folded.contains(&step.id);
+                                return true;
+                            }
+                            !folded || Some(step.id) == current || Some(step.id) == self.selected
+                        })
+                        .map(|step| step.id)
+                        .collect();
+                    let steps = seen.len();
+                    let at = match self
+                        .selected
+                        .and_then(|id| seen.iter().position(|seen| *seen == id))
+                    {
                         Some(at) => Some(at),
                         None => self.standby_lined_up().map(|at| steps + at),
                     };
                     match around(at, steps + plan.standby.len()) {
                         Some(at) if at < steps => {
-                            return self.update(Message::Select(plan.steps()[at].id));
+                            return Task::batch([self.update(Message::Select(seen[at])), ends]);
                         }
-                        Some(at) => return self.line_up_standby(&plan.standby[at - steps].id),
+                        Some(at) => {
+                            return Task::batch([
+                                self.line_up_standby(&plan.standby[at - steps].id),
+                                ends,
+                            ]);
+                        }
                         None => {}
                     }
                 }
@@ -2086,6 +2180,8 @@ impl App {
                     return self.scroll_to_pick();
                 }
             }
+            // In a search Home and End are the box's own.
+            Op::PickFirst | Op::PickLast => {}
             Op::ClearSearch if self.settings.is_some() => return self.op(Op::Settings),
             // Esc lets go of a drag without moving anything.
             Op::ClearSearch if self.drag.is_some() => self.drag = None,

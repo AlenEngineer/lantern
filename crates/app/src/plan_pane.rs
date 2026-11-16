@@ -27,6 +27,9 @@ use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::{App, Clicked, Message};
 
+/// The id of the pane's rows, to scroll them.
+pub const ROWS: &str = "plan-rows";
+
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
 
@@ -485,7 +488,7 @@ impl App {
             }
         }
         // Leaving the list means letting go would move nothing.
-        mouse_area(scrolling(rows))
+        mouse_area(scrolling(rows).id(ROWS))
             .on_exit(Message::LeftPlan)
             .into()
     }

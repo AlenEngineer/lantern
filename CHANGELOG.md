@@ -210,6 +210,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The modes have keys: Ctrl+1 is Plan, Ctrl+2 starts the service, Ctrl+3 is
   Live. In a run, Ctrl+1 pressed twice ends the service. A key that can't
   go where it points says why, as the buttons do.
+- The trees work from the keyboard. While planning, → opens a section and
+  then steps into it, ← closes it, and from a step goes up to its heading;
+  ↑ ↓ pass over a folded section's steps. Home and End go to the first and
+  last row. F6 gives the arrows to the library, where the same keys walk
+  its folders and files and Enter adds the file to the plan. In a run and
+  in Live, → ← are still next and back.
 
 ### Fixed
 
