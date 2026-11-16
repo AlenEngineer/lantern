@@ -211,7 +211,8 @@ impl Watch {
         };
         self.connected = connected;
         self.wanted = wanted_owned;
-        self.stage_seen |= stage_mapped;
+        // A stage that went away and came back has appeared again.
+        self.stage_seen = stage_mapped;
         move_now
     }
 }
