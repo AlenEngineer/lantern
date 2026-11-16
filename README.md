@@ -532,6 +532,12 @@ that blur behind windows it takes effect when Lantern next starts. The
 stage window is always solid. In the config they're `see_through = 40`
 and `no_blur = true`.
 
+The dashboard moves a little to say that something happened: the step
+that goes on the projector rings once, and when the phone put it there
+the stage says so for two seconds. Nothing loops. **Motion** in Settings
+turns the moving off (`no_motion = true`); what the phone did is still
+said.
+
 ### Putting the stage on the projector
 
 Settings → **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`).

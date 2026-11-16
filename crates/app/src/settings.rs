@@ -47,6 +47,8 @@ pub struct Draft {
     /// shows through is blurred.
     pub see_through: u8,
     pub blur: bool,
+    /// Whether the dashboard moves to say something happened.
+    pub motion: bool,
     /// A YouTube video shown outside the plan plays straight from
     /// YouTube; off, it's downloaded first like the plan's.
     pub stream: bool,
@@ -276,6 +278,8 @@ pub enum Edit {
     SeeThrough(u8),
     /// Blur what shows through, or not.
     Blur(bool),
+    /// Let the dashboard move to say something happened, or not.
+    Motion(bool),
     /// Stream a YouTube video shown outside the plan, or download it.
     Stream(bool),
     /// Turn the phone remote on or off.
@@ -348,6 +352,7 @@ impl Draft {
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
             see_through: config.see_through.min(config::MOST_SEE_THROUGH),
             blur: !config.no_blur,
+            motion: !config.no_motion,
             stream: !config.always_download,
             remote: config.remote,
             remote_port: config.remote_port,
@@ -395,7 +400,13 @@ impl Draft {
                 &self.bibles,
                 &self.brave_key,
                 &self.colors,
-                (self.see_through, self.blur, self.stream, self.remote),
+                (
+                    self.see_through,
+                    self.blur,
+                    self.motion,
+                    self.stream,
+                    self.remote,
+                ),
                 &self.output,
                 &self.stage,
                 &self.plan,
@@ -627,6 +638,7 @@ impl Draft {
                 self.see_through = percent.min(config::MOST_SEE_THROUGH);
             }
             Edit::Blur(on) => self.blur = on,
+            Edit::Motion(on) => self.motion = on,
             Edit::Stream(on) => self.stream = on,
             Edit::Remote(on) => self.remote = on,
             Edit::Choose(..) | Edit::ChooseFirst => {}
@@ -695,6 +707,7 @@ impl Draft {
             stage_output: self.output.clone(),
             see_through: self.see_through,
             no_blur: !self.blur,
+            no_motion: !self.motion,
             always_download: !self.stream,
             remote: self.remote,
             remote_port: self.remote_port,
@@ -1132,6 +1145,25 @@ impl App {
                     Some(settings(Edit::Blur(!draft.blur))),
                 ),
                 text("What shows through. How strong the blur is, is your desktop's setting.")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+            row![
+                text("Motion").size(BODY).font(MEDIUM).width(LABEL_FIELD),
+                pill(
+                    p,
+                    if draft.motion { "✓ Moving" } else { "Still" },
+                    if draft.motion {
+                        Tone::Selected
+                    } else {
+                        Tone::Plain
+                    },
+                    look::PILL_SMALL,
+                    Some(settings(Edit::Motion(!draft.motion))),
+                ),
+                text("A step going on the projector rings once, and the like. Still draws each change as it ends up.")
                     .size(META)
                     .color(p.on_surface_variant),
             ]

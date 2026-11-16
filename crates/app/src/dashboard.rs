@@ -929,11 +929,23 @@ impl App {
             (None, false) if self.look.image.is_some() => chip(p, "background", Tone::Plain),
             (None, false) => chip(p, "empty", Tone::Plain),
         };
-        let mut section: Vec<Element<'_, Message>> = vec![
-            row![state, Space::new().width(Fill)]
-                .align_y(Alignment::Center)
-                .into(),
-        ];
+        let mut says = row![state, Space::new().width(Fill)].align_y(Alignment::Center);
+        // The phone moved the stage a moment ago: it wasn't this keyboard.
+        if self.motion.by_phone() {
+            says = says.push(
+                container(
+                    row![
+                        look::icon(Icon::Phone, 12.0, p.tertiary),
+                        text("from the phone").size(META).font(BOLD),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .padding([3, 10])
+                .style(look::chip(p, Tone::Live)),
+            );
+        }
+        let mut section: Vec<Element<'_, Message>> = vec![says.into()];
         section.push(match scene {
             _ if blackout => empty_monitor(
                 p,

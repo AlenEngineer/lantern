@@ -262,6 +262,14 @@ impl App {
         if command != Command::Hello {
             log(format!("remote: {command:?}"));
         }
+        // What moves the stage from the phone is said on this screen, so
+        // whoever sits at it knows it wasn't them.
+        if !matches!(
+            command,
+            Command::Hello | Command::Search { .. } | Command::Seek { .. }
+        ) {
+            self.motion.phone_acted();
+        }
         match command {
             // Its snapshot goes out with every update, this one included.
             Command::Hello => Task::none(),

@@ -181,6 +181,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   out, and with something else picked, **Replace** puts that in its place.
   Tips wait a moment before they show, so passing over a button shows
   nothing.
+- The step that goes on the projector rings once: its dot glows and its
+  row is lit a shade more, then both settle. When the phone moved the
+  stage, the stage says **from the phone** for two seconds, so whoever is
+  at the keyboard knows it wasn't them. **Motion** in Settings (or
+  `no_motion = true`) turns the moving off.
 
 ### Fixed
 

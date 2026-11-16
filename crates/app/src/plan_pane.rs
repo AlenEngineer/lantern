@@ -782,12 +782,20 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        let mut line = row![
-            text(marker).size(META).color(label_color).width(16),
-            container(label).width(Fill).clip(true),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        // The step on the projector has a dot, which rings once as it
+        // goes up; one the phone put there says so beside it.
+        let ring = self.motion.ring().filter(|_| shown);
+        let mark: Element<'_, Message> = match place {
+            Place::Current if shown => container(
+                container(Space::new().width(8).height(8)).style(look::dot(label_color, ring)),
+            )
+            .width(16)
+            .into(),
+            _ => text(marker).size(META).color(label_color).width(16).into(),
+        };
+        let mut line = row![mark, container(label).width(Fill).clip(true)]
+            .spacing(8)
+            .align_y(Alignment::Center);
         // Under the pointer, a row that can change says so: what would
         // replace it, and the way to take it out. The selected row has
         // all of that on its second line already.
@@ -801,12 +809,25 @@ impl App {
         if pointed {
             line = line.push(self.pointed_actions(step.id));
         }
+        if place == Place::Current && shown && self.motion.by_phone() && self.motion.rung_by_phone()
+        {
+            line = line.push(look::icon(Icon::Phone, 13.0, label_color));
+        }
         let line = line.push(end);
+        // Its row is lit a shade more as it goes up, and settles.
+        let fill = look::row_fill(p, tone);
+        let fill = match ring {
+            Some(ring) => iced::Color {
+                a: crate::motion::between((fill.a * 1.9).min(1.0), fill.a, ring),
+                ..fill
+            },
+            None => fill,
+        };
         let row = button(line)
             .width(Fill)
             .padding([10, 10])
             .on_press(Message::Click(Clicked::Step(step.id)))
-            .style(look::row(p, tone));
+            .style(look::row_filled(p, fill));
         // The bar lies in the row's bottom padding, so a step going on
         // stage doesn't make its row taller and move the ones under it.
         match progress {
