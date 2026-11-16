@@ -59,6 +59,9 @@ main > * { flex: none; }
 #times { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
 #next { color: var(--dim); font-size: 14px; padding: 0 6px; }
 #next b { color: var(--text); font-weight: 600; }
+#attached { display: flex; flex-wrap: wrap; gap: 8px; }
+#attached button, #back { background: var(--raised); color: var(--accent); font-weight: 700; border-radius: 999px; padding: 10px 16px; display: flex; align-items: center; gap: 8px; }
+#attached svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
 #resume { align-self: stretch; background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 12px; }
 
 #steps { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
@@ -153,6 +156,8 @@ footer svg { width: 22px; height: 22px; fill: currentColor; }
       <div id="bar"><div><i></i><b></b></div></div>
       <span id="times"></span>
     </div>
+    <div id="attached" hidden></div>
+    <button id="back" hidden></button>
   </section>
   <button id="resume" hidden>Back to the plan</button>
   <div id="next" class="one-line" hidden></div>
@@ -251,6 +256,23 @@ function draw() {
   $("live-failed").hidden = !(live && live.failed);
   $("live-failed").textContent = live && live.failed ? "Can't show this: " + live.failed : "";
   drawTime();
+  // What the slide on stage plays or links to, and the way back from it.
+  const attached = live && !s.blackout ? live.attached || [] : [];
+  $("attached").hidden = !attached.length;
+  $("attached").replaceChildren(...attached.map((name, n) => {
+    const button = document.createElement("button");
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    shape.setAttribute("d", name.startsWith("Picture") ? "M5 5h14v14H5zm2 12h10l-3.5-4.5-2.5 3-1.5-2z" : "M8 5v14l11-7z");
+    icon.append(shape);
+    button.append(icon, name);
+    button.onclick = () => { send({ do: "attachment", n }); say("On stage: " + name); };
+    return button;
+  }));
+  const back = live && live.back;
+  $("back").hidden = !back;
+  $("back").textContent = back ? "Back to slide " + back : "";
 
   const timed = live && live.timed;
   $("play").disabled = !timed;
@@ -463,6 +485,7 @@ $("play").onclick = () => send({ do: "play_pause" });
 $("black").onclick = () => send({ do: "blackout" });
 $("clear").onclick = () => send({ do: "clear" });
 $("resume").onclick = () => send({ do: "resume" });
+$("back").onclick = () => send({ do: "prev" });
 
 /* The time bar: hold and slide, let go to jump. */
 const bar = $("bar");

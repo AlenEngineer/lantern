@@ -48,6 +48,12 @@ pub enum Command {
         /// The result's id, as in [`Hit::id`].
         id: String,
     },
+    /// Shows something the slide on stage plays or links to: a video kept
+    /// in the deck, a YouTube video, a picture.
+    Attachment {
+        /// Which, counted from 0 in [`Live::attached`].
+        n: usize,
+    },
     /// Jumps in what is playing.
     Seek {
         /// Where to, in seconds from its start.
@@ -215,6 +221,13 @@ pub struct Live {
     pub slides: Option<Slides>,
     /// Why the stage can't show it, if it can't.
     pub failed: Option<String>,
+    /// What the slide on stage plays or links to, a name each ("Video",
+    /// "YouTube video 2"): [`Command::Attachment`] shows one.
+    pub attached: Vec<String>,
+    /// The slide of the deck this was shown from, counted from 1, while
+    /// there is one to go back to: [`Command::Prev`] goes back to it and
+    /// [`Command::Next`] on to the slide after.
+    pub back: Option<usize>,
 }
 
 /// A video's timeline.
