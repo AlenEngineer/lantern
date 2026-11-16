@@ -115,6 +115,15 @@ fn does(message: &Message) -> Does {
     }
 }
 
+/// A refusal's reason as a sentence starts: "The plan is locked…".
+fn capitalised(why: &str) -> String {
+    let mut letters = why.chars();
+    match letters.next() {
+        Some(first) => first.to_uppercase().chain(letters).collect(),
+        None => String::new(),
+    }
+}
+
 impl App {
     /// Whether the plan can be changed now: always while planning, and in
     /// a run only once it is unlocked.
@@ -467,15 +476,34 @@ impl App {
             Mode::Run => ("The plan is locked while it runs", Tone::Plain),
             Mode::Live => ("No plan: what you show goes straight out", Tone::Plain),
         };
+        let at_rest = if tone == Tone::Selected {
+            p.primary
+        } else {
+            p.on_surface_variant
+        };
+        // Something was just refused: the note says why, lit, and shakes
+        // its head once. A refusal with nothing to see reads as a fault.
+        let refused = self.motion.why();
+        let words = match refused {
+            Some((why, _)) => capitalised(why),
+            None => words.to_string(),
+        };
+        let lit = |rest: iced::Color, lit: iced::Color| match refused {
+            Some((_, Some(faded))) => crate::motion::blend(lit, rest, faded * faded),
+            Some((_, None)) => lit,
+            None => rest,
+        };
+        let colour = lit(at_rest, p.tertiary);
+        let ground = lit(
+            p.surface_container_highest,
+            crate::palette::Palette::tint(p.tertiary, 0.3),
+        );
+        let aside = self.motion.nudge();
         let mut line = row![
             container(
                 text(words)
                     .size(META)
-                    .color(if tone == Tone::Selected {
-                        p.primary
-                    } else {
-                        p.on_surface_variant
-                    })
+                    .color(colour)
                     .wrapping(text::Wrapping::None)
             )
             .width(Fill)
@@ -499,9 +527,15 @@ impl App {
             );
         }
         container(line)
-            .padding([6, 10])
+            .padding(
+                iced::Padding::default()
+                    .top(6.0)
+                    .bottom(6.0)
+                    .left(10.0 + aside)
+                    .right(10.0 - aside),
+            )
             .style(move |_| container::Style {
-                background: Some(p.surface_container_highest.into()),
+                background: Some(ground.into()),
                 border: iced::Border {
                     radius: 12.0.into(),
                     ..iced::Border::default()

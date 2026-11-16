@@ -11,12 +11,18 @@
 
 use std::time::{Duration, Instant};
 
-use lantern_engine::SceneId;
+use lantern_engine::{SceneId, StepId};
 
 /// The ring around a step's dot as it goes on the projector.
 pub const RING: Duration = Duration::from_millis(700);
 /// How long the stage says the phone moved it.
 pub const PHONE: Duration = Duration::from_secs(2);
+/// The nudge of the mode's note when something is refused.
+pub const NUDGE: Duration = Duration::from_millis(240);
+/// How long the note says why it was refused.
+pub const WHY: Duration = Duration::from_millis(1800);
+/// The flash of a step that was just added, replaced or moved.
+pub const FLASH: Duration = Duration::from_millis(600);
 /// The phone's press and what it put on stage are this close together.
 const SOON: Duration = Duration::from_millis(1500);
 
@@ -30,6 +36,10 @@ pub struct Motion {
     went_up: Option<Instant>,
     /// When the phone last did something to the stage.
     phone: Option<Instant>,
+    /// What was last refused, in the mode's words, and when.
+    refused: Option<(&'static str, Instant)>,
+    /// The step that last changed, and when.
+    changed: Option<(StepId, Instant)>,
 }
 
 impl Motion {
@@ -45,6 +55,8 @@ impl Motion {
             program: None,
             went_up: None,
             phone: None,
+            refused: None,
+            changed: None,
         }
     }
 
@@ -100,15 +112,59 @@ impl Motion {
         }
     }
 
+    /// The mode refused something, for the reason `why`.
+    pub fn refuse(&mut self, why: &'static str) {
+        self.refused = Some((why, Instant::now()));
+    }
+
+    /// Why the last thing was refused, while it is being said, and how
+    /// far its light has faded: `None` for the light with motion off.
+    pub fn why(&self) -> Option<(&'static str, Option<f32>)> {
+        let (why, at) = self.refused?;
+        self.running(Some(at), WHY)
+            .then(|| (why, self.along(Some(at), WHY)))
+    }
+
+    /// How far aside the note is, in pixels, as it shakes its head: out
+    /// one way, back through the middle, less the other way, and still.
+    pub fn nudge(&self) -> f32 {
+        if self.still {
+            return 0.0;
+        }
+        let Some((_, at)) = self.refused else {
+            return 0.0;
+        };
+        let length = self.length(NUDGE);
+        let passed = at.elapsed();
+        if passed >= length {
+            return 0.0;
+        }
+        shake(passed.as_secs_f32() / length.as_secs_f32())
+    }
+
+    /// `step` was just added, replaced or moved.
+    pub fn changed(&mut self, step: StepId) {
+        self.changed = Some((step, Instant::now()));
+    }
+
+    /// How far the flash of `step` has faded, while it has one.
+    pub fn flash(&self, step: StepId) -> Option<f32> {
+        let (changed, at) = self.changed?;
+        self.along((changed == step).then_some(at), FLASH)
+    }
+
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
-        !self.still && self.running(self.went_up, RING)
+        !self.still
+            && (self.running(self.went_up, RING)
+                || self.running(self.refused.map(|(_, at)| at), WHY)
+                || self.running(self.changed.map(|(_, at)| at), FLASH))
     }
 
     /// Something that shows for a while is up: looked at now and then, to
     /// take it down on time.
     pub fn showing(&self) -> bool {
-        self.by_phone()
+        self.by_phone() || self.running(self.refused.map(|(_, at)| at), WHY)
     }
 }
 
@@ -116,6 +172,23 @@ impl Motion {
 fn ease(t: f32) -> f32 {
     let left = 1.0 - t.clamp(0.0, 1.0);
     1.0 - left * left * left
+}
+
+/// A shake of the head over `t` from 0 to 1: five pixels one way, back,
+/// fewer the other way, and still at the end.
+fn shake(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    -5.0 * (t * std::f32::consts::TAU).sin() * (1.0 - t)
+}
+
+/// `from` to `to`, `t` of the way, each part of the colour by itself.
+pub fn blend(from: iced::Color, to: iced::Color, t: f32) -> iced::Color {
+    iced::Color {
+        r: between(from.r, to.r, t),
+        g: between(from.g, to.g, t),
+        b: between(from.b, to.b, t),
+        a: between(from.a, to.a, t),
+    }
 }
 
 /// `from` to `to`, `t` of the way.
@@ -145,6 +218,28 @@ mod tests {
         motion.went_up = Instant::now().checked_sub(RING * 2);
         assert!(motion.ring().is_none());
         assert!(!motion.moving());
+    }
+
+    #[test]
+    fn a_refusal_shakes_both_ways_and_ends_still() {
+        assert_eq!(shake(0.0), 0.0);
+        assert!(shake(0.25) < -3.0, "out one way first");
+        assert!(shake(0.75) > 0.5, "then less the other way");
+        assert!(shake(0.75) < -shake(0.25));
+        assert_eq!(shake(1.0), 0.0);
+
+        let mut motion = Motion::new();
+        assert!(motion.why().is_none());
+        motion.refuse("the plan is locked while it runs");
+        assert_eq!(
+            motion.why().map(|(why, _)| why),
+            Some("the plan is locked while it runs")
+        );
+        // Said with motion off too, with nothing moving.
+        motion.still = true;
+        assert_eq!(motion.nudge(), 0.0);
+        assert!(matches!(motion.why(), Some((_, None))));
+        assert!(motion.showing() && !motion.moving());
     }
 
     #[test]

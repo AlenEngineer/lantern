@@ -546,6 +546,12 @@ struct App {
     pub(crate) live_from: usize,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
+    /// A row was pressed that the running plan won't let move: where,
+    /// and whether the pointer has pulled at it since.
+    pub(crate) balk: Option<(Option<iced::Point>, bool)>,
+    /// The plan's file and its steps with what each shows, as last looked
+    /// at: a step that is new or shows something else flashes.
+    seen: (Option<PathBuf>, HashMap<StepId, Option<ResourceId>>),
     /// What is moving for a moment, to say something happened.
     pub(crate) motion: motion::Motion,
 }
@@ -651,6 +657,8 @@ impl App {
             carried: None,
             shelf_pick: None,
             scrub: None,
+            balk: None,
+            seen: (None, HashMap::new()),
             motion: motion::Motion::new(),
         };
         app.motion.still = app.config.no_motion;
@@ -687,11 +695,15 @@ impl App {
         if matches!(message, Message::Frame) {
             return Task::none();
         }
+        if matches!(message, Message::Pointer(_, false)) {
+            self.balk = None;
+        }
         // The modes' limits, for whatever asks: a click, a key, a script,
         // the phone.
         let task = match self.refused(&message) {
             Some(why) => {
                 log(format!("mode: {why}"));
+                self.motion.refuse(why);
                 Task::none()
             }
             None => self.handle(message),
@@ -704,6 +716,7 @@ impl App {
             self.plans.relist();
         }
         self.sync_parts();
+        self.sync_changed();
         self.sync_shelf();
         self.keep_running();
         self.sync_look();
@@ -1007,6 +1020,18 @@ impl App {
                 self.keep_layout();
             }
             Message::Cursor(_, at) => {
+                // Pulling at a row the run won't let move is refused where
+                // it can be seen, once.
+                if let Some((from, pulled)) = &mut self.balk {
+                    let from = *from.get_or_insert(at);
+                    if !*pulled && from.distance(at) > 6.0 {
+                        *pulled = true;
+                        self.motion.refuse(match self.unlocked {
+                            Some(_) => "only what is still ahead can change",
+                            None => "the plan is locked while it runs",
+                        });
+                    }
+                }
                 if let Some(carried) = &mut self.carried {
                     carried.to(at);
                 }
@@ -1056,6 +1081,9 @@ impl App {
                     .hovered
                     .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
                     .map(|(step, _)| Drag::new(&plan, step));
+                if running && self.drag.is_none() && self.hovered.is_some() {
+                    self.balk = Some((None, false));
+                }
             }
             Message::Pointer(_, false) => {
                 let dropped = self.drag.take().filter(|drag| drag.moving);
@@ -1074,6 +1102,9 @@ impl App {
                     self.engine
                         .0
                         .edit_plan(|plan| plan.move_steps(&drag.carried, at));
+                    if let Some(first) = drag.carried.first() {
+                        self.motion.changed(*first);
+                    }
                     return self.preload();
                 }
             }
@@ -1708,6 +1739,7 @@ impl App {
             Ok(op) => op,
             Err(why) => {
                 log(format!("mode: {why}"));
+                self.motion.refuse(why);
                 return Task::none();
             }
         };
@@ -2389,6 +2421,40 @@ impl App {
     /// Reads what each deck in the plan plays or links to, for the plan
     /// pane to show inside its step. Once a deck: opening it is a file
     /// read, not something to do each time the pane is drawn.
+    /// Flashes the step that was just added or that shows something else
+    /// now, however it came about: a key, a drop, the Replace button. One
+    /// step, in the plan that was open already: opening another plan or
+    /// taking back several edits flashes nothing.
+    fn sync_changed(&mut self) {
+        let file = self.plans.file().map(std::path::Path::to_path_buf);
+        let steps: HashMap<StepId, Option<ResourceId>> = self.engine.0.edit_plan(|plan| {
+            plan.steps()
+                .iter()
+                .map(|step| {
+                    let shows = match &step.action {
+                        Action::Show { resource } => Some(resource.id.clone()),
+                        _ => None,
+                    };
+                    (step.id, shows)
+                })
+                .collect()
+        });
+        if steps == self.seen.1 {
+            self.seen.0 = file;
+            return;
+        }
+        let same_plan = file == self.seen.0
+            && (steps.len() == 1 || steps.keys().any(|id| self.seen.1.contains_key(id)));
+        let mut changed = steps
+            .iter()
+            .filter(|(id, shows)| self.seen.1.get(*id) != Some(*shows))
+            .map(|(id, _)| *id);
+        if let (true, Some(step), None) = (same_plan, changed.next(), changed.next()) {
+            self.motion.changed(step);
+        }
+        self.seen = (file, steps);
+    }
+
     fn sync_parts(&mut self) {
         let decks: Vec<lantern_engine::Resource> = self.engine.0.edit_plan(|plan| {
             plan.steps()
@@ -2819,7 +2885,11 @@ impl App {
             iced::event::listen_with(pointer_event),
         ];
         // The pointer is followed only while it holds a row or a pane's edge.
-        if self.drag.is_some() || self.resizing.is_some() || self.carried.is_some() {
+        if self.drag.is_some()
+            || self.resizing.is_some()
+            || self.carried.is_some()
+            || self.balk.is_some()
+        {
             subscriptions.push(iced::event::listen_with(cursor_event));
         }
         // A search on screen follows files added to or removed from a folder.
