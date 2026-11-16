@@ -540,27 +540,11 @@ impl App {
         {
             strip = strip.push(readiness);
         }
-        // The screen the stage is on, where one was chosen.
-        if let Some(output) = self
-            .config
-            .stage_output
-            .as_deref()
-            .filter(|_| wide >= 1180.0)
-        {
-            strip = strip.push(tool(
-                Icon::Video,
-                output,
-                Tone::Plain,
-                Message::Settings(crate::settings::Edit::Category(
-                    crate::settings::Category::Output,
-                )),
-            ));
-        }
         // The stage window: lit while it is open. Closed with a service
         // or Live going, nothing reaches the projector: it is the alarm's
         // colour, and the picture's label says so in words.
         let open = self.stage_window.is_some();
-        let missing = !open && self.mode != crate::mode::Mode::Plan;
+        let missing = !open && (self.stage_lost || self.stage_missing());
         strip = strip.push(hinted(
             p,
             tool(
@@ -574,10 +558,10 @@ impl App {
                 op(Op::Stage),
             ),
             keys::with_key(
-                if open {
-                    "Close the stage window"
-                } else {
-                    "Open the stage window"
+                &match (open, self.config.stage_output.as_deref()) {
+                    (true, Some(screen)) => format!("The stage prefers {screen}. Close it"),
+                    (true, None) => "Close the stage window".to_string(),
+                    (false, _) => "Open the stage window".to_string(),
                 },
                 Op::Stage,
             ),
@@ -964,14 +948,23 @@ impl App {
             .into()
     }
 
+    /// The stage window should be open by the mode and the screens, and
+    /// isn't: it was closed by hand or from outside.
+    fn stage_missing(&self) -> bool {
+        self.stage_window.is_none() && self.mode != crate::mode::Mode::Plan && self.stage_expected()
+    }
+
     fn on_stage_section(&self) -> Vec<Element<'_, Message>> {
         let p = self.palette;
         let scene = self.stage.program.as_ref();
         let blackout = self.stage.blackout;
         // With the stage window closed nothing here is in front of anyone.
-        let unseen = self.stage_window.is_none() && self.mode != crate::mode::Mode::Plan;
+        let closed = self.stage_window.is_none() && self.mode != crate::mode::Mode::Plan;
         let state = match (scene, blackout) {
-            _ if unseen => chip(p, "the stage is closed", Tone::Alarm),
+            _ if closed && self.stage_lost => chip(p, "the projector is gone", Tone::Alarm),
+            _ if closed && self.stage_missing() => chip(p, "the stage is closed", Tone::Alarm),
+            // No second screen: this picture is all there is to see.
+            (Some(_), false) if closed => chip(p, "● this screen only", Tone::Plain),
             (_, true) => chip(p, "blackout", Tone::Danger),
             (Some(_), false) if self.off_plan().is_some() => {
                 chip(p, "● live · off the plan", Tone::Live)

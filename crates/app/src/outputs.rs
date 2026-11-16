@@ -3,8 +3,15 @@
 //! places windows, so this asks the compositor. Only Hyprland so far:
 //! `hyprctl` lists the outputs and moves the stage window (found by its app
 //! id and this process, so another Lantern is never touched).
+//!
+//! Where the stage goes is decided here ([`choose`]): the screen the
+//! settings prefer when it is connected, else the screen it was last put
+//! on by hand with these same screens connected, else a screen the
+//! dashboard isn't on. With one screen and no preference there is nowhere
+//! for it, and the dashboard's live picture is the stage.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Deserialize;
@@ -30,6 +37,134 @@ impl Output {
         } else {
             format!("{} · {model} · {size}", self.name)
         }
+    }
+}
+
+impl Output {
+    /// What a screen is known by, wherever it is plugged in: its make and
+    /// model. A screen that reports none goes by its connector.
+    pub fn id(&self) -> &str {
+        match self.description.trim() {
+            "" => &self.name,
+            model => model,
+        }
+    }
+
+    /// Whether `wanted` means this screen: by make and model, or by
+    /// connector, as configs written before screens had names do.
+    pub fn is(&self, wanted: &str) -> bool {
+        let wanted = wanted.trim();
+        wanted == self.name || (!wanted.is_empty() && wanted == self.description.trim())
+    }
+}
+
+/// The screens connected, as one name: what a remembered place is kept
+/// under. The same screens in another order are the same setup.
+pub fn setup(connected: &[Output]) -> String {
+    let mut ids: Vec<&str> = connected.iter().map(Output::id).collect();
+    ids.sort_unstable();
+    ids.join(" + ")
+}
+
+/// Where the stage goes, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Place {
+    /// The screen the settings prefer is connected: the stage is on it
+    /// from the moment it is plugged in, whatever the mode.
+    Preferred(String),
+    /// Where the stage was last put by hand with these screens.
+    Remembered(String),
+    /// Nothing says where: a screen the dashboard isn't on.
+    Spare(String),
+    /// One screen and no preference: no stage window. The dashboard's
+    /// live picture shows what there is to see.
+    Nowhere,
+}
+
+impl Place {
+    /// The connector of the screen it names.
+    pub fn output(&self) -> Option<&str> {
+        match self {
+            Place::Preferred(name) | Place::Remembered(name) | Place::Spare(name) => Some(name),
+            Place::Nowhere => None,
+        }
+    }
+}
+
+/// Decides where the stage goes among the screens `connected`:
+/// `preferred` from the settings, `remembered` for this setup, and the
+/// screen the dashboard is on, to keep off it.
+pub fn choose(
+    connected: &[Output],
+    preferred: Option<&str>,
+    remembered: Option<&str>,
+    dashboard: Option<&str>,
+) -> Place {
+    let find = |wanted: Option<&str>| {
+        wanted.and_then(|wanted| connected.iter().find(|output| output.is(wanted)))
+    };
+    if let Some(output) = find(preferred) {
+        return Place::Preferred(output.name.clone());
+    }
+    if connected.len() < 2 {
+        return Place::Nowhere;
+    }
+    if let Some(output) = find(remembered) {
+        return Place::Remembered(output.name.clone());
+    }
+    match connected
+        .iter()
+        .find(|output| Some(output.name.as_str()) != dashboard)
+    {
+        Some(output) => Place::Spare(output.name.clone()),
+        None => Place::Nowhere,
+    }
+}
+
+/// Where the stage was last put by hand, for each set of screens: a file
+/// of `setup<TAB>screen` lines beside the saved plans.
+#[derive(Debug, Clone)]
+pub struct Memory {
+    file: PathBuf,
+}
+
+impl Memory {
+    pub fn new(data: &Path) -> Memory {
+        Memory {
+            file: data.join("screens"),
+        }
+    }
+
+    fn lines(&self) -> Vec<(String, String)> {
+        std::fs::read_to_string(&self.file)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(setup, screen)| (setup.to_string(), screen.to_string()))
+            .collect()
+    }
+
+    /// The screen the stage was last put on with `setup` connected.
+    pub fn of(&self, setup: &str) -> Option<String> {
+        self.lines()
+            .into_iter()
+            .find(|(kept, _)| kept == setup)
+            .map(|(_, screen)| screen)
+    }
+
+    /// Keeps `screen` as where the stage goes with `setup` connected.
+    pub fn keep(&self, setup: &str, screen: &str) -> std::io::Result<()> {
+        let mut lines = self.lines();
+        lines.retain(|(kept, _)| kept != setup);
+        lines.push((setup.to_string(), screen.to_string()));
+        if let Some(dir) = self.file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let text: String = lines
+            .iter()
+            .map(|(setup, screen)| format!("{setup}\t{screen}\n"))
+            .collect();
+        std::fs::write(&self.file, text)
     }
 }
 
@@ -112,6 +247,23 @@ pub fn stage_on() -> Result<Option<String>, String> {
         .map(|m| m.name))
 }
 
+/// The output this process's dashboard window is on.
+pub fn dashboard_on() -> Result<Option<String>, String> {
+    let monitors = monitors()?;
+    let pid = std::process::id();
+    let clients: Vec<Client> = hyprctl("clients")?;
+    let Some(dashboard) = clients
+        .into_iter()
+        .find(|c| c.class == crate::DASHBOARD_APP_ID && c.pid == pid)
+    else {
+        return Ok(None);
+    };
+    Ok(monitors
+        .into_iter()
+        .find(|m| m.id == dashboard.monitor)
+        .map(|m| m.name))
+}
+
 fn stage_client() -> Result<Option<Client>, String> {
     let pid = std::process::id();
     let clients: Vec<Client> = hyprctl("clients")?;
@@ -150,12 +302,13 @@ pub fn blur_dashboard(on: bool) -> Result<bool, String> {
 }
 
 /// Moves the stage window to `output`'s visible workspace, where it stays
-/// fullscreen. Nothing to do when it's there already or not mapped yet.
+/// fullscreen. `output` is a connector, or a screen's make and model.
+/// Nothing to do when it's there already or not mapped yet.
 pub fn put_stage_on(output: &str) -> Result<(), String> {
     let monitors = monitors()?;
     let target = monitors
         .iter()
-        .find(|m| m.name == output)
+        .find(|m| m.name == output || m.description.trim() == output.trim())
         .ok_or_else(|| format!("{output} isn't connected"))?;
     let Some(stage) = stage_client()? else {
         return Err("the stage window isn't open yet".into());
@@ -262,6 +415,90 @@ mod tests {
             "automatic leaves it alone"
         );
         assert!(watch.check(both, Some("eDP-1"), true), "asked again");
+    }
+
+    fn screen(name: &str, model: &str) -> Output {
+        Output {
+            name: name.into(),
+            description: model.into(),
+            width: 1920,
+            height: 1080,
+        }
+    }
+
+    #[test]
+    fn the_preferred_screen_wins_and_one_screen_has_no_stage() {
+        let laptop = screen("eDP-1", "BOE 0x07C9");
+        let projector = screen("HDMI-A-1", "Epson EB-X41");
+        let monitor = screen("HDMI-A-1", "Dell U2415");
+        let church = [laptop.clone(), projector.clone()];
+        let home = [laptop.clone(), monitor.clone()];
+        let alone = [laptop.clone()];
+
+        // By make and model: the same plug at home is another screen.
+        assert_eq!(
+            choose(&church, Some("Epson EB-X41"), None, Some("eDP-1")),
+            Place::Preferred("HDMI-A-1".into())
+        );
+        assert_eq!(
+            choose(&home, Some("Epson EB-X41"), None, Some("eDP-1")),
+            Place::Spare("HDMI-A-1".into()),
+            "not the projector: only a screen the dashboard isn't on"
+        );
+        // An older config names the plug.
+        assert_eq!(
+            choose(&church, Some("HDMI-A-1"), None, Some("eDP-1")),
+            Place::Preferred("HDMI-A-1".into())
+        );
+        // Put by hand on the laptop's own screen at home: remembered there.
+        assert_eq!(
+            choose(
+                &home,
+                Some("Epson EB-X41"),
+                Some("BOE 0x07C9"),
+                Some("eDP-1")
+            ),
+            Place::Remembered("eDP-1".into())
+        );
+        // Preferred beats remembered.
+        assert_eq!(
+            choose(&church, Some("Epson EB-X41"), Some("BOE 0x07C9"), None),
+            Place::Preferred("HDMI-A-1".into())
+        );
+        // The laptop alone: nowhere, unless its screen is the preference.
+        assert_eq!(
+            choose(&alone, Some("Epson EB-X41"), None, None),
+            Place::Nowhere
+        );
+        assert_eq!(
+            choose(&alone, None, Some("BOE 0x07C9"), None),
+            Place::Nowhere
+        );
+        assert_eq!(
+            choose(&alone, Some("BOE 0x07C9"), None, None),
+            Place::Preferred("eDP-1".into())
+        );
+    }
+
+    #[test]
+    fn a_setup_is_its_screens_in_any_order_and_remembers_one_place() {
+        let laptop = screen("eDP-1", "BOE 0x07C9");
+        let monitor = screen("HDMI-A-1", "Dell U2415");
+        let nameless = screen("DP-2", "");
+        assert_eq!(
+            setup(&[monitor.clone(), laptop.clone()]),
+            setup(&[laptop.clone(), monitor.clone()])
+        );
+        assert_eq!(nameless.id(), "DP-2", "no model: its plug");
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::new(dir.path());
+        let home = setup(&[laptop.clone(), monitor]);
+        assert_eq!(memory.of(&home), None);
+        memory.keep(&home, "Dell U2415").unwrap();
+        memory.keep("BOE 0x07C9 + Epson", "Epson").unwrap();
+        memory.keep(&home, "BOE 0x07C9").unwrap();
+        assert_eq!(memory.of(&home).as_deref(), Some("BOE 0x07C9"));
+        assert_eq!(memory.of("BOE 0x07C9 + Epson").as_deref(), Some("Epson"));
     }
 
     #[test]

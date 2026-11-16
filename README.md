@@ -100,16 +100,16 @@ cargo run --release -p lantern-app
 
 There are two windows: the **dashboard** for the operator and the
 fullscreen **stage** for the audience. Lantern starts with the dashboard
-alone. The stage opens when something can reach it, with **Start the
-service** or in Live, and closes on the way back to Plan; the screen button
-in the strip (F7) opens or closes it by hand, which holds until the mode
-changes. Closing the stage never closes Lantern: with a service or Live
+alone. The stage opens when it has a screen and something can reach it (see
+*Putting the stage on the projector*); the screen button in the strip (F7)
+opens or closes it by hand, which holds until the mode or the screens
+change. Closing the stage never closes Lantern: with a service or Live
 going, its button turns red and the live picture says the stage is closed.
 Closing the dashboard quits; while the projector is in use it has to be
 closed twice within a few seconds. The dashboard is three cards on one
 ground. Across the top, a **strip**: the plan's name and its buttons, the
 running section's time and how the service stands against its schedule,
-the time of day, then Search, what isn't ready, the stage's screen, Blackout
+the time of day, then Search, what isn't ready, the stage's window, Blackout
 and Settings. Each says how something stands and opens what changes it. On
 the left, the **plan**, a line a step. In the middle, the **stage**: what
 the audience sees, large, and beside it what comes next, or what you're
@@ -518,7 +518,7 @@ works. Unknown keys are errors, so typos show up on the dashboard.
 # them as part of that table.
 brave_api_key = "…"       # optional, for !gi image search
 colors = "~/.config/amane/colors.json"  # optional, see below
-stage_output = "HDMI-A-1"  # optional: the stage's screen, see below
+stage_output = "Epson EB-X41"  # optional: the screen the stage prefers, see below
 
 [[folders]]
 path = "~/Videos"
@@ -570,11 +570,25 @@ said.
 
 ### Putting the stage on the projector
 
-Settings → **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`).
-Picking one moves the stage there at once; Save keeps it as
-`stage_output` in the config. Lantern then puts the stage there when it
-starts, and when that screen is plugged in later. It doesn't fight you
-otherwise: a stage moved by hand stays where it was put.
+Where the stage goes depends on the screens connected:
+
+1. **The preferred screen, whenever it is connected.** Settings →
+   **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`); picking
+   one and saving keeps it as `stage_output`, by its make and model, so it
+   is the same screen on any plug. While it is connected the stage is open
+   on it, from the moment it is plugged in and in every mode, showing its
+   background until something is shown.
+2. **Otherwise, where you last moved it.** With a service or in Live the
+   stage opens on a screen the dashboard isn't on. Move it to another, and
+   Lantern remembers that for the same set of screens (in `screens`, beside
+   the saved plans).
+3. **With one screen, nowhere.** There is no stage window: the dashboard's
+   live picture is the stage, and a video plays in it.
+
+If the stage's screen is unplugged mid-service the stage closes and the
+live picture says the projector is gone; plugged back, the stage returns.
+F7 still opens or closes the window by hand, until the mode or the screens
+change.
 
 This needs Hyprland for now: iced can't list monitors or fullscreen on a
 chosen one, and on Wayland only the compositor places windows, so Lantern
