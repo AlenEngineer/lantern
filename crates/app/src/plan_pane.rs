@@ -310,6 +310,11 @@ impl App {
             if after && adds {
                 row = row.push(insertion_mark(p, 0.0));
             }
+            // Inside the step: what its slides play or link to, and the
+            // sound that plays with it.
+            for part in self.step_parts(step, place == Place::Current) {
+                row = row.push(part);
+            }
             let indent = if in_section { INDENT } else { 0.0 };
             rows = rows.push(container(row).padding(iced::Padding::default().left(indent)));
         }
@@ -412,6 +417,74 @@ impl App {
         mouse_area(scrolling(rows))
             .on_exit(Message::LeftPlan)
             .into()
+    }
+
+    /// What is inside a step, a line each under its row: the videos,
+    /// sounds and pictures on a deck's slides, by slide, and the step's
+    /// own sound with the slide it starts at. `on_stage`: the step is the
+    /// one the service is at, so the slide it is on is marked.
+    fn step_parts<'a>(&self, step: &Step, on_stage: bool) -> Vec<Element<'a, Message>> {
+        let p = self.palette;
+        let Action::Show { resource } = &step.action else {
+            return Vec::new();
+        };
+        let at = self
+            .stage
+            .picture()
+            .filter(|scene| on_stage && scene.resource.id == resource.id)
+            .map(lantern_engine::Scene::frame);
+        let line = |icon: Icon, words: String, lit: bool| -> Element<'a, Message> {
+            let colour = if lit {
+                p.tertiary
+            } else {
+                p.on_surface_variant
+            };
+            row![
+                look::icon(icon, 12.0, colour),
+                container(single_line(words).size(META).color(colour))
+                    .width(Fill)
+                    .clip(true),
+            ]
+            .spacing(8)
+            .padding(
+                iced::Padding::default()
+                    .left(34.0)
+                    .right(8.0)
+                    .top(1.0)
+                    .bottom(3.0),
+            )
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let mut parts = Vec::new();
+        for (slide, on_slide) in self
+            .parts
+            .get(&resource.id)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            for (n, part) in on_slide.iter().enumerate() {
+                let (icon, name) = crate::dashboard::attachment_name(part, n, on_slide.len());
+                parts.push(line(
+                    icon,
+                    format!("Slide {} · {name}", slide + 1),
+                    at == Some(slide),
+                ));
+            }
+        }
+        if let Some(sound) = &step.sound {
+            let words = match sound.from {
+                0 => format!("With {}", sound.resource.title),
+                from => format!("Slide {} on · {}", from + 1, sound.resource.title),
+            };
+            parts.push(line(
+                Icon::Music,
+                words,
+                at.is_some_and(|at| at >= sound.from),
+            ));
+        }
+        parts
     }
 
     /// `row`, telling the app which half of it the pointer is over, so a
@@ -609,17 +682,6 @@ impl App {
         }
         // "Note · note" says nothing twice: the kind shows once renamed.
         .filter(|kind| !kind.eq_ignore_ascii_case(step.label.trim()));
-        // That a sound plays with it. Which, and from where, is on its
-        // button: the row's end has room for a word or two.
-        let kind = match &step.sound {
-            Some(_) => Some(
-                kind.into_iter()
-                    .chain(["+ sound".to_string()])
-                    .collect::<Vec<_>>()
-                    .join(" · "),
-            ),
-            None => kind,
-        };
         let (said, said_color) = match (issue, place) {
             (Some(issue), _) => (
                 Some(issue.what.clone()),

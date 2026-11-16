@@ -502,6 +502,9 @@ struct App {
     pub(crate) unlocked: Option<Option<StepId>>,
     /// "End the service" was pressed once, and when.
     pub(crate) ending: Option<Instant>,
+    /// What the decks in the plan play or link to, a list for each slide,
+    /// by the deck's resource: read once, when the deck joins the plan.
+    pub(crate) parts: HashMap<ResourceId, Vec<Vec<Arc<lantern_engine::Resource>>>>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
@@ -601,6 +604,7 @@ impl App {
             ending: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
+            parts: HashMap::new(),
             scrub: None,
         };
         app.check_palette();
@@ -644,6 +648,7 @@ impl App {
         if self.mode == mode::Mode::Plan {
             self.plans.relist();
         }
+        self.sync_parts();
         self.sync_look();
         self.sync_blur();
         self.sync_remote();
@@ -2194,6 +2199,30 @@ impl App {
             if !known {
                 self.engine.0.report(scene.id, MediaReport::Frames(count));
             }
+        }
+    }
+
+    /// Reads what each deck in the plan plays or links to, for the plan
+    /// pane to show inside its step. Once a deck: opening it is a file
+    /// read, not something to do each time the pane is drawn.
+    fn sync_parts(&mut self) {
+        let decks: Vec<lantern_engine::Resource> = self.engine.0.edit_plan(|plan| {
+            plan.steps()
+                .iter()
+                .filter_map(|step| match &step.action {
+                    Action::Show { resource }
+                        if resource.kind == lantern_engine::Kind::Presentation
+                            && !self.parts.contains_key(&resource.id) =>
+                    {
+                        Some(resource.clone())
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+        for deck in decks {
+            let parts = deck::attached(&deck, &stage::cache_dir().join("decks"));
+            self.parts.insert(deck.id.clone(), parts);
         }
     }
 
