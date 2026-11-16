@@ -364,6 +364,8 @@ enum Message {
     ShelfFold(String),
     /// What is typed in the library's filter.
     ShelfFilter(String),
+    /// The pointer is over this file of the library, or over none.
+    ShelfHover(Option<ResourceId>),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -525,6 +527,9 @@ struct App {
     pub(crate) shelf_open: std::collections::HashSet<String>,
     /// What is typed in the library's filter.
     pub(crate) shelf_filter: String,
+    /// The file of the library under the pointer, and the one it holds.
+    shelf_hover: Option<ResourceId>,
+    pub(crate) carried: Option<shelf::Carried>,
     pub(crate) shelf_pick: Option<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
@@ -630,6 +635,8 @@ impl App {
             shelf_read: None,
             shelf_open: std::collections::HashSet::new(),
             shelf_filter: String::new(),
+            shelf_hover: None,
+            carried: None,
             shelf_pick: None,
             scrub: None,
         };
@@ -976,10 +983,45 @@ impl App {
                 self.keep_layout();
             }
             Message::Cursor(_, at) => {
+                if let Some(carried) = &mut self.carried {
+                    carried.to(at);
+                }
                 if let Some(drag) = &mut self.drag {
                     drag.to(at);
                 }
                 self.aim();
+            }
+            // Pressed on a file of the library: it may be carried into
+            // the plan.
+            Message::Pointer(_, true) if self.shelf_hover.is_some() && self.can_edit() => {
+                self.carried = self
+                    .shelf_hover
+                    .as_ref()
+                    .and_then(|id| self.shelf_file(id))
+                    .map(shelf::Carried::new);
+            }
+            // Let go over the plan: it goes in where the gap showed.
+            Message::Pointer(_, false) if self.carried.is_some() => {
+                // Where it would land, asked while it is still held.
+                let plan = self.engine.0.plan();
+                let landing = self.carry_landing(&plan);
+                let carried = self.carried.take().filter(|carried| carried.moving);
+                if let Some((carried, at)) = carried.zip(landing) {
+                    self.remember(None);
+                    let id = self.engine.0.edit_plan(|plan| {
+                        plan.insert(
+                            at,
+                            carried.file.title.clone(),
+                            Action::Show {
+                                resource: (*carried.file).clone(),
+                            },
+                        )
+                    });
+                    self.selected = Some(id);
+                    self.shelf_pick = None;
+                    self.engine.0.preview(carried.file);
+                    return self.preload();
+                }
             }
             Message::Pointer(_, true) => {
                 let plan = self.engine.0.plan();
@@ -1157,6 +1199,7 @@ impl App {
                     self.shelf_open.insert(folder);
                 }
             }
+            Message::ShelfHover(file) => self.shelf_hover = file,
             Message::ShelfFilter(typed) => {
                 self.shelf_filter = typed;
             }
@@ -2332,6 +2375,21 @@ impl App {
         }
     }
 
+    /// Where in `plan` a file carried from the library would land: above
+    /// or below the step the pointer is over. Nowhere while it isn't over
+    /// one, or isn't being carried.
+    pub(crate) fn carry_landing(&self, plan: &Plan) -> Option<usize> {
+        self.carried.as_ref().filter(|carried| carried.moving)?;
+        let (over, half) = self.hovered?;
+        let at = plan.position(over)? + usize::from(half == Half::Lower);
+        // In a run, only after the step the service is at.
+        let reached = (self.mode == mode::Mode::Run)
+            .then(|| self.engine.0.current_step())
+            .flatten()
+            .and_then(|step| plan.position(step.id));
+        reached.is_none_or(|reached| at > reached).then_some(at)
+    }
+
     /// Whether what is on stage is something a slide played or linked to,
     /// with its deck to go back to.
     pub(crate) fn left_for_program(&self) -> bool {
@@ -2665,7 +2723,7 @@ impl App {
             iced::event::listen_with(pointer_event),
         ];
         // The pointer is followed only while it holds a row or a pane's edge.
-        if self.drag.is_some() || self.resizing.is_some() {
+        if self.drag.is_some() || self.resizing.is_some() || self.carried.is_some() {
             subscriptions.push(iced::event::listen_with(cursor_event));
         }
         // A search on screen follows files added to or removed from a folder.

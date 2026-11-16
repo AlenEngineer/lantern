@@ -251,6 +251,38 @@ impl App {
                 .x(EDGE)
                 .y(EDGE),
         );
+        // A file carried from the library follows the pointer the same
+        // way, until it is let go over the plan.
+        if let Some(carried) = self.carried.as_ref().filter(|carried| carried.moving) {
+            let card = container(
+                row![
+                    look::icon(Icon::of(&carried.file.kind), 14.0, p.primary),
+                    text(carried.file.title.clone())
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.primary),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([10, 14])
+            .max_width(320)
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.into()),
+                border: iced::Border {
+                    color: p.primary,
+                    width: 1.0,
+                    radius: 14.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::BLACK.scale_alpha(0.4),
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 12.0,
+                },
+                ..container::Style::default()
+            });
+            layers = layers.push(pin(card).x(carried.at.x + 16.0).y(carried.at.y + 8.0));
+        }
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
         if let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) {
