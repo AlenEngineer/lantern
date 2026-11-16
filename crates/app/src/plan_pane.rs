@@ -178,12 +178,11 @@ impl App {
             );
         }
         if self.plans.is_dirty(plan) {
-            header = header.push(pill(
+            header = header.push(crate::dashboard::hinted(
                 p,
-                "Save",
-                Tone::Selected,
-                PILL_SMALL,
-                Some(op(Op::Save)),
+                pill(p, "Save", Tone::Selected, PILL_SMALL, Some(op(Op::Save))),
+                keys::with_key("Save the plan", Op::Save),
+                tooltip::Position::Bottom,
             ));
         }
         header.spacing(6).align_y(Alignment::Center).into()
@@ -670,6 +669,10 @@ impl App {
                 ));
             }
         }
+        // Under the pointer, a heading can be taken out like a step.
+        if self.pointed(id) {
+            line = line.push(self.pointed_actions(id));
+        }
         let mut content = column![line].spacing(6);
         if let Some(share) = time.share {
             let fill = match (time.pace, &phase) {
@@ -853,14 +856,7 @@ impl App {
         // Under the pointer, a row that can change says so: what would
         // replace it, and the way to take it out. The selected row has
         // all of that on its second line already.
-        let pointed = self.hovered.is_some_and(|(over, _)| over == step.id)
-            && self.selected != Some(step.id)
-            && !self.drag.as_ref().is_some_and(|drag| drag.moving)
-            && !self.carried.as_ref().is_some_and(|held| held.moving)
-            && self.editing.is_none()
-            && self.can_edit()
-            && (self.mode != crate::mode::Mode::Run || self.ahead(&self.engine.0.plan(), step.id));
-        if pointed {
+        if self.pointed(step.id) {
             line = line.push(self.pointed_actions(step.id));
         }
         if place == Place::Current && shown && self.motion.by_phone() && self.motion.rung_by_phone()
@@ -900,6 +896,19 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// Whether the pointer is on the row of `id` and the row can change:
+    /// not the selected one, which shows what can be done to it already,
+    /// and not while something is held or typed.
+    fn pointed(&self, id: StepId) -> bool {
+        self.hovered.is_some_and(|(over, _)| over == id)
+            && self.selected != Some(id)
+            && !self.drag.as_ref().is_some_and(|drag| drag.moving)
+            && !self.carried.as_ref().is_some_and(|held| held.moving)
+            && self.editing.is_none()
+            && self.can_edit()
+            && (self.mode != crate::mode::Mode::Run || self.ahead(&self.engine.0.plan(), id))
     }
 
     /// What the row under the pointer offers: Replace, when something

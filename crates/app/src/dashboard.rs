@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use iced::widget::{
     Space, button, column, container, image, pin, row, scrollable, slider, stack, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{
@@ -520,11 +521,16 @@ impl App {
         } else {
             Tone::Plain
         };
-        strip = strip.push(tool(
-            Icon::Search,
-            if wide >= 1000.0 { "Search" } else { "" },
-            search_tone,
-            op(Op::Search),
+        strip = strip.push(hinted(
+            p,
+            tool(
+                Icon::Search,
+                if wide >= 1000.0 { "Search" } else { "" },
+                search_tone,
+                op(Op::Search),
+            ),
+            keys::with_key("Search", Op::Search),
+            tooltip::Position::Bottom,
         ));
         // What isn't ready, while something isn't.
         let issues = self.issues(&plan);
@@ -551,7 +557,8 @@ impl App {
         }
         // Blackout: solid while the projector is black.
         let blackout = self.stage.blackout;
-        strip = strip.push(
+        strip = strip.push(hinted(
+            p,
             button(
                 text(if blackout {
                     "● Blackout ON"
@@ -571,8 +578,22 @@ impl App {
                 p,
                 if blackout { Tone::Alarm } else { Tone::Danger },
             )),
-        );
-        strip = strip.push(tool(Icon::Settings, "", Tone::Plain, op(Op::Settings)));
+            keys::with_key(
+                if blackout {
+                    "Bring the projector back"
+                } else {
+                    "Make the projector black"
+                },
+                Op::Blackout,
+            ),
+            tooltip::Position::Bottom,
+        ));
+        strip = strip.push(hinted(
+            p,
+            tool(Icon::Settings, "", Tone::Plain, op(Op::Settings)),
+            keys::with_key("Settings", Op::Settings),
+            tooltip::Position::Bottom,
+        ));
         container(strip)
             .height(STRIP)
             .padding([0, 8])
@@ -993,15 +1014,20 @@ impl App {
         section.push(
             row![
                 Space::new().width(Fill),
-                pill(
+                hinted(
                     p,
-                    "Clear the stage",
-                    Tone::Plain,
-                    PILL,
-                    scene.is_some().then_some(Message::Key {
-                        op: Op::Clear,
-                        only_if_empty: false,
-                    })
+                    pill(
+                        p,
+                        "Clear the stage",
+                        Tone::Plain,
+                        PILL,
+                        scene.is_some().then_some(Message::Key {
+                            op: Op::Clear,
+                            only_if_empty: false,
+                        })
+                    ),
+                    keys::with_key("Take it off the projector", Op::Clear),
+                    tooltip::Position::Top,
                 ),
             ]
             .into(),
@@ -1545,6 +1571,19 @@ impl App {
         .height(PILL)
         .on_press(op(Op::PlayPause))
         .style(look::pill(p, Tone::Solid));
+        let play = hinted(
+            p,
+            play,
+            keys::with_key(
+                match timed.playback {
+                    Playback::Playing => "Pause",
+                    Playback::Paused => "Play",
+                    Playback::Ended => "Play it again",
+                },
+                Op::PlayPause,
+            ),
+            tooltip::Position::Top,
+        );
         let position = self.scrub.unwrap_or(timed.position.as_secs_f64());
         let timeline: Element<'_, Message> = match timed.duration {
             Some(duration) if !duration.is_zero() => {
@@ -1829,6 +1868,25 @@ pub(crate) fn pill<'a>(
     .padding([0, 16])
     .on_press_maybe(message)
     .style(look::pill(p, tone))
+}
+
+/// `control`, saying what it does and its key once the pointer rests on
+/// it. The control keeps its size: the key is beside it, not in it.
+pub(crate) fn hinted<'a>(
+    p: Palette,
+    control: impl Into<Element<'a, Message>>,
+    words: String,
+    position: tooltip::Position,
+) -> Element<'a, Message> {
+    tooltip(
+        control,
+        container(text(words).size(META))
+            .padding([4, 8])
+            .style(look::tip(p)),
+        position,
+    )
+    .delay(look::TIP_DELAY)
+    .into()
 }
 
 pub(crate) fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
