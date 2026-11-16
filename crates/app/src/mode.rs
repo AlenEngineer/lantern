@@ -12,18 +12,18 @@
 
 use std::time::{Duration, Instant};
 
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
 use iced::{Alignment, Element, Fill, Task};
 use lantern_engine::{Plan, StepId};
 
-use crate::dashboard::{chip, pill, single_line};
+use crate::dashboard::{chip, hinted, pill, single_line};
 use crate::keys::{self, Op};
 use crate::look::{self, BODY, BOLD, Icon, MEDIUM, META, PILL, Tone};
 use crate::plans::{self, Notice};
 use crate::{App, Message, log};
 
 /// What Lantern is being used for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mode {
     Plan,
     Run,
@@ -197,6 +197,22 @@ impl App {
                 | Op::Undo
         );
         let manages = matches!(op, Op::New | Op::Open);
+        // The switch, from a key: the same ways in and out as its buttons.
+        if let Op::Mode(to) = op {
+            let runs = self
+                .engine
+                .0
+                .plan()
+                .steps()
+                .iter()
+                .any(|step| !step.is_section());
+            return match (self.mode, to) {
+                (Mode::Run, Mode::Live) => Err("end the service first"),
+                (Mode::Live, Mode::Run) => Err("a service starts from Plan"),
+                (Mode::Plan, Mode::Run) if !runs => Err("the plan has nothing to run yet"),
+                _ => Ok(op),
+            };
+        }
         match self.mode {
             Mode::Plan
                 if op == Op::Take
@@ -414,10 +430,21 @@ impl App {
                 .height(TALL)
                 .padding(0)
                 .on_press_maybe(reachable.then_some(Message::SetMode(mode)));
-            match on {
+            let pill: Element<'_, Message> = match on {
                 true => pill.style(look::pill_clear(ink)).into(),
                 false => pill.style(look::pill(p, Tone::Plain)).into(),
-            }
+            };
+            let does = match mode {
+                Mode::Plan => "Make and manage plans",
+                Mode::Run => "Start the service",
+                Mode::Live => "Show with no plan",
+            };
+            hinted(
+                p,
+                pill,
+                keys::with_key(does, Op::Mode(mode)),
+                tooltip::Position::Bottom,
+            )
         });
         let mut switch = row![iced::widget::stack![lit, row(buttons).spacing(GAP)]]
             .spacing(8)
@@ -426,7 +453,8 @@ impl App {
         match self.mode {
             Mode::Plan => {
                 let can_start = plan.steps().iter().any(|step| !step.is_section());
-                switch = switch.push(
+                switch = switch.push(hinted(
+                    p,
                     button(
                         text("Start the service")
                             .size(BODY)
@@ -436,14 +464,17 @@ impl App {
                     .padding([6, 14])
                     .on_press_maybe(can_start.then_some(Message::StartService))
                     .style(look::pill(p, Tone::Live)),
-                );
+                    keys::with_key("From its first step", Op::Mode(Mode::Run)),
+                    tooltip::Position::Bottom,
+                ));
             }
             Mode::Run => {
                 let sure = self.ending.is_some();
-                switch = switch.push(
+                switch = switch.push(hinted(
+                    p,
                     button(
                         text(if sure {
-                            "Click again to end it"
+                            "Again to end it"
                         } else {
                             "End the service"
                         })
@@ -454,7 +485,9 @@ impl App {
                     .padding([6, 14])
                     .on_press(Message::EndService)
                     .style(look::pill(p, if sure { Tone::Alarm } else { Tone::Plain })),
-                );
+                    keys::with_key("Back to planning", Op::Mode(Mode::Plan)),
+                    tooltip::Position::Bottom,
+                ));
             }
             Mode::Live => {}
         }

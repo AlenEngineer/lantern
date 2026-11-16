@@ -19,6 +19,7 @@ use iced::event;
 use iced::keyboard::{self, Key, key::Named};
 
 use crate::Message;
+use crate::mode::Mode;
 
 /// What the operator can do from a key, a button or a script's `press`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -67,6 +68,8 @@ pub enum Op {
     Undo,
     /// Unlocks the running plan for a change, or locks it again.
     Unlock,
+    /// Goes to a mode. Run starts the service; leaving a run ends it.
+    Mode(Mode),
 }
 
 /// A key with its modifiers, as the config writes it (`ctrl+n`, `alt+up`,
@@ -425,6 +428,27 @@ pub const ACTIONS: &[Action] = &[
         Op::Unlock,
         When::Always,
         "Change the plan while it runs; again to lock it",
+    ),
+    action(
+        "plan-mode",
+        "ctrl+1",
+        Op::Mode(Mode::Plan),
+        When::Always,
+        "Plan mode; in a run, end the service (press twice)",
+    ),
+    action(
+        "run-mode",
+        "ctrl+2",
+        Op::Mode(Mode::Run),
+        When::Always,
+        "Run mode: start the service",
+    ),
+    action(
+        "live-mode",
+        "ctrl+3",
+        Op::Mode(Mode::Live),
+        When::Always,
+        "Live mode",
     ),
 ];
 
@@ -815,6 +839,7 @@ mod tests {
         assert_eq!(op_named("Ctrl+B"), Some(Op::Blackout));
         assert_eq!(op_named("ctrl+space"), Some(Op::PlayPause));
         assert_eq!(op_named("b"), None);
+        assert_eq!(op_named("ctrl+2"), Some(Op::Mode(Mode::Run)));
     }
 
     #[test]

@@ -166,6 +166,8 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
 | Ctrl+S, Ctrl+O | save the plan, list your plans (Esc goes back) |
 | Ctrl+N | in the list of plans, a new plan; in a plan, **Add step**: ↑ ↓ choose the kind, Enter adds it |
+| Ctrl+E | in a run, unlock the plan for a change; again locks it |
+| Ctrl+1, Ctrl+2, Ctrl+3 | Plan mode, start the service, Live mode |
 | Ctrl+, | settings: folders, Bibles, image search key, colours |
 
 ### Changing keys
@@ -185,7 +187,9 @@ blackout = "f9"
 
 ### Plan, Run, Live
 
-Lantern is always in one of three modes, switched at the top:
+Lantern is always in one of three modes, switched at the top or by key:
+Ctrl+1 is Plan, Ctrl+2 starts the service, Ctrl+3 is Live. In a run,
+Ctrl+1 pressed twice ends the service, as the button does.
 
 - **Plan**: making and managing plans. Nothing reaches the projector: a
   step or a search result is looked at on this screen only, and Enter adds
