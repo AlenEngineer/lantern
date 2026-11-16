@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use lantern_resource::{Hit, Location, Query, Resource, ResourceId, SourceId};
 
-use crate::normalize::tokens;
+use crate::normalize::{natural, tokens};
 
 // Field weights: a word in the title matters more than one in the lyrics.
 const TITLE: u8 = 3;
@@ -165,6 +165,10 @@ impl Index {
     /// Every word of the query must match (as a whole word, a prefix, or with
     /// one typo). An empty query returns everything that passes the filters,
     /// alphabetically, which is how the dashboard can browse e.g. "all videos".
+    ///
+    /// Results that match equally well come in the order of their titles,
+    /// numbers counted as numbers: of the files `004`, `040` and `400`,
+    /// `4` finds `004` first (the whole number) and then `040`, `400`.
     pub fn search(&self, query: &Query) -> Vec<Hit> {
         let words = tokens(&query.text);
 
@@ -212,7 +216,7 @@ impl Index {
 
         ranked.sort_by(|a, b| {
             b.0.total_cmp(&a.0)
-                .then_with(|| a.1.title_key.cmp(&b.1.title_key))
+                .then_with(|| natural(&a.1.title_key, &b.1.title_key))
         });
         ranked.truncate(query.limit);
         ranked
@@ -423,6 +427,38 @@ mod tests {
         let index = sample();
         let hits = index.search(&Query::new("").with_kind(Kind::Audio));
         assert_eq!(titles(&hits), ["Aleluya", "Canción de alabanza"]);
+    }
+
+    #[test]
+    fn a_number_finds_the_smallest_first() {
+        let mut index = Index::new();
+        for title in ["400", "041", "004", "040", "104", "Himno 004", "Himno 40"] {
+            index.insert(file("local", title, Kind::Video));
+        }
+        assert_eq!(
+            titles(&index.search(&Query::new("4"))),
+            ["004", "Himno 004", "040", "041", "400", "Himno 40"]
+        );
+        assert_eq!(
+            titles(&index.search(&Query::new("himno 4"))),
+            ["Himno 004", "Himno 40"]
+        );
+        assert_eq!(
+            titles(&index.search(&Query::new("04"))),
+            titles(&index.search(&Query::new("4")))
+        );
+    }
+
+    #[test]
+    fn browsing_counts_numbers() {
+        let mut index = Index::new();
+        for title in ["10", "9", "100", "1"] {
+            index.insert(file("local", title, Kind::Video));
+        }
+        assert_eq!(
+            titles(&index.search(&Query::new(""))),
+            ["1", "9", "10", "100"]
+        );
     }
 
     #[test]

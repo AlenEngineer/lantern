@@ -277,6 +277,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   showing the address it had when the remote started.
 - A video taken while it was still loading starts by itself: double-clicking
   a file showed it held at 0:00 until it was paused and played again.
+- A number finds the file numbered so: `4` finds `004.mp4` first, then
+  `040`, `041`, `400`, where it used to list `400` to `499` and never
+  `004`. Results that match equally come in number order, not `1, 10,
+  100, 2`.
 
 ## [0.7.0] - 2026-11-13
 
