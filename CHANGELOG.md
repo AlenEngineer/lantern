@@ -297,6 +297,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   `040`, `041`, `400`, where it used to list `400` to `499` and never
   `004`. Results that match equally come in number order, not `1, 10,
   100, 2`.
+- While a slide's video plays, the Next button says what it does, **Next
+  slide** or **Back to slide N** after the deck's last slide, where it read
+  "Next step" and looked switched off though the key worked.
 
 ## [0.7.0] - 2026-11-13
 

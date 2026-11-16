@@ -1048,6 +1048,16 @@ impl App {
     /// the next slide or page of what's on stage while it has one, and
     /// only then the plan's next step.
     pub(crate) fn next_label(&self, has_next_step: bool) -> (String, bool) {
+        // From what a slide played, it goes back to the slides: on to the
+        // one after, or to the one it was on when that was the last.
+        if let Some(left) = self.left.as_ref().filter(|_| self.left_for_program()) {
+            let label = if left.more {
+                "Next slide".to_string()
+            } else {
+                format!("Back to slide {}", left.frame + 1)
+            };
+            return (keys::with_key(&label, Op::Next), true);
+        }
         match self.stage.program.as_ref().filter(|s| s.has_next_frame()) {
             Some(scene) => (
                 keys::with_key(&format!("Next {}", unit(&scene.resource)), Op::Next),
@@ -1315,11 +1325,15 @@ impl App {
                     PILL,
                     Some(Message::BackToSlides { next: false }),
                 ),
-                text(format!(
-                    "{} goes on to slide {}",
-                    keys::label(Op::Next),
-                    left.frame + 2
-                ))
+                text(if left.more {
+                    format!(
+                        "{} goes on to slide {}",
+                        keys::label(Op::Next),
+                        left.frame + 2
+                    )
+                } else {
+                    "It was the last slide".to_string()
+                })
                 .size(META)
                 .color(p.on_surface_variant),
             ]
