@@ -271,6 +271,10 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// Gives a step a sound to play with it, or takes it away.
+    StepSound(StepId, Option<Arc<lantern_engine::Resource>>),
+    /// The slide a step's sound starts from, as typed: counted from 1.
+    SoundFrom(StepId, String),
     /// Open the settings on this plan: its name, look, template, copy, delete.
     PlanSettings,
     /// The plan's name, as typed in its settings.
@@ -476,6 +480,9 @@ struct App {
     shown_since: Option<(Option<SceneId>, usize, Instant)>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
+    /// The slide a step's sound starts at, as it is being typed: it may
+    /// be empty for a moment, on the way from one number to another.
+    pub(crate) from_typed: Option<(StepId, String)>,
     /// Where the timeline is being dragged, until it is let go.
     scrub: Option<f64>,
 }
@@ -564,6 +571,7 @@ impl App {
             arrived_at: None,
             shown_since: None,
             drafts: HashMap::new(),
+            from_typed: None,
             scrub: None,
         };
         app.check_palette();
@@ -1050,6 +1058,9 @@ impl App {
                 if self.editing.is_some_and(|(id, _)| id != step) {
                     self.editing = None;
                 }
+                if self.from_typed.as_ref().is_some_and(|(id, _)| *id != step) {
+                    self.from_typed = None;
+                }
                 self.selected = Some(step);
                 if let Some(Action::Show { resource }) = self.cued().map(|s| s.action) {
                     self.search.unpick();
@@ -1281,6 +1292,34 @@ impl App {
                         step.label = label;
                     }
                 })
+            }
+            Message::StepSound(id, sound) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(step) = plan.get_mut(id) {
+                        self.from_typed = None;
+                        step.sound = sound.map(|resource| lantern_engine::StepSound {
+                            resource: (*resource).clone(),
+                            from: 0,
+                        });
+                    }
+                })
+            }
+            Message::SoundFrom(id, typed) => {
+                // A slide's number: digits, a few. Anything else isn't
+                // typed. Empty stands for the first slide while it lasts.
+                let typed = typed.trim().to_string();
+                if typed.len() > 3 || !typed.bytes().all(|b| b.is_ascii_digit()) {
+                    return Task::none();
+                }
+                let from = typed.parse::<usize>().unwrap_or(1).max(1);
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(sound) = plan.get_mut(id).and_then(|s| s.sound.as_mut()) {
+                        sound.from = from - 1;
+                    }
+                });
+                self.from_typed = Some((id, typed));
             }
             Message::SetAdvance(id, on) => {
                 self.remember(None);
@@ -1708,6 +1747,7 @@ impl App {
                     self.editing = None;
                     self.typing = None;
                     self.drafts.clear();
+                    self.from_typed = None;
                     engine.edit_plan(|plan| *plan = before);
                     let plan = engine.plan();
                     self.selected = self.selected.filter(|id| plan.get(*id).is_some());

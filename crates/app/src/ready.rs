@@ -43,6 +43,16 @@ pub fn check(
             level,
             what,
         };
+        // The sound that plays with it is a file to have, too.
+        if let Some(sound) = &step.sound {
+            match stage::needs(&sound.resource) {
+                Err(why) => issues.push(issue(Level::Problem, format!("its sound: {why}"))),
+                Ok(Needs::File(path)) if !path.is_file() => {
+                    issues.push(issue(Level::Problem, "its sound's file is missing".into()))
+                }
+                Ok(_) => {}
+            }
+        }
         match stage::needs(resource) {
             Err(why) => issues.push(issue(Level::Problem, why)),
             Ok(Needs::Nothing) => {}

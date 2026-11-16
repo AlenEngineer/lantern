@@ -63,6 +63,22 @@ pub enum Action {
     },
 }
 
+/// A sound that plays with a step, over what the step shows: music under
+/// a passage, or under the last slides of a deck.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepSound {
+    /// The sound.
+    pub resource: Resource,
+    /// The slide it starts at, counted from 0: it plays from there on, and
+    /// stops when the step goes back before it.
+    #[serde(default, skip_serializing_if = "is_first")]
+    pub from: usize,
+}
+
+fn is_first(slide: &usize) -> bool {
+    *slide == 0
+}
+
 /// One entry of a plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Step {
@@ -82,6 +98,10 @@ pub struct Step {
     /// anything else after its length. Off, the operator moves on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub advance: bool,
+    /// A sound that plays with the step. Only a step that shows something
+    /// still (slides, a passage, a picture, pages) plays one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<StepSound>,
 }
 
 impl Step {
@@ -193,6 +213,7 @@ impl Plan {
             action,
             estimate: None,
             advance: false,
+            sound: None,
         };
         self.steps.insert(index.min(self.steps.len()), step);
         id

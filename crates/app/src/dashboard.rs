@@ -1049,7 +1049,9 @@ impl App {
     /// or a note has nothing of its own on stage, so it's never off.
     pub(crate) fn off_plan(&self) -> Option<Step> {
         let step = self.engine.0.current_step()?;
-        let scene = self.stage.program.as_ref()?;
+        // Under a sound, what counts is the picture: the step's own sound
+        // plays over what the step shows.
+        let scene = self.stage.picture().or(self.stage.program.as_ref())?;
         match &step.action {
             Action::Show { resource } if resource.id != scene.resource.id => Some(step),
             Action::Blank => Some(step),
