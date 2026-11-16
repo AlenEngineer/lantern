@@ -237,6 +237,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   to be closed twice within four seconds. With a service or Live going and
   the stage window closed, its button is red and the live picture says
   "the stage is closed".
+- Less standing text. The line over the plan pane no longer describes the
+  mode: it shows only when something is refused, and in a run it holds
+  Unlock. The preview is headed just "Preview", the empty preview and the
+  empty Live list say nothing, and what each Settings section is about
+  shows when the pointer rests on its title.
 
 ### Fixed
 
