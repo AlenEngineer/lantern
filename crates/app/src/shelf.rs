@@ -26,6 +26,36 @@ fn within(file: &Resource) -> String {
     file.tags.get(1..).unwrap_or_default().join("/")
 }
 
+/// A file of the library held by the pointer, on its way into the plan.
+pub struct Carried {
+    pub file: Arc<Resource>,
+    /// Where it was picked up, and where the pointer is now.
+    from: Option<iced::Point>,
+    pub at: iced::Point,
+    /// It has moved far enough to be a drag and not a click.
+    pub moving: bool,
+}
+
+impl Carried {
+    pub fn new(file: Arc<Resource>) -> Carried {
+        Carried {
+            file,
+            from: None,
+            at: iced::Point::ORIGIN,
+            moving: false,
+        }
+    }
+
+    /// The pointer moved to `at`. A few pixels of travel make it a drag.
+    pub fn to(&mut self, at: iced::Point) {
+        let from = *self.from.get_or_insert(at);
+        self.at = at;
+        if from.distance(at) > 6.0 {
+            self.moving = true;
+        }
+    }
+}
+
 /// One folder of the library and the files in it.
 pub struct Folder {
     /// Its label, as in Settings.
@@ -147,20 +177,27 @@ impl App {
                         .clip(true),
                 );
             }
-            button(line)
-                .width(Fill)
-                .padding(
-                    iced::Padding::default()
-                        .left(12.0 + 18.0 * depth as f32)
-                        .right(8.0)
-                        .top(5.0)
-                        .bottom(5.0),
-                )
-                .on_press(Message::Click(Clicked::Shelf(file.id.clone())))
-                .style(look::row(
-                    p,
-                    if picked { Tone::Selected } else { Tone::Plain },
-                ))
+            // Pressed and pulled, it is carried into the plan; the pointer
+            // says it can be.
+            iced::widget::mouse_area(
+                button(line)
+                    .width(Fill)
+                    .padding(
+                        iced::Padding::default()
+                            .left(12.0 + 18.0 * depth as f32)
+                            .right(8.0)
+                            .top(5.0)
+                            .bottom(5.0),
+                    )
+                    .on_press(Message::Click(Clicked::Shelf(file.id.clone())))
+                    .style(look::row(
+                        p,
+                        if picked { Tone::Selected } else { Tone::Plain },
+                    )),
+            )
+            .on_enter(Message::ShelfHover(Some(file.id.clone())))
+            .on_exit(Message::ShelfHover(None))
+            .interaction(iced::mouse::Interaction::Grab)
         };
         for folder in &self.shelf {
             // Filtering: the files that have it, flat under their folder,

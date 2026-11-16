@@ -200,11 +200,18 @@ impl App {
         // they'd land; the editing strip and marks step aside.
         let moving = self.drag.as_ref().filter(|drag| drag.moving);
         let carried = moving.map_or(&[][..], |drag| drag.carried.as_slice());
-        let landing = moving.and_then(|drag| drag.landing);
+        // A file carried in from the library opens the same gap.
+        let held = self.carried.as_ref().filter(|held| held.moving);
+        let landing = moving
+            .and_then(|drag| drag.landing)
+            .or_else(|| self.carry_landing(plan));
         let gap = |indent: f32| {
             container(drop_gap(
                 p,
-                moving.map(|d| d.label(plan)).unwrap_or_default(),
+                moving
+                    .map(|d| d.label(plan))
+                    .or_else(|| held.map(|held| held.file.title.clone()))
+                    .unwrap_or_default(),
             ))
             .padding(iced::Padding::default().left(indent))
         };

@@ -172,6 +172,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The library's folders nest as they do on disk, and a **filter** box at
   its top narrows it to the files whose name or folder has what you type.
   A folder shows all its files, not the first 200.
+- **Drag a file from the library into the plan.** A gap opens where it
+  will land, above or below the step under the pointer.
 
 ### Fixed
 
