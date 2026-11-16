@@ -202,6 +202,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   path in the search, or paste a file copied in the file manager. The
   step then offers **keep a copy**, which copies the file to where Lantern
   keeps plans' media so the plan doesn't depend on the original.
+- **Space goes on.** With the search closed, Space is next: the big key
+  for the thing done most. In an open search it still types, and right
+  after letters typed into a closed search it is let go, so a search typed
+  by mistake never moves the service.
+- Ctrl+Shift+B clears the stage. It had a button and no key.
 
 ### Fixed
 

@@ -179,6 +179,10 @@ impl<T> Hash for Shared<T> {
 
 /// Two clicks on the same thing this close together are a double click.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+
+/// How long after a letter typed into a closed search Space is taken for
+/// part of what was being typed, and not for "go on".
+const STRAY: Duration = Duration::from_millis(1500);
 /// How many plan edits Ctrl+Z can take back.
 const UNDO_DEPTH: usize = 50;
 
@@ -256,6 +260,12 @@ enum Message {
     Key {
         op: Op,
         only_if_empty: bool,
+    },
+    /// A key that types while the search is open and acts once it is
+    /// closed: Space, which goes on to what is next.
+    KeyIfClosed {
+        op: Op,
+        typed: String,
     },
     /// Text typed while the search box didn't have focus: it goes there.
     Type(String),
@@ -467,6 +477,9 @@ struct App {
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
+    /// When a letter was last typed with the search closed, where it goes
+    /// nowhere.
+    stray: Option<Instant>,
     /// A search result just went on stage: what's typed next starts a new
     /// search instead of adding to the old one.
     spent: bool,
@@ -626,6 +639,7 @@ impl App {
             hovered: None,
             drag: None,
             stepping: false,
+            stray: None,
             spent: false,
             adding: None,
             search_open: false,
@@ -1175,8 +1189,21 @@ impl App {
             }
             // Typing goes to the search box, which settings cover.
             Message::Type(_) if self.settings.is_some() => {}
+            Message::KeyIfClosed { .. } if self.settings.is_some() => {}
+            Message::KeyIfClosed { typed, .. } if self.search_open => {
+                return self.update(Message::Type(typed));
+            }
+            // Someone typing a search into a closed box hasn't asked for
+            // the next step: the Space between their words is let go.
+            Message::KeyIfClosed { op, .. } => {
+                if self.stray.is_some_and(|at| at.elapsed() < STRAY) {
+                    self.stray = Some(Instant::now());
+                } else {
+                    return self.op(op);
+                }
+            }
             // With the search closed there's nowhere to type.
-            Message::Type(_) if !self.search_open => {}
+            Message::Type(_) if !self.search_open => self.stray = Some(Instant::now()),
             Message::Type(typed) => {
                 self.stepping = false;
                 let query = if std::mem::take(&mut self.spent) {
