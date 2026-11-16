@@ -851,8 +851,12 @@ impl App {
         // plan's next step).
         let side: Element<'_, Message> = if self.search_open {
             Space::new().width(self.search_width()).into()
-        } else if planning || (self.mode == crate::mode::Mode::Live && self.stage.preview.is_none())
-        {
+        } else if planning {
+            // Beside the plan: the library, to build it from.
+            container(self.shelf_pane())
+                .width(self.side_width().max(260.0))
+                .into()
+        } else if self.mode == crate::mode::Mode::Live && self.stage.preview.is_none() {
             // No plan to say what is next.
             Space::new().into()
         } else {

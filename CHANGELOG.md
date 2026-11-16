@@ -160,6 +160,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A step shows what is inside it, under its row: the videos, sounds and
   pictures on a deck's slides, by slide, and the sound that plays with the
   step. In a run, the slide the service is on is lit.
+- **The library is a tree beside the plan** while planning: the media
+  folders and their files. A click looks at one on this screen; a double
+  click or Enter adds it to the plan after the selected step.
 
 ### Fixed
 
