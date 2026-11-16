@@ -195,6 +195,7 @@ impl App {
                 | Op::RemoveStep
                 | Op::Rename
                 | Op::Undo
+                | Op::Redo
         );
         let manages = matches!(op, Op::New | Op::Open);
         // → and ← are a tree's keys only where nothing they could move

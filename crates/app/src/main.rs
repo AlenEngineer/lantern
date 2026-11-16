@@ -526,6 +526,9 @@ struct App {
     list_pick: Option<PathBuf>,
     /// The plan before each edit, newest last, for Ctrl+Z.
     undo: Vec<Plan>,
+    /// The plans Ctrl+Z took back from, newest last, for doing again.
+    /// A new edit empties it.
+    redo: Vec<Plan>,
     /// The step whose fields are being typed in, so its keystrokes undo as
     /// one edit.
     typing: Option<StepId>,
@@ -670,6 +673,7 @@ impl App {
             editing: None,
             list_pick: None,
             undo: Vec::new(),
+            redo: Vec::new(),
             typing: None,
             arrived_at: None,
             shown_since: None,
@@ -2287,14 +2291,14 @@ impl App {
             }
             Op::Undo => {
                 if let Some(before) = self.undo.pop() {
-                    self.editing = None;
-                    self.typing = None;
-                    self.drafts.clear();
-                    self.from_typed = None;
-                    engine.edit_plan(|plan| *plan = before);
-                    let plan = engine.plan();
-                    self.selected = self.selected.filter(|id| plan.get(*id).is_some());
-                    return self.preload();
+                    self.redo.push(engine.plan());
+                    return self.put_back(before);
+                }
+            }
+            Op::Redo => {
+                if let Some(after) = self.redo.pop() {
+                    self.undo.push(engine.plan());
+                    return self.put_back(after);
                 }
             }
             Op::Open => {
@@ -2510,6 +2514,21 @@ impl App {
             self.undo.remove(0);
         }
         self.undo.push(self.engine.0.plan());
+        // A new edit: what was undone before it can't follow it.
+        self.redo.clear();
+    }
+
+    /// Makes the plan `to`, for an undo or a redo: nothing is mid-edit
+    /// any more, and a step that is gone isn't selected.
+    fn put_back(&mut self, to: Plan) -> Task<Message> {
+        self.editing = None;
+        self.typing = None;
+        self.drafts.clear();
+        self.from_typed = None;
+        self.engine.0.edit_plan(|plan| *plan = to);
+        let plan = self.engine.0.plan();
+        self.selected = self.selected.filter(|id| plan.get(*id).is_some());
+        self.preload()
     }
 
     /// Replaces the plan with `to`, asking first while the plan is running.
@@ -2567,6 +2586,7 @@ impl App {
             // Ctrl+Z never reaches back into the plan that was open before.
             self.editing = None;
             self.undo.clear();
+            self.redo.clear();
             self.typing = None;
             self.preload()
         } else {
