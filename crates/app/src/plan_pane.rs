@@ -520,6 +520,9 @@ impl App {
             .on_exit(Message::Unhover(id));
         if self.drag.as_ref().is_some_and(|drag| drag.moving) {
             area.interaction(mouse::Interaction::Grabbing).into()
+        } else if self.balk.is_some_and(|(_, pulled)| pulled) {
+            // Pulled at in a run that won't let it move.
+            area.interaction(mouse::Interaction::NotAllowed).into()
         } else {
             area.into()
         }
@@ -821,6 +824,12 @@ impl App {
                 a: crate::motion::between((fill.a * 1.9).min(1.0), fill.a, ring),
                 ..fill
             },
+            None => fill,
+        };
+        // Just added, replaced or dropped here: it flashes once, so the
+        // eye finds where it went.
+        let fill = match self.motion.flash(step.id) {
+            Some(faded) => crate::motion::blend(Palette::tint(p.primary, 0.5), fill, faded),
             None => fill,
         };
         let row = button(line)

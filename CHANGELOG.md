@@ -186,6 +186,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   stage, the stage says **from the phone** for two seconds, so whoever is
   at the keyboard knows it wasn't them. **Motion** in Settings (or
   `no_motion = true`) turns the moving off.
+- A refusal can be seen. When a mode won't do what was asked (an edit to
+  a locked run, something for the projector while planning), the mode's
+  note says why, lit, and shakes once. Pulling at a step the run won't let
+  move does the same, under a "not allowed" pointer.
+- A step that was just added, replaced or dropped in its new place
+  flashes once, so the eye finds where it went.
 
 ### Fixed
 
