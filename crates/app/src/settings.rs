@@ -12,7 +12,7 @@ use iced::{Alignment, Element, Fill};
 use lantern_engine::{Look, Plan, Rgb, fold};
 
 use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
-use crate::dashboard::{chip, pill, scrolling, wide};
+use crate::dashboard::{chip, hinted, pill, scrolling, wide};
 use crate::fit;
 use crate::keys::{self, Keymap, Op};
 use crate::library;
@@ -923,12 +923,6 @@ impl App {
             }
             (None, false) => {}
         }
-        header = header.push(
-            text(format!("{} closes", keys::label(Op::ClearSearch)))
-                .size(META)
-                .color(p.on_surface_variant),
-        );
-
         let mut folders = column![section(
             p,
             "Media folders",
@@ -1535,33 +1529,34 @@ impl App {
             footer = footer.push(chip(p, "unsaved changes", Tone::Live));
         }
         footer = footer
-            .push(pill(
+            .push(hinted(
                 p,
-                &keys::with_key(
+                pill(
+                    p,
                     match (dirty, draft.leaving) {
                         (true, true) => "Discard them",
                         (true, false) => "Discard",
                         (false, _) => "Close",
                     },
-                    Op::ClearSearch,
+                    if dirty && draft.leaving {
+                        Tone::Danger
+                    } else {
+                        Tone::Plain
+                    },
+                    PILL,
+                    Some(Message::Key {
+                        op: Op::ClearSearch,
+                        only_if_empty: false,
+                    }),
                 ),
-                if dirty && draft.leaving {
-                    Tone::Danger
-                } else {
-                    Tone::Plain
-                },
-                PILL,
-                Some(Message::Key {
-                    op: Op::ClearSearch,
-                    only_if_empty: false,
-                }),
+                keys::with_key("Leave the settings", Op::ClearSearch),
+                iced::widget::tooltip::Position::Top,
             ))
-            .push(pill(
+            .push(hinted(
                 p,
-                &keys::with_key("Save", Op::Save),
-                Tone::Selected,
-                PILL,
-                Some(Message::SaveSettings),
+                pill(p, "Save", Tone::Selected, PILL, Some(Message::SaveSettings)),
+                keys::with_key("Keep these settings", Op::Save),
+                iced::widget::tooltip::Position::Top,
             ));
         column![header, body, footer]
             .spacing(16)

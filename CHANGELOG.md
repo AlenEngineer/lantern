@@ -218,6 +218,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
   in Live, → ← are still next and back.
 - Ctrl+Shift+Z does again what Ctrl+Z took back. A new edit of the plan
   ends what can be redone.
+- Buttons no longer carry their keys in their labels: Unlock, New plan,
+  Add to the plan, Show now, and Save and Close in Settings say their key
+  once the pointer rests on them, like the rest. A key stays in sight
+  where the words are the instruction ("Ctrl+Enter adds here"), and on
+  **Next step**, which now names Space.
+- Buttons no longer carry their keys in their labels: Unlock, New plan,
+  Add to the plan, Show now, and Save and Close in Settings say their key
+  once the pointer rests on them, like the rest. A key stays in sight
+  where the words are the instruction ("Ctrl+Enter adds here"), and on
+  **Next step**, which now names Space.
 
 ### Fixed
 
