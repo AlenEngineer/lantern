@@ -167,6 +167,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
+| Ctrl+Shift+Z | do again what Ctrl+Z took back, until the plan is edited anew |
 | Ctrl+S, Ctrl+O | save the plan, list your plans (Esc goes back) |
 | Ctrl+N | in the list of plans, a new plan; in a plan, **Add step**: ↑ ↓ choose the kind, Enter adds it |
 | Ctrl+E | in a run, unlock the plan for a change; again locks it |

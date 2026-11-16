@@ -216,6 +216,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   last row. F6 gives the arrows to the library, where the same keys walk
   its folders and files and Enter adds the file to the plan. In a run and
   in Live, → ← are still next and back.
+- Ctrl+Shift+Z does again what Ctrl+Z took back. A new edit of the plan
+  ends what can be redone.
 
 ### Fixed
 

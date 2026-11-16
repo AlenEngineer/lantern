@@ -76,6 +76,8 @@ pub enum Op {
     Rename,
     /// Takes back the last edit of the plan.
     Undo,
+    /// Does again the edit that was last taken back.
+    Redo,
     /// Unlocks the running plan for a change, or locks it again.
     Unlock,
     /// Goes to a mode. Run starts the service; leaving a run ends it.
@@ -422,6 +424,13 @@ pub const ACTIONS: &[Action] = &[
         Op::Undo,
         When::Always,
         "Undo the last edit of the plan",
+    ),
+    action(
+        "redo",
+        "ctrl+shift+z",
+        Op::Redo,
+        When::Always,
+        "Redo the edit that was undone",
     ),
     action(
         "move-up",
@@ -871,6 +880,8 @@ mod tests {
         assert_eq!(op_named("ctrl+space"), Some(Op::PlayPause));
         assert_eq!(op_named("b"), None);
         assert_eq!(op_named("ctrl+2"), Some(Op::Mode(Mode::Run)));
+        assert_eq!(op_named("ctrl+z"), Some(Op::Undo));
+        assert_eq!(op_named("ctrl+shift+z"), Some(Op::Redo));
     }
 
     #[test]
