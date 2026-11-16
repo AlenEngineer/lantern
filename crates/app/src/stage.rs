@@ -869,9 +869,10 @@ impl Stage {
             return;
         };
         let paused = timed.playback != Playback::Playing;
-        if video.paused() != paused {
-            video.set_paused(paused);
-        }
+        // Told every time, not only when the player says it differs: one
+        // just opened is still on its way to paused and says "playing"
+        // until it gets there, and then stays paused.
+        video.set_paused(paused);
         if paused && let Some(position) = position(video) {
             engine.report(scene, MediaReport::Position(position));
         }
