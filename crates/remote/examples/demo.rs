@@ -110,6 +110,12 @@ fn snapshot(at: usize, blackout: bool, playing: bool, text: &str) -> Snapshot {
             }),
             slides: verse.then_some(Slides { at: 1, of: Some(2) }),
             failed: None,
+            attached: if verse {
+                vec!["Video".into(), "YouTube video".into()]
+            } else {
+                Vec::new()
+            },
+            back: (!verse).then_some(3),
         }),
         next: Some(Upcoming {
             title: rows[shown[(at + 1) % shown.len()]].1.into(),

@@ -135,6 +135,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   `.pptx`, a YouTube video or a link to a picture, a button under the
   slides shows it. Next then goes on to the following slide, and Prev back
   to the one it was on.
+- The phone remote shows a deck's videos: the slide on stage lists what it
+  plays or links to, a button each, and **Back to slide N** returns from
+  it. Next and the back arrow do as they do on the computer.
 
 ### Fixed
 

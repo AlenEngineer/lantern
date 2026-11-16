@@ -1272,18 +1272,7 @@ impl App {
             return None;
         }
         let buttons = on_slide.iter().enumerate().map(|(n, resource)| {
-            let (icon, what) = match resource.kind {
-                _ if YoutubeVideo::of(resource).is_some() => (Icon::Play, "YouTube video"),
-                lantern_engine::Kind::Video => (Icon::Play, "Video"),
-                lantern_engine::Kind::Image => (Icon::Image, "Picture"),
-                _ => (Icon::Link, "Link"),
-            };
-            // Numbered only when the slide has several.
-            let label = if on_slide.len() > 1 {
-                format!("{what} {}", n + 1)
-            } else {
-                what.to_string()
-            };
+            let (icon, label) = attachment_name(resource, n, on_slide.len());
             button(
                 container(
                     row![
@@ -1470,6 +1459,24 @@ impl App {
 
 /// How tall the slide strip grows before it scrolls: about three rows.
 const STRIP_HEIGHT: f32 = 96.0;
+
+/// What something a slide plays or links to is called on its button, and
+/// its icon: "Video", or "Video 2" as the second of several on the slide.
+pub(crate) fn attachment_name(resource: &Resource, n: usize, of: usize) -> (Icon, String) {
+    let (icon, what) = match resource.kind {
+        _ if YoutubeVideo::of(resource).is_some() => (Icon::Play, "YouTube video"),
+        lantern_engine::Kind::Video => (Icon::Play, "Video"),
+        lantern_engine::Kind::Image => (Icon::Image, "Picture"),
+        _ => (Icon::Link, "Link"),
+    };
+    // Numbered only when the slide has several.
+    let label = if of > 1 {
+        format!("{what} {}", n + 1)
+    } else {
+        what.to_string()
+    };
+    (icon, label)
+}
 
 pub(crate) fn unit(resource: &Resource) -> &'static str {
     match resource.kind {

@@ -271,6 +271,7 @@ impl App {
             Command::Blackout => self.op(Op::Blackout),
             Command::Clear => self.op(Op::Clear),
             Command::Resume => self.update(Message::Resume),
+            Command::Attachment { n } => self.update(Message::Attachment(n)),
             Command::Seek { seconds } if seconds.is_finite() && seconds >= 0.0 => {
                 self.engine.0.seek(Duration::from_secs_f64(seconds));
                 Task::none()
@@ -396,12 +397,30 @@ impl App {
                 }
                 Media::Failed { reason } => (None, None, Some(reason.clone())),
             };
+            let on_slide = self
+                .attached
+                .as_ref()
+                .filter(|(deck, _)| *deck == scene.resource.id)
+                .and_then(|(_, slides)| slides.get(scene.frame()))
+                .map_or(&[][..], Vec::as_slice);
             Live {
                 title: scene.resource.title.clone(),
                 facts: scene.resource.subtitle.clone().unwrap_or_default(),
                 timed,
                 slides,
                 failed,
+                attached: on_slide
+                    .iter()
+                    .enumerate()
+                    .map(|(n, resource)| {
+                        crate::dashboard::attachment_name(resource, n, on_slide.len()).1
+                    })
+                    .collect(),
+                back: self
+                    .left
+                    .as_ref()
+                    .filter(|_| self.left_for_program())
+                    .map(|left| left.frame + 1),
             }
         });
         let next = self.engine.0.up_next().map(|step| Upcoming {

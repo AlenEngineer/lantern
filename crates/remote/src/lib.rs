@@ -470,6 +470,9 @@ mod tests {
         post(&server, "/do?t=secret", r#"{"do":"go","step":7}"#);
         assert_eq!(commands.recv().unwrap(), Command::Go { step: 7 });
 
+        post(&server, "/do?t=secret", r#"{"do":"attachment","n":1}"#);
+        assert_eq!(commands.recv().unwrap(), Command::Attachment { n: 1 });
+
         let answer = post(&server, "/do?t=secret", r#"{"do":"explode"}"#);
         assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");
         assert!(commands.try_recv().is_err());
