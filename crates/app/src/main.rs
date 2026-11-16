@@ -353,6 +353,8 @@ enum Message {
     Scrub(f64),
     /// The timeline was let go.
     Scrubbed,
+    /// Puts what is picked in a step's place.
+    ReplaceStep(StepId),
     /// Folds a section of the plan away, or opens it again.
     Fold(StepId),
     /// Opens a folder of the library tree, or closes it.
@@ -1144,6 +1146,38 @@ impl App {
             }
             Message::ShelfFold(folder) => {
                 self.shelf_open = (self.shelf_open.as_ref() != Some(&folder)).then_some(folder);
+            }
+            Message::ReplaceStep(id) => {
+                let Some((step, pick)) = self.replaceable().filter(|(step, _)| step.id == id)
+                else {
+                    return Task::none();
+                };
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| {
+                    let Some(step) = plan.get_mut(id) else {
+                        return;
+                    };
+                    // A step named after what it showed is named after
+                    // what it shows now; a name the operator gave stays.
+                    let named_after = matches!(
+                        &step.action,
+                        Action::Show { resource } if resource.title == step.label
+                    );
+                    if named_after || step.label.is_empty() {
+                        step.label.clone_from(&pick.title);
+                    }
+                    // The sound that played with it stays with the step;
+                    // a length set for the old content doesn't fit the new.
+                    step.estimate = None;
+                    step.action = Action::Show {
+                        resource: (*pick).clone(),
+                    };
+                });
+                log(format!("plan: {} replaced with {}", step.label, pick.title));
+                self.search.unpick();
+                self.shelf_pick = None;
+                self.engine.0.preview(pick);
+                return self.preload();
             }
             Message::Fold(section) => {
                 if !self.folded.remove(&section) {

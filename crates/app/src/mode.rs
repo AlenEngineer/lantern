@@ -93,6 +93,7 @@ fn does(message: &Message) -> Does {
         | M::SlotSearch(id, _)
         | M::Length(id, _)
         | M::Move(id, _)
+        | M::ReplaceStep(id)
         | M::EditStep(Some((id, _))) => Does::EditsStep(*id),
         M::AddStep(_) | M::ToggleAdd | M::Unstandby(_) | M::PlanStarts(_) => Does::EditsPlan,
         M::RenamePlan(_)
