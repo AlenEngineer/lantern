@@ -1295,6 +1295,7 @@ impl App {
                     .style(look::tip(p)),
                     iced::widget::tooltip::Position::Top,
                 )
+                .delay(look::TIP_DELAY)
                 .into()
             } else {
                 Space::new().width(28).into()

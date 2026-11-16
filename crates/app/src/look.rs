@@ -30,6 +30,10 @@ pub const PILL_RADIUS: f32 = 999.0;
 pub const PILL: f32 = 36.0;
 pub const PILL_SMALL: f32 = 30.0;
 
+/// How long the pointer rests on something before its tip shows: passing
+/// over shows nothing.
+pub const TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(350);
+
 /// The hover veil: `on_surface` at 12% over whatever is under it.
 const VEIL: f32 = 0.12;
 /// A selected or current item: its role at 22%.

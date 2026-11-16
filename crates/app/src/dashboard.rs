@@ -9,7 +9,9 @@ use iced::widget::{
     Space, button, column, container, image, pin, row, scrollable, slider, stack, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Length};
-use lantern_engine::{Action, Bang, Media, Playback, Resource, Scene, Scope, Step, Timed, Timing};
+use lantern_engine::{
+    Action, Bang, Media, Playback, Resource, Scene, Scope, Step, StepId, Timed, Timing,
+};
 
 use crate::keys::{self, Op};
 use crate::length;
@@ -498,16 +500,19 @@ impl App {
                         .into(),
                 };
                 let about = format!("{} · !{}", bang.sources.join(", "), bang.bang);
-                strip = strip.push(iced::widget::tooltip(
-                    button(face)
-                        .padding([9, 10])
-                        .on_press(Message::Bang(bang.bang.clone()))
-                        .style(look::strip_item(p, tone)),
-                    container(text(about).size(META))
-                        .padding([4, 8])
-                        .style(look::tip(p)),
-                    iced::widget::tooltip::Position::Bottom,
-                ));
+                strip = strip.push(
+                    iced::widget::tooltip(
+                        button(face)
+                            .padding([9, 10])
+                            .on_press(Message::Bang(bang.bang.clone()))
+                            .style(look::strip_item(p, tone)),
+                        container(text(about).size(META))
+                            .padding([4, 8])
+                            .style(look::tip(p)),
+                        iced::widget::tooltip::Position::Bottom,
+                    )
+                    .delay(look::TIP_DELAY),
+                );
             }
         }
         let search_tone = if self.search_open {
@@ -1087,8 +1092,13 @@ impl App {
     /// result or a file of the library, other than what the step shows
     /// already. Nothing when the mode wouldn't let the step change.
     pub(crate) fn replaceable(&self) -> Option<(Step, std::sync::Arc<Resource>)> {
+        self.replaceable_at(self.selected?)
+    }
+
+    /// The same for any step: the row under the pointer offers it too.
+    pub(crate) fn replaceable_at(&self, id: StepId) -> Option<(Step, std::sync::Arc<Resource>)> {
         let plan = self.engine.0.plan();
-        let step = plan.get(self.selected?)?.clone();
+        let step = plan.get(id)?.clone();
         let Action::Show { resource: shown } = &step.action else {
             return None;
         };

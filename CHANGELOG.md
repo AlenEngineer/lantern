@@ -177,6 +177,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - **A service cut short is picked up.** Closed or crashed mid-service,
   Lantern comes back in Run with the plan waiting at the step and slide it
   was at; nothing is shown until **Pick up there** (PgDn).
+- A step under the pointer offers what can be done to it: **✕** takes it
+  out, and with something else picked, **Replace** puts that in its place.
+  Tips wait a moment before they show, so passing over a button shows
+  nothing.
 
 ### Fixed
 

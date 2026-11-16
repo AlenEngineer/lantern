@@ -153,6 +153,7 @@ impl App {
                 tip(about),
                 tooltip::Position::Top,
             )
+            .delay(look::TIP_DELAY)
         };
         let sign = |label: &'static str| -> Element<'static, Message> {
             text(label).size(META).color(p.primary).into()
@@ -213,26 +214,30 @@ impl App {
                         .style(look::row(p, Tone::Plain)),
                     tip("To play a sound with this step: find it in search, pick it, then click here".into()),
                     tooltip::Position::Top,
-                ),
+                )
+.delay(look::TIP_DELAY),
             });
             // Where in the step it starts: the slide's number.
             if let Some(sound) = &step.sound {
-                actions = actions.push(tooltip(
-                    text_input(
-                        "1",
-                        &match &self.from_typed {
-                            Some((typing, typed)) if *typing == id => typed.clone(),
-                            _ => (sound.from + 1).to_string(),
-                        },
+                actions = actions.push(
+                    tooltip(
+                        text_input(
+                            "1",
+                            &match &self.from_typed {
+                                Some((typing, typed)) if *typing == id => typed.clone(),
+                                _ => (sound.from + 1).to_string(),
+                            },
+                        )
+                        .on_input(move |typed| Message::SoundFrom(id, typed))
+                        .size(META)
+                        .padding([2, 4])
+                        .width(30)
+                        .style(look::input(p)),
+                        tip("The slide the sound starts at".into()),
+                        tooltip::Position::Top,
                     )
-                    .on_input(move |typed| Message::SoundFrom(id, typed))
-                    .size(META)
-                    .padding([2, 4])
-                    .width(30)
-                    .style(look::input(p)),
-                    tip("The slide the sound starts at".into()),
-                    tooltip::Position::Top,
-                ));
+                    .delay(look::TIP_DELAY),
+                );
             }
         }
         actions
