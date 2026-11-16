@@ -485,8 +485,9 @@ impl App {
                 (place.unwrap_or(BANG_ORDER.len()), bang.bang.clone())
             });
             // Only as many as the strip has room for beside the rest.
-            // The mode switch and the service's time come first.
-            let room = ((wide - 1280.0).max(0.0) / 40.0) as usize + 2;
+            // The mode switch, the service's time and the stage's button
+            // come first.
+            let room = ((wide - 1280.0).max(0.0) / 40.0) as usize + 1;
             for bang in bangs.into_iter().take(room) {
                 let lit = self.search_open && self.search.bang() == Some(bang.bang.as_str());
                 let tone = if lit { Tone::Selected } else { Tone::Plain };
