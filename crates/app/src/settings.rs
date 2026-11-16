@@ -245,6 +245,8 @@ struct Folder {
     path: String,
     /// Its bang as typed, `!` or not.
     bang: String,
+    /// Its names file, as typed.
+    names: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,6 +261,7 @@ struct Bible {
 pub enum Edit {
     FolderLabel(usize, String),
     FolderBang(usize, String),
+    FolderNames(usize, String),
     FolderPath(usize, String),
     AddFolder,
     RemoveFolder(usize),
@@ -329,6 +332,7 @@ impl Draft {
                     label: f.label.clone().unwrap_or_default(),
                     path: shown(&f.path),
                     bang: f.bang.as_ref().map(|b| format!("!{b}")).unwrap_or_default(),
+                    names: f.names.as_deref().map(shown).unwrap_or_default(),
                 })
                 .collect(),
             bibles: config
@@ -520,6 +524,7 @@ impl Draft {
         match edit {
             Edit::FolderLabel(i, text) => self.folder(i, |f| f.label = text),
             Edit::FolderBang(i, text) => self.folder(i, |f| f.bang = text),
+            Edit::FolderNames(i, text) => self.folder(i, |f| f.names = text),
             Edit::FolderPath(i, text) => self.folder(i, |f| f.path = text),
             Edit::AddFolder => self.folders.push(Folder::default()),
             Edit::PlanFolderPath(i, text) => self.plan_folder(i, text),
@@ -656,6 +661,7 @@ impl Draft {
                         .map(|bang| config::folder_bang(&bang))
                         .transpose()
                         .map_err(|err| format!("The folder {p}: {err}"))?,
+                    names: optional(&folder.names).map(|names| path(&names)),
                 }),
                 (Some(label), None) => return Err(format!("The folder “{label}” needs a path.")),
                 (None, None) => {}
@@ -913,13 +919,29 @@ impl App {
         let mut folders = column![section(
             p,
             "Media folders",
-            "The folders Lantern indexes, with those inside them. A bang like !h searches only that folder."
+            "The folders Lantern indexes, with those inside them. A bang like !h searches only that folder. A names file gives titles to files named by number: a line each, the file's name, a tab, its title."
         )]
         .spacing(6);
         // A folder that isn't there says so under its row, once it's
         // typed: saved as it is, it would just never find anything.
         let config_dir = file.parent().unwrap_or(Path::new(".")).to_path_buf();
         let home = self.home.clone();
+        // A names file that isn't there says so too: the folder would keep
+        // the names its files have, with nothing to say why.
+        let no_names = {
+            let (dir, home) = (config_dir.clone(), home.clone());
+            move |typed: &str| {
+                let typed = typed.trim();
+                (!typed.is_empty()
+                    && !config::resolve(Path::new(typed), &dir, home.as_deref()).is_file())
+                .then(|| -> Element<'a, Message> {
+                    text("No file there. The folder keeps its files' own names.")
+                        .size(META)
+                        .color(p.error)
+                        .into()
+                })
+            }
+        };
         let not_there = move |draft: &Draft, field: Field, typed: &str| {
             draft
                 .missing_folder(field, typed, &config_dir, home.as_deref())
@@ -933,7 +955,7 @@ impl App {
         for (i, folder) in draft.folders.iter().enumerate() {
             // The path has a line to itself: beside the label and the bang
             // it showed about twenty characters of a folder's path.
-            folders = folders.push(
+            let mut group = column![
                 row![
                     field(p, "Label", &folder.label, move |t| Edit::FolderLabel(i, t)).width(Fill),
                     field(p, "!bang", &folder.bang, move |t| Edit::FolderBang(i, t))
@@ -942,16 +964,32 @@ impl App {
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
-            );
-            folders = folders.push(
                 field(p, "e.g. ~/Music", &folder.path, move |t| {
                     Edit::FolderPath(i, t)
                 })
                 .id(Field::Folder(i).id())
                 .width(Fill),
+            ]
+            .spacing(6);
+            // Only what there is: an empty line would still take its gap,
+            // and push the names file away from its folder.
+            if !draft.suggestions(Field::Folder(i)).is_empty() {
+                group = group.push(suggestions(p, draft, Field::Folder(i)));
+            }
+            if let Some(missing) = not_there(draft, Field::Folder(i), &folder.path) {
+                group = group.push(missing);
+            }
+            group = group.push(
+                field(p, "Names file, optional", &folder.names, move |t| {
+                    Edit::FolderNames(i, t)
+                })
+                .width(Fill),
             );
-            folders = folders.push(suggestions(p, draft, Field::Folder(i)));
-            folders = folders.push(not_there(draft, Field::Folder(i), &folder.path));
+            if let Some(missing) = no_names(&folder.names) {
+                group = group.push(missing);
+            }
+            // A folder's three lines read as one: the next starts apart.
+            folders = folders.push(group).push(Space::new().height(4));
         }
         folders = folders.push(add(p, "Add folder", Edit::AddFolder));
 
@@ -2085,6 +2123,14 @@ mod tests {
         let config = draft.config(dir, home()).unwrap();
         assert_eq!(config.folders[1].bang.as_deref(), Some("h"));
         assert_eq!(Draft::of(&config, home()).folders[1].bang, "!h");
+        assert_eq!(config.folders[1].names, None);
+        draft.edit(Edit::FolderNames(1, " ~/himnos.tsv ".into()));
+        let config = draft.config(dir, home()).unwrap();
+        assert_eq!(
+            config.folders[1].names.as_deref(),
+            Some(Path::new("/home/ana/himnos.tsv"))
+        );
+        assert_eq!(Draft::of(&config, home()).folders[1].names, "~/himnos.tsv");
         draft.edit(Edit::FolderBang(1, "b".into()));
         let err = draft.config(dir, home()).unwrap_err();
         assert_eq!(

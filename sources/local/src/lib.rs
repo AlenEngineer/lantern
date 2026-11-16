@@ -11,8 +11,13 @@
 //! - **tags**: the same folder names, so searching `hymns` finds everything inside;
 //! - **meta**: `extension` and `size` (bytes).
 //!
+//! A folder whose files are named by number or code (`004.mp4`) can have a
+//! names file, which gives each a title to show and to search by: see
+//! [`Folder::named_by`].
+//!
 //! Hidden files and folders (starting with `.`) are skipped unless enabled.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::iter;
 use std::path::{Path, PathBuf};
@@ -33,6 +38,8 @@ pub struct Folder {
     pub recursive: bool,
     /// Only index these kinds. Empty means every kind recognized.
     pub kinds: Vec<Kind>,
+    /// A file with titles for the folder's files: see [`Folder::named_by`].
+    pub names: Option<PathBuf>,
 }
 
 impl Folder {
@@ -43,7 +50,27 @@ impl Folder {
             label: None,
             recursive: true,
             kinds: Vec::new(),
+            names: None,
         }
+    }
+
+    /// Takes the titles of the folder's files from a names file: text with
+    /// a file and its title on each line, a tab between them.
+    ///
+    /// ```text
+    /// # Lines starting with # are skipped.
+    /// 004.mp4<tab>Himno 4 · Alabanzas sin cesar
+    /// 005<tab>Himno 5 · A ti, glorioso Dios
+    /// ```
+    ///
+    /// The file is named as it is in the folder, with its extension or
+    /// without it (then every `005.*` takes the title), or by its path
+    /// from the folder for one in a sub-folder (`coros/005.mp4`). A file
+    /// the list leaves out keeps its own name, and so does every file if
+    /// the list can't be read.
+    pub fn named_by(mut self, names: impl Into<PathBuf>) -> Self {
+        self.names = Some(names.into());
+        self
     }
 
     /// Sets the display name.
@@ -127,15 +154,26 @@ impl LocalSource {
             .max_depth(depth)
             .into_iter()
             .filter_entry(|e| self.include_hidden || e.depth() == 0 || !is_hidden(e.file_name()));
+        let names = folder
+            .names
+            .as_deref()
+            .and_then(|file| std::fs::read_to_string(file).ok())
+            .map(|text| names(&text))
+            .unwrap_or_default();
         // Unreadable entries are skipped: one bad file must not hide the rest.
         for entry in walker.filter_map(Result::ok) {
             if entry.file_type().is_file() {
-                out.extend(self.resource_for(folder, &entry));
+                out.extend(self.resource_for(folder, &names, &entry));
             }
         }
     }
 
-    fn resource_for(&self, folder: &Folder, entry: &DirEntry) -> Option<Resource> {
+    fn resource_for(
+        &self,
+        folder: &Folder,
+        names: &HashMap<String, String>,
+        entry: &DirEntry,
+    ) -> Option<Resource> {
         let path = entry.path();
         let extension = path.extension()?.to_str()?.to_ascii_lowercase();
         let kind = Kind::from_extension(&extension)?;
@@ -152,7 +190,7 @@ impl LocalSource {
 
         let mut resource = Resource::new(
             ResourceId::new(&self.id, &path.to_string_lossy()),
-            humanize(&path.file_stem()?.to_string_lossy()),
+            title(names, &folder.path, path)?,
             kind,
             Location::File(path.to_path_buf()),
         )
@@ -217,6 +255,34 @@ fn relative_parents(root: &Path, file: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// What a names file says, by the file each line names.
+fn names(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(file, title)| (file.trim().to_owned(), title.trim().to_owned()))
+        .filter(|(file, title)| !file.is_empty() && !title.is_empty())
+        .collect()
+}
+
+/// A file's title: what `names` gives it, by its path from `root`, its
+/// name or its name without extension, or else its own name made readable.
+fn title(names: &HashMap<String, String>, root: &Path, file: &Path) -> Option<String> {
+    let stem = file.file_stem()?.to_string_lossy();
+    let from_root = file.strip_prefix(root).ok().map(|path| {
+        path.iter()
+            .map(|part| part.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/")
+    });
+    let name = file.file_name().map(|name| name.to_string_lossy());
+    let named = [from_root.as_deref(), name.as_deref(), Some(&*stem)]
+        .into_iter()
+        .flatten()
+        .find_map(|key| names.get(key));
+    Some(named.cloned().unwrap_or_else(|| humanize(&stem)))
 }
 
 /// `"Santo_santo  santo"` → `"Santo santo santo"`.
@@ -296,6 +362,37 @@ mod tests {
         let items = source([folder]).scan().unwrap();
         assert_eq!(titles(items.clone()), ["intro"]);
         assert_eq!(items[0].subtitle.as_deref(), Some("Música"));
+    }
+
+    #[test]
+    fn a_names_file_gives_titles() {
+        let dir = tree();
+        let list = dir.path().join("names.tsv");
+        fs::write(
+            &list,
+            "# our music\n\
+             intro\tPreludio\n\
+             cover.jpg\tPortada del disco\n\
+             Hymns/Santo_santo_santo.mp3\t Himno 1 · Santo, santo, santo \n\
+             not a line\n\
+             nobody.mp3\tNadie\n",
+        )
+        .unwrap();
+        let folder = Folder::new(dir.path().join("Music")).named_by(&list);
+        let items = source([folder]).scan().unwrap();
+        assert_eq!(
+            titles(items),
+            [
+                "Himno 1 · Santo, santo, santo",
+                "Portada del disco",
+                "Preludio"
+            ]
+        );
+
+        // A list that isn't there changes nothing.
+        let folder = Folder::new(dir.path().join("Music")).named_by(dir.path().join("gone.tsv"));
+        let items = source([folder]).scan().unwrap();
+        assert_eq!(titles(items), ["Santo santo santo", "cover", "intro"]);
     }
 
     #[test]

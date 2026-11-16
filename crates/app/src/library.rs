@@ -59,6 +59,7 @@ impl PlanNeeds {
                     .map(|name| name.to_string_lossy().into_owned()),
                 path,
                 bang: None,
+                names: None,
             }
         }));
         let wanted = |entry: &BibleEntry| {
@@ -299,6 +300,10 @@ fn folder_sources(
             };
             let local = entries.into_iter().fold(local, |local, entry| {
                 let folder = Folder::new(entry.path);
+                let folder = match entry.names {
+                    Some(names) => folder.named_by(names),
+                    None => folder,
+                };
                 local.with_folder(match entry.label {
                     Some(label) => folder.labeled(label),
                     None => folder,

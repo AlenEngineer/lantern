@@ -10,6 +10,7 @@
 //! path = "~/Videos"
 //! label = "Videos"      # optional
 //! bang = "v"            # optional: !v searches only this folder
+//! names = "~/himnos.tsv" # optional: titles for its files, "004<tab>Title"
 //!
 //! [[bibles]]
 //! lang = "es"           # "es" or "en": the language of the book names
@@ -95,6 +96,10 @@ pub struct FolderEntry {
     /// with the same bang). It still answers `!f` with every folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bang: Option<String>,
+    /// A text file with titles for the folder's files, one a line: the
+    /// file's name, a tab, its title. For files named by number or code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub names: Option<PathBuf>,
 }
 
 /// The bangs Lantern's own sources answer, which a folder can't take.
@@ -162,7 +167,7 @@ impl Config {
     fn paths_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
         self.folders
             .iter_mut()
-            .map(|f| &mut f.path)
+            .flat_map(|f| std::iter::once(&mut f.path).chain(f.names.as_mut()))
             .chain(self.bibles.iter_mut().map(|b| &mut b.path))
             .chain(self.colors.as_mut())
             .chain(self.stage.image.as_mut())
@@ -438,6 +443,7 @@ mod tests {
                 path: "/home/ana/Music".into(),
                 label: Some("Music".into()),
                 bang: Some("m".into()),
+                names: Some("/home/ana/Music/names.tsv".into()),
             }],
             bibles: vec![BibleEntry {
                 lang: Lang::Es,
@@ -453,6 +459,7 @@ mod tests {
         let text = config.to_toml(Some(home));
         assert!(text.contains("image = \"~/Pictures/cross.jpg\""), "{text}");
         assert!(text.contains("path = \"~/Music\""), "{text}");
+        assert!(text.contains("names = \"~/Music/names.tsv\""), "{text}");
         assert!(text.contains("/srv/bibles/rv1909.tsv"), "{text}");
         assert!(
             text.contains("see_through = 40") && text.contains("no_blur = true"),
