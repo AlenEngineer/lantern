@@ -217,8 +217,37 @@ impl App {
             move |id| schedule.start_of(id).map(|after| starts.plus(after))
         });
         let mut rows = column![].spacing(2);
+        // While planning, the pane is a tree: the open plan, its sections
+        // and their steps, and under them the other plans.
+        let tree = self.mode == crate::mode::Mode::Plan;
+        if tree {
+            rows = rows.push(
+                row![
+                    text("▾").size(META).color(p.primary),
+                    container(
+                        single_line(plan.title.clone())
+                            .size(BODY)
+                            .font(BOLD)
+                            .color(p.primary)
+                    )
+                    .width(Fill)
+                    .clip(true),
+                    text(if self.plans.is_dirty(plan) {
+                        "unsaved"
+                    } else {
+                        "open"
+                    })
+                    .size(META)
+                    .color(p.on_surface_variant),
+                ]
+                .spacing(8)
+                .padding([4, 8])
+                .align_y(Alignment::Center),
+            );
+        }
         let mut number = 0;
         let mut in_section = false;
+        let mut folded = false;
         let mut rest = 0;
         for (index, step) in plan.steps().iter().enumerate() {
             if carried.contains(&step.id) {
@@ -231,16 +260,37 @@ impl App {
             let selected = self.selected == Some(step.id) && moving.is_none();
             if step.is_section() {
                 in_section = true;
+                folded = self.folded.contains(&step.id);
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 let due = due.as_ref().and_then(|due| due(step.id));
-                rows =
-                    rows.push(self.draggable(step.id, self.section_row(plan, step, section, due)));
+                // Its arrow folds its steps away, and opens them again.
+                let id = step.id;
+                let arrow = button(
+                    text(if folded { "▸" } else { "▾" })
+                        .size(META)
+                        .color(p.on_surface_variant),
+                )
+                .padding([4, 6])
+                .on_press(Message::Fold(id))
+                .style(look::row(p, Tone::Plain));
+                rows = rows.push(
+                    row![
+                        arrow,
+                        self.draggable(step.id, self.section_row(plan, step, section, due))
+                    ]
+                    .align_y(Alignment::Center),
+                );
                 if selected && adds {
                     rows = rows.push(insertion_mark(p, INDENT));
                 }
                 continue;
             }
             number += 1;
+            // Folded away with its section, unless it is the step the
+            // service is at or the one being worked on.
+            if folded && in_section && Some(step.id) != current && !selected {
+                continue;
+            }
             let place = if Some(step.id) == current {
                 Place::Current
             } else if Some(step.id) == next {
@@ -316,6 +366,46 @@ impl App {
             let lined_up = self.standby_lined_up();
             for (at, resource) in plan.standby.iter().enumerate() {
                 rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
+            }
+        }
+        // The other plans, in sight under the open one: a click opens one
+        // in its place.
+        if tree && moving.is_none() {
+            let now = SystemTime::now();
+            let when = |entry: &Entry| ago(now.duration_since(entry.modified).unwrap_or_default());
+            let others: Vec<&Entry> = self
+                .plans
+                .entries
+                .iter()
+                .filter(|entry| Some(entry.path.as_path()) != self.plans.file())
+                .collect();
+            let is_template = |entry: &Entry| entry.summary.as_ref().is_ok_and(|s| s.template);
+            let heading = |title: &'static str| {
+                container(
+                    text(title)
+                        .size(META)
+                        .font(BOLD)
+                        .color(p.on_surface_variant),
+                )
+                .padding(iced::Padding::default().left(8.0).top(14.0).bottom(2.0))
+            };
+            let plans: Vec<&&Entry> = others.iter().filter(|e| !is_template(e)).collect();
+            rows = rows.push(heading("OTHER PLANS"));
+            for entry in plans {
+                rows = rows.push(saved_plan(p, entry, when(entry), false));
+            }
+            rows = rows.push(list_action(
+                p,
+                "+",
+                keys::with_key("New plan", Op::New),
+                op(Op::New),
+            ));
+            let templates: Vec<&&Entry> = others.iter().filter(|e| is_template(e)).collect();
+            if !templates.is_empty() {
+                rows = rows.push(heading("TEMPLATES"));
+                for entry in templates {
+                    rows = rows.push(saved_plan(p, entry, when(entry), false));
+                }
             }
         }
         // Leaving the list means letting go would move nothing.

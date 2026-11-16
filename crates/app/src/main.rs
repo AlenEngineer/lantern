@@ -350,6 +350,8 @@ enum Message {
     Scrub(f64),
     /// The timeline was let go.
     Scrubbed,
+    /// Folds a section of the plan away, or opens it again.
+    Fold(StepId),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -500,6 +502,8 @@ struct App {
     pub(crate) unlocked: Option<Option<StepId>>,
     /// "End the service" was pressed once, and when.
     pub(crate) ending: Option<Instant>,
+    /// The sections of the plan that are folded away.
+    pub(crate) folded: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
     /// was shown since.
     pub(crate) live_from: usize,
@@ -596,6 +600,7 @@ impl App {
             unlocked: None,
             ending: None,
             live_from: 0,
+            folded: std::collections::HashSet::new(),
             scrub: None,
         };
         app.check_palette();
@@ -636,6 +641,9 @@ impl App {
             None => self.handle(message),
         };
         self.sync_lock();
+        if self.mode == mode::Mode::Plan {
+            self.plans.relist();
+        }
         self.sync_look();
         self.sync_blur();
         self.sync_remote();
@@ -1100,6 +1108,11 @@ impl App {
                         .0
                         .show_now_at(left.deck, left.frame + usize::from(next));
                     self.stepping = true;
+                }
+            }
+            Message::Fold(section) => {
+                if !self.folded.remove(&section) {
+                    self.folded.insert(section);
                 }
             }
             Message::SetMode(to) => return self.set_mode(to),
@@ -2073,6 +2086,10 @@ impl App {
     /// After a plan may have replaced the last one: preloads for it, and a
     /// brand new plan opens on its name, so it isn't left "Untitled".
     fn switched(&mut self, replaced: bool) -> Task<Message> {
+        // Another plan's sections are folded or not on their own account.
+        if replaced {
+            self.folded.clear();
+        }
         let preload = self.preload_if(replaced);
         if replaced && self.plans.is_blank(&self.engine.0.plan()) {
             self.plans.edit_name(&self.engine.0);
