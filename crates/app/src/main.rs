@@ -355,6 +355,9 @@ enum Message {
     Scrubbed,
     /// Puts what is picked in a step's place.
     ReplaceStep(StepId),
+    /// A line inside a step was clicked: go to the slide it is on. In a
+    /// run, on the projector; while planning, in the preview.
+    StepSlide(StepId, usize),
     /// Folds a section of the plan away, or opens it again.
     Fold(StepId),
     /// Opens a folder of the library tree, or closes it.
@@ -1177,6 +1180,34 @@ impl App {
                 self.search.unpick();
                 self.shelf_pick = None;
                 self.engine.0.preview(pick);
+                return self.preload();
+            }
+            Message::StepSlide(id, slide) => {
+                let Some(step) = self.engine.0.plan().get(id).cloned() else {
+                    return Task::none();
+                };
+                let Action::Show { resource } = &step.action else {
+                    return Task::none();
+                };
+                let on_stage = self
+                    .stage
+                    .picture()
+                    .is_some_and(|scene| scene.resource.id == resource.id)
+                    && self.engine.0.current_step().is_some_and(|at| at.id == id);
+                match self.mode {
+                    // The step is on the projector: its slide goes on.
+                    mode::Mode::Run if on_stage => {
+                        self.engine.0.goto_frame(slide);
+                        self.stepping = true;
+                    }
+                    // Looked at, at that slide, on this screen.
+                    _ => {
+                        self.selected = Some(id);
+                        self.shelf_pick = None;
+                        self.search.unpick();
+                        self.engine.0.preview_at(Arc::new(resource.clone()), slide);
+                    }
+                }
                 return self.preload();
             }
             Message::Fold(section) => {

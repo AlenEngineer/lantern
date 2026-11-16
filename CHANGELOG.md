@@ -167,6 +167,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   search result or a library file picked, a button puts the pick in the
   step's place: it keeps its position and its sound, and takes the new
   name unless you had named it yourself.
+- The lines inside a step go to their slide: in a run the slide goes on
+  the projector, and while planning it is looked at in the preview.
 
 ### Fixed
 

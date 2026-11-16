@@ -433,27 +433,35 @@ impl App {
             .picture()
             .filter(|scene| on_stage && scene.resource.id == resource.id)
             .map(lantern_engine::Scene::frame);
-        let line = |icon: Icon, words: String, lit: bool| -> Element<'a, Message> {
+        let id = step.id;
+        // Each is a way to its slide: in a run it goes on the projector,
+        // while planning it is looked at here.
+        let line = |icon: Icon, words: String, lit: bool, slide: usize| -> Element<'a, Message> {
             let colour = if lit {
                 p.tertiary
             } else {
                 p.on_surface_variant
             };
-            row![
-                look::icon(icon, 12.0, colour),
-                container(single_line(words).size(META).color(colour))
-                    .width(Fill)
-                    .clip(true),
-            ]
-            .spacing(8)
+            button(
+                row![
+                    look::icon(icon, 12.0, colour),
+                    container(single_line(words).size(META).color(colour))
+                        .width(Fill)
+                        .clip(true),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
             .padding(
                 iced::Padding::default()
                     .left(34.0)
                     .right(8.0)
-                    .top(1.0)
+                    .top(2.0)
                     .bottom(3.0),
             )
-            .align_y(Alignment::Center)
+            .on_press(Message::StepSlide(id, slide))
+            .style(look::row(p, Tone::Plain))
             .into()
         };
         let mut parts = Vec::new();
@@ -470,6 +478,7 @@ impl App {
                     icon,
                     format!("Slide {} · {name}", slide + 1),
                     at == Some(slide),
+                    slide,
                 ));
             }
         }
@@ -482,6 +491,7 @@ impl App {
                 Icon::Music,
                 words,
                 at.is_some_and(|at| at >= sound.from),
+                sound.from,
             ));
         }
         parts
