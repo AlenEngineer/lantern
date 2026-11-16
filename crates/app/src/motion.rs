@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 
 use lantern_engine::{SceneId, StepId};
 
+use crate::mode::Mode;
+
 /// The ring around a step's dot as it goes on the projector.
 pub const RING: Duration = Duration::from_millis(700);
 /// How long the stage says the phone moved it.
@@ -23,6 +25,12 @@ pub const NUDGE: Duration = Duration::from_millis(240);
 pub const WHY: Duration = Duration::from_millis(1800);
 /// The flash of a step that was just added, replaced or moved.
 pub const FLASH: Duration = Duration::from_millis(600);
+/// The lit pill of the mode switch sliding to the mode.
+pub const SLIDE: Duration = Duration::from_millis(220);
+/// A section's steps closing under its heading, or opening.
+pub const FOLD: Duration = Duration::from_millis(180);
+/// The gap opening where what is carried would land.
+pub const GAP: Duration = Duration::from_millis(150);
 /// The phone's press and what it put on stage are this close together.
 const SOON: Duration = Duration::from_millis(1500);
 
@@ -40,6 +48,13 @@ pub struct Motion {
     refused: Option<(&'static str, Instant)>,
     /// The step that last changed, and when.
     changed: Option<(StepId, Instant)>,
+    /// The mode it is in, the one it was in before, and when it changed.
+    mode: Mode,
+    left: Option<(Mode, Instant)>,
+    /// The section last folded (`true`) or opened, and when.
+    fold: Option<(StepId, bool, Instant)>,
+    /// Where what is carried would land, and since when.
+    gap: Option<(usize, Instant)>,
 }
 
 impl Motion {
@@ -57,6 +72,10 @@ impl Motion {
             phone: None,
             refused: None,
             changed: None,
+            mode: Mode::Plan,
+            left: None,
+            fold: None,
+            gap: None,
         }
     }
 
@@ -153,10 +172,53 @@ impl Motion {
         self.along((changed == step).then_some(at), FLASH)
     }
 
+    /// Lantern is in `mode` now.
+    pub fn mode_is(&mut self, mode: Mode) {
+        if mode != self.mode {
+            self.left = Some((self.mode, Instant::now()));
+            self.mode = mode;
+        }
+    }
+
+    /// The mode the switch's pill is on its way from, and how far it has
+    /// come.
+    pub fn slide(&self) -> Option<(Mode, f32)> {
+        let (from, at) = self.left?;
+        Some((from, self.along(Some(at), SLIDE)?))
+    }
+
+    /// `section` was folded, or opened.
+    pub fn folded(&mut self, section: StepId, closed: bool) {
+        self.fold = Some((section, closed, Instant::now()));
+    }
+
+    /// How much of `section`'s steps is in sight while they close or
+    /// open: 1 is all of them.
+    pub fn open(&self, section: StepId) -> Option<f32> {
+        let (folding, closed, at) = self.fold?;
+        let along = self.along((folding == section).then_some(at), FOLD)?;
+        Some(if closed { 1.0 - along } else { along })
+    }
+
+    /// What is carried would land at `landing` now.
+    pub fn lands_at(&mut self, landing: Option<usize>) {
+        if landing != self.gap.map(|(at, _)| at) {
+            self.gap = landing.map(|at| (at, Instant::now()));
+        }
+    }
+
+    /// How far open the gap is, while it opens.
+    pub fn gap(&self) -> Option<f32> {
+        self.along(self.gap.map(|(_, at)| at), GAP)
+    }
+
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         !self.still
             && (self.running(self.went_up, RING)
+                || self.running(self.left.map(|(_, at)| at), SLIDE)
+                || self.running(self.fold.map(|(_, _, at)| at), FOLD)
+                || self.running(self.gap.map(|(_, at)| at), GAP)
                 || self.running(self.refused.map(|(_, at)| at), WHY)
                 || self.running(self.changed.map(|(_, at)| at), FLASH))
     }
@@ -240,6 +302,33 @@ mod tests {
         assert_eq!(motion.nudge(), 0.0);
         assert!(matches!(motion.why(), Some((_, None))));
         assert!(motion.showing() && !motion.moving());
+    }
+
+    #[test]
+    fn the_pill_slides_from_the_mode_it_left() {
+        let mut motion = Motion::new();
+        motion.mode_is(Mode::Plan);
+        assert!(motion.slide().is_none(), "it started there");
+        motion.mode_is(Mode::Live);
+        assert!(matches!(motion.slide(), Some((Mode::Plan, _))));
+        motion.mode_is(Mode::Live);
+        assert!(
+            matches!(motion.slide(), Some((Mode::Plan, _))),
+            "not started over"
+        );
+    }
+
+    #[test]
+    fn the_gap_opens_again_only_where_it_moved_to() {
+        let mut motion = Motion::new();
+        motion.lands_at(Some(2));
+        let since = motion.gap;
+        motion.lands_at(Some(2));
+        assert_eq!(motion.gap, since);
+        motion.lands_at(Some(3));
+        assert_eq!(motion.gap.map(|(at, _)| at), Some(3));
+        motion.lands_at(None);
+        assert!(motion.gap().is_none());
     }
 
     #[test]

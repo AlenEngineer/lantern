@@ -192,6 +192,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   move does the same, under a "not allowed" pointer.
 - A step that was just added, replaced or dropped in its new place
   flashes once, so the eye finds where it went.
+- The mode switch's lit pill slides to the mode and takes its colour. A
+  section's steps close under its heading and open again, and the gap
+  where something dragged would land opens instead of appearing.
 
 ### Fixed
 

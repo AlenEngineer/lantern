@@ -359,27 +359,66 @@ impl App {
         let p = self.palette;
         // In a run only Run shows: the others are reached by ending it,
         // and the strip has the service's time to show instead.
-        let shown = Mode::ALL
+        let shown: Vec<Mode> = Mode::ALL
             .into_iter()
-            .filter(|mode| self.mode != Mode::Run || *mode == Mode::Run);
-        let buttons = shown.map(|mode| {
+            .filter(|mode| self.mode != Mode::Run || *mode == Mode::Run)
+            .collect();
+        // Every pill is as wide as the others, so the lit one under them
+        // can slide from one to the next.
+        const WIDE: f32 = 62.0;
+        const GAP: f32 = 2.0;
+        const TALL: f32 = 32.0;
+        let place = |mode: Mode| {
+            let at = shown.iter().position(|shown| *shown == mode).unwrap_or(0);
+            at as f32 * (WIDE + GAP)
+        };
+        let (fill, ink) = look::pill_colours(p, self.mode.tone());
+        // On its way from the mode it left: across, and from its colour.
+        let (aside, fill) = match self.motion.slide() {
+            Some((from, along)) => (
+                crate::motion::between(place(from), place(self.mode), along),
+                crate::motion::blend(look::pill_colours(p, from.tone()).0, fill, along),
+            ),
+            None => (place(self.mode), fill),
+        };
+        let lit = row![
+            Space::new().width(aside),
+            container(Space::new().width(WIDE).height(TALL)).style(move |_| container::Style {
+                background: Some(fill.into()),
+                border: iced::Border {
+                    radius: (TALL / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            }),
+        ]
+        .width(shown.len() as f32 * (WIDE + GAP) - GAP)
+        .height(TALL);
+        let buttons = shown.iter().map(|&mode| {
             let on = mode == self.mode;
             // Run is reached by starting the service. The mode it is in
             // is pressable too, to no effect: unpressable, it would look
             // switched off.
             let reachable = on || mode != Mode::Run;
-            button(
+            let label = container(
                 text(mode.name())
                     .size(BODY)
                     .font(if on { BOLD } else { MEDIUM })
                     .wrapping(text::Wrapping::None),
             )
-            .padding([6, 14])
-            .on_press_maybe(reachable.then_some(Message::SetMode(mode)))
-            .style(look::pill(p, if on { mode.tone() } else { Tone::Plain }))
-            .into()
+            .center_x(Fill)
+            .center_y(Fill);
+            let pill = button(label)
+                .width(WIDE)
+                .height(TALL)
+                .padding(0)
+                .on_press_maybe(reachable.then_some(Message::SetMode(mode)));
+            match on {
+                true => pill.style(look::pill_clear(ink)).into(),
+                false => pill.style(look::pill(p, Tone::Plain)).into(),
+            }
         });
-        let mut switch = row![row(buttons).spacing(2)]
+        let mut switch = row![iced::widget::stack![lit, row(buttons).spacing(GAP)]]
             .spacing(8)
             .align_y(Alignment::Center);
         let plan = self.engine.0.plan();

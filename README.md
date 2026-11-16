@@ -534,7 +534,9 @@ and `no_blur = true`.
 
 The dashboard moves a little to say that something happened: the step
 that goes on the projector rings once, and when the phone put it there
-the stage says so for two seconds. Nothing loops. **Motion** in Settings
+the stage says so for two seconds. A refusal shakes the mode's note, a
+new step flashes where it landed, the mode switch's pill slides, and a
+section's steps close under its heading. Nothing loops. **Motion** in Settings
 turns the moving off (`no_motion = true`); what the phone did is still
 said.
 
