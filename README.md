@@ -82,6 +82,18 @@ passage, a picture or pages. A video doesn't stay under a sound, since it
 would go on playing. Whatever goes on stage next takes the sound's place,
 and clearing the stage stops it.
 
+Slides go on turning under a sound: Next and Prev step the deck, PDF or
+passage it plays over, and the plan moves on only after the last slide.
+
+**A step can bring its own sound.** In a plan, select a step that shows
+slides, a passage, a picture or pages; find the sound in search and pick
+it; then click the note on the step's row. A number beside it is the slide
+the sound starts at: `1` plays it with the whole step, `8` brings it in at
+the eighth slide. From there it plays over the step's slides as they turn.
+It stops when you go back before that slide, and when the plan moves on.
+Click the note again to take the sound off. A sound you put on yourself
+over the step is left alone.
+
 ```sh
 cargo run --release -p lantern-app
 ```

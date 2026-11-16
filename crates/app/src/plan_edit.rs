@@ -3,6 +3,7 @@
 //! search) and buttons to move or remove it, and new steps go right after
 //! it.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use iced::widget::{Space, button, container, row, text, text_input, tooltip};
@@ -174,6 +175,60 @@ impl App {
                 Message::SetAdvance(id, !on),
             ));
         }
+        if takes_sound(step) {
+            let picked = self
+                .search
+                .picked()
+                .filter(|resource| resource.kind == Kind::Audio);
+            let note = |color| -> Element<'static, Message> {
+                look::icon(Icon::Music, 13.0, color).into()
+            };
+            actions = actions.push(match (&step.sound, picked) {
+                (Some(sound), _) => small(
+                    note(p.primary),
+                    Tone::Selected,
+                    format!(
+                        "Plays {} with it, from slide {}. Click to take it off",
+                        sound.resource.title,
+                        sound.from + 1
+                    ),
+                    Message::StepSound(id, None),
+                ),
+                (None, Some(sound)) => small(
+                    note(p.primary),
+                    Tone::Plain,
+                    format!("Play {} with this step", sound.title),
+                    Message::StepSound(id, Some(Arc::clone(sound))),
+                ),
+                // Nothing to give it yet: the button says how.
+                (None, None) => tooltip(
+                    button(note(p.on_surface_variant))
+                        .padding([2, 6])
+                        .style(look::row(p, Tone::Plain)),
+                    tip("To play a sound with this step: find it in search, pick it, then click here".into()),
+                    tooltip::Position::Top,
+                ),
+            });
+            // Where in the step it starts: the slide's number.
+            if let Some(sound) = &step.sound {
+                actions = actions.push(tooltip(
+                    text_input(
+                        "1",
+                        &match &self.from_typed {
+                            Some((typing, typed)) if *typing == id => typed.clone(),
+                            _ => (sound.from + 1).to_string(),
+                        },
+                    )
+                    .on_input(move |typed| Message::SoundFrom(id, typed))
+                    .size(META)
+                    .padding([2, 4])
+                    .width(30)
+                    .style(look::input(p)),
+                    tip("The slide the sound starts at".into()),
+                    tooltip::Position::Top,
+                ));
+            }
+        }
         actions
             .push(small(
                 look::icon(Icon::Pencil, 13.0, p.primary).into(),
@@ -270,6 +325,12 @@ pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
     )
     .width(Fill)
     .into()
+}
+
+/// Whether a step can have a sound play with it: one that shows something
+/// still. A video or a sound has its own.
+fn takes_sound(step: &Step) -> bool {
+    matches!(&step.action, Action::Show { resource } if !matches!(resource.kind, Kind::Video | Kind::Audio))
 }
 
 /// When a step that goes on by itself would: a video when it ends, a still

@@ -511,6 +511,17 @@ impl App {
         }
         // "Note · note" says nothing twice: the kind shows once renamed.
         .filter(|kind| !kind.eq_ignore_ascii_case(step.label.trim()));
+        // That a sound plays with it. Which, and from where, is on its
+        // button: the row's end has room for a word or two.
+        let kind = match &step.sound {
+            Some(_) => Some(
+                kind.into_iter()
+                    .chain(["+ sound".to_string()])
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ),
+            None => kind,
+        };
         let (said, said_color) = match (issue, place) {
             (Some(issue), _) => (
                 Some(issue.what.clone()),

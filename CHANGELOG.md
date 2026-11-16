@@ -146,6 +146,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   PDF or a passage, Next and Prev step its slides, and the plan moves on
   only after the last one. The slide strip stays, and the sound's line
   says what it plays over.
+- **A step can bring its own sound**: music under a passage, or under the
+  last slides of a deck. Select the step, pick the sound in search, click
+  the note on the step's row, and set the slide it starts at. It plays over
+  the step's slides as they turn and stops with the step.
 
 ### Fixed
 

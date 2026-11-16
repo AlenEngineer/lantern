@@ -857,6 +857,13 @@ impl Stage {
         // A sound went on over what was on program: that picture stays,
         // and what was loaded for it with it.
         let was = std::mem::replace(&mut self.program, Program::Bare);
+        // A sound came off the picture it played over: the picture is the
+        // program again, with what was loaded for it.
+        let lifted = stage.program.as_ref().map(|scene| scene.id);
+        if let Some((scene, content)) = self.under.take_if(|(id, _)| Some(*id) == lifted) {
+            self.install(scene, Ok(content), stage, engine);
+            return iced::Task::none();
+        }
         self.under = match (&stage.under, was, self.under.take()) {
             (Some(under), Program::Showing { scene, content }, _) if scene == under.id => {
                 Some((scene, content))

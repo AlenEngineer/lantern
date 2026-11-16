@@ -90,8 +90,14 @@ fn rewrite(plan: &mut Plan, mut place: impl FnMut(&Path, &str) -> Option<PathBuf
     };
     let ids: Vec<StepId> = plan.steps().iter().map(|step| step.id).collect();
     for id in ids {
-        if let Some(Action::Show { resource: shown }) = plan.get_mut(id).map(|s| &mut s.action) {
+        let Some(step) = plan.get_mut(id) else {
+            continue;
+        };
+        if let Action::Show { resource: shown } = &mut step.action {
             resource(shown);
+        }
+        if let Some(sound) = &mut step.sound {
+            resource(&mut sound.resource);
         }
     }
     plan.standby.iter_mut().for_each(&mut resource);

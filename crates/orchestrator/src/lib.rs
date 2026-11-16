@@ -19,5 +19,5 @@ mod plan;
 mod session;
 pub mod timing;
 
-pub use plan::{Action, Plan, PlanError, Step, StepId};
+pub use plan::{Action, Plan, PlanError, Step, StepId, StepSound};
 pub use session::{LogEntry, Session};

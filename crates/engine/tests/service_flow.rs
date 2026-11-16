@@ -444,3 +444,132 @@ fn a_video_that_goes_on_by_itself_moves_the_plan_when_it_ends() {
     assert_eq!(engine.current_step().map(|s| s.id), Some(outro));
     assert_eq!(playback(&engine), Some(Playback::Ended));
 }
+
+#[test]
+fn a_steps_sound_plays_from_its_slide_and_stops_with_the_step() {
+    use lantern_engine::StepSound;
+
+    let source = SourceId::new("test").unwrap();
+    let music = Resource::new(
+        ResourceId::new(&source, "music"),
+        "Instrumental",
+        Kind::Audio,
+        Location::File("/music.mp3".into()),
+    );
+    let first = hymn(&source, "1", "Santo", "Uno\n\nDos\n\nTres");
+    let second = hymn(&source, "2", "Grande", "Uno");
+
+    let engine = Engine::new();
+    let step = engine.edit_plan(|plan| {
+        let step = plan.show(first.clone());
+        plan.push("Oración", Action::Note);
+        plan.show(second.clone());
+        plan.get_mut(step).unwrap().sound = Some(StepSound {
+            resource: music.clone(),
+            from: 1,
+        });
+        step
+    });
+    let on = |engine: &Engine| {
+        let stage = engine.stage();
+        let program = stage
+            .program
+            .as_ref()
+            .map(|scene| scene.resource.title.clone());
+        let picture = stage
+            .picture()
+            .map(|scene| (scene.resource.title.clone(), scene.frame()));
+        (program, picture)
+    };
+    let hymn_at = |frame| Some(("Santo".to_string(), frame));
+
+    // The first slide: no sound yet.
+    assert_eq!(engine.next(), Moved::Step(step));
+    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(0)));
+
+    // The slide it starts from: the sound goes on over it, playing.
+    assert_eq!(engine.next(), Moved::Frame(1));
+    assert_eq!(on(&engine), (Some("Instrumental".into()), hymn_at(1)));
+    let sound = engine.stage().program.unwrap();
+    assert_eq!(sound.timed().unwrap().playback, Playback::Playing);
+
+    // The slides go on under the same sound.
+    assert_eq!(engine.next(), Moved::Frame(2));
+    assert_eq!(engine.stage().program.unwrap().id, sound.id);
+
+    // Back before its slide: it stops, and the slide is as it was.
+    assert_eq!(engine.prev(), Moved::Frame(1));
+    assert_eq!(engine.prev(), Moved::Frame(0));
+    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(0)));
+
+    // On again: it starts over.
+    assert_eq!(engine.next(), Moved::Frame(1));
+    let again = engine.stage().program.unwrap();
+    assert_eq!(again.resource.title, "Instrumental");
+    assert_ne!(again.id, sound.id);
+
+    // A sound the operator puts on instead is left alone.
+    let other = Resource::new(
+        ResourceId::new(&source, "other"),
+        "Otra",
+        Kind::Audio,
+        Location::File("/other.mp3".into()),
+    );
+    engine.show_now(Arc::new(other));
+    assert_eq!(engine.next(), Moved::Frame(2));
+    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2)));
+
+    // The step ends at a note, which leaves the stage as it is: the
+    // slide stays. The operator's sound isn't the step's to stop.
+    assert!(matches!(engine.next(), Moved::Step(_)));
+    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2)));
+
+    // Again, with the step's own sound: it stops with the step.
+    engine.go_to(step).unwrap();
+    assert_eq!(engine.next(), Moved::Frame(1));
+    assert_eq!(engine.next(), Moved::Frame(2));
+    assert!(matches!(engine.next(), Moved::Step(_)));
+    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(2)));
+
+    // And the next thing shown takes its place as ever.
+    assert!(matches!(engine.next(), Moved::Step(_)));
+    assert_eq!(
+        on(&engine),
+        (Some("Grande".into()), Some(("Grande".into(), 0)))
+    );
+}
+
+#[test]
+fn a_steps_sound_from_the_first_slide_starts_with_the_step() {
+    use lantern_engine::StepSound;
+
+    let source = SourceId::new("test").unwrap();
+    let music = Resource::new(
+        ResourceId::new(&source, "music"),
+        "Instrumental",
+        Kind::Audio,
+        Location::File("/music.mp3".into()),
+    );
+    let engine = Engine::new();
+    engine.edit_plan(|plan| {
+        let step = plan.show(hymn(&source, "1", "Santo", "Uno\n\nDos"));
+        plan.get_mut(step).unwrap().sound = Some(StepSound {
+            resource: music,
+            from: 0,
+        });
+    });
+    engine.next();
+    let stage = engine.stage();
+    assert_eq!(
+        stage.program.as_ref().unwrap().resource.title,
+        "Instrumental"
+    );
+    assert_eq!(stage.picture().unwrap().resource.title, "Santo");
+
+    // Saved with the plan; the first slide goes without saying.
+    let json = engine.plan().to_json();
+    assert!(json.contains("\"sound\""), "{json}");
+    assert!(!json.contains("\"from\""), "{json}");
+    let back = Plan::from_json(&json).unwrap();
+    assert_eq!(back.steps()[0].sound, engine.plan().steps()[0].sound);
+}

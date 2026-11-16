@@ -28,7 +28,9 @@ use std::time::Duration;
 pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
-pub use lantern_orchestrator::{Action, LogEntry, Plan, PlanError, Session, Step, StepId};
+pub use lantern_orchestrator::{
+    Action, LogEntry, Plan, PlanError, Session, Step, StepId, StepSound,
+};
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
 };
@@ -73,6 +75,9 @@ pub struct Engine {
     // Lock order, whenever both are needed: `session`, then `stage`.
     session: Mutex<Session>,
     stage: Mutex<Showman>,
+    /// The sound the current step is playing over what it shows
+    /// ([`StepSound`]), while it is on program. Locked last.
+    accompanying: Mutex<Option<SceneId>>,
 }
 
 impl Default for Engine {
@@ -88,6 +93,7 @@ impl Engine {
             searcher: Searcher::new(),
             session: Mutex::new(Session::new(Plan::default())),
             stage: Mutex::new(Showman::new()),
+            accompanying: Mutex::new(None),
         }
     }
 
@@ -406,6 +412,7 @@ impl Engine {
         let mut stage = lock(&self.stage);
         let before = stage.program().map(|scene| scene.id);
         let result = f(&mut session, &mut stage);
+        accompany(&session, &mut stage, &mut lock(&self.accompanying));
         if let Some(scene) = stage.program().filter(|scene| Some(scene.id) != before) {
             session.record((*scene.resource).clone(), planned);
         }
@@ -427,6 +434,44 @@ fn perform(stage: &mut Showman, step: &Step) {
         // Live slots and notes leave the stage as the operator left it, and
         // the session never stops on a section marker.
         Action::Live { .. } | Action::Note | Action::Section { .. } => {}
+    }
+}
+
+/// Keeps the current step's sound ([`StepSound`]) with what the step
+/// shows, after anything the operator did: it goes on over the step's
+/// picture once that is at the slide the sound starts from, and comes off,
+/// leaving the picture, when the picture goes back before that slide or
+/// the plan moves to a step that leaves the stage as it is.
+///
+/// `playing` is the sound this put on program. One the operator replaced
+/// or cleared is forgotten, and isn't started again over the same slides.
+fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<SceneId>) {
+    let program = stage.program().map(|scene| scene.id);
+    if playing.is_some() && *playing != program {
+        *playing = None;
+    }
+    let wanted = session.current().and_then(|step| {
+        let sound = step.sound.as_ref()?;
+        let Action::Show { resource } = &step.action else {
+            return None;
+        };
+        let picture = stage.state().picture()?;
+        let due = picture.resource.id == resource.id
+            && picture.timed().is_none()
+            && picture.frame() >= sound.from;
+        due.then(|| sound.resource.clone())
+    });
+    match (wanted, *playing) {
+        // Over the picture itself: not over a sound the operator put on.
+        (Some(sound), None) if stage.program().is_some_and(|on| !on.sounds_only()) => {
+            stage.show(Arc::new(sound));
+            *playing = stage.program().map(|scene| scene.id);
+        }
+        (None, Some(_)) => {
+            stage.lift_sound();
+            *playing = None;
+        }
+        _ => {}
     }
 }
 

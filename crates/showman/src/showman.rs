@@ -286,6 +286,17 @@ impl Showman {
         }
     }
 
+    /// Ends the sound on program and leaves the picture it played over,
+    /// as it is. Returns `false` if no sound is on program.
+    pub fn lift_sound(&mut self) -> bool {
+        if !self.program().is_some_and(Scene::sounds_only) {
+            return false;
+        }
+        let scene = self.state.under.clone();
+        self.emit(StageEvent::Program { scene });
+        true
+    }
+
     /// Empties the stage.
     pub fn clear(&mut self) {
         self.emit(StageEvent::Program { scene: None });
@@ -655,6 +666,14 @@ mod tests {
         stage.show(sound());
         let picture = stage.state().picture().unwrap();
         assert_eq!((picture.id, picture.frame()), (id, 3));
+
+        // The sound lifted: the picture is on program again, as it was.
+        assert!(stage.lift_sound());
+        let program = stage.program().unwrap();
+        assert_eq!((program.id, program.frame()), (id, 3));
+        assert_eq!(stage.state().under, None);
+        assert!(!stage.lift_sound(), "no sound to lift");
+        stage.show(sound());
 
         // Anything else takes the picture's place.
         stage.show(hymn());
