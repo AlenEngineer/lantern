@@ -197,6 +197,16 @@ impl App {
                 | Op::Undo
         );
         let manages = matches!(op, Op::New | Op::Open);
+        // → and ← are a tree's keys only where nothing they could move
+        // is on the projector.
+        let op = match (self.mode, op) {
+            (Mode::Run | Mode::Live, Op::In) => Op::Next,
+            (Mode::Run | Mode::Live, Op::Out) => Op::Prev,
+            (Mode::Run | Mode::Live, Op::Pane) => {
+                return Err("the library is beside the plan while planning");
+            }
+            (_, op) => op,
+        };
         // The switch, from a key: the same ways in and out as its buttons.
         if let Op::Mode(to) = op {
             let runs = self

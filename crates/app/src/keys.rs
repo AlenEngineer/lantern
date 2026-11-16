@@ -41,6 +41,16 @@ pub enum Op {
     Clear,
     PickNext,
     PickPrev,
+    /// The first and the last of what the arrows move through.
+    PickFirst,
+    PickLast,
+    /// → and ←. Where something is on the projector they are next and
+    /// back; while planning they are a tree's: into a section or folder,
+    /// opening it first, and out of it, closing it.
+    In,
+    Out,
+    /// Gives the arrows to the library beside the plan, or back.
+    Pane,
     /// Empties the search box, keeping it focused.
     ClearSearch,
     /// Saves the plan to its file, or a new one named after it.
@@ -308,16 +318,37 @@ pub const ACTIONS: &[Action] = &[
     action(
         "next-arrow",
         "right",
-        Op::Next,
+        Op::In,
         When::EmptySearch,
-        "Next, while the search is empty",
+        "Next, while the search is empty; planning, open a section or folder",
     ),
     action(
         "prev-arrow",
         "left",
-        Op::Prev,
+        Op::Out,
         When::EmptySearch,
-        "Back, while the search is empty",
+        "Back, while the search is empty; planning, close a section or folder",
+    ),
+    action(
+        "pick-first",
+        "home",
+        Op::PickFirst,
+        When::Unused,
+        "The first step, plan or library row",
+    ),
+    action(
+        "pick-last",
+        "end",
+        Op::PickLast,
+        When::Unused,
+        "The last step, plan or library row",
+    ),
+    action(
+        "pane",
+        "f6",
+        Op::Pane,
+        When::Always,
+        "Planning, move the arrows between the plan and the library",
     ),
     action(
         "go",
@@ -811,7 +842,7 @@ mod tests {
     fn arrows_step_only_through_an_empty_search() {
         assert_eq!(
             op(press(Key::Named(Named::ArrowRight), NONE, TYPING)),
-            Some((Op::Next, true))
+            Some((Op::In, true))
         );
         assert_eq!(
             op(press(Key::Named(Named::PageDown), NONE, FREE)),

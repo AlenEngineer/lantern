@@ -152,6 +152,9 @@ on a result or step only lines it up; a double click shows it at once.
 | Space | next, while the search is closed (open, it types) |
 | click a chip under On stage | jump to that verse, stanza, page or slide (`16`, `17a`) |
 | → ← | the same, while the search box is empty, or once something's on stage until you type again |
+| → ← while planning | a tree's keys: → opens a section or folder, then steps into it; ← closes it, and from inside goes up to its heading |
+| Home, End | with no search, the first / last step, plan or library row |
+| F6 | while planning, give the arrows to the library beside the plan, or back |
 | Ctrl+Enter | add the result you're looking at after the selected step |
 | Alt+Enter | keep it on standby instead: ready under the plan, not in its order |
 | Ctrl+Space, play key | play / pause |
@@ -214,7 +217,9 @@ what is inside it: the videos, sounds and pictures on a deck's slides, by
 slide, and the sound that plays with the step. Beside the preview is the
 **library**, the media folders as a tree: a click looks at a file on this
 screen, a double click or Enter adds it to the plan after the selected
-step, and it can be dragged to where it should go. Folders nest as on disk,
+step, and it can be dragged to where it should go. F6 gives it the arrows
+(its heading lights up): ↑ ↓ walk its rows, → ← open and close folders,
+Enter adds the file. Folders nest as on disk,
 and the filter at the top narrows the tree to what you type. With a step
 selected and something else picked, **Replace** puts the pick in the step's
 place. The lines inside a step go to their slide: on the projector in a
