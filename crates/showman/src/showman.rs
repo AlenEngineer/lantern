@@ -56,7 +56,9 @@ impl StageState {
                 true
             }
             StageEvent::Preview { scene } => set_if_different(&mut self.preview, scene),
-            StageEvent::Frame { frame } => match self.program_media() {
+            // Under a sound, the frames are the picture's: its slides
+            // go on turning while the sound plays.
+            StageEvent::Frame { frame } => match self.picture_media() {
                 Some(Media::Frames { frame: current, .. }) => set_if_different(current, frame),
                 _ => false,
             },
@@ -87,21 +89,32 @@ impl StageState {
         }
     }
 
-    /// The scene with this id, in program or preview. A window whose media
-    /// finished loading asks this to learn whether the scene is still on
-    /// stage and what the operator did meanwhile.
+    /// The scene with this id: in program, in preview, or the picture under
+    /// a sound. A window whose media finished loading asks this to learn
+    /// whether the scene is still on stage and what the operator did
+    /// meanwhile.
     pub fn scene(&self, id: SceneId) -> Option<&Scene> {
-        [&self.program, &self.preview]
+        [&self.program, &self.preview, &self.under]
             .into_iter()
             .flatten()
             .find(|scene| scene.id == id)
     }
 
     fn scene_mut(&mut self, id: SceneId) -> Option<&mut Scene> {
-        [&mut self.program, &mut self.preview]
+        [&mut self.program, &mut self.preview, &mut self.under]
             .into_iter()
             .flatten()
             .find(|scene| scene.id == id)
+    }
+
+    fn picture_media(&mut self) -> Option<&mut Media> {
+        let under_a_sound = self.program.as_ref().is_some_and(Scene::sounds_only);
+        let picture = if under_a_sound {
+            &mut self.under
+        } else {
+            &mut self.program
+        };
+        picture.as_mut().map(|scene| &mut scene.media)
     }
 
     fn program_media(&mut self) -> Option<&mut Media> {
@@ -289,10 +302,11 @@ impl Showman {
         self.state.blackout
     }
 
-    /// Advances the program one frame. Returns `false` at the last frame,
-    /// and for scenes without frames.
+    /// Advances what is seen one frame: the program, or under a sound the
+    /// picture it plays over. Returns `false` at the last frame, and for
+    /// scenes without frames.
     pub fn next_frame(&mut self) -> bool {
-        match self.program() {
+        match self.state.picture() {
             Some(scene) if scene.has_next_frame() => self.goto_frame(scene.frame() + 1),
             _ => false,
         }
@@ -300,7 +314,7 @@ impl Showman {
 
     /// Goes back one frame. Returns `false` at the first frame.
     pub fn prev_frame(&mut self) -> bool {
-        match self.program().map(Scene::frame) {
+        match self.state.picture().map(Scene::frame) {
             Some(frame) if frame > 0 => self.goto_frame(frame - 1),
             _ => false,
         }
@@ -308,7 +322,7 @@ impl Showman {
 
     /// Jumps to a frame. Returns `false` if it doesn't exist.
     pub fn goto_frame(&mut self, frame: usize) -> bool {
-        match self.program().map(|scene| &scene.media) {
+        match self.state.picture().map(|scene| &scene.media) {
             Some(Media::Frames { count, .. }) if frame < count.map_or(1, |n| n.get()) => {
                 self.emit(StageEvent::Frame { frame });
                 true
@@ -622,9 +636,25 @@ mod tests {
         let picture = stage.state().picture().unwrap();
         assert_eq!((picture.id, picture.frame()), (id, 2));
 
-        // Another sound: the same picture.
+        // Its slides go on turning under the sound, which plays on.
+        let playing = program_id(&stage);
+        assert!(stage.next_frame());
+        assert!(stage.next_frame());
+        assert!(!stage.next_frame(), "slide 5 is the last");
+        assert!(stage.prev_frame());
+        assert_eq!(stage.state().picture().unwrap().frame(), 3);
+        assert!(stage.goto_frame(1));
+        assert_eq!(stage.state().picture().unwrap().frame(), 1);
+        assert_eq!(program_id(&stage), playing);
+        assert_eq!(timed(&stage).playback, Playback::Playing);
+        // What the stage learns about the picture still reaches it.
+        assert!(stage.report(id, pages(4)));
+        assert!(stage.goto_frame(3) && !stage.goto_frame(4));
+
+        // Another sound: the same picture, at the same slide.
         stage.show(sound());
-        assert_eq!(stage.state().picture().unwrap().id, id);
+        let picture = stage.state().picture().unwrap();
+        assert_eq!((picture.id, picture.frame()), (id, 3));
 
         // Anything else takes the picture's place.
         stage.show(hymn());
