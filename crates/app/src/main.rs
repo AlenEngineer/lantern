@@ -531,6 +531,9 @@ struct App {
     pub(crate) lengths: lengths::Lengths,
     /// What has been shown in services and in Live, and when.
     pub(crate) usage: usage::Usage,
+    /// Where the plan's dots and brackets were when last drawn: what is
+    /// laid over the list beside one of them is put there.
+    pub(crate) places: track::Places,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -775,6 +778,7 @@ impl App {
             thumbs: thumbs::Thumbs::start(),
             lengths,
             usage,
+            places: track::Places::default(),
             attached: None,
             left: None,
             config,

@@ -68,6 +68,18 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
         .into()
 }
 
+/// A section that is a bracket beside its steps: where its heading is,
+/// where what it holds ends, and how far out its bracket is.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Braced {
+    at: usize,
+    end: usize,
+    lane: u8,
+}
+
+/// How wide the card of a picked section is, where there is room.
+const CARD: f32 = 214.0;
+
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
 /// holds, the further), and the section it is attached to, if it is.
@@ -433,7 +445,48 @@ impl App {
         let mut rows = column![].spacing(2);
         // Where the dots are, said by the rows as they are laid out, and
         // what one drawing over the list makes of them.
-        let places = track::Places::default();
+        let places = self.places.clone();
+        // A section with steps in sight is a bracket beside them: it has
+        // no row of its own. One folded away, or with nothing in it yet,
+        // keeps its row. Each bracket is a lane further out than those
+        // it holds.
+        let bracketed = |at: usize| {
+            let step = &plan.steps()[at];
+            let over = self.mode == crate::mode::Mode::Run
+                && timing
+                    .sections
+                    .iter()
+                    .find(|section| section.id == step.id)
+                    .is_some_and(|section| matches!(section.phase, Phase::Done { .. }));
+            step.is_section()
+                && !over
+                && !self.folded.contains(&step.id)
+                && self.motion.open(step.id).is_none()
+                && (at + 1..plan.group_end(at)).any(|at| !plan.steps()[at].is_section())
+        };
+        let mut braced: Vec<Braced> = (0..plan.len())
+            .filter(|at| bracketed(*at))
+            .map(|at| Braced {
+                at,
+                end: plan.group_end(at),
+                lane: 0,
+            })
+            .collect();
+        for at in (0..braced.len()).rev() {
+            let (outer, inner) = braced.split_at_mut(at + 1);
+            let this = &mut outer[at];
+            this.lane = inner
+                .iter()
+                .filter(|held| held.end <= this.end)
+                .map(|held| held.lane + 1)
+                .max()
+                .unwrap_or(0);
+        }
+        let side_lanes = braced
+            .iter()
+            .map(|braced| braced.lane + 1)
+            .max()
+            .unwrap_or(0);
         let mut stops: Vec<track::Stop> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
         let mut headings: Vec<usize> = Vec::new();
@@ -549,7 +602,9 @@ impl App {
             {
                 put!(proposed);
             }
-            let inward = INDENT * f32::from(plan.level(index));
+            // Every step is on the one line, as far in as any other: the
+            // brackets say what is in what.
+            let inward = 0.0;
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
                 // The section that was closing or opening ends here.
@@ -581,7 +636,10 @@ impl App {
                     true => p.outline,
                     false => p.on_surface_variant,
                 };
-                headings.push(index);
+                let bracket = braced.iter().any(|braced| braced.at == index);
+                if !bracket {
+                    headings.push(index);
+                }
                 let mark = container(track::seen(
                     track::Key::Heading(id),
                     &places,
@@ -694,11 +752,13 @@ impl App {
                 };
                 // A section inside the one that is closing or opening
                 // goes under the cut with its steps.
-                match folding.take() {
-                    Some((steps, so_far, open)) => {
+                match (bracket, folding.take()) {
+                    // A bracket beside its steps: no row.
+                    (true, kept) => folding = kept,
+                    (false, Some((steps, so_far, open))) => {
                         folding = Some((steps.push(apart(heading)), so_far + ROW_TALL, open));
                     }
-                    None => put!(heading),
+                    (false, None) => put!(heading),
                 }
                 if selected && adds {
                     put!(insertion_mark(p, inward + INDENT));
@@ -756,7 +816,13 @@ impl App {
             let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
             // Every dot is on the one line; what is in a section sits a
             // little further in, as its heading's name does.
-            let row = row![rail, Space::new().width(inward), apart(row)].height(Length::Shrink);
+            let row = row![
+                rail,
+                Space::new().width(inward),
+                apart(row),
+                self.side(plan, index, &braced, side_lanes, &places)
+            ]
+            .height(Length::Shrink);
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -976,15 +1042,138 @@ impl App {
                 Some(Would::Join { .. }) | None => {}
             }
         }
+        // The sections' brackets, each beside the first to the last of
+        // its steps in sight, with its name and its times.
+        let brackets: Vec<track::Bracket> = braced
+            .iter()
+            .filter_map(|braced| {
+                let step = &plan.steps()[braced.at];
+                let mut inside = shown
+                    .iter()
+                    .copied()
+                    .filter(|at| (braced.at + 1..braced.end).contains(at));
+                let first = inside.next()?;
+                let last = inside.next_back().unwrap_or(first);
+                let section = timing.sections.iter().find(|s| s.id == step.id);
+                let budget = match step.action {
+                    Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+                    _ => None,
+                };
+                let phase = section.map_or(
+                    Phase::Coming {
+                        planned: self.planned(plan, step.id),
+                    },
+                    |section| section.phase,
+                );
+                // The time it takes, against the time it is given.
+                let (sum, late, on) = match phase {
+                    Phase::Coming { planned } => (
+                        planned,
+                        budget.is_some_and(|budget| planned > budget),
+                        false,
+                    ),
+                    Phase::Running { elapsed, expected } => (
+                        elapsed,
+                        budget.is_some_and(|budget| expected > budget),
+                        true,
+                    ),
+                    Phase::Done { took } => (took.unwrap_or_default(), false, false),
+                };
+                let mut lines = Vec::new();
+                if let Some(budget) = budget {
+                    lines.push((
+                        track::Sign::Goal,
+                        length::clock(budget),
+                        p.on_surface_variant,
+                    ));
+                }
+                lines.push((
+                    track::Sign::Sum,
+                    length::clock(sum),
+                    match (late, on) {
+                        (true, _) => p.error,
+                        (false, true) => p.tertiary,
+                        (false, false) => p.on_surface,
+                    },
+                ));
+                // In a service, when it is due.
+                if let Some(due) = due.as_ref().and_then(|due| due(step.id)).filter(|_| !on) {
+                    lines.push((track::Sign::Clock, due.to_string(), p.on_surface_variant));
+                }
+                let picked = self.selected == Some(step.id);
+                Some(track::Bracket {
+                    id: step.id,
+                    first: id_at(first),
+                    last: id_at(last),
+                    lane: braced.lane,
+                    color: match on {
+                        true => p.tertiary,
+                        false => p.primary,
+                    },
+                    name: step.label.clone(),
+                    lines,
+                    strong: picked || host_id == Some(step.id),
+                    bare: picked,
+                    cut: None,
+                })
+            })
+            .collect();
+        // The section that is picked says what it is set to, and what
+        // can be done to it, in a card over its bracket's name.
+        let card: Option<Element<'_, Message>> = braced
+            .iter()
+            .find(|braced| self.selected == Some(plan.steps()[braced.at].id))
+            .and_then(|braced| {
+                let step = &plan.steps()[braced.at];
+                let first = shown
+                    .iter()
+                    .copied()
+                    .find(|at| (braced.at + 1..braced.end).contains(at))?;
+                let last = shown
+                    .iter()
+                    .copied()
+                    .rfind(|at| (braced.at + 1..braced.end).contains(at))?;
+                let (origin, top, foot) = {
+                    let places = places.borrow();
+                    (
+                        *places.get(&track::Key::Canvas)?,
+                        *places.get(&track::Key::Side(id_at(first)))?,
+                        *places.get(&track::Key::Side(id_at(last)))?,
+                    )
+                };
+                let wide = CARD.min(origin.width - 8.0);
+                let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
+                let section = timing.sections.iter().find(|s| s.id == step.id);
+                let card = container(self.section_row(
+                    plan,
+                    step,
+                    section,
+                    due.as_ref().and_then(|due| due(step.id)),
+                ))
+                .width(wide)
+                .padding(4)
+                .style(look::card(p, 0.0, 12.0));
+                Some(
+                    iced::widget::pin(card)
+                        .x((origin.width - wide - 4.0).max(0.0))
+                        .y((middle - 34.0).max(0.0))
+                        .into(),
+                )
+            });
         let picture = track::Picture {
             stops,
             loops: drawn_loops,
             orders: drawn_orders,
             still: self.motion.still,
             hot: can,
+            brackets,
         };
         // Leaving the list means letting go would move nothing.
-        mouse_area(scrolling(stack![rows, track::over(picture, &places)].width(Fill)).id(ROWS))
+        let mut layers = stack![rows, track::over(picture, &places)].width(Fill);
+        if let Some(card) = card {
+            layers = layers.push(card);
+        }
+        mouse_area(scrolling(layers).id(ROWS))
             .on_exit(Message::LeftPlan)
             .into()
     }
@@ -2164,6 +2353,47 @@ impl App {
         .on_exit(Message::Rail(crate::rail::Act::Left(id)))
         .into();
         (rail, stop)
+    }
+
+    /// The room right of the step at `index` for the brackets of the
+    /// sections it is in, a part for each lane, the innermost first. A
+    /// press there picks that section, and held and moved carries it
+    /// with all it holds; twice folds it away; a right click opens the
+    /// ring of what holds for all of it.
+    fn side<'a>(
+        &self,
+        plan: &Plan,
+        index: usize,
+        braced: &[Braced],
+        lanes: u8,
+        places: &track::Places,
+    ) -> Element<'a, Message> {
+        let wide = track::BRACE + track::LABEL;
+        let parts = (0..lanes).map(|lane| {
+            let part = Space::new().width(wide).height(Fill);
+            let Some(section) = braced
+                .iter()
+                .find(|braced| braced.lane == lane && (braced.at + 1..braced.end).contains(&index))
+                .map(|braced| plan.steps()[braced.at].id)
+            else {
+                return part.into();
+            };
+            let mut area = mouse_area(part)
+                .on_press(Message::Click(Clicked::Step(section)))
+                .on_double_click(Message::Fold(section))
+                .interaction(mouse::Interaction::Pointer);
+            if self.can_edit() {
+                area = area.on_right_press(Message::Rail(crate::rail::Act::Ring(
+                    crate::rail::RingOn::All(Some(section)),
+                )));
+            }
+            self.draggable(section, area.into())
+        });
+        track::seen(
+            track::Key::Side(plan.steps()[index].id),
+            places,
+            row(parts).width(track::side_room(lanes)).height(Fill),
+        )
     }
 
     /// The room left of the dots in one row, a part for each lane, the

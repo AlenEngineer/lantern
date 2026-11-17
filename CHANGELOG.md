@@ -420,6 +420,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A section is a bracket to the right of the steps it holds, with its
+  name, the time it is given and the time it takes beside it; sections
+  one in another are brackets side by side. It has no row of its own
+  while it has steps in sight: one folded away or with nothing in it yet
+  keeps its row. A press on a bracket picks the section, and a card over
+  its name says what it is set to and what can be done to it; held and
+  moved it carries the section with all it holds; pressed twice it folds;
+  a right click opens its ring.
 - A drawn order is worked on by hand along its own line: pressed and
   pulled along inside it, that part is rubbed out; pulled from a step it
   shares with one, the two become one; a double click on its line takes

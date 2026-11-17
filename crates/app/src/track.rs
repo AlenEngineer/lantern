@@ -39,6 +39,11 @@ pub enum Key {
     Heading(StepId),
     /// Rows cut to a height while their section closes or opens.
     Cut(u32),
+    /// The room right of a step for the brackets of the sections it is
+    /// in.
+    Side(StepId),
+    /// The canvas itself: where what is laid over the list starts.
+    Canvas,
 }
 
 /// Where each of them is, as last laid out.
@@ -298,6 +303,77 @@ pub struct Picture {
     pub still: bool,
     /// The dots can be pressed: the one under the pointer shows it.
     pub hot: bool,
+    /// The sections, each a bracket beside the steps it holds.
+    pub brackets: Vec<Bracket>,
+}
+
+/// What a line beside a bracket is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sign {
+    /// The time it is given.
+    Goal,
+    /// The time it takes, or has taken so far.
+    Sum,
+    /// A time of day.
+    Clock,
+}
+
+/// A section: a bracket to the right of the steps it holds, from the
+/// first of them in sight to the last, with its name and its times
+/// beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bracket {
+    pub id: StepId,
+    pub first: StepId,
+    pub last: StepId,
+    /// How many sections it holds, one in another: it is that much
+    /// further out.
+    pub lane: u8,
+    pub color: Color,
+    pub name: String,
+    pub lines: Vec<(Sign, String, Color)>,
+    /// Picked, or what something carried would go into.
+    pub strong: bool,
+    /// Its name and times are not written: something open over them
+    /// says them.
+    pub bare: bool,
+    pub cut: Option<u32>,
+}
+
+/// How much room a bracket takes, and what is written beside it.
+pub const BRACE: f32 = 18.0;
+pub const LABEL: f32 = 86.0;
+
+/// How much room right of the steps the brackets need, `lanes` deep.
+pub fn side_room(lanes: u8) -> f32 {
+    (BRACE + LABEL) * f32::from(lanes)
+}
+
+/// `name` on as few lines as it takes, two at most, each about as wide
+/// as there is room for beside a bracket.
+fn name_lines(name: &str) -> Vec<String> {
+    const WIDE: usize = 13;
+    let mut lines: Vec<String> = Vec::new();
+    for word in name.split_whitespace() {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= WIDE => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_string()),
+        }
+    }
+    if lines.len() > 2 {
+        let rest = lines.split_off(1).join(" ");
+        lines.push(rest);
+    }
+    lines
+        .into_iter()
+        .map(|line| match line.chars().count() > WIDE {
+            true => line.chars().take(WIDE - 1).chain(['…']).collect(),
+            false => line,
+        })
+        .collect()
 }
 
 /// A dot's radius, and how much further out the ring of the one that is
@@ -355,6 +431,7 @@ enum Thing {
     Line(StepId),
     Loop(StepId, StepId),
     Order(StepId, StepId),
+    Bracket(StepId),
 }
 
 /// What is under way.
@@ -453,6 +530,9 @@ impl Moves {
         for span in &picture.orders {
             draw(Thing::Order(span.first.id(), span.last), span.pulled);
         }
+        for bracket in &picture.brackets {
+            draw(Thing::Bracket(bracket.id), false);
+        }
         self.drawn = drawn;
         moving
     }
@@ -548,6 +628,8 @@ impl<Message> canvas::Program<Message> for Over {
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
+        // Where it starts, for what is laid over the list beside it.
+        self.places.borrow_mut().insert(Key::Canvas, bounds);
         let places = self.places.borrow().clone();
         let moves = &state.moves;
         let mut drawn: Vec<(Thing, f32)> = moves
@@ -760,6 +842,131 @@ fn paint(
             false => span.color,
         };
         wander(frame, span, color, far, at);
+    }
+    // The sections' brackets.
+    for bracket in &picture.brackets {
+        let (Some(first), Some(last)) = (at(Key::Side(bracket.first)), at(Key::Side(bracket.last)))
+        else {
+            continue;
+        };
+        let far = moves.drawn(Thing::Bracket(bracket.id));
+        let x = first.x + (BRACE + LABEL) * f32::from(bracket.lane) + 3.0;
+        let (top, foot) = (
+            first.y + 2.0,
+            (last.y + last.height - 4.0).min(limit(bracket.cut, at)),
+        );
+        if foot - top < 12.0 {
+            continue;
+        }
+        let middle = (top + foot) / 2.0;
+        // It opens out from its middle as it is made.
+        let (top, foot) = (
+            middle - (middle - top) * far,
+            middle + (foot - middle) * far,
+        );
+        let color = faded(bracket.color, far);
+        let round = 7.0_f32.min((foot - top) / 4.0);
+        let brace = Path::new(|path| {
+            path.move_to(Point::new(x, top));
+            path.quadratic_curve_to(
+                Point::new(x + round, top),
+                Point::new(x + round, top + round),
+            );
+            path.line_to(Point::new(x + round, middle - round));
+            path.quadratic_curve_to(
+                Point::new(x + round, middle),
+                Point::new(x + round + 6.0, middle),
+            );
+            path.quadratic_curve_to(
+                Point::new(x + round, middle),
+                Point::new(x + round, middle + round),
+            );
+            path.line_to(Point::new(x + round, foot - round));
+            path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
+        });
+        frame.stroke(
+            &brace,
+            Stroke {
+                line_cap: canvas::LineCap::Round,
+                line_join: canvas::LineJoin::Round,
+                ..Stroke::default()
+                    .with_color(color)
+                    .with_width(match bracket.strong {
+                        true => 2.6,
+                        false => 1.6,
+                    })
+            },
+        );
+        if bracket.bare {
+            continue;
+        }
+        // Beside it: its name, and as many of its times as there is
+        // room for.
+        const TALL: f32 = 14.0;
+        let names = name_lines(&bracket.name);
+        let room = (((foot - top) + 10.0) / TALL).floor().max(1.0) as usize;
+        let names = &names[..names.len().min(room)];
+        let lines = &bracket.lines[..bracket.lines.len().min(room - names.len())];
+        let tall = TALL * (names.len() + lines.len()) as f32;
+        let left = x + round + 12.0;
+        let mut y = middle - tall / 2.0 + TALL / 2.0;
+        for name in names {
+            frame.fill_text(canvas::Text {
+                content: name.clone(),
+                position: Point::new(left, y),
+                color,
+                size: 11.5.into(),
+                font: crate::look::BOLD,
+                align_y: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+            y += TALL;
+        }
+        for (sign, words, ink) in lines {
+            let ink = faded(*ink, far);
+            let stroke = Stroke {
+                line_cap: canvas::LineCap::Round,
+                line_join: canvas::LineJoin::Round,
+                ..Stroke::default().with_color(ink).with_width(1.2)
+            };
+            let c = Point::new(left + 4.5, y);
+            match sign {
+                Sign::Goal => {
+                    frame.stroke(&Path::circle(c, 4.0), stroke);
+                    frame.fill(&Path::circle(c, 1.3), ink);
+                }
+                Sign::Clock => {
+                    frame.stroke(&Path::circle(c, 4.0), stroke);
+                    frame.stroke(
+                        &Path::new(|path| {
+                            path.move_to(Point::new(c.x, c.y - 2.4));
+                            path.line_to(c);
+                            path.line_to(Point::new(c.x + 2.0, c.y));
+                        }),
+                        stroke,
+                    );
+                }
+                Sign::Sum => frame.stroke(
+                    &Path::new(|path| {
+                        path.move_to(Point::new(c.x + 3.5, c.y - 4.0));
+                        path.line_to(Point::new(c.x - 3.5, c.y - 4.0));
+                        path.line_to(Point::new(c.x + 0.5, c.y));
+                        path.line_to(Point::new(c.x - 3.5, c.y + 4.0));
+                        path.line_to(Point::new(c.x + 3.5, c.y + 4.0));
+                    }),
+                    stroke,
+                ),
+            }
+            frame.fill_text(canvas::Text {
+                content: words.clone(),
+                position: Point::new(left + 13.0, y),
+                color: ink,
+                size: 10.5.into(),
+                align_y: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+            y += TALL;
+        }
     }
     // The dots, over the ends of the lines.
     for stop in &picture.stops {
@@ -1327,5 +1534,18 @@ mod tests {
         moves.on(&picture, 0.0);
         assert_eq!(moves.played, Some((id(2), 0.5)));
         assert_eq!(moves.shown(id(2), 0.5), 0.5);
+    }
+
+    #[test]
+    fn a_name_beside_a_bracket_takes_two_lines_at_most() {
+        assert_eq!(name_lines("Culto"), vec!["Culto"]);
+        assert_eq!(
+            name_lines("Servicio de Canto"),
+            vec!["Servicio de", "Canto"]
+        );
+        assert_eq!(
+            name_lines("Escuela Sabática de los menores"),
+            vec!["Escuela", "Sabática de …"]
+        );
     }
 }
