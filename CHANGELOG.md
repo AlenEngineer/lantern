@@ -334,9 +334,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   loudspeaker with its volume as a bar, and no projector is a struck
   screen.
 - Rehearsal says which step of how many it is at ("2 / 4"), dims the
-  steps it has been through, and lights the section being rehearsed. The
-  step that is up has a standing ring round its dot on the rail. The
-  rail's three marks are named once at the foot of the plan.
+  steps it has been through, and lights the section being rehearsed.
+- The step that is up has a standing ring round its dot on the rail.
+- The rail's three marks are named once at the foot of the plan.
 
 ### Fixed
 
