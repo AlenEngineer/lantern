@@ -113,6 +113,23 @@ impl Repeat {
     fn is_once(&self) -> bool {
         *self == Repeat::Once
     }
+
+    /// How many times it comes, for adding up how long a plan takes: a
+    /// repeat with no number to it counts once, and is [`open`].
+    ///
+    /// [`open`]: Repeat::open
+    pub fn times(self) -> u32 {
+        match self {
+            Repeat::Times(times) => u32::from(times.max(1)),
+            Repeat::Once | Repeat::Forever | Repeat::Until(_) => 1,
+        }
+    }
+
+    /// Whether how often it comes isn't a number: until the operator
+    /// goes elsewhere, or until a time.
+    pub fn open(self) -> bool {
+        matches!(self, Repeat::Forever | Repeat::Until(_))
+    }
 }
 
 impl Flow {
@@ -216,6 +233,10 @@ pub struct Plan {
     /// what time each section comes, and how far behind the service runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub starts: Option<TimeOfDay>,
+    /// How long the whole service is meant to take. An app sets what is
+    /// planned against it, as a section's steps against its time.
+    #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
+    pub target: Option<Duration>,
     /// Things kept ready outside the running order: a spare song, a notice
     /// to move a car. Shown when wanted, without moving the plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -248,6 +269,7 @@ impl Plan {
             folders: Vec::new(),
             bibles: Vec::new(),
             starts: None,
+            target: None,
             standby: Vec::new(),
             advance: false,
             flow: Flow::default(),

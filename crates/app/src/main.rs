@@ -306,6 +306,12 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// The plan's target time is to be typed.
+    EditTarget,
+    /// How long the whole service is meant to take, as typed.
+    PlanTarget(String),
+    /// The target is typed.
+    TargetDone,
     /// Whether the plan's steps go on by themselves unless one says.
     PlanAdvance(bool),
     /// How many times a step or section comes, or the plan (`None`).
@@ -568,6 +574,8 @@ struct App {
     /// The plan's start time while it's being typed and doesn't read as
     /// one yet ("10:").
     pub(crate) starts_typed: Option<String>,
+    /// The plan's target time as typed, while its field is open.
+    pub(crate) target_typed: Option<String>,
     /// Delete was pressed once in the plan's settings: again deletes.
     pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
@@ -740,6 +748,7 @@ impl App {
             copying: false,
             importing: None,
             starts_typed: None,
+            target_typed: None,
             deleting_plan: false,
             editing: None,
             list_pick: None,
@@ -1949,6 +1958,22 @@ impl App {
                 });
                 self.from_typed = Some((id, typed));
             }
+            Message::EditTarget => {
+                let target = self.engine.0.plan().target;
+                self.target_typed = Some(target.map(length::typed).unwrap_or_default());
+                return operation::focus(plan_pane::TARGET_BOX);
+            }
+            Message::PlanTarget(text) => {
+                // Kept as typed until it reads as a length. Emptied, the
+                // plan has no target.
+                if length::typeable(&text) {
+                    if let Some(target) = length::parse(&text) {
+                        self.engine.0.edit_plan(|plan| plan.target = target);
+                    }
+                    self.target_typed = Some(text);
+                }
+            }
+            Message::TargetDone => self.target_typed = None,
             Message::PlanAdvance(on) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| plan.advance = on);

@@ -147,8 +147,13 @@ impl From<TimeOfDay> for String {
 pub struct Schedule {
     /// Each section's marker and how long after the start it begins.
     pub sections: Vec<(StepId, Duration)>,
-    /// From the start to the end.
+    /// From the start to the end. What repeats a number of times counts
+    /// that many times.
     pub total: Duration,
+    /// Something in the plan repeats with no number to it (until the
+    /// operator goes elsewhere, or until a time): the total counts it
+    /// once and the service may take longer.
+    pub open: bool,
 }
 
 impl Schedule {
@@ -165,50 +170,67 @@ impl Schedule {
 pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Schedule {
     let steps = plan.steps();
     let mut schedule = Schedule::default();
+    let mut total = Duration::ZERO;
     let mut at = 0;
     while at < steps.len() {
         if steps[at].is_section() {
-            let (takes, next) = group(plan, at, schedule.total, loaded, &mut schedule.sections);
-            schedule.total += takes;
+            let (takes, next) = group(plan, at, total, loaded, &mut schedule);
+            total += takes;
             at = next;
         } else {
-            schedule.total += estimate(&steps[at], loaded(&steps[at])).length;
+            total += step_takes(&steps[at], loaded, &mut schedule);
             at += 1;
         }
     }
+    schedule.open |= plan.flow.repeat.open();
+    schedule.total = total * plan.flow.repeat.times();
     schedule
+}
+
+/// How long a step takes with its repeats.
+fn step_takes(
+    step: &Step,
+    loaded: &dyn Fn(&Step) -> Option<Duration>,
+    schedule: &mut Schedule,
+) -> Duration {
+    schedule.open |= step.flow.repeat.open();
+    estimate(step, loaded(step)).length * step.flow.repeat.times()
 }
 
 /// How long the section at `at` takes, starting `start` into the service,
 /// and where it ends: its budget, or without one its steps and the
-/// sections in it. Notes when it and each section in it starts.
+/// sections in it, as many times as it comes. Notes when it and each
+/// section in it starts.
 fn group(
     plan: &Plan,
     at: usize,
     start: Duration,
     loaded: &dyn Fn(&Step) -> Option<Duration>,
-    starts: &mut Vec<(StepId, Duration)>,
+    schedule: &mut Schedule,
 ) -> (Duration, usize) {
     let steps = plan.steps();
     let end = plan.group_end(at);
-    starts.push((steps[at].id, start));
+    schedule.sections.push((steps[at].id, start));
     let mut planned = Duration::ZERO;
     let mut inside = at + 1;
     while inside < end {
         if steps[inside].is_section() {
-            let (takes, next) = group(plan, inside, start + planned, loaded, starts);
+            let (takes, next) = group(plan, inside, start + planned, loaded, schedule);
             planned += takes;
             inside = next;
         } else {
-            planned += estimate(&steps[inside], loaded(&steps[inside])).length;
+            planned += step_takes(&steps[inside], loaded, schedule);
             inside += 1;
         }
     }
+    let repeat = steps[at].flow.repeat;
+    schedule.open |= repeat.open();
     let budget = match steps[at].action {
         Action::Section { budget, .. } => budget,
         _ => None,
     };
-    (budget.unwrap_or(planned), end)
+    // A section's time is for all of it, however often it comes round.
+    (budget.unwrap_or(planned * repeat.times()), end)
 }
 
 /// How far behind its schedule a service runs (negative: ahead), in
@@ -337,7 +359,9 @@ pub struct Clock<'a> {
 /// The timing of every section of `plan`.
 pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
     let steps = plan.steps();
-    let length = |step: &Step| estimate(step, (clock.loaded)(step)).length;
+    // What repeats a number of times counts that many times.
+    let length =
+        |step: &Step| estimate(step, (clock.loaded)(step)).length * step.flow.repeat.times();
     let since = |time: SystemTime| clock.now.duration_since(time).unwrap_or_default();
     let at = clock.current.and_then(|id| plan.position(id));
 
@@ -376,7 +400,8 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
         let outer = depth == 0;
         let stop = plan.group_end(start);
         let members = &steps[start + 1..stop];
-        let planned: Duration = members.iter().map(length).sum();
+        let planned: Duration =
+            members.iter().map(length).sum::<Duration>() * step.flow.repeat.times();
         let began = members.iter().filter_map(|s| (clock.entered)(s.id)).min();
         let phase = match at {
             Some(i) if (start + 1..stop).contains(&i) => {
@@ -687,5 +712,30 @@ mod tests {
         assert_eq!(planned(music), 3 * MIN);
         assert_eq!(planned(praise), 2 * MIN);
         assert_eq!(planned(reading), MIN);
+    }
+
+    #[test]
+    fn what_repeats_counts_as_often_as_it_comes() {
+        use crate::Repeat;
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let a = plan.show(video("A", Some(120)));
+        plan.show(video("B", Some(60)));
+        let sermon = plan.section("Sermon", Some(20 * MIN));
+        plan.show(video("C", Some(300)));
+        // A twice each time, Music three times round: (2+2+1) x 3.
+        plan.get_mut(a).unwrap().flow.repeat = Repeat::Times(2);
+        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(3);
+        // A section's time is for all of it, repeats and all.
+        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Times(2);
+        let got = schedule(&plan, &|_| None);
+        assert_eq!(got.start_of(sermon), Some(15 * MIN));
+        assert_eq!(got.total, 35 * MIN);
+        assert!(!got.open);
+        // Until you go elsewhere has no number: counted once, and said.
+        plan.get_mut(music).unwrap().flow.repeat = Repeat::Forever;
+        let got = schedule(&plan, &|_| None);
+        assert_eq!(got.total, 25 * MIN);
+        assert!(got.open);
     }
 }
