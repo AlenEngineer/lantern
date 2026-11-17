@@ -88,6 +88,113 @@ pub fn dashed_dot<'a, Message: 'a>(size: f32, color: Color) -> Element<'a, Messa
     .into()
 }
 
+/// The line that curls back beside the steps of something that comes
+/// again, the piece of it beside one step: drawn the whole height of the
+/// step's row, in dashes spaced to fit that height exactly, so that one
+/// row's piece meets the next with no seam.
+struct CurlPiece {
+    piece: crate::look::Curl,
+    color: Color,
+    /// How far down the row the step's dot is.
+    dot: f32,
+}
+
+/// Where the line runs down, the dashes' length, about how far from one
+/// to the next, and how wide the bend to the dot is.
+const CURL_X: f32 = 3.0;
+const CURL_DASH: f32 = 2.5;
+const CURL_STEP: f32 = 5.0;
+const CURL_BEND: f32 = 4.0;
+
+impl<Message> canvas::Program<Message> for CurlPiece {
+    type State = ();
+
+    fn draw(
+        &self,
+        (): &(),
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        use crate::look::Curl;
+        let mut frame = Frame::new(renderer, bounds.size());
+        let stroke = Stroke {
+            line_cap: canvas::LineCap::Round,
+            line_join: canvas::LineJoin::Round,
+            ..Stroke::default().with_color(self.color).with_width(1.5)
+        };
+        // Dashes down from `from` to `to`, as many as fit, each in the
+        // middle of its share: half a gap at either end.
+        let mut down = |from: f32, to: f32| {
+            let tall = to - from;
+            if tall < CURL_DASH {
+                return;
+            }
+            let count = (tall / CURL_STEP).round().max(1.0);
+            let share = tall / count;
+            for n in 0..count as usize {
+                let top = from + share * n as f32 + (share - CURL_DASH) / 2.0;
+                frame.stroke(
+                    &Path::line(Point::new(CURL_X, top), Point::new(CURL_X, top + CURL_DASH)),
+                    stroke,
+                );
+            }
+        };
+        let (tall, wide, dot) = (bounds.height, bounds.width, self.dot);
+        // The bend between the line and the dot's level, one stroke.
+        let bend = |down: bool| {
+            let sign = if down { 1.0 } else { -1.0 };
+            Path::new(|path| {
+                path.move_to(Point::new(CURL_X, dot + sign * CURL_BEND));
+                path.quadratic_curve_to(
+                    Point::new(CURL_X, dot),
+                    Point::new(CURL_X + CURL_BEND, dot),
+                );
+            })
+        };
+        match self.piece {
+            Curl::Past => down(0.0, tall),
+            // In to the dot, with the arrow's head, from the line below.
+            Curl::Into => {
+                down(dot + CURL_BEND, tall);
+                frame.stroke(&bend(true), stroke);
+                let head = Path::new(|path| {
+                    path.move_to(Point::new(wide - 4.5, dot - 3.0));
+                    path.line_to(Point::new(wide - 1.0, dot));
+                    path.line_to(Point::new(wide - 4.5, dot + 3.0));
+                });
+                frame.stroke(&head, stroke);
+            }
+            // Down the line and out to the dot.
+            Curl::Out => {
+                down(0.0, dot - CURL_BEND);
+                frame.stroke(&bend(false), stroke);
+                frame.stroke(
+                    &Path::line(
+                        Point::new(CURL_X + CURL_BEND + 2.0, dot),
+                        Point::new(wide - 0.5, dot),
+                    ),
+                    stroke,
+                );
+            }
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+/// The piece of the curl beside one step, the whole height it is given;
+/// `dot` is how far down the step's dot is.
+pub fn curl<'a, Message: 'a>(
+    piece: crate::look::Curl,
+    color: Color,
+    dot: f32,
+) -> iced::widget::Canvas<impl canvas::Program<Message> + 'a, Message> {
+    draw(CurlPiece { piece, color, dot })
+        .width(crate::look::CURL_WIDE)
+        .height(Fill)
+}
+
 /// Slanted stripes of two colours.
 struct Hatch {
     light: Color,

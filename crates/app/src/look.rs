@@ -446,50 +446,10 @@ pub enum Curl {
     Past,
     /// Beside the last step: down to its dot and out to the side.
     Out,
-    /// Under a step's dot, as tall as the row leaves: straight down.
-    Down,
 }
 
-/// How wide the curl's pieces are, and how tall the ones beside a dot.
+/// How wide the curl's pieces are. They are drawn by [`crate::drawn::curl`].
 pub const CURL_WIDE: f32 = 12.0;
-pub const CURL_TALL: f32 = 25.0;
-
-/// A piece of the curl. [`Curl::Down`] takes whatever height it is given.
-pub fn curl<'a>(piece: Curl, color: Color) -> svg::Svg<'a> {
-    macro_rules! dashed {
-        ($tall:literal, $paths:literal) => {
-            concat!(
-                r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 "#,
-                $tall,
-                r#"" fill="none" stroke="black" stroke-width="1.5">"#,
-                $paths,
-                "</svg>"
-            )
-            .as_bytes()
-        };
-    }
-    let bytes: &'static [u8] = match piece {
-        Curl::Into => dashed!(
-            "25",
-            r#"<path d="M11 20H6a3 3 0 0 0-3 3v2" stroke-dasharray="2.5 2.5"/><path d="M7.500 16.500l4 3.500-4 3.500" stroke-linecap="round" stroke-linejoin="round"/>"#
-        ),
-        Curl::Past => dashed!("25", r#"<path d="M3 0v25" stroke-dasharray="2.5 2.5"/>"#),
-        Curl::Out => dashed!(
-            "25",
-            r#"<path d="M3 0v17a3 3 0 0 0 3 3h6" stroke-dasharray="2.5 2.5"/>"#
-        ),
-        Curl::Down => dashed!("10", r#"<path d="M3 0v10" stroke-dasharray="2.5 2.5"/>"#),
-    };
-    let piece_svg = svg(svg::Handle::from_memory(bytes))
-        .width(CURL_WIDE)
-        .style(move |_, _| svg::Style { color: Some(color) });
-    match piece {
-        Curl::Down => piece_svg
-            .height(iced::Fill)
-            .content_fit(iced::ContentFit::Fill),
-        _ => piece_svg.height(CURL_TALL),
-    }
-}
 
 /// A ring that fills as something comes in, such as a download: `done`
 /// from 0 to 1, in twentieths.
