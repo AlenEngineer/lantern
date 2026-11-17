@@ -42,7 +42,17 @@ pub(crate) const TARGET_BOX: &str = "plan-target";
 const RAIL: f32 = 20.0;
 const RAIL_DOT: f32 = 10.0;
 const RAIL_LINE: f32 = 2.0;
+/// How thick each side is of the line that has not played yet.
+const RAIL_SIDE: f32 = 0.5;
 const RAIL_TOP: f32 = 15.0;
+/// How tall the line under the playing step's dot was when last laid out:
+/// the step after it fills its own part of the same line from where this
+/// one ends.
+static BELOW_TALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn below_tall() -> f32 {
+    f32::from_bits(BELOW_TALL.load(std::sync::atomic::Ordering::Relaxed))
+}
 /// How far the ring round the dot of the step that is up stands off it.
 const RAIL_RING: f32 = 4.0;
 
@@ -1719,14 +1729,18 @@ impl App {
         }
         .or(rehearsed);
         // The line from the step that is on to the next one's dot fills
-        // as it plays: the first half of it is under its own dot, the
-        // second over this one's, when this is the step after it.
+        // as it plays, evenly along its whole length: first what of it
+        // is under its own dot, then what is over this one's, when this
+        // is the step after it.
         let current = self.engine.0.current_step().map(|step| step.id);
         let filling_above = before
             .map(|before| &steps[before])
             .filter(|before| Some(before.id) == current && rehearsed.is_none())
             .and_then(on_stage)
-            .map(|done| ((done - 0.5) * 2.0).clamp(0.0, 1.0));
+            .map(|done| {
+                let under = below_tall();
+                ((done * (under + RAIL_TOP) - under) / RAIL_TOP).clamp(0.0, 1.0)
+            });
         let line = |colour: Option<iced::Color>, height: Length| {
             container(Space::new().width(RAIL_LINE).height(height)).style(move |_| {
                 container::Style {
@@ -1734,6 +1748,25 @@ impl App {
                     ..container::Style::default()
                 }
             })
+        };
+        // The line of the step that is playing is as wide as any other:
+        // solid in the stage's colour as far as it has played, and only
+        // its two sides from there on, so how far it has come is plain.
+        let solid = |colour: iced::Color, height: Length| {
+            container(Space::new().width(RAIL_LINE).height(height))
+                .style(move |_| container::Style::default().background(colour))
+        };
+        let tube = |colour: iced::Color, height: Length| {
+            let side = move || {
+                container(Space::new().width(RAIL_SIDE).height(Fill))
+                    .style(move |_| container::Style::default().background(colour))
+            };
+            container(row![
+                side(),
+                Space::new().width(RAIL_LINE - 2.0 * RAIL_SIDE),
+                side()
+            ])
+            .height(height)
         };
         let would_above = self
             .pull
@@ -1753,12 +1786,10 @@ impl App {
             // Under way from the step before: filled as far as it has
             // come, in the stage's colour.
             Some(done) if !would_above => column![
-                line(Some(p.tertiary), Length::Fixed(RAIL_TOP * done)),
-                line(
-                    Some(track(joined_above)),
-                    Length::Fixed(RAIL_TOP * (1.0 - done))
-                ),
+                solid(p.tertiary, Length::Fixed(RAIL_TOP * done)),
+                tube(track(joined_above), Length::Fixed(RAIL_TOP * (1.0 - done))),
             ]
+            .align_x(iced::Center)
             .into(),
             _ => line(
                 (joined_above || would_above).then_some(match place {
@@ -1850,23 +1881,28 @@ impl App {
             // The step that is on fills the line under its dot as it
             // plays, whether or not it goes on by itself.
             (_, Place::Current, Some(done)) => {
-                // Its half of the line to the next dot; all of the line
-                // when no step comes after it.
-                let done = match after {
-                    true => (done * 2.0).min(1.0),
-                    false => done,
+                let ahead = match rehearsed {
+                    Some(_) => faint,
+                    None => track(joined_below),
                 };
-                let done = (done.clamp(0.0, 1.0) * 100.0).round() as u16;
-                column![
-                    line(Some(live), Length::FillPortion(done.max(1))),
-                    line(
-                        Some(match rehearsed {
-                            Some(_) => faint,
-                            None => track(joined_below),
-                        }),
-                        Length::FillPortion((100 - done).max(1))
-                    ),
-                ]
+                // The line goes on over the next step's dot, where one
+                // comes after: this is its part of that length.
+                let beyond = match after {
+                    true => RAIL_TOP,
+                    false => 0.0,
+                };
+                let done = done.clamp(0.0, 1.0);
+                iced::widget::responsive(move |room| {
+                    let tall = room.height;
+                    BELOW_TALL.store(tall.to_bits(), std::sync::atomic::Ordering::Relaxed);
+                    let filled = (done * (tall + beyond)).min(tall);
+                    container(column![
+                        solid(live, Length::Fixed(filled)),
+                        tube(ahead, Length::Fixed(tall - filled)),
+                    ])
+                    .center_x(Fill)
+                    .into()
+                })
                 .into()
             }
             (false, ..) => Space::new().height(Fill).into(),

@@ -418,6 +418,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   and the plan's panel alike. Nothing looks different, but for the plan
   panel's look fields, which are now the same size as the Look lens's.
 
+### Changed
+
+- The line of the step that is playing is hollow where it has not played
+  yet and solid where it has: how far it has come is plain.
+
 ### Fixed
 
 - The line under the step that is on looked half filled before anything
