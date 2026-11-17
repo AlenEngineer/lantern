@@ -353,6 +353,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   order held, at random or by what you usually use, within a margin. It
   proposes rows under the section; keep some, leave some out, draw again,
   and the tick adds them as steps.
+- Drawing again in autofill gives other things even when nothing comes
+  to what was asked: a draw may then stand a little further off than the
+  nearest there is, and still says by how much.
 
 ### Fixed
 
