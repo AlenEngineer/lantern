@@ -1776,6 +1776,8 @@ impl App {
                     let Some(step) = plan.get_mut(id) else {
                         return;
                     };
+                    // Picked by hand now, whatever put the step there.
+                    step.filled = false;
                     // A step named after what it showed is named after
                     // what it shows now; a name the operator gave stays.
                     let named_after = matches!(
@@ -3436,8 +3438,20 @@ impl App {
     fn program_changed(&mut self) -> Task<Message> {
         self.follow_deck();
         // What goes on the projector in a service or in Live has been
-        // used today. Looking at something while planning is not that.
+        // used today, when it was picked by hand: looked up and shown,
+        // or put in the plan from a search or the library. Looking at
+        // something while planning is not that, and neither is a step
+        // the fill put there: nobody chose it.
+        let filled = self.engine.0.current_step().is_some_and(|step| {
+            step.filled
+                && matches!(
+                    (&step.action, &self.stage.program),
+                    (lantern_engine::Action::Show { resource }, Some(scene))
+                        if resource.id == scene.resource.id
+                )
+        });
         if self.mode != mode::Mode::Plan
+            && !filled
             && let Some(scene) = &self.stage.program
         {
             self.usage

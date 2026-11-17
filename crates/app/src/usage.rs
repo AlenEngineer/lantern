@@ -1,10 +1,12 @@
 //! What has been shown, and when: so that filling a section can prefer
 //! what is usually used and leave out what was on lately.
 //!
-//! One line a day for each thing that went on the projector in a service
-//! or in Live, kept in `usage` in the data folder: its id and the day.
-//! Looking at something while planning is not using it. It stays on this
-//! machine.
+//! One line a day for each thing the operator picked and put on the
+//! projector, in a service or in Live, kept in `usage` in the data
+//! folder: its id and the day. Looking at something while planning is
+//! not using it, and neither is showing a step that a fill put in the
+//! plan: only what was chosen by hand says what is usually used. It
+//! stays on this machine.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
