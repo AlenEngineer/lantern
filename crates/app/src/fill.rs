@@ -100,6 +100,15 @@ impl Draw {
     }
 }
 
+/// How many draws are made for one choosing.
+const DRAWS: usize = 24;
+
+/// How much further off than the nearest a draw may be, when nothing
+/// fits: the margin, and never less than a twentieth of the time.
+fn slack(wish: Wish) -> Duration {
+    wish.margin.max(wish.time.unwrap_or_default() / 20)
+}
+
 /// How far `total` is outside the window: zero inside it.
 fn off(total: Duration, window: Option<(Duration, Duration)>) -> Duration {
     match window {
@@ -122,15 +131,46 @@ pub fn choose(things: &[Thing], wish: Wish, order: Order, kept: &[usize], seed: 
     let picks = match order {
         Order::Held => held(things, wish, kept, &free),
         Order::Drawn | Order::Usual => {
+            // How good a draw is: first how far from the number asked,
+            // then how far from the time.
+            let far = |picks: &Vec<usize>| {
+                let short = wish.count.map_or(0, |count| count.abs_diff(picks.len()));
+                (short, off(total(things, picks), window))
+            };
+            // Several draws, each bettered one swap at a time, find how
+            // near what was asked can be come to.
             let mut draw = Draw(seed | 1);
-            // Several draws, each then bettered one swap at a time: the
-            // nearest to what was asked is the one.
-            (0..24)
-                .map(|_| drawn(things, wish, order, kept, &free, &mut draw))
-                .min_by_key(|picks| {
-                    let short = wish.count.map_or(0, |count| count.abs_diff(picks.len()));
-                    (short, off(total(things, picks), window))
+            let (short, nearest) = (0..DRAWS)
+                .map(|_| {
+                    far(&drawn(
+                        things,
+                        wish,
+                        order,
+                        kept,
+                        &free,
+                        &mut draw,
+                        Duration::ZERO,
+                    ))
                 })
+                .min()
+                .unwrap_or_default();
+            // When nothing fits, the nearest of all is one set, the same
+            // at every draw. So a draw may then stop a little short of
+            // it, and another seed gives other things.
+            let allow = if nearest.is_zero() {
+                Duration::ZERO
+            } else {
+                nearest + slack(wish)
+            };
+            let mut draw = Draw(seed | 1);
+            let draws: Vec<Vec<usize>> = (0..DRAWS)
+                .map(|_| drawn(things, wish, order, kept, &free, &mut draw, allow))
+                .collect();
+            draws
+                .iter()
+                .find(|picks| far(picks) <= (short, allow))
+                .or_else(|| draws.iter().min_by_key(|picks| far(picks)))
+                .cloned()
                 .unwrap_or_else(|| kept.to_vec())
         }
     };
@@ -179,7 +219,9 @@ fn held(things: &[Thing], wish: Wish, kept: &[usize], free: &[usize]) -> Vec<usi
 }
 
 /// One draw: things taken at random while they fit, then swapped one
-/// for another for as long as that brings the total nearer.
+/// for another for as long as that brings the total nearer, until it is
+/// no further off than `allow`. A swap that gets there is taken at
+/// random among those that do; short of that, the one that comes nearest.
 fn drawn(
     things: &[Thing],
     wish: Wish,
@@ -187,6 +229,7 @@ fn drawn(
     kept: &[usize],
     free: &[usize],
     draw: &mut Draw,
+    allow: Duration,
 ) -> Vec<usize> {
     let window = wish.window();
     // The order they are tried in: at random, the used ones first and
@@ -222,16 +265,25 @@ fn drawn(
     }
     // Nearer by swapping one chosen (not a kept one) for one left out.
     let mut far = off(sum, window);
-    while !far.is_zero() {
-        let better = (kept.len()..picks.len())
+    while far > allow {
+        let swaps: Vec<(Duration, usize, usize, Duration)> = (kept.len()..picks.len())
             .flat_map(|chosen| (0..spare.len()).map(move |left| (chosen, left)))
             .map(|(chosen, left)| {
                 let swapped = sum + things[spare[left]].length.unwrap_or_default()
                     - things[picks[chosen]].length.unwrap_or_default();
                 (off(swapped, window), chosen, left, swapped)
             })
-            .min_by_key(|(far, ..)| *far)
-            .filter(|(nearer, ..)| *nearer < far);
+            .filter(|(nearer, ..)| *nearer < far)
+            .collect();
+        let there: Vec<_> = swaps
+            .iter()
+            .filter(|(nearer, ..)| *nearer <= allow)
+            .collect();
+        let better = if there.is_empty() {
+            swaps.iter().min_by_key(|(nearer, ..)| *nearer).copied()
+        } else {
+            Some(*there[draw.next() as usize % there.len()])
+        };
         let Some((nearer, chosen, left, swapped)) = better else {
             break;
         };
@@ -423,5 +475,35 @@ mod tests {
         assert_eq!(chosen.picks.len(), 5);
         assert_eq!(chosen.each_still, Some(4 * MIN));
         assert_eq!(chosen.off, Duration::ZERO);
+    }
+
+    #[test]
+    fn drawing_again_gives_other_things_even_when_nothing_fits() {
+        // Four things can't come to 27 min here: the four longest make
+        // about 17. Each draw still says how far off it is, none is far
+        // from the nearest there is, and they are not all the same four.
+        let lengths: Vec<u64> = (0..200).map(|at| 120 + (at * 37) % 140).collect();
+        let library = songs(&lengths);
+        let asked = wish(Some(27 * MIN), Some(4), Fit::Either);
+        let mut longest = lengths.clone();
+        longest.sort_unstable();
+        let most: u64 = longest.iter().rev().take(4).sum();
+        let nearest = 26 * MIN - Duration::from_secs(most);
+        let mut draws = std::collections::HashSet::new();
+        for seed in 1..30 {
+            let chosen = choose(&library, asked, Order::Drawn, &[], seed);
+            assert_eq!(chosen.picks.len(), 4, "seed {seed}");
+            assert!(chosen.off >= nearest);
+            assert!(
+                chosen.off <= nearest + slack(asked),
+                "seed {seed}: {:?} against {nearest:?}",
+                chosen.off
+            );
+            assert_eq!(choose(&library, asked, Order::Drawn, &[], seed), chosen);
+            let mut picks = chosen.picks;
+            picks.sort_unstable();
+            draws.insert(picks);
+        }
+        assert!(draws.len() > 10, "only {} different draws", draws.len());
     }
 }
