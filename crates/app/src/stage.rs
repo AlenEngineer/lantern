@@ -1317,15 +1317,89 @@ fn open_live(uri: &url::Url) -> Result<Video, String> {
     )
 }
 
+/// How wide a picture of `player` is against how tall, as it should be
+/// seen: its pixels counted, and how much wider than tall each one is.
+/// `None` until the player has a picture.
+pub(crate) fn shape(player: &Video) -> Option<f32> {
+    let (wide, tall) = player.size();
+    if wide <= 0 || tall <= 0 {
+        return None;
+    }
+    let pixel = player
+        .pipeline()
+        .property::<gst::Element>("video-sink")
+        .downcast::<gst::Bin>()
+        .ok()
+        .and_then(|bin| bin.by_name("sink"))
+        .and_then(|sink| sink.static_pad("sink"))
+        .and_then(|pad| pad.current_caps())
+        .and_then(|caps| {
+            let shape = caps
+                .structure(0)?
+                .get::<gst::Fraction>("pixel-aspect-ratio")
+                .ok()?;
+            (shape.denom() > 0 && shape.numer() > 0)
+                .then(|| shape.numer() as f32 / shape.denom() as f32)
+        })
+        .unwrap_or(1.0);
+    Some(wide as f32 * pixel / tall as f32)
+}
+
+/// The largest size of `shape` (wide against tall) that fits `room`: all
+/// of the room for a picture whose shape is not known yet.
+fn fitted(room: iced::Size, shape: Option<f32>) -> (f32, f32) {
+    match shape {
+        Some(shape) if room.width > room.height * shape => (room.height * shape, room.height),
+        Some(shape) => (room.width, room.width / shape),
+        None => (room.width, room.height),
+    }
+}
+
+/// `player`'s picture, as large as fits the room it is given and in the
+/// middle of it, in the shape it should be seen: stretched there as it
+/// is drawn, where its pixels are not square.
+pub(crate) fn picture<'a, Message: Clone + 'a>(
+    player: &'a Video,
+    ended: Message,
+    broke: impl Fn(String) -> Message + Clone + 'a,
+) -> iced::Element<'a, Message> {
+    let shape = shape(player);
+    iced::widget::responsive(move |room| {
+        let (wide, tall) = fitted(room, shape);
+        let broke = broke.clone();
+        iced::widget::container(
+            iced_video_player::VideoPlayer::new(player)
+                .width(wide)
+                .height(tall)
+                .content_fit(iced::ContentFit::Fill)
+                .on_end_of_stream(ended.clone())
+                .on_error(move |err| broke(err.message().to_string())),
+        )
+        .center(iced::Fill)
+        .into()
+    })
+    .into()
+}
+
 /// [`open_video`] with the player element named, and `size` added to the
 /// pictures it asks for. `patient`: it waits for the first picture.
 fn open_playbin(playbin: &str, uri: &url::Url, size: &str, patient: bool) -> Result<Video, String> {
     let fail = |err: &dyn fmt::Display| format!("{uri}: {err}");
     gst::init().map_err(|err| fail(&err))?;
+    // A player asked for a size has its pictures made that size, with
+    // square pixels. One that plays them as they are leaves their pixels
+    // the shape the file gives them: making them square would mean
+    // working every picture over again, which for a large video costs
+    // more than decoding it. They are stretched as they are drawn
+    // instead, which costs nothing: see [`shape`].
+    let pixels = match size {
+        "" => "",
+        _ => ",pixel-aspect-ratio=1/1",
+    };
     let pipeline = gst::parse::launch(&format!(
         "{playbin} uri=\"{uri}\" mute=true video-sink=\"videoscale add-borders=true ! \
          videoconvert ! appsink name=sink drop=true \
-         caps=video/x-raw,format=NV12,pixel-aspect-ratio=1/1{size}\""
+         caps=video/x-raw,format=NV12{pixels}{size}\""
     ))
     .map_err(|err| fail(&err))?
     .downcast::<gst::Pipeline>()
@@ -1391,6 +1465,21 @@ mod tests {
     use lantern_engine::SourceId;
 
     use super::*;
+
+    #[test]
+    fn a_picture_fills_the_room_it_fits_in_its_own_shape() {
+        let wide = 2143.0 / 1290.0;
+        // A room wider than the picture: as tall as the room.
+        let (w, h) = fitted(iced::Size::new(960.0, 540.0), Some(wide));
+        assert_eq!(h, 540.0);
+        assert!((w / h - wide).abs() < 0.001 && w < 960.0);
+        // A room taller than the picture: as wide as the room.
+        let (w, h) = fitted(iced::Size::new(400.0, 540.0), Some(wide));
+        assert_eq!(w, 400.0);
+        assert!((w / h - wide).abs() < 0.001 && h < 540.0);
+        // Not known yet: all of the room.
+        assert_eq!(fitted(iced::Size::new(400.0, 300.0), None), (400.0, 300.0));
+    }
 
     fn fixture(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -61,7 +61,6 @@ use std::time::{Duration, Instant, SystemTime};
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::widget::{Space, container, image, operation, scrollable, stack};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
-use iced_video_player::VideoPlayer;
 use lantern_engine::{
     Action, Engine, Look, Media, MediaReport, Plan, Playback, Query, ResourceId, SceneId,
     SearchEvent, SearchStream, StageEvent, StageFeed, StageState, Step, StepId,
@@ -3745,16 +3744,12 @@ impl App {
                     }
                     Some(Content::Sound(_)) => nothing(),
                     Some(Content::Video { player, .. }) => (
-                        VideoPlayer::new(player)
-                            .width(Fill)
-                            .height(Fill)
-                            .content_fit(ContentFit::Contain)
-                            .on_end_of_stream(Message::Ended(scene.id))
-                            .on_error({
-                                let id = scene.id;
-                                move |err| Message::Broke(id, err.message().to_string())
+                        {
+                            let id = scene.id;
+                            stage::picture(player, Message::Ended(id), move |why| {
+                                Message::Broke(id, why)
                             })
-                            .into(),
+                        },
                         Over::Media,
                     ),
                 },
