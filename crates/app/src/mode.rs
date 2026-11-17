@@ -105,6 +105,14 @@ fn does(message: &Message) -> Does {
         | M::PlanAdvance(_)
         | M::PlanTarget(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
+        | M::PlanPanel(
+            crate::plan_panel::PlanEdit::Target(_)
+            | crate::plan_panel::PlanEdit::Folder(..)
+            | crate::plan_panel::PlanEdit::Done
+            | crate::plan_panel::PlanEdit::AddFolder
+            | crate::plan_panel::PlanEdit::RemoveFolder(_)
+            | crate::plan_panel::PlanEdit::Bible(_),
+        )
         | M::LookEdit(..)
         | M::LookReset(_)
         | M::EditTarget
@@ -298,6 +306,8 @@ impl App {
         self.rehearsal = None;
         self.rehearsed = None;
         self.filling = None;
+        self.plan_panel = false;
+        self.plan_typed = None;
         match (self.mode, to) {
             (from, to) if from == to => {}
             (Mode::Run, _) | (_, Mode::Run) => {}
@@ -368,6 +378,8 @@ impl App {
         self.rehearsal = None;
         self.rehearsed = None;
         self.filling = None;
+        self.plan_panel = false;
+        self.plan_typed = None;
         self.editing = None;
         self.adding = None;
         self.selected = None;

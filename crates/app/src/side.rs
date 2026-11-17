@@ -29,6 +29,8 @@ pub enum Lens {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Field {
     Background,
+    /// The picture over the background colour.
+    Picture,
     Text,
     Font,
     Largest,
@@ -38,8 +40,9 @@ pub enum Field {
 }
 
 impl Field {
-    pub const ALL: [Field; 7] = [
+    pub const ALL: [Field; 8] = [
         Field::Background,
+        Field::Picture,
         Field::Text,
         Field::Font,
         Field::Largest,
@@ -48,9 +51,10 @@ impl Field {
         Field::Reference,
     ];
 
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Field::Background => "Background",
+            Field::Picture => "Picture",
             Field::Text => "Text colour",
             Field::Font => "Font",
             Field::Largest => "Largest text",
@@ -61,9 +65,14 @@ impl Field {
     }
 
     /// What `look` says of it, as its field shows it.
-    fn of(self, look: &Look) -> String {
+    pub(crate) fn of(self, look: &Look) -> String {
         match self {
             Field::Background => look.background.to_string(),
+            Field::Picture => look
+                .image
+                .as_ref()
+                .map(|image| image.display().to_string())
+                .unwrap_or_default(),
             Field::Text => look.text.to_string(),
             Field::Font => look.font.clone().unwrap_or_default(),
             Field::Largest => look.max_size.to_string(),
@@ -77,7 +86,7 @@ impl Field {
     }
 
     /// Its colour, for the swatch beside a colour's field.
-    fn colour(self, look: &Look) -> Option<Rgb> {
+    pub(crate) fn colour(self, look: &Look) -> Option<Rgb> {
         match self {
             Field::Background => Some(look.background),
             Field::Text => Some(look.text),
@@ -89,6 +98,7 @@ impl Field {
     fn set_in(self, change: &LookChange) -> bool {
         match self {
             Field::Background => change.background.is_some(),
+            Field::Picture => change.image.is_some() || change.no_image,
             Field::Text => change.text.is_some(),
             Field::Font => change.font.is_some(),
             Field::Largest => change.max_size.is_some(),
@@ -113,6 +123,13 @@ impl Field {
                 .parse()
                 .map(|colour| change.background = Some(colour))
                 .is_ok(),
+            // Empty takes the picture away; the caller has seen that
+            // anything else is a file.
+            Field::Picture => {
+                change.no_image = typed.is_empty();
+                change.image = (!typed.is_empty()).then(|| typed.into());
+                true
+            }
             Field::Text => typed
                 .parse()
                 .map(|colour| change.text = Some(colour))
@@ -143,6 +160,10 @@ impl Field {
     fn clear(self, change: &mut LookChange) {
         match self {
             Field::Background => change.background = None,
+            Field::Picture => {
+                change.image = None;
+                change.no_image = false;
+            }
             Field::Text => change.text = None,
             Field::Font => change.font = None,
             Field::Largest => change.max_size = None,
@@ -156,6 +177,7 @@ impl Field {
     fn copy(self, to: &mut Look, from: &Look) {
         match self {
             Field::Background => to.background = from.background,
+            Field::Picture => to.image.clone_from(&from.image),
             Field::Text => to.text = from.text,
             Field::Font => to.font.clone_from(&from.font),
             Field::Largest => to.max_size = from.max_size,
@@ -181,7 +203,7 @@ fn track<'a>(p: crate::palette::Palette, done: f32, colour: iced::Color) -> Elem
 
 /// Where a value in the Look lens comes from.
 #[derive(Debug, PartialEq, Eq)]
-enum From {
+pub(crate) enum From {
     Here,
     Section(String),
     Plan,
@@ -192,7 +214,7 @@ enum From {
 /// as `None`) comes from: itself, the nearest section around it that
 /// says, the plan's own look where that differs from the `usual` one, or
 /// the usual one.
-fn origin(plan: &Plan, usual: &Look, target: Option<StepId>, field: Field) -> From {
+pub(crate) fn origin(plan: &Plan, usual: &Look, target: Option<StepId>, field: Field) -> From {
     let from_plan = || match &plan.look {
         Some(own) if field.of(own) != field.of(usual) => From::Plan,
         _ => From::Usual,
@@ -223,7 +245,9 @@ impl App {
     /// Whose look the Look lens edits: the selected step or section, or
     /// with nothing selected the plan (`None`).
     fn look_target(&self) -> Option<StepId> {
+        // The plan's own panel edits the plan's look, whatever is selected.
         self.selected
+            .filter(|_| !self.plan_panel)
             .filter(|id| self.engine.0.plan().get(*id).is_some())
     }
 
@@ -233,7 +257,23 @@ impl App {
         let target = self.look_target();
         let usual = self.config.stage.clone();
         let mut change = LookChange::default();
-        if field.put(&mut change, &typed) {
+        // A picture is kept as typed until it is a file there is; then
+        // it is held whole (`~` and all), as the stage reads it.
+        let (typed, value) = match field {
+            Field::Picture if !typed.trim().is_empty() => {
+                let file = self.config_status.path();
+                let dir = file.parent().unwrap_or(std::path::Path::new("."));
+                let path = crate::config::resolve(
+                    std::path::Path::new(typed.trim()),
+                    dir,
+                    self.home.as_deref(),
+                );
+                let value = path.is_file().then(|| path.display().to_string());
+                (typed, value)
+            }
+            _ => (typed.clone(), Some(typed)),
+        };
+        if let Some(typed) = value.filter(|value| field.put(&mut change, value)) {
             self.remember(None);
             self.engine.0.edit_plan(|plan| match target {
                 Some(id) => {
@@ -288,6 +328,10 @@ impl App {
         // A fill under way has the panel to itself.
         if let Some(fill) = self.fill_card() {
             return fill;
+        }
+        // So do the open plan's own settings.
+        if let Some(plan) = self.plan_card() {
+            return plan;
         }
         let p = self.palette;
         let plan = self.engine.0.plan();
@@ -771,5 +815,20 @@ mod tests {
         assert_eq!(change.reference, Some(false));
         Field::Largest.clear(&mut change);
         assert!(!Field::Largest.set_in(&change));
+    }
+
+    #[test]
+    fn a_picture_is_set_taken_away_and_given_back() {
+        let mut change = LookChange::default();
+        assert!(!Field::Picture.set_in(&change));
+        assert!(Field::Picture.put(&mut change, "/media/night.jpg"));
+        assert_eq!(change.image, Some("/media/night.jpg".into()));
+        assert!(!change.no_image);
+        // Emptied, the level says there is no picture: that is said too.
+        assert!(Field::Picture.put(&mut change, " "));
+        assert!(change.image.is_none() && change.no_image);
+        assert!(Field::Picture.set_in(&change));
+        Field::Picture.clear(&mut change);
+        assert!(change.is_empty(), "back to what the level above gives");
     }
 }

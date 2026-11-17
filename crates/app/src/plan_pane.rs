@@ -167,20 +167,38 @@ impl App {
                 .style(look::input(p))
                 .into(),
             // A long name is cut at its edge, not drawn over the count.
-            _ => button(
-                container(
+            // It opens the plan's own settings, and is lit while they
+            // are open; in a run it is only a name.
+            _ => {
+                let open = self.plan_panel;
+                let name = container(
                     single_line(plan.title.clone())
                         .size(HEADING)
                         .font(BOLD)
                         .color(p.primary),
                 )
-                .clip(true),
-            )
-            .padding([4, 8])
-            .on_press(Message::EditPlanName)
-            .style(look::row(p, Tone::Plain))
-            .width(Fill)
-            .into(),
+                .clip(true);
+                let running = self.mode == crate::mode::Mode::Run;
+                let mut inside = row![name].spacing(8).align_y(Alignment::Center);
+                if !running {
+                    inside = inside.push(look::icon(Icon::Tune, 14.0, p.primary));
+                }
+                tooltip(
+                    button(inside)
+                        .padding([4, 10])
+                        .on_press_maybe((!running).then_some(Message::PlanSettings))
+                        .style(look::pill(
+                            p,
+                            if open { Tone::Selected } else { Tone::Plain },
+                        )),
+                    container(text("This plan: name, time, media, look, copy, delete").size(META))
+                        .padding([4, 8])
+                        .style(look::tip(p)),
+                    tooltip::Position::Bottom,
+                )
+                .delay(look::TIP_DELAY)
+                .into()
+            }
         };
         // The name has the header's room. Where the service is ("3 of 7")
         // shows only once it's running; how many steps there are is plain
@@ -203,22 +221,6 @@ impl App {
                 text(format!("{} of {}", at + 1, items.len()))
                     .size(META)
                     .color(p.on_surface_variant),
-            );
-        }
-        // Everything about the plan that isn't its steps.
-        if !running {
-            header = header.push(
-                tooltip(
-                    button(text("⋯").size(HEADING).color(p.on_surface_variant))
-                        .padding([2, 10])
-                        .on_press(Message::PlanSettings)
-                        .style(look::row(p, Tone::Plain)),
-                    container(text("This plan: name, look, template, copy, delete").size(META))
-                        .padding([4, 8])
-                        .style(look::tip(p)),
-                    tooltip::Position::Bottom,
-                )
-                .delay(look::TIP_DELAY),
             );
         }
         if self.plans.is_dirty(plan) {

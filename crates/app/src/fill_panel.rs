@@ -102,6 +102,9 @@ impl App {
     pub(crate) fn fill_edit(&mut self, edit: FillEdit) {
         match edit {
             FillEdit::Open(section) => {
+                // A fill has the side to itself.
+                self.plan_panel = false;
+                self.plan_typed = None;
                 let (planned, budget) = self.section_room(section);
                 let any_used = self
                     .shelf

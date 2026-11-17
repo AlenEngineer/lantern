@@ -496,22 +496,29 @@ dim = 60        # % the image is dimmed under text; 0 leaves it as it is
 Where text is set over the image, the image is dimmed toward the background
 colour so the words read; an empty stage shows it as it is.
 
-A plan can have a look of its own, for a Santa Cena or a youth night: the
-**⋯** in the plan's header opens Settings on **This plan**, where
-**Give it its own look** starts from the look for all plans. The same place
-has the plan's name, **Make it a template**, **Duplicate** (saves the plan
-and opens a copy) and **Delete** (press twice; Ctrl+Z right after brings the plan back).
+**This plan.** What belongs to one plan is set in the plan, not in
+Settings: click the plan's name in the header and its panel opens where the
+side panel is. It has the plan's name, when it starts, its target time,
+whether it is a template, its own media, its own look, **Make a copy**
+(saves the plan and opens a copy), **Export** and **Delete** (press twice;
+Ctrl+Z right after brings the plan back). Settings keeps what holds for
+this computer and for every plan.
 
-**Its folders**, in the same place, lists folders of media only that plan
-needs, such as a campaign's. They're searched like your media folders
-while the plan is open, and no longer once another plan is. They're saved
-in the plan, written as you typed them (`~/Church/Campaña`). The look is
-saved in the plan too, so opening the plan anywhere brings it, and **Use
-the look for all plans** removes it. Opening another plan while something
-is on stage leaves that as it looks: the new plan's look starts with the
-next thing shown.
+A plan can have a look of its own, for a Santa Cena or a youth night:
+under **Its look** each value says **default** while it comes from the look
+for all plans; type another and it is **set here**, and the ✕ beside that
+goes back to the default. The look is saved in the plan, so opening the
+plan anywhere brings it. Opening another plan while something is on stage
+leaves that as it looks: the new plan's look starts with the next thing
+shown.
 
-**Starts at** is when the service begins, on a 24-hour clock (`10:30`).
+**Its media** lists folders of media only that plan needs, such as a
+campaign's: **+** adds one, Enter keeps what you typed. They're searched
+like your media folders while the plan is open, and no longer once another
+plan is. They're saved in the plan, written as you typed them
+(`~/Church/Campaña`); one that isn't on this computer is marked in red.
+
+**Starts** is when the service begins, on a 24-hour clock (`10:30`).
 With it, each section still to come says when it's due ("10:45 · 12 of 15
 min planned"), counting each section before it for its time, or without
 one for its steps. The header counts down to the start ("starts 10:30 · in
@@ -520,7 +527,7 @@ schedule ("4 min behind", "2 min ahead", "on time") in place of "ends in".
 A section counts for its whole time even when its steps are shorter, so a
 late start reads as behind until time is made up.
 
-**Export**, beside them, puts the plan and everything it shows into one
+**Export**, at the foot of the panel, puts the plan and everything it shows into one
 file, `Sábado.lantern` in your Documents, to take or send to another
 computer: the files its steps and standby shelf show, its own folders
 whole, its look's image, and its YouTube videos as downloaded. What can't
@@ -535,8 +542,8 @@ new one is named apart ("Sábado (imported)"). Deleting an imported plan
 removes its media the next time Lantern starts, once no copy of it uses
 them.
 
-**Its Bibles** picks which of your Bibles the plan searches: all of them
-until you pick one. A plan that names a Bible this computer doesn't have
+Under the folders, the Bibles you have: click one and the plan searches
+only the ones lit; with none lit it searches them all. A plan that names a Bible this computer doesn't have
 searches them all.
 
 **Ready check.** While something in the plan isn't ready, a line under its
