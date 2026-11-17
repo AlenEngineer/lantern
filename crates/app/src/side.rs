@@ -487,7 +487,8 @@ impl App {
         ));
         if let Some(at) = at {
             for id in plan.within(at) {
-                if let Some(section) = plan.get(id) {
+                // A loop has no name to show, and no look of its own.
+                if let Some(section) = plan.get(id).filter(|section| !section.is_loop()) {
                     crumbs = crumbs.push(crumb(
                         section.label.clone(),
                         false,
@@ -627,7 +628,10 @@ impl App {
         let mut times = column![].spacing(8);
         let mut any = false;
         for section in &timing.sections {
-            if plan.get(section.id).and_then(Step::depth) != Some(0) {
+            if !plan
+                .get(section.id)
+                .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+            {
                 continue;
             }
             any = true;

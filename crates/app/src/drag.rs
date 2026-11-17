@@ -52,6 +52,13 @@ pub struct Drag {
     pub levels: (u8, u8),
 }
 
+/// How far in a heading sits. A loop drawn round some steps is not one:
+/// it has no row, and what is carried lands among its steps or beside
+/// them by where it is put.
+fn heading(step: &Step) -> Option<u8> {
+    step.depth().filter(|_| !step.is_loop())
+}
+
 /// How far the pointer goes sideways for one level in or out.
 const LEVEL_STEP: f32 = 24.0;
 
@@ -61,7 +68,7 @@ pub fn level_at(rest: &[&Step], at: usize) -> u8 {
     rest[..at.min(rest.len())]
         .iter()
         .rev()
-        .find_map(|step| step.depth())
+        .find_map(|step| heading(step))
         .map_or(0, |depth| depth + 1)
 }
 
@@ -72,11 +79,11 @@ pub fn host(rest: &[&Step], at: usize, level: u8) -> Option<(usize, usize)> {
     let above = level.checked_sub(1)?;
     let start = rest[..at.min(rest.len())]
         .iter()
-        .rposition(|step| step.depth().is_some_and(|depth| depth <= above))
-        .filter(|start| rest[*start].depth() == Some(above))?;
+        .rposition(|step| heading(step).is_some_and(|depth| depth <= above))
+        .filter(|start| heading(rest[*start]) == Some(above))?;
     let end = rest[start + 1..]
         .iter()
-        .position(|step| step.depth().is_some_and(|depth| depth <= above))
+        .position(|step| heading(step).is_some_and(|depth| depth <= above))
         .map_or(rest.len(), |n| start + 1 + n);
     Some((start, end))
 }
@@ -170,8 +177,8 @@ impl Drag {
         let before = rest[..at.min(rest.len())]
             .iter()
             .rev()
-            .find_map(|step| step.depth());
-        let after = rest.get(at).and_then(|step| step.depth()).unwrap_or(0);
+            .find_map(|step| heading(step));
+        let after = rest.get(at).and_then(|step| heading(step)).unwrap_or(0);
         let most = before
             .map_or(0, |before| before + 1)
             .min(DEEPEST.saturating_sub(self.span));
@@ -204,12 +211,12 @@ impl Drag {
         if !self.section {
             return Some(at + usize::from(half == Half::Lower));
         }
-        if rest[at].is_section() && half == Half::Upper {
+        if heading(rest[at]).is_some() && half == Half::Upper {
             return Some(at);
         }
         let end = rest[at + 1..]
             .iter()
-            .position(|step| step.is_section())
+            .position(|step| heading(step).is_some())
             .map_or(rest.len(), |n| at + 1 + n);
         Some(end)
     }

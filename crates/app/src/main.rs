@@ -2575,6 +2575,10 @@ impl App {
                         .enumerate()
                         .filter(|(index, step)| {
                             let hidden = *index < hidden_to;
+                            // A loop has no row to stop on.
+                            if step.is_loop() {
+                                return false;
+                            }
                             if step.is_section() {
                                 if !hidden && self.folded.contains(&step.id) {
                                     hidden_to = plan.group_end(*index);

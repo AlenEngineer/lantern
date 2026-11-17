@@ -496,6 +496,7 @@ impl Script {
                 let action = lantern_engine::Action::Section {
                     budget: *budget,
                     depth: 0,
+                    through: None,
                 };
                 engine.add(None, title.clone(), action);
             }

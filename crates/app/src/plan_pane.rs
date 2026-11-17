@@ -428,7 +428,12 @@ impl App {
             {
                 put!(proposed);
             }
-            let inward = INDENT * f32::from(plan.level(index));
+            // A loop round some steps has no row of its own: it is the
+            // curl beside them, and they stay in line with their section.
+            if step.is_loop() {
+                continue;
+            }
+            let inward = INDENT * f32::from(plan.shown_level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
                 // The section that was closing or opening ends here.
@@ -1224,7 +1229,10 @@ impl App {
         let parts = timing
             .sections
             .iter()
-            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .filter(|section| {
+                plan.get(section.id)
+                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+            })
             .map(|section| {
                 let part = |of: Duration, whole: Duration| match whole.is_zero() {
                     true => 1.0,
@@ -1362,7 +1370,10 @@ impl App {
         let parts = timing
             .sections
             .iter()
-            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .filter(|section| {
+                plan.get(section.id)
+                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+            })
             .map(|section| {
                 let planned = match section.phase {
                     Phase::Coming { planned } => planned,
@@ -1871,15 +1882,38 @@ impl App {
         // something that repeats to its first. Every row keeps its room,
         // so the dots stay in one line down the plan.
         let curl: Element<'a, Message> = match curl_at(plan, index) {
-            Some(piece) => {
+            Some((piece, count)) => {
                 let under: Element<'a, Message> = match piece {
                     look::Curl::Out => Space::new().height(Fill).into(),
                     _ => look::curl(look::Curl::Down, planned).into(),
                 };
-                column![look::curl(piece, planned), under]
+                let pieces = column![look::curl(piece, planned), under]
                     .width(look::CURL_WIDE)
-                    .height(Fill)
-                    .into()
+                    .height(Fill);
+                // A loop with no heading says how often on its own line.
+                match count {
+                    Some((words, low)) => stack![
+                        pieces,
+                        container(
+                            container(
+                                text(words)
+                                    .size(9.0)
+                                    .font(BOLD)
+                                    .color(planned)
+                                    .wrapping(text::Wrapping::None)
+                            )
+                            .style(move |_| container::Style::default().background(p.surface))
+                        )
+                        .width(look::CURL_WIDE)
+                        .height(Fill)
+                        .align_y(match low {
+                            true => iced::alignment::Vertical::Bottom,
+                            false => iced::alignment::Vertical::Center,
+                        })
+                    ]
+                    .into(),
+                    None => pieces.into(),
+                }
             }
             None => Space::new().width(look::CURL_WIDE).into(),
         };
@@ -2407,25 +2441,42 @@ fn ago(elapsed: Duration) -> String {
 /// The piece of the curl beside the step at `index`, when it is in
 /// something that repeats: the nearest section around it that does, or
 /// else the plan. `None` for a step in nothing that repeats, and for the
-/// only step of something that does (its own mark says so).
-fn curl_at(plan: &Plan, index: usize) -> Option<look::Curl> {
+/// only step of something that does (its own mark says so). With it,
+/// for a loop that has no heading, how often it comes, on the row that
+/// says so, and whether at that row's foot.
+fn curl_at(plan: &Plan, index: usize) -> Option<(look::Curl, Option<(String, bool)>)> {
     let steps = plan.steps();
-    let (start, end) = plan
+    let (group, start, end) = plan
         .within(index)
         .into_iter()
         .rev()
         .filter_map(|id| plan.position(id))
         .find(|at| steps[*at].flow.repeat != Repeat::Once)
-        .map(|at| (at + 1, plan.group_end(at)))
-        .or((plan.flow.repeat != Repeat::Once).then_some((0, steps.len())))?;
-    let mut inside = (start..end).filter(|at| !steps[*at].is_section());
-    let first = inside.next()?;
-    let last = inside.next_back()?;
-    Some(match index {
+        .map(|at| (Some(at), at + 1, plan.group_end(at)))
+        .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))?;
+    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
+    let (first, last) = (*inside.first()?, *inside.last()?);
+    if first == last {
+        return None;
+    }
+    let piece = match index {
         at if at == first => look::Curl::Into,
         at if at == last => look::Curl::Out,
         _ => look::Curl::Past,
-    })
+    };
+    // A loop drawn round some steps has no heading to say how often it
+    // comes: its line says, half way down. With an even number of steps
+    // that is between two, at the foot of the upper one.
+    let low = inside.len().is_multiple_of(2);
+    let count = group
+        .map(|at| &steps[at])
+        .filter(|group| group.is_loop() && index == inside[(inside.len() - 1) / 2])
+        .and_then(|group| match group.flow.repeat {
+            Repeat::Until(_) => Some("◷".to_string()),
+            repeat => repeat_words(repeat),
+        })
+        .map(|words| (words, low));
+    Some((piece, count))
 }
 
 /// How often something comes, in a few characters; `None` for once.
@@ -2647,9 +2698,9 @@ mod tests {
         // Nothing repeats: no curl.
         assert_eq!(curl_at(&plan, 1), None);
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
-        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
-        assert_eq!(curl_at(&plan, 2), Some(Curl::Past));
-        assert_eq!(curl_at(&plan, 3), Some(Curl::Out));
+        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
+        assert_eq!(curl_at(&plan, 2), Some((Curl::Past, None)));
+        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
         assert_eq!(curl_at(&plan, 5), None, "Sermon doesn't repeat");
         // One step has nothing to curl round.
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever;
@@ -2658,7 +2709,19 @@ mod tests {
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
         plan.flow.repeat = Repeat::Forever;
-        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
-        assert_eq!(curl_at(&plan, 5), Some(Curl::Out));
+        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
+        assert_eq!(curl_at(&plan, 5), Some((Curl::Out, None)));
+        // A loop drawn round two steps has no heading: its line says how
+        // often, between the two.
+        plan.flow.repeat = Repeat::Once;
+        let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
+        plan.loop_over(a, b).unwrap();
+        // Music, the loop, A, B, C.
+        assert_eq!(
+            curl_at(&plan, 2),
+            Some((Curl::Into, Some(("×2".to_string(), true))))
+        );
+        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
+        assert_eq!(curl_at(&plan, 4), None, "C is out of it");
     }
 }
