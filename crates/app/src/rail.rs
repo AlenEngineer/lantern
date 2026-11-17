@@ -29,6 +29,9 @@ pub enum Act {
     /// The line of a drawn order was pressed beside a step: pulled along
     /// from there, it draws more of the order or rubs some of it out.
     PressOrder(StepId),
+    /// The line of a loop or a drawn order was pressed: held and moved,
+    /// all it holds is carried.
+    CarrySpan(lantern_engine::SpanId),
     /// The pointer came onto a step's rail, or left it.
     Over(StepId),
     Left(StepId),

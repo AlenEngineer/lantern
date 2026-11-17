@@ -77,6 +77,15 @@ pub(crate) struct Braced {
     lane: u8,
 }
 
+/// The brackets beside the steps: which sections they are, how many
+/// lanes of them, and whether one needs room right of its brace.
+#[derive(Debug, Clone, Copy)]
+struct Side<'a> {
+    braced: &'a [Braced],
+    lanes: u8,
+    wide: bool,
+}
+
 /// How wide the card of a picked section is, where there is room.
 const CARD: f32 = 214.0;
 
@@ -443,6 +452,13 @@ impl App {
         // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
         let mut rows = column![].spacing(2);
+        // What was just refused shakes and flashes, the wrong colour and
+        // white by turns, while the refusal is said: how far aside it is.
+        let alarm = Some(self.motion.nudge()).filter(|aside| *aside != 0.0);
+        let alarm_ink = match alarm {
+            Some(aside) if aside > 0.0 => iced::Color::WHITE,
+            _ => p.error,
+        };
         // Where the dots are, said by the rows as they are laid out, and
         // what one drawing over the list makes of them.
         let places = self.places.clone();
@@ -487,6 +503,44 @@ impl App {
             .map(|braced| braced.lane + 1)
             .max()
             .unwrap_or(0);
+        // The steps that are a section's own: in it and in no section
+        // inside it. A section that holds others writes its name beside
+        // the longest run of those; one with none needs room right of
+        // its brace.
+        let own_of = |outer: &Braced| {
+            let own = |at: &usize| {
+                !plan.steps()[*at].is_section()
+                    && !braced.iter().any(|inner| {
+                        inner.at > outer.at
+                            && inner.end <= outer.end
+                            && (inner.at..inner.end).contains(at)
+                    })
+            };
+            // The longest run of them, the first of the longest.
+            let mut best: Option<(usize, usize)> = None;
+            let mut at = outer.at + 1;
+            while at < outer.end {
+                match own(&at) {
+                    true => {
+                        let last = (at..outer.end).take_while(own).last().unwrap_or(at);
+                        if best.is_none_or(|(from, to)| last - at > to - from) {
+                            best = Some((at, last));
+                        }
+                        at = last + 1;
+                    }
+                    false => at += 1,
+                }
+            }
+            best
+        };
+        let side_wide = braced
+            .iter()
+            .any(|braced| braced.lane > 0 && own_of(braced).is_none());
+        let side = Side {
+            braced: &braced,
+            lanes: side_lanes,
+            wide: side_wide,
+        };
         let mut stops: Vec<track::Stop> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
         let mut headings: Vec<usize> = Vec::new();
@@ -700,7 +754,10 @@ impl App {
                 let before = plan.steps()[..index]
                     .iter()
                     .rposition(|step| !step.is_section());
+                // Not before a bracket: the line runs on past where it
+                // starts, and the dot of a step that waits says so.
                 if let Some(before) = before
+                    && !bracket
                     && !plan.goes_on(before)
                     && folding.is_none()
                     && !hidden
@@ -816,11 +873,19 @@ impl App {
             let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
             // Every dot is on the one line; what is in a section sits a
             // little further in, as its heading's name does.
+            // A step that was not let go where it was carried shakes.
+            let aside = alarm
+                .filter(|_| self.alarm.0.contains(&step.id))
+                .map_or(0.0, f32::abs);
+            if aside > 0.0 {
+                stop.dot = track::Dot::Would(alarm_ink);
+            }
             let row = row![
+                Space::new().width(aside),
                 rail,
                 Space::new().width(inward),
                 apart(row),
-                self.side(plan, index, &braced, side_lanes, &places)
+                self.side(plan, index, side, &places)
             ]
             .height(Length::Shrink);
             // A step that stays in sight when its section is folded (the
@@ -951,6 +1016,13 @@ impl App {
         // In a service, the span the flow goes back round when the step
         // that is on ends is the stage's colour, and one the service is
         // in says which time round it is.
+        // What letting go of the steps being carried would do to the
+        // loops and drawn orders they are in.
+        let (would_cut, would_leave) = match self.carry_check(plan) {
+            Some(Err(lantern_engine::CarryError::Crosses(spans))) => (spans, Vec::new()),
+            Some(Ok(carried)) => (Vec::new(), carried.left),
+            _ => (Vec::new(), Vec::new()),
+        };
         let at_now = at.filter(|_| running);
         let back = at_now.and_then(|_| self.engine.0.follows_back());
         let mut drawn_loops: Vec<track::Span> = Vec::new();
@@ -961,9 +1033,19 @@ impl App {
                 .then(|| self.engine.0.rounds(laid.of))
                 .and_then(|(now, of)| Some(format!("{}/{}", now + 1, of?)));
             let words = round.or_else(|| repeat_words(plan.flow_of(laid.of)?.repeat));
-            let color = match back == Some(laid.of) {
-                true => p.tertiary,
-                false => p.primary,
+            let own = match laid.of {
+                FlowOf::Span(id) => Some(id),
+                _ => None,
+            };
+            let color = match own {
+                // It was just not cut: it flashes, as the steps do.
+                Some(id) if alarm.is_some() && self.alarm.1.contains(&id) => alarm_ink,
+                // Letting go now would cut it.
+                Some(id) if would_cut.contains(&id) => p.error,
+                // Or take the carried steps out of it.
+                Some(id) if would_leave.contains(&id) => Palette::tint(p.primary, 0.35),
+                _ if back == Some(laid.of) => p.tertiary,
+                _ => p.primary,
             };
             let mark = words.map_or(track::Mark::Nothing, track::Mark::Words);
             if let Some(span) = span(laid, color, mark, false) {
@@ -1105,7 +1187,12 @@ impl App {
                     id: step.id,
                     first: id_at(first),
                     last: id_at(last),
-                    lane: braced.lane,
+                    offset: track::brace_at(braced.lane),
+                    // One that holds others writes beside its own steps.
+                    beside: Some(braced)
+                        .filter(|braced| braced.lane > 0)
+                        .and_then(own_of)
+                        .map(|(first, last)| (id_at(first), id_at(last))),
                     color: match on {
                         true => p.tertiary,
                         false => p.primary,
@@ -1172,6 +1259,39 @@ impl App {
         let mut layers = stack![rows, track::over(picture, &places)].width(Fill);
         if let Some(card) = card {
             layers = layers.push(card);
+        }
+        // Steps picked together can be made a section: a mark beside the
+        // last of them does it.
+        let last_picked = self
+            .picked
+            .iter()
+            .filter_map(|id| plan.position(*id))
+            .max()
+            .filter(|_| self.picked.len() > 1 && tree && can && moving.is_none());
+        if let Some(last) = last_picked
+            && let Some((origin, row)) = {
+                let places = places.borrow();
+                places
+                    .get(&track::Key::Canvas)
+                    .copied()
+                    .zip(places.get(&track::Key::Side(id_at(last))).copied())
+            }
+        {
+            let make = hinted(
+                p,
+                button(text("{ + }").size(META).font(BOLD).color(p.primary))
+                    .padding([4, 10])
+                    .on_press(Message::BracketPicked)
+                    .style(look::pill(p, Tone::Selected)),
+                "Make a section of them".to_string(),
+                tooltip::Position::Top,
+            );
+            layers = layers.push(
+                iced::widget::pin(make)
+                    // Just left of the brackets, level with that row.
+                    .x((row.x - origin.x - 64.0).max(0.0))
+                    .y((row.y - origin.y + 5.0).max(0.0)),
+            );
         }
         mouse_area(scrolling(layers).id(ROWS))
             .on_exit(Message::LeftPlan)
@@ -1479,7 +1599,7 @@ impl App {
         };
         let tone = match place {
             Place::Current if shown => Tone::Live,
-            _ if self.selected == Some(step.id) => Tone::Selected,
+            _ if self.selected == Some(step.id) || self.picked.contains(&step.id) => Tone::Selected,
             _ => Tone::Plain,
         };
         // On stage, the row says how far into it the stage is.
@@ -2364,18 +2484,20 @@ impl App {
         &self,
         plan: &Plan,
         index: usize,
-        braced: &[Braced],
-        lanes: u8,
+        side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
-        let wide = track::BRACE + track::LABEL;
-        let parts = (0..lanes).map(|lane| {
-            let part = Space::new().width(wide).height(Fill);
-            let Some(section) = braced
+        let covering = |lane: Option<u8>| {
+            side.braced
                 .iter()
-                .find(|braced| braced.lane == lane && (braced.at + 1..braced.end).contains(&index))
+                .filter(|braced| (braced.at + 1..braced.end).contains(&index))
+                .filter(|braced| lane.is_none_or(|lane| braced.lane == lane))
+                .min_by_key(|braced| braced.lane)
                 .map(|braced| plan.steps()[braced.at].id)
-            else {
+        };
+        let part = |wide: f32, section: Option<StepId>| -> Element<'a, Message> {
+            let part = Space::new().width(wide).height(Fill);
+            let Some(section) = section else {
                 return part.into();
             };
             let mut area = mouse_area(part)
@@ -2388,11 +2510,30 @@ impl App {
                 )));
             }
             self.draggable(section, area.into())
-        });
+        };
+        // The innermost brace and the names beside it: the section this
+        // step is most nearly in. Then a brace for each one further out,
+        // and the room right of those, which is the outermost's.
+        let mut parts: Vec<Element<'a, Message>> = Vec::new();
+        if side.lanes > 0 {
+            parts.push(part(track::BRACE + track::LABEL, covering(None)));
+        }
+        for lane in 1..side.lanes {
+            parts.push(part(track::BRACE, covering(Some(lane))));
+        }
+        if side.wide {
+            let outermost = side
+                .lanes
+                .checked_sub(1)
+                .and_then(|lane| covering(Some(lane)));
+            parts.push(part(track::LABEL, outermost));
+        }
         track::seen(
             track::Key::Side(plan.steps()[index].id),
             places,
-            row(parts).width(track::side_room(lanes)).height(Fill),
+            row(parts)
+                .width(track::side_room(side.lanes, side.wide))
+                .height(Fill),
         )
     }
 
@@ -2420,12 +2561,20 @@ impl App {
                 .iter()
                 .find(|laid| laid.lane == lane && covers(laid))
             {
-                Some(laid) if rings => mouse_area(part)
-                    .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                        crate::rail::RingOn::Loop(laid.of),
-                    )))
-                    .interaction(mouse::Interaction::Pointer)
-                    .into(),
+                Some(laid) if rings => {
+                    let line = mouse_area(part)
+                        .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                            crate::rail::RingOn::Loop(laid.of),
+                        )))
+                        .interaction(mouse::Interaction::Pointer);
+                    // Held and moved, the line carries all it holds.
+                    match laid.of {
+                        FlowOf::Span(span) if self.mode == crate::mode::Mode::Plan => line
+                            .on_press(Message::Rail(crate::rail::Act::CarrySpan(span)))
+                            .into(),
+                        _ => line.into(),
+                    }
+                }
                 _ => part.into(),
             }
         });

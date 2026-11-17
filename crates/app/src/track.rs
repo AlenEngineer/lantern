@@ -326,9 +326,14 @@ pub struct Bracket {
     pub id: StepId,
     pub first: StepId,
     pub last: StepId,
-    /// How many sections it holds, one in another: it is that much
-    /// further out.
-    pub lane: u8,
+    /// How far right of where the brackets start its brace is: further
+    /// out the more sections it holds, one in another.
+    pub offset: f32,
+    /// The steps its name and times are written beside, left of its
+    /// brace, in the room the innermost brackets write theirs in: the
+    /// first run of its steps that are in no section inside it. `None`
+    /// writes them right of its brace.
+    pub beside: Option<(StepId, StepId)>,
     pub color: Color,
     pub name: String,
     pub lines: Vec<(Sign, String, Color)>,
@@ -344,9 +349,31 @@ pub struct Bracket {
 pub const BRACE: f32 = 18.0;
 pub const LABEL: f32 = 86.0;
 
-/// How much room right of the steps the brackets need, `lanes` deep.
-pub fn side_room(lanes: u8) -> f32 {
-    (BRACE + LABEL) * f32::from(lanes)
+/// How much room right of the steps the brackets need, `lanes` deep:
+/// the innermost and what is written beside it, and a brace for each
+/// one further out; with room right of those too (`wide`) where one of
+/// them has no steps of its own to write beside.
+pub fn side_room(lanes: u8, wide: bool) -> f32 {
+    match lanes {
+        0 => 0.0,
+        lanes => {
+            BRACE
+                + LABEL
+                + BRACE * f32::from(lanes - 1)
+                + match wide {
+                    true => LABEL,
+                    false => 0.0,
+                }
+        }
+    }
+}
+
+/// How far right of where the brackets start the brace in `lane` is.
+pub fn brace_at(lane: u8) -> f32 {
+    match lane {
+        0 => 0.0,
+        lane => BRACE + LABEL + BRACE * f32::from(lane - 1),
+    }
 }
 
 /// `name` on as few lines as it takes, two at most, each about as wide
@@ -850,7 +877,7 @@ fn paint(
             continue;
         };
         let far = moves.drawn(Thing::Bracket(bracket.id));
-        let x = first.x + (BRACE + LABEL) * f32::from(bracket.lane) + 3.0;
+        let x = first.x + bracket.offset + 3.0;
         let (top, foot) = (
             first.y + 2.0,
             (last.y + last.height - 4.0).min(limit(bracket.cut, at)),
@@ -904,11 +931,23 @@ fn paint(
         // room for.
         const TALL: f32 = 14.0;
         let names = name_lines(&bracket.name);
-        let room = (((foot - top) + 10.0) / TALL).floor().max(1.0) as usize;
+        // Right of its brace; or left of it, beside the steps that are
+        // its own, where the innermost write theirs.
+        let own = bracket
+            .beside
+            .and_then(|(from, to)| at(Key::Side(from)).zip(at(Key::Side(to))));
+        let (left, middle, tall) = match own {
+            Some((from, to)) => (
+                first.x + 3.0 + 7.0 + 12.0,
+                (from.y + to.y + to.height) / 2.0,
+                to.y + to.height - from.y,
+            ),
+            None => (x + round + 12.0, middle, foot - top),
+        };
+        let room = ((tall + 10.0) / TALL).floor().max(1.0) as usize;
         let names = &names[..names.len().min(room)];
         let lines = &bracket.lines[..bracket.lines.len().min(room - names.len())];
         let tall = TALL * (names.len() + lines.len()) as f32;
-        let left = x + round + 12.0;
         let mut y = middle - tall / 2.0 + TALL / 2.0;
         for name in names {
             frame.fill_text(canvas::Text {

@@ -299,34 +299,61 @@ impl App {
             // first, then held.
             let lift = self.motion.lift();
             let ground = crate::motion::blend(p.surface_container_highest, p.primary, 0.2);
-            let card = container(
-                single_line(drag.label(&self.engine.0.plan()))
+            // Where letting go would cut a loop or a drawn order, it says
+            // so, and which keys would let it.
+            let plan = self.engine.0.plan();
+            let cuts = matches!(
+                self.carry_check(&plan),
+                Some(Err(lantern_engine::CarryError::Crosses(_)))
+            );
+            let mut said = row![
+                single_line(drag.label(&plan))
                     .size(BODY)
                     .font(BOLD)
                     .color(p.primary.scale_alpha(lift)),
-            )
-            .padding([9, 14])
-            .max_width(300)
-            .clip(true)
-            .style(move |_| container::Style {
-                background: Some(
-                    Color {
-                        a: 0.94 * lift,
-                        ..ground
-                    }
-                    .into(),
-                ),
-                border: iced::Border {
-                    radius: 12.0.into(),
-                    ..iced::Border::default()
-                },
-                shadow: iced::Shadow {
-                    color: Color::BLACK.scale_alpha(0.5 * lift),
-                    offset: iced::Vector::new(0.0, 4.0 + 4.0 * lift),
-                    blur_radius: 8.0 + 16.0 * lift,
-                },
-                ..container::Style::default()
-            });
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            if cuts {
+                said = said.push(look::icon(Icon::Warning, 14.0, p.error));
+                for key in ["Ctrl", "Alt"] {
+                    said = said.push(
+                        container(text(key).size(META).font(BOLD).color(p.on_surface_variant))
+                            .padding([1, 6])
+                            .style(move |_| container::Style {
+                                border: iced::Border {
+                                    color: p.outline,
+                                    width: 1.0,
+                                    radius: 5.0.into(),
+                                },
+                                ..container::Style::default()
+                            }),
+                    );
+                }
+            }
+            let card = container(said)
+                .padding([9, 14])
+                .max_width(300)
+                .clip(true)
+                .style(move |_| container::Style {
+                    background: Some(
+                        Color {
+                            a: 0.94 * lift,
+                            ..ground
+                        }
+                        .into(),
+                    ),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..iced::Border::default()
+                    },
+                    shadow: iced::Shadow {
+                        color: Color::BLACK.scale_alpha(0.5 * lift),
+                        offset: iced::Vector::new(0.0, 4.0 + 4.0 * lift),
+                        blur_radius: 8.0 + 16.0 * lift,
+                    },
+                    ..container::Style::default()
+                });
             layers = layers.push(
                 pin(card)
                     .x(drag.at.x + 14.0)

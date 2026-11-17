@@ -302,6 +302,10 @@ enum Message {
     /// A plan step was picked: it becomes the selection, where new steps
     /// go, and is lined up in the preview.
     Select(StepId),
+    /// The keys held changed.
+    Mods(iced::keyboard::Modifiers),
+    /// The steps picked together become a section.
+    BracketPicked,
     Remove(StepId),
     /// Takes this off the plan's standby shelf.
     Unstandby(ResourceId),
@@ -534,6 +538,16 @@ struct App {
     /// Where the plan's dots and brackets were when last drawn: what is
     /// laid over the list beside one of them is put there.
     pub(crate) places: track::Places,
+    /// The steps picked together, with the selected one: Ctrl and a
+    /// click adds or drops one, Shift and a click takes all from the
+    /// selected step to there. Empty when only one is selected.
+    pub(crate) picked: Vec<StepId>,
+    /// The keys held that change what a press does.
+    pub(crate) mods: iced::keyboard::Modifiers,
+    /// The steps that were not let go where they were carried, and the
+    /// loops and drawn orders that would have been cut: they shake and
+    /// flash while the refusal is said.
+    pub(crate) alarm: (Vec<StepId>, Vec<lantern_engine::SpanId>),
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -779,6 +793,9 @@ impl App {
             lengths,
             usage,
             places: track::Places::default(),
+            picked: Vec::new(),
+            mods: iced::keyboard::Modifiers::default(),
+            alarm: (Vec::new(), Vec::new()),
             attached: None,
             left: None,
             config,
@@ -1568,7 +1585,23 @@ impl App {
                     .hovered
                     .filter(|_| self.rail_over.is_none() && self.pull.is_none())
                     .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
-                    .map(|(step, _)| Drag::new(&plan, step));
+                    .map(|(step, _)| Drag::new(&plan, step))
+                    // Picked up by its line just now: that stays.
+                    .or_else(|| self.drag.take().filter(|drag| drag.by_line));
+                // One of the steps picked together carries them all.
+                if let Some(drag) = self.drag.as_mut()
+                    && !drag.is_section()
+                    && self.picked.len() > 1
+                    && self.picked.contains(&drag.step)
+                {
+                    let mut all: Vec<(usize, StepId)> = self
+                        .picked
+                        .iter()
+                        .filter_map(|id| Some((plan.position(*id)?, *id)))
+                        .collect();
+                    all.sort_unstable();
+                    drag.carried = all.into_iter().map(|(_, id)| id).collect();
+                }
                 if running && self.drag.is_none() && self.hovered.is_some() {
                     self.balk = Some((None, false));
                 }
@@ -1591,6 +1624,35 @@ impl App {
                     .and_then(|d| d.landing.map(|at| (d, at)))
                     .filter(|(drag, at)| *at != drag.home || drag.nests());
                 if let Some((drag, at)) = dropped {
+                    // Steps are carried by the rules for what they are in
+                    // a flow with: refused where a loop or a drawn order
+                    // would be cut, unless a key says to cut it.
+                    if !drag.is_section() {
+                        let plan = self.engine.0.plan();
+                        let (place, how) = (self.carry_place(&plan, &drag, at), self.carry_how());
+                        match plan.would_carry(&drag.carried, place, how) {
+                            Ok(_) => {
+                                self.remember(None);
+                                let _ = self.engine.0.carry(&drag.carried, place, how);
+                            }
+                            Err(lantern_engine::CarryError::Crosses(spans)) => {
+                                self.alarm = (drag.carried.clone(), spans);
+                                self.motion.refuse(
+                                    "It would cut a loop or a drawn order. Ctrl cuts it loose, Alt strips its flows",
+                                );
+                                return Task::none();
+                            }
+                            Err(_) => {
+                                self.alarm = (drag.carried.clone(), Vec::new());
+                                self.motion.refuse("It can't go there");
+                                return Task::none();
+                            }
+                        }
+                        if let Some(first) = drag.carried.first() {
+                            self.motion.changed(*first);
+                        }
+                        return self.preload();
+                    }
                     self.remember(None);
                     self.engine.0.edit_plan(|plan| match drag.is_section() {
                         true => plan.move_group(&drag.carried, at, drag.level),
@@ -1848,7 +1910,88 @@ impl App {
                     self.search.refresh_index(&self.engine.0);
                 }
             }
+            Message::Mods(mods) => self.mods = mods,
+            Message::BracketPicked => {
+                let plan = self.engine.0.plan();
+                let mut picked: Vec<usize> = self
+                    .picked
+                    .iter()
+                    .filter_map(|id| plan.position(*id))
+                    .collect();
+                picked.sort_unstable();
+                let (Some(first), Some(last)) = (picked.first(), picked.last()) else {
+                    return Task::none();
+                };
+                let (first, last) = (plan.steps()[*first].id, plan.steps()[*last].id);
+                self.remember(None);
+                match self.engine.0.bracket_over(first, last, "Section") {
+                    Ok(section) => {
+                        self.picked.clear();
+                        self.motion.changed(section);
+                        // Its name is asked for at once.
+                        let named = self.update(Message::Select(section));
+                        return Task::batch([
+                            named,
+                            self.update(Message::EditStep(Some((section, plan_edit::Part::Name)))),
+                        ]);
+                    }
+                    Err(why) => self.motion.refuse(match why {
+                        lantern_engine::BracketError::HalfOver(_) => {
+                            "It would take in a part of another section"
+                        }
+                        lantern_engine::BracketError::TooDeep => "Sections go no deeper than that",
+                        lantern_engine::BracketError::Cuts(_) => {
+                            "It would cut a drawn order in two"
+                        }
+                        _ => "No section can be made there",
+                    }),
+                }
+            }
+            Message::Rail(rail::Act::CarrySpan(span)) => {
+                let plan = self.engine.0.plan();
+                let steps = plan.span_steps(span);
+                if let Some(first) = steps.first().filter(|_| self.can_edit()) {
+                    let mut drag = Drag::new(&plan, *first);
+                    drag.carried = steps;
+                    drag.by_line = true;
+                    self.pull = None;
+                    self.drag = Some(drag);
+                }
+            }
             Message::Select(step) => {
+                // Ctrl adds a step to those picked, or drops it; Shift takes
+                // all from the selected step to this one; a plain click
+                // picks this one alone.
+                let plan = self.engine.0.plan();
+                let plain = |id: StepId| plan.get(id).is_some_and(|step| !step.is_section());
+                let together = self.mode == mode::Mode::Plan && self.can_edit() && plain(step);
+                match (together, self.mods.control(), self.mods.shift()) {
+                    (true, true, _) => {
+                        if self.picked.is_empty()
+                            && let Some(first) = self.selected.filter(|id| plain(*id))
+                        {
+                            self.picked.push(first);
+                        }
+                        match self.picked.iter().position(|id| *id == step) {
+                            Some(at) => {
+                                self.picked.remove(at);
+                            }
+                            None => self.picked.push(step),
+                        }
+                    }
+                    (true, false, true) => {
+                        let from = self.selected.and_then(|id| plan.position(id));
+                        let to = plan.position(step);
+                        if let (Some(from), Some(to)) = (from, to) {
+                            self.picked = plan.steps()[from.min(to)..=from.max(to)]
+                                .iter()
+                                .filter(|step| !step.is_section())
+                                .map(|step| step.id)
+                                .collect();
+                        }
+                    }
+                    _ => self.picked.clear(),
+                }
                 if self.editing.is_some_and(|(id, _)| id != step) {
                     self.editing = None;
                 }
@@ -3427,6 +3570,55 @@ impl App {
         }
     }
 
+    /// Where steps carried to `at` among the rows that stay would land:
+    /// in the section as far in as the drag is held, of those that end
+    /// there, or else the innermost.
+    pub(crate) fn carry_place(&self, plan: &Plan, drag: &Drag, at: usize) -> lantern_engine::Place {
+        let landings = plan.landings(&drag.carried, at);
+        let level = |section: &Option<StepId>| {
+            section
+                .and_then(|id| plan.get(id))
+                .and_then(|step| step.depth())
+                .map_or(0, |depth| depth + 1)
+        };
+        let section = landings
+            .iter()
+            .find(|section| level(section) == drag.level)
+            .or(landings.first())
+            .copied()
+            .flatten();
+        lantern_engine::Place { index: at, section }
+    }
+
+    /// How steps are carried, by the keys held: as they are, cut loose
+    /// from what they are in with others (Ctrl), or stripped of every
+    /// flow (Alt).
+    pub(crate) fn carry_how(&self) -> lantern_engine::Carry {
+        match (self.mods.alt(), self.mods.control()) {
+            (true, _) => lantern_engine::Carry::Stripped,
+            (false, true) => lantern_engine::Carry::CutLoose,
+            (false, false) => lantern_engine::Carry::Whole,
+        }
+    }
+
+    /// What letting go of the steps being carried would do, where they
+    /// are over a place to land.
+    pub(crate) fn carry_check(
+        &self,
+        plan: &Plan,
+    ) -> Option<Result<lantern_engine::Carried, lantern_engine::CarryError>> {
+        let drag = self
+            .drag
+            .as_ref()
+            .filter(|drag| drag.moving && !drag.is_section())?;
+        let at = drag.landing?;
+        Some(plan.would_carry(
+            &drag.carried,
+            self.carry_place(plan, drag, at),
+            self.carry_how(),
+        ))
+    }
+
     fn program_changed(&mut self) -> Task<Message> {
         self.follow_deck();
         // What goes on the projector in a service or in Live has been
@@ -3759,6 +3951,12 @@ impl App {
             window::close_requests().map(Message::CloseAsked),
             window::resize_events().map(|(window, size)| Message::Resized(window, size)),
             iced::event::listen_with(keys::key_event),
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(mods)) => {
+                    Some(Message::Mods(mods))
+                }
+                _ => None,
+            }),
             iced::event::listen_with(pointer_event),
         ];
         // The pointer is followed only while it holds a row, a dot of the
