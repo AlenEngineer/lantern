@@ -1,7 +1,8 @@
-//! The line down the plan's steps, drawn once over the whole list: the
-//! dots, the lines from one to the next, what has played of the one that
-//! is on, and beside them the line of what comes again and of a drawn
-//! order.
+//! The line down the plan's steps, drawn once over the whole list: one
+//! line through every step, whatever section it is in, with its dots,
+//! what has played of the step that is on, and beside it the spans laid
+//! over it: what comes again, to the left, and what comes in a drawn
+//! order, to the right, each further out the more spans it holds.
 //!
 //! The rows say where they are ([`seen`]) and what should be drawn for
 //! them ([`Picture`]); one canvas laid over the list ([`over`]) draws it
@@ -33,8 +34,9 @@ pub enum Key {
     Dot(StepId),
     /// The room beside a step for its dot and the lines either side.
     Row(StepId),
-    /// A section's dot.
-    Section(StepId),
+    /// Where a section's heading is on the rail: level with the heading,
+    /// in line with the dots.
+    Heading(StepId),
     /// Rows cut to a height while their section closes or opens.
     Cut(u32),
 }
@@ -224,87 +226,74 @@ pub enum Line {
 pub struct Stop {
     pub id: StepId,
     pub dot: Dot,
+    /// Its line down to the next step, where it goes on into it.
     pub line: Option<Line>,
-    /// The step the line goes to: `None` for the last of the plan, whose
-    /// line ends under it.
+    /// The step the line goes to, whatever section that is in: `None`
+    /// for the last of the plan, whose line ends under it.
     pub next: Option<StepId>,
-    /// The section it is in, and whether that one is being worked on:
-    /// what is drawn for the steps of one that is not steps back.
-    pub group: Option<StepId>,
-    pub awake: bool,
+    /// The step is playing and the flow goes back from it when it ends:
+    /// which of [`Picture::loops`] it follows. What has played is then
+    /// shown along that line, not the one down.
+    pub back: Option<(usize, f32, Color)>,
     /// The cut it is under, while its section closes or opens.
     pub cut: Option<u32>,
 }
 
-/// What is down the rail, top to bottom.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Item {
-    Stop(Stop),
-    /// A section's heading: a line that passes it leaves its dot room.
-    Section {
-        id: StepId,
-        cut: Option<u32>,
-    },
-}
-
-/// What a line beside the steps says of itself, at its middle.
+/// What a span says of itself, at the middle of its line.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mark {
     Nothing,
-    /// How often it comes.
+    /// How often it comes, or which round it is on.
     Words(String),
     /// The mark of a drawn order.
     Crossed,
 }
 
-/// A line beside some steps: the first and last of them in sight.
+/// Where a span starts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum From {
+    /// At a step.
+    Step(StepId),
+    /// At a section's heading: it is over all that section holds.
+    Heading(StepId),
+}
+
+impl From {
+    fn id(self) -> StepId {
+        match self {
+            From::Step(id) | From::Heading(id) => id,
+        }
+    }
+}
+
+/// A span laid over the line: from its first step in sight (or its
+/// section's heading) to its last.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Beside {
-    pub first: StepId,
+pub struct Span {
+    pub first: From,
     pub last: StepId,
-    /// Whether the line really starts and ends at those two: not where
+    /// Whether the span really starts and ends at those two: not where
     /// its own first or last step is folded away.
     pub starts: bool,
     pub ends: bool,
+    /// How many spans of its kind it holds: it is drawn that much
+    /// further out from the dots.
+    pub lane: u8,
     pub color: Color,
     pub mark: Mark,
     /// One a pull would make: it is not drawn in, it is there.
     pub pulled: bool,
-    /// The section its steps are in.
-    pub group: Option<StepId>,
-}
-
-/// A section's own line, down from its dot: on to the next section's
-/// dot where it hands over by itself, and curling back from the level of
-/// its last step where it comes again.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Section {
-    pub id: StepId,
-    /// The last of its steps in sight.
-    pub last: Option<StepId>,
-    /// The section it hands over to, where it does and that one is next
-    /// down the same line.
-    pub next: Option<StepId>,
-    /// What its loop says of itself, where it comes again.
-    pub again: Option<Mark>,
-    pub color: Color,
-    pub cut: Option<u32>,
 }
 
 /// Everything the canvas draws.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Picture {
-    pub items: Vec<Item>,
-    /// The sections' own lines.
-    pub sections: Vec<Section>,
-    /// What comes again: dashed, curling back to its first step.
-    pub loops: Vec<Beside>,
+    /// The steps in sight, top to bottom.
+    pub stops: Vec<Stop>,
+    /// What comes again: dashed, curling back to where it starts.
+    pub loops: Vec<Span>,
     /// What comes in a drawn order: a line that wanders.
-    pub orders: Vec<Beside>,
-    /// How wide the room for a loop's line is, left of the dots, and for
-    /// an order's, right of them.
-    pub curl_wide: f32,
-    pub order_wide: f32,
+    pub orders: Vec<Span>,
     /// Nothing moves: what would is where it is going at once.
     pub still: bool,
     /// The dots can be pressed: the one under the pointer shows it.
@@ -316,14 +305,20 @@ pub struct Picture {
 const DOT: f32 = 5.0;
 const RING: f32 = 4.0;
 /// How wide a line is, each side of a line that has not played, and how
-/// much room a line leaves a section's dot.
+/// much room a line leaves what it passes.
 const LINE: f32 = 2.0;
 const SIDE: f32 = 0.5;
 const ROOM: f32 = 2.0;
-/// Where a loop's line runs down in its room, its dashes' length, about
-/// how far from one to the next, how wide its bend to a dot is, and how
-/// much of a line a mark takes, above and below its middle.
-const CURL_X: f32 = 20.0;
+/// How far left of the dots the first loop's line runs, and how much
+/// further each one that holds another: see [`loop_room`].
+pub const LOOP_FIRST: f32 = 22.0;
+pub const LOOP_STEP: f32 = 24.0;
+/// The same for a drawn order's line, right of the dots.
+pub const ORDER_FIRST: f32 = 17.0;
+pub const ORDER_STEP: f32 = 12.0;
+/// A loop's dashes' length, about how far from one to the next, how wide
+/// its bend to a dot is, and how much of a line a mark takes, above and
+/// below its middle.
 const DASH: f32 = 2.5;
 const DASH_STEP: f32 = 5.0;
 const BEND: f32 = 4.0;
@@ -336,10 +331,23 @@ const WAVE_OUT: f32 = 3.5;
 const DRAW: f32 = 0.26;
 const OPEN: f32 = 0.3;
 const CATCH_UP: f32 = 0.12;
-/// How strong what is drawn for a section's steps is while the section
-/// is not being worked on, and how long it takes to come forward.
-const BACK: f32 = 0.38;
-const FORWARD: f32 = 0.16;
+
+/// How much room left of the dots' middle the loops need, the deepest of
+/// them `lanes` deep (0 for none), with what they say of themselves.
+pub fn loop_room(lanes: u8) -> f32 {
+    match lanes {
+        0 => DOT + RING + 2.0,
+        lanes => LOOP_FIRST + LOOP_STEP * f32::from(lanes - 1) + 16.0,
+    }
+}
+
+/// How much room right of the dots' middle the drawn orders need.
+pub fn order_room(lanes: u8) -> f32 {
+    match lanes {
+        0 => DOT + RING + 2.0,
+        lanes => ORDER_FIRST + ORDER_STEP * f32::from(lanes - 1) + 7.0,
+    }
+}
 
 /// Something that is drawn in when it first appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -347,7 +355,6 @@ enum Thing {
     Line(StepId),
     Loop(StepId, StepId),
     Order(StepId, StepId),
-    Again(StepId),
 }
 
 /// What is under way.
@@ -366,11 +373,15 @@ struct Moves {
     drawn: HashMap<Thing, f32>,
     /// The dot under the pointer.
     over: Option<StepId>,
-    /// The section whose steps the pointer is on: `Some(None)` on steps
-    /// in no section.
-    among: Option<Option<StepId>>,
-    /// How far forward each section's steps have come.
-    forward: HashMap<Option<StepId>, f32>,
+}
+
+/// How far the step that is playing has come, if one is.
+fn playing(picture: &Picture) -> Option<(StepId, f32)> {
+    picture.stops.iter().find_map(|stop| match (stop.back, stop.line) {
+        (Some((_, done, _)), _) => Some((stop.id, done)),
+        (None, Some(Line::Playing { done, .. })) => Some((stop.id, done)),
+        _ => None,
+    })
 }
 
 impl Moves {
@@ -381,15 +392,7 @@ impl Moves {
         self.begun = true;
         let mut moving = false;
         // What has played.
-        let playing = picture.items.iter().find_map(|item| match item {
-            Item::Stop(Stop {
-                id,
-                line: Some(Line::Playing { done, .. }),
-                ..
-            }) => Some((*id, *done)),
-            _ => None,
-        });
-        self.played = playing.map(|(id, done)| {
+        self.played = playing(picture).map(|(id, done)| {
             let from = match self.played {
                 Some((was, shown)) if was == id && !fresh => shown,
                 _ if fresh => done,
@@ -406,14 +409,11 @@ impl Moves {
             }
         });
         // The ring.
-        let on = picture.items.iter().find_map(|item| match item {
-            Item::Stop(Stop {
-                id,
-                dot: Dot::On { .. },
-                ..
-            }) => Some(*id),
-            _ => None,
-        });
+        let on = picture
+            .stops
+            .iter()
+            .find(|stop| matches!(stop.dot, Dot::On { .. }))
+            .map(|stop| stop.id);
         self.ring = on.map(|id| {
             let from = match self.ring {
                 Some((was, open)) if was == id => open,
@@ -439,65 +439,33 @@ impl Moves {
             moving |= far < 1.0;
             drawn.insert(thing, far);
         };
-        for item in &picture.items {
-            if let Item::Stop(Stop {
-                id, line: Some(_), ..
-            }) = item
-            {
-                draw(Thing::Line(*id), false);
+        for stop in &picture.stops {
+            if stop.line.is_some() {
+                draw(Thing::Line(stop.id), false);
             }
         }
-        for beside in &picture.loops {
-            draw(Thing::Loop(beside.first, beside.last), beside.pulled);
+        for span in &picture.loops {
+            draw(Thing::Loop(span.first.id(), span.last), span.pulled);
         }
-        for beside in &picture.orders {
-            draw(Thing::Order(beside.first, beside.last), beside.pulled);
-        }
-        for section in &picture.sections {
-            if section.again.is_some() && section.last.is_some() {
-                draw(Thing::Again(section.id), false);
-            }
+        for span in &picture.orders {
+            draw(Thing::Order(span.first.id(), span.last), span.pulled);
         }
         self.drawn = drawn;
-        // The steps of a section that is worked on come forward: one of
-        // them is on, selected or pulled, or the pointer is on them.
-        let mut forward = HashMap::new();
-        for item in &picture.items {
-            let Item::Stop(stop) = item else {
-                continue;
-            };
-            let wanted = stop.awake || self.among == Some(stop.group);
-            let entry = forward.entry(stop.group).or_insert((false, 0.0));
-            entry.0 |= wanted;
-        }
-        for (group, (wanted, far)) in &mut forward {
-            let target = if *wanted { 1.0 } else { 0.0 };
-            let from = match self.forward.get(group) {
-                Some(far) if !fresh => *far,
-                _ => target,
-            };
-            let step = passed / FORWARD;
-            *far = match target > from {
-                true => (from + step).min(target),
-                false => (from - step).max(target),
-            };
-            moving |= *far != target;
-        }
-        self.forward = forward
-            .into_iter()
-            .map(|(group, (_, far))| (group, far))
-            .collect();
         moving
-    }
-
-    /// How strong what is drawn for the steps of `group` is.
-    fn strength(&self, group: Option<StepId>) -> f32 {
-        let far = self.forward.get(&group).copied().unwrap_or(1.0);
-        BACK + (1.0 - BACK) * ease(far)
     }
 
     fn drawn(&self, thing: Thing) -> f32 {
         ease(self.drawn.get(&thing).copied().unwrap_or(1.0))
+    }
+
+    /// How far the step `id` is shown to have played, `done` if it is
+    /// not the one being caught up with.
+    fn shown(&self, id: StepId, done: f32) -> f32 {
+        match self.played {
+            Some((was, shown)) if was == id => shown,
+            _ => done,
+        }
+        .clamp(0.0, 1.0)
     }
 }
 
@@ -514,7 +482,6 @@ type Shown = (
     Option<(StepId, f32)>,
     Vec<(Thing, f32)>,
     Option<StepId>,
-    HashMap<Option<StepId>, f32>,
 );
 
 #[derive(Default)]
@@ -554,32 +521,15 @@ impl<Message> canvas::Program<Message> for Over {
                     .filter(|_| self.picture.hot && cursor.is_over(bounds))
                     .and_then(|at| {
                         let places = self.places.borrow();
-                        self.picture.items.iter().find_map(|item| match item {
-                            Item::Stop(stop) => places
+                        self.picture.stops.iter().find_map(|stop| {
+                            places
                                 .get(&Key::Dot(stop.id))
                                 .filter(|dot| dot.center().distance(at) <= DOT + RING)
-                                .map(|_| stop.id),
-                            Item::Section { .. } => None,
+                                .map(|_| stop.id)
                         })
                     });
-                // The section whose steps it is among: level with one of
-                // their rows.
-                let among = cursor
-                    .position()
-                    .filter(|_| cursor.is_over(bounds))
-                    .and_then(|at| {
-                        let places = self.places.borrow();
-                        self.picture.items.iter().find_map(|item| match item {
-                            Item::Stop(stop) => places
-                                .get(&Key::Row(stop.id))
-                                .filter(|row| (row.y..row.y + row.height).contains(&at.y))
-                                .map(|_| stop.group),
-                            Item::Section { .. } => None,
-                        })
-                    });
-                (over != state.moves.over || among != state.moves.among).then(|| {
+                (over != state.moves.over).then(|| {
                     state.moves.over = over;
-                    state.moves.among = among;
                     canvas::Action::request_redraw()
                 })
             }
@@ -611,7 +561,6 @@ impl<Message> canvas::Program<Message> for Over {
             moves.ring,
             drawn,
             moves.over,
-            moves.forward.clone(),
         );
         vec![state.kept.draw(shown, renderer, bounds.size(), |frame| {
             // Where each is, from the canvas's own corner.
@@ -696,84 +645,53 @@ fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: 
     }
 }
 
-/// The way from the dot of the stop at `n` to the next one's, in
-/// straight parts: round the dot of any section it passes, and no
-/// further than a cut lets it be seen.
+/// How far down something under `cut` may be drawn.
+fn limit(cut: Option<u32>, at: &dyn Fn(Key) -> Option<Rectangle>) -> f32 {
+    cut.and_then(|cut| at(Key::Cut(cut)))
+        .map_or(f32::INFINITY, |cut| cut.y + cut.height)
+}
+
+/// The way from the dot of the stop at `n` to the next step's, in
+/// straight parts: straight through any heading between them, and no
+/// further than a cut lets it be seen. To the foot of its own row where
+/// the step it goes to is not in sight.
 fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Vec<Run> {
-    let Item::Stop(stop) = &picture.items[n] else {
-        return Vec::new();
-    };
+    let stop = &picture.stops[n];
     let Some(dot) = at(Key::Dot(stop.id)) else {
         return Vec::new();
     };
-    let limit = |cut: Option<u32>| {
-        cut.and_then(|cut| at(Key::Cut(cut)))
-            .map_or(f32::INFINITY, |cut| cut.y + cut.height)
-    };
     let x = dot.center_x();
-    let mut y = dot.center_y() + stop.dot.reach();
+    let y = dot.center_y() + stop.dot.reach();
     let mut runs: Vec<Run> = Vec::new();
     let down = |runs: &mut Vec<Run>, x: f32, from: f32, to: f32| {
         if to > from {
             runs.push((Point::new(x, from), Point::new(x, to)));
         }
     };
-    let later = match stop.next {
-        Some(_) => &picture.items[n + 1..],
-        None => &[][..],
-    };
-    for later in later {
-        match later {
-            Item::Section { id, cut } => {
-                let Some(section) = at(Key::Section(*id)) else {
-                    continue;
-                };
-                let to = section.y - ROOM;
-                down(&mut runs, x, y, to.min(limit(*cut)));
-                y = section.y + section.height + ROOM;
-                if to > limit(*cut) {
-                    return runs;
-                }
-            }
-            // The step it goes to: down to its dot, across first where
-            // that one is further in or out.
-            Item::Stop(next) if Some(next.id) == stop.next => {
-                let Some(there) = at(Key::Dot(next.id)) else {
-                    return runs;
-                };
-                let to = (there.center_y() - next.dot.reach()).min(limit(next.cut));
-                let over = there.center_x();
-                if (over - x).abs() > 0.5 && runs.is_empty() {
-                    let turn = (to - BEND * 2.0).max(y);
-                    down(&mut runs, x, y, turn);
-                    runs.push((Point::new(x, turn), Point::new(over, turn)));
-                    down(&mut runs, over, turn, to);
-                } else {
-                    down(&mut runs, over, y, to);
-                }
-                return runs;
-            }
-            // Its own next step is folded away: as far as the heading it
-            // is under.
-            Item::Stop(_) => {
-                runs.truncate(1);
-                return runs;
+    let next = picture.stops[n + 1..]
+        .iter()
+        .find(|next| Some(next.id) == stop.next)
+        .and_then(|next| Some((next, at(Key::Dot(next.id))?)));
+    match next {
+        Some((next, there)) => {
+            let to = (there.center_y() - next.dot.reach()).min(limit(next.cut, at));
+            let over = there.center_x();
+            // Across first, where that one is further in or out.
+            if (over - x).abs() > 0.5 {
+                let turn = (to - BEND * 2.0).max(y);
+                down(&mut runs, x, y, turn);
+                runs.push((Point::new(x, turn), Point::new(over, turn)));
+                down(&mut runs, over, turn, to);
+            } else {
+                down(&mut runs, x, y, to);
             }
         }
-    }
-    // Nothing under it: to the foot of its own row.
-    match runs.is_empty() {
-        true => {
+        None => {
             if let Some(row) = at(Key::Row(stop.id)) {
-                down(
-                    &mut runs,
-                    x,
-                    y,
-                    (row.y + row.height - ROOM).min(limit(stop.cut)),
-                );
+                let foot = (row.y + row.height - ROOM).min(limit(stop.cut, at));
+                down(&mut runs, x, y, foot);
             }
         }
-        false => runs.truncate(1),
     }
     runs
 }
@@ -784,15 +702,8 @@ fn paint(
     at: &dyn Fn(Key) -> Option<Rectangle>,
     moves: &Moves,
 ) {
-    let limit = |cut: Option<u32>| {
-        cut.and_then(|cut| at(Key::Cut(cut)))
-            .map_or(f32::INFINITY, |cut| cut.y + cut.height)
-    };
-    // The lines from dot to dot.
-    for (n, item) in picture.items.iter().enumerate() {
-        let Item::Stop(stop) = item else {
-            continue;
-        };
+    // The line from dot to dot.
+    for (n, stop) in picture.stops.iter().enumerate() {
         let Some(line) = stop.line else {
             continue;
         };
@@ -800,24 +711,16 @@ fn paint(
         let whole: f32 = runs.iter().map(long).sum();
         // As much of it as is drawn so far.
         let shown = whole * moves.drawn(Thing::Line(stop.id));
-        let (played, ink, ahead) = match line {
-            Line::Plain(color) => {
-                let color = faded(color, moves.strength(stop.group));
-                (0.0, color, color)
-            }
+        let (played, ink, ahead, hollow) = match line {
+            Line::Plain(color) => (0.0, color, color, false),
+            // What has played is shown along the line it goes back by.
+            Line::Playing { ahead, .. } if stop.back.is_some() => (0.0, ahead, ahead, false),
             Line::Playing {
                 done,
                 played,
                 ahead,
-            } => {
-                let done = match moves.played {
-                    Some((id, shown)) if id == stop.id => shown,
-                    _ => done,
-                };
-                (whole * done.clamp(0.0, 1.0), played, ahead)
-            }
+            } => (whole * moves.shown(stop.id, done), played, ahead, true),
         };
-        let hollow = matches!(line, Line::Playing { .. });
         let mut before = 0.0;
         for run in &runs {
             let length = long(run);
@@ -828,113 +731,50 @@ fn paint(
             before += length;
         }
     }
-    // The sections' own lines.
-    for section in &picture.sections {
-        let Some(dot) = at(Key::Section(section.id)) else {
-            continue;
-        };
-        let x = dot.center_x();
-        let top = dot.y + dot.height + ROOM;
-        let foot = limit(section.cut);
-        let end = section
-            .last
-            .and_then(|last| at(Key::Dot(last)))
-            .map(|last| last.center_y());
-        // On to the next section's dot, where it hands over.
-        let next = section
-            .next
-            .and_then(|next| at(Key::Section(next)))
-            .filter(|next| (next.center_x() - x).abs() < 0.5)
-            .map(|next| next.y - ROOM);
-        let again = section.again.as_ref().and(end);
-        let down = match (next, again) {
-            (Some(next), _) => Some(next),
-            (None, Some(end)) => Some(end),
-            (None, None) => None,
-        };
-        if let Some(down) = down.map(|down| down.min(foot))
-            && down > top
-        {
-            part(
-                frame,
-                &(Point::new(x, top), Point::new(x, down)),
-                0.0,
-                down - top,
-                section.color,
-                false,
-            );
-        }
-        // Where it comes again: back from the level of its last step.
-        if let (Some(mark), Some(end)) = (&section.again, end)
-            && end < foot
-            && picture.curl_wide > 0.0
-        {
-            frame.fill(&Path::circle(Point::new(x, end), 3.0), section.color);
-            turn(
-                frame,
-                section.color,
-                moves.drawn(Thing::Again(section.id)),
-                &Turn {
-                    x: x - CURL_X,
-                    top: dot.center_y(),
-                    bottom: end,
-                    from: end - BEND,
-                    to: dot.center_y() + BEND,
-                    out_from: x - 4.5,
-                    tip: x - dot.width / 2.0 - 2.5,
-                    starts: true,
-                    ends: true,
-                },
-                mark,
-            );
-        }
-    }
-    // The lines beside them.
-    let pulling = picture.loops.iter().any(|beside| beside.pulled);
-    for beside in &picture.loops {
-        let far = moves.drawn(Thing::Loop(beside.first, beside.last));
+    // The spans beside it.
+    let going_back = picture
+        .stops
+        .iter()
+        .find_map(|stop| Some((stop.id, stop.back?)));
+    let pulling = picture.loops.iter().any(|span| span.pulled);
+    for (n, span) in picture.loops.iter().enumerate() {
+        let far = moves.drawn(Thing::Loop(span.first.id(), span.last));
         // What is there steps back while another is pulled over it.
-        let color = match (beside.pulled, pulling) {
-            (true, _) => beside.color,
-            (false, true) => faded(beside.color, 0.35),
-            (false, false) => faded(beside.color, moves.strength(beside.group)),
+        let color = match pulling && !span.pulled {
+            true => faded(span.color, 0.35),
+            false => span.color,
         };
-        curl(frame, picture, beside, color, far, at);
+        let played = going_back
+            .filter(|(_, (back, ..))| *back == n)
+            .map(|(id, (_, done, color))| (moves.shown(id, done), color));
+        curl(frame, span, color, far, played, at);
     }
-    let pulling = picture.orders.iter().any(|beside| beside.pulled);
-    for beside in &picture.orders {
-        let far = moves.drawn(Thing::Order(beside.first, beside.last));
-        let color = match (beside.pulled, pulling) {
-            (true, _) => beside.color,
-            (false, true) => faded(beside.color, 0.35),
-            (false, false) => faded(beside.color, moves.strength(beside.group)),
+    let pulling = picture.orders.iter().any(|span| span.pulled);
+    for span in &picture.orders {
+        let far = moves.drawn(Thing::Order(span.first.id(), span.last));
+        let color = match pulling && !span.pulled {
+            true => faded(span.color, 0.35),
+            false => span.color,
         };
-        wander(frame, picture, beside, color, far, at);
+        wander(frame, span, color, far, at);
     }
     // The dots, over the ends of the lines.
-    for item in &picture.items {
-        let Item::Stop(stop) = item else {
-            continue;
-        };
+    for stop in &picture.stops {
         let Some(place) = at(Key::Dot(stop.id)) else {
             continue;
         };
         let middle = place.center();
         // Under a cut, only as much of it as the cut leaves.
-        let room = limit(stop.cut) - (middle.y - stop.dot.reach());
+        let room = limit(stop.cut, at) - (middle.y - stop.dot.reach());
         if room <= 0.0 {
             continue;
         }
         let whole = room >= stop.dot.reach() * 2.0;
         let draw = |frame: &mut Frame| {
             if moves.over == Some(stop.id) {
-                let color = stop.dot.color();
                 frame.fill(
                     &Path::circle(middle, DOT + RING),
-                    Color {
-                        a: color.a * 0.22,
-                        ..color
-                    },
+                    faded(stop.dot.color(), 0.22),
                 );
             }
             dot(frame, stop, middle, moves);
@@ -963,17 +803,13 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
     let glow = |frame: &mut Frame, color: Color, gone: f32| {
         frame.stroke(
             &Path::circle(middle, DOT + 1.5 + 9.0 * gone),
-            Stroke::default().with_width(2.5).with_color(Color {
-                a: color.a * 0.6 * (1.0 - gone),
-                ..color
-            }),
+            Stroke::default()
+                .with_width(2.5)
+                .with_color(faded(color, 0.6 * (1.0 - gone))),
         );
     };
     match stop.dot {
-        Dot::Solid(color) => frame.fill(
-            &Path::circle(middle, DOT),
-            faded(color, moves.strength(stop.group)),
-        ),
+        Dot::Solid(color) => frame.fill(&Path::circle(middle, DOT), color),
         Dot::Hollow(color) => frame.stroke(
             &Path::circle(middle, DOT - 1.0),
             Stroke::default().with_width(2.0).with_color(color),
@@ -997,10 +833,9 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
             }
             frame.stroke(
                 &Path::circle(middle, DOT + (RING - 0.75) * open),
-                Stroke::default().with_width(1.5).with_color(Color {
-                    a: ring.a * open,
-                    ..ring
-                }),
+                Stroke::default()
+                    .with_width(1.5)
+                    .with_color(faded(ring, open)),
             );
             frame.fill(&Path::circle(middle, DOT), color);
         }
@@ -1015,12 +850,31 @@ fn faded(color: Color, strength: f32) -> Color {
     }
 }
 
-/// Dashes along the straight line from `from` to `to`, as many as fit,
-/// each in the middle of its share: half a gap at either end. Only those
-/// that end within `upto` of its start are drawn.
-fn dashes(frame: &mut Frame, stroke: Stroke<'_>, from: Point, to: Point, upto: f32) {
+/// The straight line from `from` to `to`: solid for the first `solid`
+/// of its length, then dashes, as many as fit the whole of it, each in
+/// the middle of its share. Nothing past `upto` of its length is drawn.
+fn dashes(
+    frame: &mut Frame,
+    stroke: Stroke<'_>,
+    from: Point,
+    to: Point,
+    upto: f32,
+    solid: Option<(f32, Color)>,
+) {
     let run = (from, to);
     let whole = long(&run);
+    let filled = solid.map_or(0.0, |(far, _)| far.clamp(0.0, whole).min(upto.max(0.0)));
+    if let Some((_, color)) = solid
+        && filled > 0.0
+    {
+        frame.stroke(
+            &Path::line(from, along(&run, filled)),
+            Stroke {
+                line_cap: canvas::LineCap::Round,
+                ..Stroke::default().with_color(color).with_width(LINE)
+            },
+        );
+    }
     if whole < DASH {
         return;
     }
@@ -1030,6 +884,9 @@ fn dashes(frame: &mut Frame, stroke: Stroke<'_>, from: Point, to: Point, upto: f
         let start = share * n as f32 + (share - DASH) / 2.0;
         if start + DASH > upto {
             return;
+        }
+        if start < filled {
+            continue;
         }
         frame.stroke(
             &Path::line(along(&run, start), along(&run, start + DASH)),
@@ -1050,116 +907,123 @@ fn round_mark(from: f32, to: f32, middle: Option<f32>) -> Vec<(f32, f32)> {
     }
 }
 
+/// Where a span's two ends are: the middle of its last step's dot, and
+/// of its first step's or of its heading's place on the rail; and the
+/// rows of those two, for a span that runs on out of sight.
+struct Ends {
+    first: Rectangle,
+    last: Rectangle,
+    first_row: Option<Rectangle>,
+    last_row: Option<Rectangle>,
+}
+
+fn ends(span: &Span, at: &dyn Fn(Key) -> Option<Rectangle>) -> Option<Ends> {
+    Some(Ends {
+        first: match span.first {
+            From::Step(id) => at(Key::Dot(id))?,
+            From::Heading(id) => at(Key::Heading(id))?,
+        },
+        last: at(Key::Dot(span.last))?,
+        first_row: match span.first {
+            From::Step(id) => at(Key::Row(id)),
+            From::Heading(_) => None,
+        },
+        last_row: at(Key::Row(span.last)),
+    })
+}
+
 /// The line of what comes again: out from its last step's dot, up beside
-/// the steps, and in to its first step's with an arrow's head. `far` of
-/// it is drawn, from where it leaves the last step.
+/// the steps, and in to where it starts with an arrow's head: its first
+/// step's dot, or the rail level with its section's heading, marked
+/// there. `far` of it is drawn, from where it leaves the last step; and
+/// where the step that is playing goes back by it, `played` of it is
+/// solid in that colour.
 fn curl(
     frame: &mut Frame,
-    picture: &Picture,
-    beside: &Beside,
+    span: &Span,
     color: Color,
     far: f32,
+    played: Option<(f32, Color)>,
     at: &dyn Fn(Key) -> Option<Rectangle>,
 ) {
-    let (Some(first), Some(last)) = (at(Key::Dot(beside.first)), at(Key::Dot(beside.last))) else {
+    let Some(ends) = ends(span, at) else {
         return;
     };
-    let (Some(first_row), Some(last_row)) = (at(Key::Row(beside.first)), at(Key::Row(beside.last)))
-    else {
-        return;
-    };
-    // Down the room the rows keep for it: the one furthest out, where
-    // they are not all as far in.
-    let x = first_row.x.min(last_row.x) + CURL_X.min(picture.curl_wide / 2.0);
-    let (top, bottom) = (first.center_y(), last.center_y());
-    // Where it turns, or runs on out of sight where its own end is
-    // folded away.
-    turn(
-        frame,
-        color,
-        far,
-        &Turn {
-            x,
-            top,
-            bottom,
-            from: match beside.ends {
-                true => bottom - BEND,
-                false => last_row.y + last_row.height,
-            },
-            to: match beside.starts {
-                true => top + BEND,
-                false => first_row.y,
-            },
-            out_from: last.center_x() - DOT - RING - 1.0,
-            tip: first.center_x() - DOT - RING - 2.0,
-            starts: beside.starts,
-            ends: beside.ends,
-        },
-        &beside.mark,
-    );
-}
-
-/// Where a line that curls back runs.
-struct Turn {
-    /// Where it runs up.
-    x: f32,
-    /// The level of what it comes back to, and of what it leaves.
-    top: f32,
-    bottom: f32,
-    /// Where its run up starts and ends.
-    from: f32,
-    to: f32,
-    /// Where it leaves from, and where its arrow's head points to.
-    out_from: f32,
-    tip: f32,
-    /// Whether it really starts and ends there, with its bends.
-    starts: bool,
-    ends: bool,
-}
-
-/// The line `turn` describes, `far` of it drawn from where it leaves,
-/// with `mark` in a gap at the middle of its run up.
-fn turn(frame: &mut Frame, color: Color, far: f32, turn: &Turn, mark: &Mark) {
-    let Turn {
-        x,
-        top,
-        bottom,
-        from,
-        to,
-        ..
-    } = *turn;
     let stroke = Stroke {
         line_cap: canvas::LineCap::Round,
         line_join: canvas::LineJoin::Round,
         ..Stroke::default().with_color(color).with_width(1.5)
     };
-    let out = (turn.out_from - (x + BEND + 1.0)).max(0.0);
-    let into = (turn.tip - 4.0 - (x + BEND + 1.0)).max(0.0);
+    let rail = ends.last.center_x();
+    let x = rail - LOOP_FIRST - LOOP_STEP * f32::from(span.lane);
+    let (top, bottom) = (ends.first.center_y(), ends.last.center_y());
+    // Where it turns, or runs on out of sight where its own end is
+    // folded away.
+    let from = match (span.ends, ends.last_row) {
+        (false, Some(row)) => row.y + row.height,
+        _ => bottom - BEND,
+    };
+    let to = match (span.starts, ends.first_row) {
+        (false, Some(row)) => row.y,
+        _ => top + BEND,
+    };
+    // A heading has no dot: the line comes in to a mark on the rail.
+    let heading = matches!(span.first, From::Heading(_));
+    let tip = match heading {
+        true => ends.first.center_x() - 5.0,
+        false => ends.first.center_x() - DOT - RING - 2.0,
+    };
+    if heading && span.starts {
+        frame.fill(
+            &Path::circle(Point::new(ends.first.center_x(), top), 2.5),
+            color,
+        );
+    }
+    let out = (rail - DOT - RING - 1.0 - (x + BEND + 1.0)).max(0.0);
+    let into = (tip - 4.0 - (x + BEND + 1.0)).max(0.0);
     let up = (from - to).max(0.0);
     let whole = out + up + into;
     let mut left = whole * far;
+    // How much of it has played, from where it leaves.
+    let mut filled = played.map(|(done, color)| (whole * done.clamp(0.0, 1.0), color));
+    let mut take = |length: f32| {
+        let now = filled;
+        if let Some((far, _)) = &mut filled {
+            *far = (*far - length).max(0.0);
+        }
+        now.filter(|(far, _)| *far > 0.0)
+    };
+    let bend = |frame: &mut Frame, path: &Path, solid: Option<(f32, Color)>| match solid {
+        Some((_, color)) => frame.stroke(
+            path,
+            Stroke {
+                line_cap: canvas::LineCap::Round,
+                ..Stroke::default().with_color(color).with_width(LINE)
+            },
+        ),
+        None => frame.stroke(path, stroke),
+    };
     // Out from the last step's dot.
-    if turn.ends {
+    if span.ends {
         dashes(
             frame,
             stroke,
             Point::new(x + BEND + 1.0 + out, bottom),
             Point::new(x + BEND + 1.0, bottom),
             left,
+            take(out),
         );
         if left >= out {
-            frame.stroke(
-                &Path::new(|path| {
-                    path.move_to(Point::new(x + BEND, bottom));
-                    path.quadratic_curve_to(Point::new(x, bottom), Point::new(x, bottom - BEND));
-                }),
-                stroke,
-            );
+            let turn = Path::new(|path| {
+                path.move_to(Point::new(x + BEND, bottom));
+                path.quadratic_curve_to(Point::new(x, bottom), Point::new(x, bottom - BEND));
+            });
+            bend(frame, &turn, filled.filter(|(far, _)| *far > 0.0));
         }
         left -= out;
     }
     // Up, round what it says of itself at its middle.
-    let words = match mark {
+    let words = match &span.mark {
         Mark::Words(words) if up > MARK_ROOM * 3.0 => Some(words),
         _ => None,
     };
@@ -1173,6 +1037,7 @@ fn turn(frame: &mut Frame, color: Color, far: f32, turn: &Turn, mark: &Mark) {
                 Point::new(x, from),
                 Point::new(x, to),
                 left - gone,
+                take(from - to),
             );
             gone += from - to;
         }
@@ -1192,24 +1057,22 @@ fn turn(frame: &mut Frame, color: Color, far: f32, turn: &Turn, mark: &Mark) {
         });
     }
     left -= up;
-    // In to the first step's dot, with the arrow's head.
-    if turn.starts && left > 0.0 {
-        frame.stroke(
-            &Path::new(|path| {
-                path.move_to(Point::new(x, top + BEND));
-                path.quadratic_curve_to(Point::new(x, top), Point::new(x + BEND, top));
-            }),
-            stroke,
-        );
+    // In to where it starts, with the arrow's head.
+    if span.starts && left > 0.0 {
+        let turn = Path::new(|path| {
+            path.move_to(Point::new(x, top + BEND));
+            path.quadratic_curve_to(Point::new(x, top), Point::new(x + BEND, top));
+        });
+        bend(frame, &turn, filled.filter(|(far, _)| *far > 0.0));
         dashes(
             frame,
             stroke,
             Point::new(x + BEND + 1.0, top),
             Point::new(x + BEND + 1.0 + into, top),
             left,
+            take(into),
         );
         if left >= into {
-            let tip = x + BEND + 1.0 + into + 4.0;
             frame.stroke(
                 &Path::new(|path| {
                     path.move_to(Point::new(tip - 3.5, top - 3.0));
@@ -1227,17 +1090,12 @@ fn turn(frame: &mut Frame, color: Color, far: f32, turn: &Turn, mark: &Mark) {
 /// it is drawn, from the top.
 fn wander(
     frame: &mut Frame,
-    picture: &Picture,
-    beside: &Beside,
+    span: &Span,
     color: Color,
     far: f32,
     at: &dyn Fn(Key) -> Option<Rectangle>,
 ) {
-    let (Some(first), Some(last)) = (at(Key::Dot(beside.first)), at(Key::Dot(beside.last))) else {
-        return;
-    };
-    let (Some(first_row), Some(last_row)) = (at(Key::Row(beside.first)), at(Key::Row(beside.last)))
-    else {
+    let Some(ends) = ends(span, at) else {
         return;
     };
     let stroke = Stroke {
@@ -1245,18 +1103,15 @@ fn wander(
         line_join: canvas::LineJoin::Round,
         ..Stroke::default().with_color(color).with_width(1.5)
     };
-    let x =
-        (first_row.x + first_row.width).max(last_row.x + last_row.width) - picture.order_wide / 2.0;
-    let (top, bottom) = (
-        match beside.starts {
-            true => first.center_y(),
-            false => first_row.y,
-        },
-        match beside.ends {
-            true => last.center_y(),
-            false => last_row.y + last_row.height,
-        },
-    );
+    let x = ends.last.center_x() + ORDER_FIRST + ORDER_STEP * f32::from(span.lane);
+    let top = match (span.starts, ends.first_row) {
+        (false, Some(row)) => row.y,
+        _ => ends.first.center_y(),
+    };
+    let bottom = match (span.ends, ends.last_row) {
+        (false, Some(row)) => row.y + row.height,
+        _ => ends.last.center_y(),
+    };
     let whole = bottom - top;
     if whole < 2.0 {
         return;
@@ -1288,7 +1143,7 @@ fn wander(
         frame.stroke(&line, stroke);
     };
     let middle = (top + bottom) / 2.0;
-    if beside.mark != Mark::Crossed || whole < MARK_ROOM * 3.0 {
+    if span.mark != Mark::Crossed || whole < MARK_ROOM * 3.0 {
         swing(frame, top, bottom);
         return;
     }
@@ -1326,19 +1181,18 @@ mod tests {
         serde_json::from_str(&n.to_string()).unwrap()
     }
 
-    fn stop(n: u64, line: Option<Line>, next: Option<u64>) -> Item {
-        Item::Stop(Stop {
+    fn stop(n: u64, line: Option<Line>, next: Option<u64>) -> Stop {
+        Stop {
             id: id(n),
             dot: Dot::Solid(Color::WHITE),
             line,
             next: next.map(id),
-            group: None,
-            awake: true,
+            back: None,
             cut: None,
-        })
+        }
     }
 
-    /// Dots 10 across, their middles at x 25 and 40 apart down from 20.
+    /// Dots 10 across, their middles at x 25 and as far down as given.
     fn places<const N: usize>(of: [(Key, f32); N]) -> impl Fn(Key) -> Option<Rectangle> {
         let of: HashMap<Key, f32> = of.into_iter().collect();
         move |key| {
@@ -1352,7 +1206,7 @@ mod tests {
     #[test]
     fn a_line_runs_from_one_dot_to_the_next() {
         let picture = Picture {
-            items: vec![
+            stops: vec![
                 stop(1, Some(Line::Plain(Color::WHITE)), Some(2)),
                 stop(2, None, None),
             ],
@@ -1364,70 +1218,63 @@ mod tests {
     }
 
     #[test]
-    fn a_line_leaves_room_for_the_dot_of_a_section_it_passes() {
+    fn a_line_runs_straight_through_a_heading_to_the_next_section() {
+        // A heading between the two takes room, and nothing else: the
+        // line is one run, past it.
         let picture = Picture {
-            items: vec![
+            stops: vec![
                 stop(1, Some(Line::Plain(Color::WHITE)), Some(3)),
-                Item::Section {
-                    id: id(2),
-                    cut: None,
-                },
                 stop(3, None, None),
             ],
             ..Picture::default()
         };
         let at = places([
             (Key::Dot(id(1)), 20.0),
-            (Key::Section(id(2)), 60.0),
+            (Key::Heading(id(2)), 60.0),
             (Key::Dot(id(3)), 100.0),
         ]);
         let runs = way(&picture, 0, &at);
+        assert_eq!(runs, vec![(Point::new(25.0, 25.0), Point::new(25.0, 95.0))]);
+    }
+
+    #[test]
+    fn a_line_to_a_step_out_of_sight_ends_at_the_foot_of_its_row() {
+        let picture = Picture {
+            stops: vec![
+                stop(1, Some(Line::Plain(Color::WHITE)), None),
+                stop(2, Some(Line::Plain(Color::WHITE)), Some(9)),
+            ],
+            ..Picture::default()
+        };
+        let at = places([
+            (Key::Dot(id(1)), 20.0),
+            (Key::Row(id(1)), 20.0),
+            (Key::Dot(id(2)), 60.0),
+            (Key::Row(id(2)), 60.0),
+        ]);
+        // The last of the plan.
         assert_eq!(
-            runs,
-            vec![
-                (Point::new(25.0, 25.0), Point::new(25.0, 53.0)),
-                (Point::new(25.0, 67.0), Point::new(25.0, 95.0)),
-            ]
+            way(&picture, 0, &at),
+            vec![(Point::new(25.0, 25.0), Point::new(25.0, 38.0))]
+        );
+        // One whose next step is folded away.
+        assert_eq!(
+            way(&picture, 1, &at),
+            vec![(Point::new(25.0, 65.0), Point::new(25.0, 78.0))]
         );
     }
 
     #[test]
-    fn the_last_steps_line_ends_at_the_foot_of_its_row() {
-        let picture = Picture {
-            items: vec![stop(1, Some(Line::Plain(Color::WHITE)), None)],
-            ..Picture::default()
-        };
-        let at = places([(Key::Dot(id(1)), 20.0), (Key::Row(id(1)), 20.0)]);
-        let runs = way(&picture, 0, &at);
-        assert_eq!(runs, vec![(Point::new(25.0, 25.0), Point::new(25.0, 38.0))]);
-    }
-
-    #[test]
-    fn a_line_stops_at_the_heading_its_next_step_is_folded_under() {
-        let picture = Picture {
-            items: vec![
-                stop(1, Some(Line::Plain(Color::WHITE)), Some(9)),
-                Item::Section {
-                    id: id(2),
-                    cut: None,
-                },
-                stop(3, None, None),
-            ],
-            ..Picture::default()
-        };
-        let at = places([
-            (Key::Dot(id(1)), 20.0),
-            (Key::Section(id(2)), 60.0),
-            (Key::Dot(id(3)), 100.0),
-        ]);
-        let runs = way(&picture, 0, &at);
-        assert_eq!(runs, vec![(Point::new(25.0, 25.0), Point::new(25.0, 53.0))]);
+    fn each_span_that_holds_another_takes_more_room() {
+        assert!(loop_room(0) < loop_room(1));
+        assert_eq!(loop_room(2) - loop_room(1), LOOP_STEP);
+        assert_eq!(order_room(2) - order_room(1), ORDER_STEP);
     }
 
     #[test]
     fn what_has_played_catches_up_and_a_new_line_is_drawn_in() {
         let playing = |done| Picture {
-            items: vec![stop(
+            stops: vec![stop(
                 1,
                 Some(Line::Playing {
                     done,
@@ -1445,7 +1292,7 @@ mod tests {
         assert_eq!(moves.drawn(Thing::Line(id(1))), 1.0);
         // A jump is caught up with, not made at once.
         assert!(moves.on(&playing(0.75), 0.05));
-        let (_, shown) = moves.played.unwrap();
+        let shown = moves.shown(id(1), 0.75);
         assert!(shown > 0.25 && shown < 0.75);
         for _ in 0..100 {
             moves.on(&playing(0.75), 0.05);
@@ -1453,15 +1300,28 @@ mod tests {
         assert_eq!(moves.played, Some((id(1), 0.75)));
         // A line that was not there is drawn in.
         let mut two = playing(0.75);
-        two.items
+        two.stops
             .push(stop(2, Some(Line::Plain(Color::WHITE)), None));
         assert!(moves.on(&two, 0.05));
         assert!(moves.drawn(Thing::Line(id(2))) < 1.0);
         // With motion off it is there at once.
         two.still = true;
-        two.items
+        two.stops
             .push(stop(3, Some(Line::Plain(Color::WHITE)), None));
         assert!(!moves.on(&two, 0.05));
         assert_eq!(moves.drawn(Thing::Line(id(3))), 1.0);
+    }
+
+    #[test]
+    fn a_step_that_goes_back_is_caught_up_with_along_that_line() {
+        let mut picture = Picture {
+            stops: vec![stop(1, None, None), stop(2, None, None)],
+            ..Picture::default()
+        };
+        picture.stops[1].back = Some((0, 0.5, Color::WHITE));
+        let mut moves = Moves::default();
+        moves.on(&picture, 0.0);
+        assert_eq!(moves.played, Some((id(2), 0.5)));
+        assert_eq!(moves.shown(id(2), 0.5), 0.5);
     }
 }
