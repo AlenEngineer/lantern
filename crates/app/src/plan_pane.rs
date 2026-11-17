@@ -1456,10 +1456,31 @@ impl App {
             } else {
                 below.into()
             };
-        column![above, dot, below]
+        let rail = column![above, dot, below]
             .width(RAIL)
             .height(Fill)
-            .align_x(Alignment::Center)
+            .align_x(Alignment::Center);
+        // Beside it, the line that curls back from the last step of
+        // something that repeats to its first. Every row keeps its room,
+        // so the dots stay in one line down the plan.
+        let curl: Element<'a, Message> = match curl_at(plan, index) {
+            Some(piece) => {
+                let under: Element<'a, Message> = match piece {
+                    look::Curl::Out => Space::new().height(Fill).into(),
+                    _ => look::curl(look::Curl::Down, planned).into(),
+                };
+                column![look::curl(piece, planned), under]
+                    .width(look::CURL_WIDE)
+                    .height(Fill)
+                    .into()
+            }
+            None => Space::new().width(look::CURL_WIDE).into(),
+        };
+        // A width of its own: laid out after the step beside it, a row
+        // that takes what it needs would be left none.
+        row![curl, rail]
+            .width(look::CURL_WIDE + RAIL)
+            .height(Fill)
             .into()
     }
 
@@ -1983,6 +2004,30 @@ fn ago(elapsed: Duration) -> String {
 }
 
 /// A dragged step lands indented inside a section; a section never does.
+/// The piece of the curl beside the step at `index`, when it is in
+/// something that repeats: the nearest section around it that does, or
+/// else the plan. `None` for a step in nothing that repeats, and for the
+/// only step of something that does (its own mark says so).
+fn curl_at(plan: &Plan, index: usize) -> Option<look::Curl> {
+    let steps = plan.steps();
+    let (start, end) = plan
+        .within(index)
+        .into_iter()
+        .rev()
+        .filter_map(|id| plan.position(id))
+        .find(|at| steps[*at].flow.repeat != Repeat::Once)
+        .map(|at| (at + 1, plan.group_end(at)))
+        .or((plan.flow.repeat != Repeat::Once).then_some((0, steps.len())))?;
+    let mut inside = (start..end).filter(|at| !steps[*at].is_section());
+    let first = inside.next()?;
+    let last = inside.next_back()?;
+    Some(match index {
+        at if at == first => look::Curl::Into,
+        at if at == last => look::Curl::Out,
+        _ => look::Curl::Past,
+    })
+}
+
 /// How often something comes, in a few characters; `None` for once.
 pub(crate) fn repeat_words(repeat: Repeat) -> Option<String> {
     match repeat {
@@ -2127,5 +2172,33 @@ mod tests {
             None,
             "length unknown"
         );
+    }
+
+    #[test]
+    fn the_curl_runs_from_the_last_step_of_what_repeats_to_its_first() {
+        use look::Curl;
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        for label in ["A", "B", "C"] {
+            plan.push(label, Action::Blank);
+        }
+        let sermon = plan.section("Sermon", None);
+        plan.push("D", Action::Blank);
+        // Nothing repeats: no curl.
+        assert_eq!(curl_at(&plan, 1), None);
+        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
+        assert_eq!(curl_at(&plan, 2), Some(Curl::Past));
+        assert_eq!(curl_at(&plan, 3), Some(Curl::Out));
+        assert_eq!(curl_at(&plan, 5), None, "Sermon doesn't repeat");
+        // One step has nothing to curl round.
+        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever;
+        assert_eq!(curl_at(&plan, 5), None);
+        // The plan repeats: the steps in nothing nearer are its own.
+        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
+        plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
+        plan.flow.repeat = Repeat::Forever;
+        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
+        assert_eq!(curl_at(&plan, 5), Some(Curl::Out));
     }
 }
