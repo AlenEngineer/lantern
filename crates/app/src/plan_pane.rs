@@ -13,7 +13,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
     Action, Basis, Flow, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming, Step,
-    StepId, Timing,
+    StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
@@ -266,10 +266,10 @@ impl App {
         let tree = self.mode == crate::mode::Mode::Plan;
         if tree {
             rows = rows.push(self.time_row(plan, timing));
-            if self.repeat_panel == Some(None) {
-                rows = rows
-                    .push(container(self.repeat_choices(None, plan.flow.repeat)).padding([0, 8]));
-            }
+        } else if let Some(card) = self.repeat_card(plan) {
+            // Away from Plan there is no side panel for it: the choices of
+            // how often something comes sit over the plan.
+            rows = rows.push(container(card).padding(8));
         }
         let mut in_section = false;
         // Up to where rows are folded away with the section that holds
@@ -655,20 +655,15 @@ impl App {
             }
             _ => p.primary,
         };
-        let mut line = row![match editing_name {
-            true => container(title).width(Fill),
+        // Selected, its row has every choice of how it moves: the name
+        // gives way so they all fit, and the bar is left out.
+        let mut line = row![match editing_name || selected {
+            true => container(title).width(Fill).clip(true),
             false => container(title),
         }]
-        .spacing(8)
+        .spacing(6)
         .align_y(Alignment::Center);
-        // What can be done to the selected section comes up in the bar's
-        // place while the pointer is on it.
-        let acting = selected && self.hovered.is_some_and(|(over, _)| over == id);
-        if acting {
-            line = line
-                .push(Space::new().width(Fill))
-                .push(self.step_actions(step));
-        } else if !editing_name {
+        if !editing_name && !selected {
             line = line.push(match full {
                 Some(full) => container(bar(p, full, fill, 0.0)).width(Fill),
                 None => container(Space::new()).width(Fill),
@@ -678,8 +673,6 @@ impl App {
         if self.editing(id, Part::Length) {
             // The time is edited where it's read.
             line = line.push(self.section_time_field(id, budget));
-        } else if acting {
-            // The actions have its place for now.
         } else if selected {
             // On the selected section a click on its time changes it; one
             // without a time offers to set one.
@@ -703,9 +696,10 @@ impl App {
             line = line.push(self.pointed_actions(id));
         }
         let mut content = column![line].spacing(6);
-        // The choices of how often it comes open under everything else.
-        if self.repeat_panel == Some(Some(id)) {
-            content = content.push(self.repeat_choices(Some(id), step.flow.repeat));
+        // What can be done to the selected section, on a line of its
+        // own: nothing on the first line moves as the pointer comes.
+        if selected {
+            content = content.push(row![Space::new().width(Fill), self.step_actions(step)]);
         }
         let tone = if self.selected == Some(id) {
             Tone::Selected
@@ -837,9 +831,6 @@ impl App {
         // the pointer is on it, in the length's place: at rest it is one
         // line like the others.
         let acting = selected && self.hovered.is_some_and(|(over, _)| over == step.id);
-        if self.repeat_panel == Some(Some(step.id)) {
-            label = label.push(self.repeat_choices(Some(step.id), step.flow.repeat));
-        }
         // Its dot is on the rail beside it. One the phone put on the
         // projector says so here.
         let ring = self.motion.ring().filter(|_| shown);
@@ -868,7 +859,7 @@ impl App {
             );
         }
         let line = match acting {
-            true => line.push(self.step_actions(step)),
+            true => line.push(self.step_actions(step)).push(end),
             false => line.push(end),
         };
         // Its row is lit a shade more as it goes up, and settles.
@@ -1145,78 +1136,198 @@ impl App {
         buttons.into()
     }
 
-    /// The choices of how often a step, a section or the plan comes:
-    /// once, a number of times, until you go elsewhere, until a time.
-    pub(crate) fn repeat_choices<'a>(
-        &self,
-        of: Option<StepId>,
-        repeat: Repeat,
-    ) -> Element<'a, Message> {
+    /// How often a step, a section or the plan comes, as a card of its
+    /// own: its name, a switch with four places (once, a number of times,
+    /// until you go elsewhere, until a time of day), and under it what
+    /// the place in use needs: a number to step, with what that comes to,
+    /// or a time to type. `None` with nothing's choices open.
+    pub(crate) fn repeat_card<'a>(&self, plan: &Plan) -> Option<Element<'a, Message>> {
+        let of = self.repeat_panel?;
         let p = self.palette;
-        let choice = |label: String, on: bool, about: &str, message: Message| {
-            crate::dashboard::hinted(
-                p,
-                button(text(label).size(META).font(BOLD))
-                    .padding([4, 10])
-                    .on_press(message)
-                    .style(look::pill(p, if on { Tone::Solid } else { Tone::Plain })),
-                about.to_string(),
-                tooltip::Position::Bottom,
-            )
+        let loaded = |step: &Step| self.loaded_length(step);
+        // Its name, how often it comes now, and how long once round is.
+        let (name, repeat, once) = match of {
+            Some(id) => {
+                let step = plan.get(id)?;
+                let once = match plan.part(id) {
+                    Some(mut part) => {
+                        part.flow.repeat = Repeat::Once;
+                        lantern_engine::timing::schedule(&part, &loaded).total
+                    }
+                    None => lantern_engine::timing::estimate(step, loaded(step)).length,
+                };
+                (step.label.clone(), step.flow.repeat, once)
+            }
+            None => {
+                let mut whole = plan.clone();
+                whole.flow.repeat = Repeat::Once;
+                (
+                    plan.title.clone(),
+                    plan.flow.repeat,
+                    lantern_engine::timing::schedule(&whole, &loaded).total,
+                )
+            }
         };
         let times = match repeat {
-            Repeat::Times(times) => times,
-            _ => 1,
+            Repeat::Times(times) => times.max(2),
+            _ => 2,
         };
+        // Until a time starts at the plan's start, or else the next half
+        // hour: a loop before the service is what it is mostly for.
+        let then = plan.starts.or_else(|| {
+            let minutes = length::now_of_day().as_secs() / 60;
+            let next = (minutes / 30 + 1) * 30 % (24 * 60);
+            TimeOfDay::parse(&format!("{}:{:02}", next / 60, next % 60))
+        });
         let set = |repeat| Message::SetRepeat(of, repeat);
-        let fewer = match times {
-            0..=2 => Repeat::Once,
-            times => Repeat::Times(times - 1),
+        let place =
+            |content: Element<'a, Message>, on: bool, about: &str, message: Option<Message>| {
+                crate::dashboard::hinted(
+                    p,
+                    button(container(content).center_x(Fill))
+                        .width(Fill)
+                        .padding([6, 0])
+                        .on_press_maybe(message)
+                        .style(look::pill(p, if on { Tone::Solid } else { Tone::Plain })),
+                    about.to_string(),
+                    tooltip::Position::Bottom,
+                )
+            };
+        let ink = |on: bool| if on { p.on_primary } else { p.on_surface };
+        let word = |label: &'static str, on: bool| -> Element<'a, Message> {
+            text(label).size(BODY).font(BOLD).color(ink(on)).into()
         };
-        let until = match repeat {
-            Repeat::Until(time) => time.to_string(),
-            _ => String::new(),
-        };
-        row![
-            choice(
-                "1".into(),
-                repeat == Repeat::Once,
-                "Once",
-                set(Repeat::Once)
-            ),
-            choice("−".into(), false, "One time fewer", set(fewer)),
-            choice(
-                format!("×{}", times.max(2)),
-                matches!(repeat, Repeat::Times(_)),
-                "This many times",
-                set(Repeat::Times(times.max(2))),
-            ),
-            choice(
-                "+".into(),
-                false,
-                "One time more",
-                set(Repeat::Times(times.max(1).saturating_add(1))),
-            ),
-            choice(
-                "∞".into(),
-                repeat == Repeat::Forever,
-                "Until you go somewhere else",
-                set(Repeat::Forever),
-            ),
-            text_input(
-                if until.is_empty() { "10:30" } else { &until },
-                &self.repeat_until
-            )
-            .on_input(Message::RepeatUntil)
-            .on_submit(Message::RepeatUntilSet)
-            .size(META)
-            .padding([4, 8])
-            .width(58)
-            .style(look::input(p)),
+        let (once_on, times_on, ever_on, until_on) = (
+            repeat == Repeat::Once,
+            matches!(repeat, Repeat::Times(_)),
+            repeat == Repeat::Forever,
+            matches!(repeat, Repeat::Until(_)),
+        );
+        let places = container(
+            row![
+                place(word("1", once_on), once_on, "Once", Some(set(Repeat::Once))),
+                place(
+                    word("×", times_on),
+                    times_on,
+                    "A number of times",
+                    Some(set(Repeat::Times(times))),
+                ),
+                place(
+                    word("∞", ever_on),
+                    ever_on,
+                    "Until you go somewhere else",
+                    Some(set(Repeat::Forever)),
+                ),
+                place(
+                    look::icon(Icon::Clock, 16.0, ink(until_on)).into(),
+                    until_on,
+                    "Until a time of day",
+                    then.map(|then| set(Repeat::Until(then))),
+                ),
+            ]
+            .spacing(2),
+        )
+        .padding(3)
+        .style(move |_| container::Style {
+            background: Some(p.surface_container_highest.into()),
+            border: iced::Border {
+                radius: 16.0.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        });
+        let mut card = column![
+            row![
+                look::icon(Icon::Repeat, 16.0, p.primary),
+                container(
+                    text(name)
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.primary)
+                        .wrapping(text::Wrapping::None)
+                )
+                .width(Fill)
+                .clip(true),
+                button(text("✕").size(META).color(p.on_surface_variant))
+                    .padding([2, 6])
+                    .on_press(Message::RepeatPanel(of))
+                    .style(look::row(p, Tone::Plain)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            places,
         ]
-        .spacing(3)
-        .align_y(Alignment::Center)
-        .into()
+        .spacing(12);
+        let round = |label: &'static str, message: Message| {
+            button(
+                container(text(label).size(HEADING).color(p.on_surface))
+                    .center_x(34)
+                    .center_y(34),
+            )
+            .padding(0)
+            .on_press(message)
+            .style(look::pill(p, Tone::Plain))
+        };
+        match repeat {
+            Repeat::Times(_) => {
+                let fewer = match times {
+                    0..=2 => Repeat::Once,
+                    times => Repeat::Times(times - 1),
+                };
+                card = card
+                    .push(
+                        container(
+                            row![
+                                round("−", set(fewer)),
+                                text(format!("×{times}"))
+                                    .size(26)
+                                    .font(BOLD)
+                                    .width(64)
+                                    .align_x(iced::alignment::Horizontal::Center),
+                                round("+", set(Repeat::Times(times.saturating_add(1)))),
+                            ]
+                            .spacing(14)
+                            .align_y(Alignment::Center),
+                        )
+                        .center_x(Fill),
+                    )
+                    .push(
+                        container(
+                            row![
+                                look::icon(Icon::Clock, 14.0, p.on_surface_variant),
+                                text(format!(
+                                    "{} × {times} = {}",
+                                    length::clock(once),
+                                    length::clock(once * u32::from(times))
+                                ))
+                                .size(META)
+                                .color(p.on_surface_variant),
+                            ]
+                            .spacing(6)
+                            .align_y(Alignment::Center),
+                        )
+                        .center_x(Fill),
+                    );
+            }
+            Repeat::Until(time) => {
+                let shown = time.to_string();
+                card = card.push(
+                    container(
+                        text_input(&shown, &self.repeat_until)
+                            .on_input(Message::RepeatUntil)
+                            .on_submit(Message::RepeatUntilSet)
+                            .size(22)
+                            .padding([6, 10])
+                            .width(96)
+                            .align_x(iced::alignment::Horizontal::Center)
+                            .style(look::input(p)),
+                    )
+                    .center_x(Fill),
+                );
+            }
+            Repeat::Once | Repeat::Forever => {}
+        }
+        Some(card.into())
     }
 
     /// The rail beside the step at `index`: its dot, the line down to

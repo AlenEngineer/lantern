@@ -315,6 +315,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   wears a mark for "not on the projector". Gone from the plan view: the
   plan's title row, "unsaved", the other plans and templates under it,
   the standing fold arrows and the words "Add step".
+- How often something comes is chosen on a card of its own, at the top of
+  the side panel: a switch with four places (once, ×, ∞, until a time), a
+  stepper for the number with what it comes to ("5:15 × 2 = 10:30"), or a
+  field for the time. A selected section's row keeps still under the
+  pointer, with its actions on a second line.
 
 ### Fixed
 

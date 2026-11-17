@@ -326,7 +326,17 @@ impl App {
             Lens::Look => scrollable(self.look_lens(&plan)).height(Fill).into(),
             Lens::Check => scrollable(self.check_lens(&plan)).height(Fill).into(),
         };
-        column![lenses, body].spacing(12).height(Fill).into()
+        // How often something comes is chosen here, over the lenses, while
+        // its choices are open.
+        let mut panel = column![].spacing(12).height(Fill);
+        if let Some(card) = self.repeat_card(&plan) {
+            panel = panel.push(card).push(
+                container(Space::new().height(1))
+                    .width(Fill)
+                    .style(move |_| container::Style::default().background(p.outline_variant)),
+            );
+        }
+        panel.push(lenses).push(body).into()
     }
 
     fn look_lens<'a>(&self, plan: &Plan) -> Element<'a, Message> {
