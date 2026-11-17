@@ -348,6 +348,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Lantern keeps what went on the projector in a service or in Live, and
   on which day (`usage` in the data folder, on this machine only), so
   that filling a section can prefer what is usually used.
+- Autofill. A selected section has a fill button: ask for a time, a
+  number of things or both, from a folder of the library, by kind, in the
+  order held, at random or by what you usually use, within a margin. It
+  proposes rows under the section; keep some, leave some out, draw again,
+  and the tick adds them as steps.
 
 ### Fixed
 
