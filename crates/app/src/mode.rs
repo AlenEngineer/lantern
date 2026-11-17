@@ -192,6 +192,8 @@ impl App {
                 | Op::Standby
                 | Op::MoveUp
                 | Op::MoveDown
+                | Op::NestIn
+                | Op::NestOut
                 | Op::RemoveStep
                 | Op::Rename
                 | Op::Undo
@@ -238,7 +240,17 @@ impl App {
             Mode::Run if edits && self.unlocked.is_none() => {
                 Err("the plan is locked while it runs")
             }
-            Mode::Run if matches!(op, Op::MoveUp | Op::MoveDown | Op::RemoveStep | Op::Rename) => {
+            Mode::Run
+                if matches!(
+                    op,
+                    Op::MoveUp
+                        | Op::MoveDown
+                        | Op::NestIn
+                        | Op::NestOut
+                        | Op::RemoveStep
+                        | Op::Rename
+                ) =>
+            {
                 let plan = self.engine.0.plan();
                 match self.selected {
                     Some(step) if self.ahead(&plan, step) => Ok(op),

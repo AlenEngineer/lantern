@@ -39,7 +39,13 @@ impl NewStep {
     /// time; its row offers to set one.
     pub fn step(self) -> (&'static str, Action) {
         match self {
-            NewStep::Section => ("New section", Action::Section { budget: None }),
+            NewStep::Section => (
+                "New section",
+                Action::Section {
+                    budget: None,
+                    depth: 0,
+                },
+            ),
             NewStep::LiveSlot => (
                 "Live search",
                 Action::Live {
@@ -250,7 +256,23 @@ impl App {
                 Message::KeepCopy(id),
             ));
         }
-        actions
+        // A section goes into the one before it, and out again.
+        if step.is_section() {
+            actions = actions
+                .push(small(
+                    sign("←"),
+                    Tone::Plain,
+                    keys::with_key("Out a level", Op::NestOut),
+                    Message::Nest(id, false),
+                ))
+                .push(small(
+                    sign("→"),
+                    Tone::Plain,
+                    keys::with_key("Into the section before it", Op::NestIn),
+                    Message::Nest(id, true),
+                ));
+        }
+        actions = actions
             .push(small(
                 look::icon(Icon::Pencil, 13.0, p.primary).into(),
                 Tone::Plain,
@@ -274,8 +296,8 @@ impl App {
                 Tone::Plain,
                 keys::with_key("Remove", Op::RemoveStep),
                 Message::Remove(id),
-            ))
-            .into()
+            ));
+        actions.into()
     }
 
     /// A length or time field: what was typed, else the value, else `hint`

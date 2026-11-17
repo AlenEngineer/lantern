@@ -493,7 +493,10 @@ impl Script {
                 engine.add(None, "Live search", action);
             }
             Command::Section(budget, title) => {
-                let action = lantern_engine::Action::Section { budget: *budget };
+                let action = lantern_engine::Action::Section {
+                    budget: *budget,
+                    depth: 0,
+                };
                 engine.add(None, title.clone(), action);
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
