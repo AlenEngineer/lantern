@@ -320,6 +320,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   stepper for the number with what it comes to ("5:15 × 2 = 10:30"), or a
   field for the time. A selected section's row keeps still under the
   pointer, with its actions on a second line.
+- A dotted line curls back on the rail beside the steps of a section, or
+  a plan, that repeats: from its last step, out and up, into its first.
 
 ### Fixed
 

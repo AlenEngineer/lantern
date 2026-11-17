@@ -144,7 +144,9 @@ The rail down the left of the steps shows how the plan moves. A filled dot
 with a line on to the next step goes on by itself; a hollow dot waits for
 you. Click under a dot to join it to the next step or part them. In a
 service, grey is past, the stage's colour is on the projector now (its
-line fills as it plays), and a ring in that colour is next.
+line fills as it plays), and a ring in that colour is next. Beside the steps of a
+section that repeats, a dotted line curls back from its last step to its
+first.
 
 Over the plan, large, is how long it takes: sections count for their
 time, steps outside one for their length, and what repeats a number of
