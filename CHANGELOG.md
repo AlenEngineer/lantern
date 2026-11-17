@@ -408,6 +408,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- In the ring, a time to come again until is a pill that grows into a
+  small card once a time is set, with how it ends and what that comes to
+  inside it: they were a row of their own under all three choices. A thin
+  line joins the repeat button to its choices.
 - Under an open ring, what is written and drawn goes dim and every
   ground stays as it was, so the ring is what is read. It laid a dark
   sheet over the whole window.

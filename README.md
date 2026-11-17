@@ -172,8 +172,8 @@ Esc or a click elsewhere closes the ring.
 Beside the repeat button, once it is lit, is how often: **− ×2 +** for a
 number of times, **∞** until you move on, and a clock with a box to type
 a time of day in (`10:30`), which holds as soon as it reads as one. With
-a time, a second row says how it ends when the time comes, and what that
-comes to:
+a time, its pill grows into a small card that holds what is the time's
+own: how it ends when the time comes, and what that comes to:
 
 - ■ **there and then**: what is on is cut off, and the plan goes on.
 - ⏭ **with the step**: the step that is on is finished, and the rest of
