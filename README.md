@@ -519,6 +519,8 @@ works. Unknown keys are errors, so typos show up on the dashboard.
 brave_api_key = "…"       # optional, for !gi image search
 colors = "~/.config/amane/colors.json"  # optional, see below
 stage_output = "Epson EB-X41"  # optional: the screen the stage prefers, see below
+on_service_start = "dunstctl set-paused true"   # optional, see While it shows
+on_service_end = "dunstctl set-paused false"
 
 [[folders]]
 path = "~/Videos"
@@ -594,6 +596,28 @@ This needs Hyprland for now: iced can't list monitors or fullscreen on a
 chosen one, and on Wayland only the compositor places windows, so Lantern
 asks Hyprland (`hyprctl`). Elsewhere, move the window yourself: the stage's
 app id is `lantern-stage`, the dashboard's `lantern-dashboard`.
+
+### While it shows
+
+With a service running, or anything on the projector, Lantern asks the
+desktop not to turn the screens off: a still slide through a sermon is
+not idleness. It asks `org.freedesktop.ScreenSaver` on the session bus,
+which hypridle, KDE and GNOME answer. Nothing is asked while planning,
+and it ends when Lantern does.
+
+For the length of a service it also asks the notification service to
+hold its popups, with the `Inhibit` that KDE added to
+`org.freedesktop.Notifications`. Most other notification daemons have no
+such call. For those, name a command to run as a service starts and one
+as it ends (or as Lantern closes with one running):
+
+```toml
+on_service_start = "dunstctl set-paused true"
+on_service_end = "dunstctl set-paused false"
+```
+
+They run in `sh`, and Lantern does not wait for them. If Lantern is
+killed mid-service, the end command never runs.
 
 ### End-to-end screenshots
 

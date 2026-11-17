@@ -13,6 +13,7 @@ mod config;
 mod cut;
 mod dashboard;
 mod deck;
+mod desktop;
 mod drag;
 mod fit;
 mod keys;
@@ -492,6 +493,10 @@ struct App {
     /// When the dashboard was asked to close with the projector in use:
     /// asked again soon after, it closes.
     quitting: Option<Instant>,
+    /// What is held from the desktop: the screens on, notifications off.
+    desktop: desktop::Desktop,
+    /// Lantern is closing.
+    leaving: bool,
     /// The dashboard window's size, to lay out for the room there is.
     dashboard_size: iced::Size,
     /// The stage window's mirror, built only from the engine's feed.
@@ -682,6 +687,8 @@ impl App {
             stage_wish: None,
             stage_mode: mode::Mode::Plan,
             quitting: None,
+            desktop: desktop::Desktop::default(),
+            leaving: false,
             dashboard_size: iced::Size::new(1280.0, 720.0),
             stage: StageState::default(),
             search: Search::default(),
@@ -745,6 +752,7 @@ impl App {
         // it. A service picked up from before this start is one already.
         app.stage_mode = app.mode;
         app.check_outputs();
+        app.sync_desktop();
         let stage = app.sync_stage();
         let open = open_dashboard
             .discard()
@@ -756,6 +764,44 @@ impl App {
                     .map(move |size| Message::Resized(dashboard_window, size)),
             );
         (app, open)
+    }
+
+    /// Asks of the desktop what the moment needs. The screens stay on
+    /// with a service running or anything on the projector: a still slide
+    /// through a sermon is no reason to turn them off. Notifications wait
+    /// for the length of a service.
+    fn sync_desktop(&mut self) {
+        // Closing, with the service still running: what was taken back
+        // is not asked for again.
+        if self.leaving {
+            return;
+        }
+        let running = self.mode == mode::Mode::Run;
+        self.desktop
+            .keep_awake(running || self.stage.program.is_some());
+        if self.desktop.keep_quiet(running) {
+            let command = match running {
+                true => &self.config.on_service_start,
+                false => &self.config.on_service_end,
+            };
+            if let Some(command) = command {
+                desktop::run(command);
+            }
+        }
+    }
+
+    /// Lantern is closing: what a running service asked of the desktop
+    /// by a command is taken back by its other command. What was asked
+    /// over the bus ends with the connection.
+    fn leave(&mut self) -> Task<Message> {
+        self.leaving = true;
+        self.desktop.keep_awake(false);
+        if self.desktop.keep_quiet(false)
+            && let Some(command) = &self.config.on_service_end
+        {
+            desktop::run(command);
+        }
+        iced::exit()
     }
 
     /// Opens or closes the stage window to match the mode: open with a
@@ -875,6 +921,7 @@ impl App {
         self.sync_blur();
         self.sync_remote();
         self.tell_remote();
+        self.sync_desktop();
         Task::batch([task, self.sync_stage()])
     }
 
@@ -987,7 +1034,7 @@ impl App {
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
-                return iced::exit();
+                return self.leave();
             }
             Message::Script(ui) => {
                 log(format!("dashboard: {ui:?}"));
@@ -1938,7 +1985,7 @@ impl App {
                     log("the dashboard was asked to close mid-service: asking again");
                 } else {
                     log("the dashboard closed, exiting");
-                    return iced::exit();
+                    return self.leave();
                 }
             }
             Message::CloseAsked(window) => return window::close(window),
@@ -1947,7 +1994,7 @@ impl App {
             // it is opened again, like one closed by hand.
             Message::Closed(window) if window == self.dashboard_window => {
                 log("the dashboard closed, exiting");
-                return iced::exit();
+                return self.leave();
             }
             Message::Closed(window) => {
                 if Some(window) == self.stage_window {

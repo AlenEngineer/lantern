@@ -252,6 +252,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
   for that set of screens. With one screen there is no stage window: the
   live picture is the stage. A stage whose screen is unplugged mid-service
   closes, and the live picture says the projector is gone.
+- The screens stay on while it shows. With a service running or anything
+  on the projector, Lantern asks the desktop not to idle, and lets go when
+  the service ends and the stage is clear.
+- Notifications wait for the length of a service, on desktops whose
+  notification service can be asked (`Inhibit`, as in KDE). For the
+  others, `on_service_start` and `on_service_end` in the config name a
+  command to run as a service starts and as it ends.
 
 ### Fixed
 

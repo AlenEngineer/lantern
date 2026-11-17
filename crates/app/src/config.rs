@@ -68,6 +68,15 @@ pub struct Config {
     /// The port the remote listens on, when not [`REMOTE_PORT`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_port: Option<u16>,
+    /// A command to run as a service starts, such as the one that turns
+    /// on do-not-disturb. Lantern already asks the desktop to hold
+    /// notifications; this is for a desktop that can't be asked that way.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_service_start: Option<String>,
+    /// The command to run as the service ends, or as Lantern closes with
+    /// one running.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_service_end: Option<String>,
     #[serde(default)]
     pub folders: Vec<FolderEntry>,
     #[serde(default)]
@@ -442,6 +451,8 @@ mod tests {
             always_download: true,
             remote: true,
             remote_port: Some(8080),
+            on_service_start: Some("dunstctl set-paused true".into()),
+            on_service_end: Some("dunstctl set-paused false".into()),
             keys: [("new".to_string(), "ctrl+t".to_string())].into(),
             folders: vec![FolderEntry {
                 path: "/home/ana/Music".into(),

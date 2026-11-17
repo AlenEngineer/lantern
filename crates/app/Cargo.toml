@@ -38,6 +38,9 @@ zip.workspace = true
 qrcode.workspace = true
 roxmltree.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 
