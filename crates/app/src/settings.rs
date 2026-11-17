@@ -30,8 +30,8 @@ const BANG_FIELD: f32 = 80.0;
 pub const SCROLL: &str = "settings-body";
 const SAMPLE_WIDTH: f32 = 384.0;
 /// The list of the settings' parts, and the most a part's fields spread.
-const CATEGORIES: f32 = 132.0;
-const PART_WIDTH: f32 = 640.0;
+const CATEGORIES: f32 = 216.0;
+const PART_WIDTH: f32 = 760.0;
 /// How tall the small picture of what's on stage is, in the header.
 const LIVE_HEIGHT: f32 = 54.0;
 
@@ -55,9 +55,15 @@ pub struct Draft {
     pub remote: bool,
     /// The remote's port as the config has it; not edited here.
     remote_port: Option<u16>,
-    /// Set only in the config file, kept as they are.
-    on_service_start: Option<String>,
-    on_service_end: Option<String>,
+    /// Whether the desktop is asked to keep the screens on while a
+    /// service runs or something is on the projector.
+    pub keep_awake: bool,
+    /// The commands run as a service starts and as it ends, as typed.
+    on_service_start: String,
+    on_service_end: String,
+    /// The screens the stage and the dashboard are on now, by name.
+    stage_on: Option<String>,
+    dashboard_on: Option<String>,
     /// The screen for the stage; `None` leaves it to the compositor.
     pub output: Option<String>,
     /// The screens connected when the settings opened, or why they can't
@@ -88,9 +94,8 @@ pub struct Draft {
 /// A part of the settings: one shows at a time, picked from the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    /// The look for all plans.
-    Stage,
-    Output,
+    /// Where the stage and the dashboard are, and where the stage goes.
+    Screens,
     /// Media folders, Bibles and image search.
     Library,
     /// The dashboard's colours.
@@ -98,17 +103,46 @@ pub enum Category {
     Keys,
     /// The remote for a phone.
     Phone,
+    /// What is run as a service starts and ends.
+    Service,
+    /// The look every plan has unless it sets its own.
+    Look,
 }
 
 impl Category {
+    /// What holds for this computer.
+    const COMPUTER: [Category; 6] = [
+        Category::Screens,
+        Category::Library,
+        Category::Appearance,
+        Category::Keys,
+        Category::Phone,
+        Category::Service,
+    ];
+    /// What holds for every plan.
+    const PLANS: [Category; 1] = [Category::Look];
+
     fn name(self) -> &'static str {
         match self {
-            Category::Stage => "Stage",
-            Category::Output => "Output",
+            Category::Screens => "Screens",
             Category::Library => "Library",
             Category::Appearance => "Appearance",
             Category::Keys => "Keys",
             Category::Phone => "Phone",
+            Category::Service => "Service",
+            Category::Look => "Default look",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Category::Screens => Icon::Screen,
+            Category::Library => Icon::Folder,
+            Category::Appearance => Icon::Contrast,
+            Category::Keys => Icon::Keyboard,
+            Category::Phone => Icon::Phone,
+            Category::Service => Icon::Command,
+            Category::Look => Icon::Tune,
         }
     }
 }
@@ -257,6 +291,11 @@ pub enum Edit {
     Stream(bool),
     /// Turn the phone remote on or off.
     Remote(bool),
+    /// Keep the screens on during a service, or leave them be.
+    KeepAwake(bool),
+    /// The command run as a service starts, and the one as it ends.
+    ServiceStart(String),
+    ServiceEnd(String),
     /// The key of action N of `keys::ACTIONS`.
     Key(usize, String),
     /// Shows a part of the settings.
@@ -319,12 +358,15 @@ impl Draft {
             stream: !config.always_download,
             remote: config.remote,
             remote_port: config.remote_port,
-            on_service_start: config.on_service_start.clone(),
-            on_service_end: config.on_service_end.clone(),
+            keep_awake: !config.no_keep_awake,
+            on_service_start: config.on_service_start.clone().unwrap_or_default(),
+            on_service_end: config.on_service_end.clone().unwrap_or_default(),
+            stage_on: None,
+            dashboard_on: None,
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
-            category: Category::Stage,
+            category: Category::Screens,
             recording: None,
             fonts: Vec::new(),
             notice: None,
@@ -369,7 +411,9 @@ impl Draft {
                     self.motion,
                     self.stream,
                     self.remote,
+                    self.keep_awake,
                 ),
+                (&self.on_service_start, &self.on_service_end),
                 &self.output,
                 &self.stage,
                 &self.keys
@@ -532,7 +576,7 @@ impl Draft {
                 self.recording = None;
             }
             Edit::Output(output) => {
-                self.category = Category::Output;
+                self.category = Category::Screens;
                 self.output = output;
             }
             Edit::Background(text) => self.stage_mut().background = text,
@@ -550,6 +594,9 @@ impl Draft {
             Edit::Motion(on) => self.motion = on,
             Edit::Stream(on) => self.stream = on,
             Edit::Remote(on) => self.remote = on,
+            Edit::KeepAwake(on) => self.keep_awake = on,
+            Edit::ServiceStart(text) => self.on_service_start = text,
+            Edit::ServiceEnd(text) => self.on_service_end = text,
             Edit::Choose(..) | Edit::ChooseFirst => {}
         }
     }
@@ -620,8 +667,9 @@ impl Draft {
             always_download: !self.stream,
             remote: self.remote,
             remote_port: self.remote_port,
-            on_service_start: self.on_service_start.clone(),
-            on_service_end: self.on_service_end.clone(),
+            no_keep_awake: !self.keep_awake,
+            on_service_start: optional(&self.on_service_start),
+            on_service_end: optional(&self.on_service_end),
             folders,
             bibles,
             stage,
@@ -659,8 +707,15 @@ impl Draft {
     }
 
     /// Lists the connected screens, for the output row.
-    pub fn with_outputs(mut self, outputs: Result<Vec<Output>, String>) -> Draft {
+    pub fn with_outputs(
+        mut self,
+        outputs: Result<Vec<Output>, String>,
+        stage_on: Option<String>,
+        dashboard_on: Option<String>,
+    ) -> Draft {
         self.outputs = outputs;
+        self.stage_on = stage_on;
+        self.dashboard_on = dashboard_on;
         self
     }
 
@@ -682,17 +737,37 @@ impl App {
             Some(home) => config::tilde(file, home).display().to_string(),
             None => file.display().to_string(),
         };
-        let mut header = row![
-            look::icon(Icon::Settings, 20.0, p.primary),
-            text("Settings").size(HEADING).font(BOLD).color(p.primary),
-            Space::new().width(Fill),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .height(match (&self.stage.program, self.stage.blackout) {
-            (Some(_), false) => LIVE_HEIGHT,
-            _ => 36.0,
-        });
+        // The part on show is named over it.
+        let title = text(draft.category.name())
+            .size(20.0)
+            .font(BOLD)
+            .color(p.primary);
+        // A part that is one thing says how it works under its name.
+        let about = match draft.category {
+            Category::Keys => Some(
+                "Click a key, then press the new one. Esc gives up; ↺ puts the usual key back.",
+            ),
+            Category::Look => Some(
+                "What's behind the content, and how text is set: as large as fits between the two sizes. A plan, a section or a step can set its own.",
+            ),
+            _ => None,
+        };
+        let title: Element<'a, Message> = match about {
+            Some(about) => hinted(
+                p,
+                title,
+                about.to_string(),
+                iced::widget::tooltip::Position::Bottom,
+            ),
+            None => title.into(),
+        };
+        let mut header = row![title, Space::new().width(Fill)]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .height(match (&self.stage.program, self.stage.blackout) {
+                (Some(_), false) => LIVE_HEIGHT,
+                _ => 36.0,
+            });
         // The settings take the stage pane's room, so what the audience
         // sees is kept in sight here: its state, its name, a small picture.
         match (&self.stage.program, self.stage.blackout) {
@@ -971,12 +1046,7 @@ impl App {
         let label = |name| text(name).size(BODY).font(MEDIUM).width(LABEL_FIELD);
         let line =
             |items: iced::widget::Row<'a, Message>| items.spacing(8).align_y(Alignment::Center);
-        let mut stage = column![section(
-            p,
-            "Default look",
-            "What's behind the content, and how text is set: as large as fits between the two sizes."
-        )]
-        .spacing(6);
+        let mut stage = column![].spacing(6);
         {
             stage = stage.extend([
                 line(row![
@@ -1056,12 +1126,7 @@ impl App {
         stage =
             stage.push(row![Space::new().width(LABEL_FIELD), self.stage_sample(draft)].spacing(8));
 
-        let mut keys = column![section(
-            p,
-            "Keys",
-            "Click a key, then press the new one. Esc gives up; ↺ puts the usual key back."
-        )]
-        .spacing(4);
+        let mut keys = column![].spacing(4);
         for (at, (action, key)) in keys::ACTIONS.iter().zip(&draft.keys).enumerate() {
             let recording = draft.recording == Some(at);
             let shown = if recording {
@@ -1123,54 +1188,205 @@ impl App {
             }
         }
 
-        // Opened for a plan's look, the stage comes first.
-        let output = column![
-            section(
-                p,
-                "Output",
-                "The screen the stage prefers. While it is connected the stage is open on it, from the moment it is plugged in. Automatic: the stage opens with a service on a screen the dashboard isn't on, and stays where you last moved it. With one screen and no preference there is no stage window: the live picture shows it."
-            ),
-            output_row(p, draft),
+        // The screens there are, each with what is on it, then where the
+        // stage goes and whether the screens are kept on.
+        let mut cards = row![].spacing(12);
+        if let Ok(outputs) = &draft.outputs {
+            for output in outputs {
+                let on = |screen: &Option<String>| screen.as_deref() == Some(output.name.as_str());
+                let (role, stage) = match (on(&draft.stage_on), on(&draft.dashboard_on)) {
+                    (true, _) => ("Stage", true),
+                    (false, true) => ("Dashboard", false),
+                    (false, false) => ("", false),
+                };
+                let ink = if stage {
+                    p.primary
+                } else {
+                    p.on_surface_variant
+                };
+                let picture = iced::widget::container(
+                    text(role)
+                        .size(BODY)
+                        .font(if stage { BOLD } else { MEDIUM })
+                        .color(ink),
+                )
+                .center_x(Fill)
+                .center_y(90)
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(p.surface.into()),
+                    border: iced::Border {
+                        radius: 8.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..iced::widget::container::Style::default()
+                });
+                let model = match output.description.trim() {
+                    "" => output.name.clone(),
+                    model => model.to_string(),
+                };
+                cards = cards.push(
+                    iced::widget::container(
+                        column![
+                            picture,
+                            text(model).size(BODY).font(MEDIUM),
+                            text(format!(
+                                "{} · {} × {}",
+                                output.name, output.width, output.height
+                            ))
+                            .size(META)
+                            .color(p.on_surface_variant),
+                        ]
+                        .spacing(10),
+                    )
+                    .width(Fill)
+                    .padding(14)
+                    .style(move |_| iced::widget::container::Style {
+                        background: Some(p.surface_container_highest.into()),
+                        border: iced::Border {
+                            radius: 14.0.into(),
+                            width: if stage { 2.0 } else { 0.0 },
+                            color: p.primary,
+                        },
+                        ..iced::widget::container::Style::default()
+                    }),
+                );
+            }
+        }
+        let awake = button(crate::plan_panel::switch(p, draft.keep_awake))
+            .padding(0)
+            .on_press(settings(Edit::KeepAwake(!draft.keep_awake)))
+            .style(look::row(p, Tone::Plain));
+        let wide_label = |name| text(name).size(BODY).width(220);
+        let screens = column![
+            cards,
+            row![
+                hinted(
+                    p,
+                    wide_label("The stage prefers"),
+                    "While that screen is connected the stage is open on it, from the moment it is plugged in. Automatic: the stage opens with a service on a screen the dashboard isn't on, and stays where you last moved it.".to_string(),
+                    iced::widget::tooltip::Position::Bottom,
+                ),
+                output_row(p, draft),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+            row![
+                hinted(
+                    p,
+                    wide_label("Keep the screens on"),
+                    "While a service runs or something is on the projector, the desktop is asked not to dim or lock.".to_string(),
+                    iced::widget::tooltip::Position::Bottom,
+                ),
+                awake,
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
         ]
-        .spacing(6);
+        .spacing(16);
+        // What the desktop is told as a service starts and ends, for one
+        // that can't be asked over the bus.
+        let service = column![
+            row![
+                hinted(
+                    p,
+                    wide_label("As a service starts, run"),
+                    "A command, such as the one that turns on do-not-disturb. Lantern already asks the desktop to hold notifications; this is for a desktop that can't be asked that way.".to_string(),
+                    iced::widget::tooltip::Position::Bottom,
+                ),
+                field(p, "makoctl mode -a dnd", &draft.on_service_start, Edit::ServiceStart)
+                    .width(Fill),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+            row![
+                hinted(
+                    p,
+                    wide_label("As it ends, run"),
+                    "Run as the service ends, or as Lantern closes with one running.".to_string(),
+                    iced::widget::tooltip::Position::Bottom,
+                ),
+                field(p, "makoctl mode -r dnd", &draft.on_service_end, Edit::ServiceEnd)
+                    .width(Fill),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(16);
         // One part at a time, picked from the list beside it.
         let part = match draft.category {
-            Category::Stage => column![stage],
-            Category::Output => column![output],
+            Category::Screens => column![screens],
             Category::Library => column![folders, bibles, youtube, images],
             Category::Appearance => column![colors, glass],
             Category::Keys => column![keys],
             Category::Phone => column![self.phone_section(draft.remote)],
+            Category::Service => column![service],
+            Category::Look => column![stage],
         };
-        let parts = vec![
-            Category::Stage,
-            Category::Output,
-            Category::Library,
-            Category::Appearance,
-            Category::Keys,
-            Category::Phone,
-        ];
-        let list = column(parts.into_iter().map(|category| {
+        // The list: what holds for this computer, then what holds for
+        // every plan.
+        let group = |words: &'static str| {
+            iced::widget::container(
+                text(words)
+                    .size(11.0)
+                    .font(BOLD)
+                    .color(p.on_surface_variant),
+            )
+            .padding(iced::Padding::default().left(12.0).bottom(6.0))
+        };
+        let item = |category: Category| {
             let on = draft.category == category;
+            let ink = if on { p.primary } else { p.on_surface };
             button(
-                text(category.name())
-                    .size(BODY)
-                    .font(if on { BOLD } else { MEDIUM })
-                    .color(if on { p.primary } else { p.on_surface }),
+                row![
+                    look::icon(category.icon(), 16.0, ink),
+                    text(category.name())
+                        .size(BODY)
+                        .font(if on { BOLD } else { MEDIUM })
+                        .color(ink),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
             )
             .width(Fill)
-            .padding([8, 12])
+            .padding([9, 12])
             .on_press(settings(Edit::Category(category)))
             .style(look::row(p, if on { Tone::Selected } else { Tone::Plain }))
-            .into()
-        }))
-        .spacing(2)
-        .width(CATEGORIES);
+        };
+        let mut list = column![group("THIS COMPUTER")].spacing(4).width(CATEGORIES);
+        for category in Category::COMPUTER {
+            list = list.push(item(category));
+        }
+        list = list
+            .push(Space::new().height(6))
+            .push(
+                iced::widget::container(Space::new().height(1))
+                    .width(Fill)
+                    .style(move |_| {
+                        iced::widget::container::Style::default().background(p.outline_variant)
+                    }),
+            )
+            .push(Space::new().height(6))
+            .push(group("EVERY PLAN"));
+        for category in Category::PLANS {
+            list = list.push(item(category));
+        }
+        // A line between the list and the part on show.
+        let line = iced::widget::container(Space::new().width(1))
+            .height(Fill)
+            .style(move |_| {
+                iced::widget::container::Style::default().background(p.outline_variant)
+            });
         let body = row![
             list,
-            scrolling(iced::widget::container(part.spacing(24)).max_width(PART_WIDTH)).id(SCROLL),
+            line,
+            column![
+                header,
+                scrolling(iced::widget::container(part.spacing(24)).max_width(PART_WIDTH))
+                    .id(SCROLL),
+            ]
+            .spacing(16),
         ]
-        .spacing(24)
+        .spacing(20)
         .height(Fill);
         // Where it's all kept, for whoever edits the file by hand.
         let mut footer = row![chip(p, &shown_file, Tone::Plain)]
@@ -1229,10 +1445,7 @@ impl App {
                 keys::with_key("Keep these settings", Op::Save),
                 iced::widget::tooltip::Position::Top,
             ));
-        column![header, body, footer]
-            .spacing(16)
-            .height(Fill)
-            .into()
+        column![body, footer].spacing(16).height(Fill).into()
     }
 }
 
@@ -1467,42 +1680,92 @@ fn suggestions<'a>(p: Palette, draft: &Draft, field: Field) -> Element<'a, Messa
 
 /// The screens to put the stage on: Automatic, then each connected one,
 /// and a line when the one asked for isn't connected.
+/// A screen the stage could prefer, as the list names it.
+#[derive(Debug, Clone, PartialEq)]
+struct Choice {
+    name: String,
+    /// What the config keeps for it; `None` leaves it to Lantern.
+    id: Option<String>,
+}
+
+impl std::fmt::Display for Choice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
 fn output_row<'a>(p: Palette, draft: &Draft) -> Element<'a, Message> {
     let note = |line: String| text(line).size(META).color(p.on_surface_variant);
-    let choices: Element<'a, Message> = match &draft.outputs {
-        Err(why) => note(why.clone()).into(),
-        Ok(outputs) => {
-            let choice = |label: String, output: Option<String>, lit: bool| {
-                pill(
-                    p,
-                    &label,
-                    if lit { Tone::Selected } else { Tone::Plain },
-                    look::PILL_SMALL,
-                    Some(settings(Edit::Output(output))),
-                )
-            };
-            let mut list =
-                column![choice("Automatic".into(), None, draft.output.is_none())].spacing(6);
-            // A screen is kept by its make and model, so it is the same
-            // screen whichever plug it is on.
-            for output in outputs {
-                let lit = draft
-                    .output
-                    .as_deref()
-                    .is_some_and(|wanted| output.is(wanted));
-                list = list.push(choice(output.label(), Some(output.id().to_string()), lit));
-            }
-            if let Some(wanted) = &draft.output
-                && !outputs.iter().any(|o| o.is(wanted))
-            {
-                list = list.push(note(format!(
-                    "{wanted} isn't connected: the stage opens there when it is."
-                )));
-            }
-            list.into()
-        }
+    let outputs = match &draft.outputs {
+        Err(why) => return note(why.clone()).into(),
+        Ok(outputs) => outputs,
     };
-    choices
+    // A screen is kept by its make and model, so it is the same screen
+    // whichever plug it is on.
+    let mut choices = vec![Choice {
+        name: "Automatic".into(),
+        id: None,
+    }];
+    choices.extend(outputs.iter().map(|output| {
+        let model = output.description.trim();
+        // Two of one model, or one that names none, are told apart by
+        // their plug and size.
+        let alone = outputs
+            .iter()
+            .filter(|other| other.description.trim() == model)
+            .count()
+            == 1;
+        Choice {
+            name: match !model.is_empty() && alone {
+                true => model.to_string(),
+                false => output.label(),
+            },
+            id: Some(output.id().to_string()),
+        }
+    }));
+    let chosen = match &draft.output {
+        None => choices.first().cloned(),
+        Some(wanted) => outputs
+            .iter()
+            .position(|output| output.is(wanted))
+            .and_then(|at| choices.get(at + 1).cloned()),
+    };
+    let ground = iced::Border {
+        radius: 10.0.into(),
+        ..iced::Border::default()
+    };
+    let list = iced::widget::pick_list(choices, chosen, |choice: Choice| {
+        settings(Edit::Output(choice.id))
+    })
+    // One that isn't connected is still what it prefers.
+    .placeholder(draft.output.clone().unwrap_or_default())
+    .text_size(BODY)
+    .padding([8, 12])
+    .width(420)
+    .style(move |_, _| iced::widget::pick_list::Style {
+        text_color: p.on_surface,
+        placeholder_color: p.on_surface_variant,
+        handle_color: p.on_surface_variant,
+        background: p.surface_container_highest.into(),
+        border: ground,
+    })
+    .menu_style(move |_| iced::widget::overlay::menu::Style {
+        background: p.surface_container_highest.into(),
+        border: ground,
+        text_color: p.on_surface,
+        selected_text_color: p.on_primary,
+        selected_background: p.primary.into(),
+        shadow: iced::Shadow::default(),
+    });
+    let mut row = column![list].spacing(6);
+    if let Some(wanted) = &draft.output
+        && !outputs.iter().any(|o| o.is(wanted))
+    {
+        row = row.push(note(format!(
+            "{wanted} isn't connected: the stage opens there when it is."
+        )));
+    }
+    row.into()
 }
 
 fn remove(p: Palette, edit: Edit) -> Element<'static, Message> {

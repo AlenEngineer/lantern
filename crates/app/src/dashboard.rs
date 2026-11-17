@@ -78,9 +78,6 @@ pub enum Side {
     Stage,
 }
 
-/// The most the settings spread.
-const SETTINGS_WIDTH: f32 = 880.0;
-
 /// The plan and stage panes' widths in a window `width` wide: their full
 /// widths while the launcher has room, then both narrower by the same
 /// share, down to their least.
@@ -196,9 +193,7 @@ impl App {
         .style(look::card(p, glass, look::CARD_RADIUS));
         // The settings take the stage's card while they're open.
         let middle: Element<'_, Message> = match &self.settings {
-            Some(draft) => container(self.settings_view(draft))
-                .max_width(SETTINGS_WIDTH)
-                .into(),
+            Some(draft) => self.settings_view(draft),
             None => self.stage_centre(&seam),
         };
         // The settings are one card. Otherwise the picture and what is
@@ -215,7 +210,12 @@ impl App {
             // drops from it.
             column![
                 Space::new().height(STRIP),
-                row![plan, seam(Side::Plan, GAP), stage].height(Fill)
+                // The settings are not the plan's: they have the window.
+                match self.settings {
+                    Some(_) => row![stage],
+                    None => row![plan, seam(Side::Plan, GAP), stage],
+                }
+                .height(Fill)
             ]
             .spacing(GAP),
         )
@@ -625,7 +625,16 @@ impl App {
         ));
         strip = strip.push(hinted(
             p,
-            tool(Icon::Settings, "", Tone::Plain, op(Op::Settings)),
+            tool(
+                Icon::Settings,
+                "",
+                // Lit while they are open.
+                match self.settings {
+                    Some(_) => Tone::Solid,
+                    None => Tone::Plain,
+                },
+                op(Op::Settings),
+            ),
             keys::with_key("Settings", Op::Settings),
             tooltip::Position::Bottom,
         ));

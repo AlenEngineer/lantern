@@ -882,7 +882,7 @@ impl App {
         }
         let running = self.mode == mode::Mode::Run;
         self.desktop
-            .keep_awake(running || self.stage.program.is_some());
+            .keep_awake(!self.config.no_keep_awake && (running || self.stage.program.is_some()));
         if self.desktop.keep_quiet(running) {
             let command = match running {
                 true => &self.config.on_service_start,
@@ -2836,7 +2836,11 @@ impl App {
     /// The settings as saved, with the open plan's look too.
     fn settings_draft(&self) -> settings::Draft {
         let mut draft = settings::Draft::of(&self.config, self.home.as_deref())
-            .with_outputs(outputs::list())
+            .with_outputs(
+                outputs::list(),
+                outputs::stage_on().ok().flatten(),
+                outputs::dashboard_on().ok().flatten(),
+            )
             .with_fonts(fit::families());
         draft.mark_saved();
         draft

@@ -484,7 +484,7 @@ fn line<'a>(
 }
 
 /// A switch, on or off.
-fn switch<'a>(p: crate::palette::Palette, on: bool) -> Element<'a, Message> {
+pub(crate) fn switch<'a>(p: crate::palette::Palette, on: bool) -> Element<'a, Message> {
     let knob = container(Space::new().width(16).height(16)).style(move |_| container::Style {
         background: Some(
             if on {

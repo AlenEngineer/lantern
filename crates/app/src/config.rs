@@ -57,6 +57,10 @@ pub struct Config {
     /// Draw every change as it ends up, with nothing moving on the way.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_motion: bool,
+    /// Don't ask the desktop to keep the screens on while a service runs
+    /// or something is on the projector.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_keep_awake: bool,
     /// Download every YouTube video before playing it, also one shown
     /// outside the plan. Unset, those play straight from YouTube and only
     /// the plan's are downloaded.
@@ -448,6 +452,7 @@ mod tests {
             see_through: 40,
             no_blur: true,
             no_motion: true,
+            no_keep_awake: true,
             always_download: true,
             remote: true,
             remote_port: Some(8080),
@@ -479,7 +484,8 @@ mod tests {
         assert!(
             text.contains("see_through = 40")
                 && text.contains("no_blur = true")
-                && text.contains("no_motion = true"),
+                && text.contains("no_motion = true")
+                && text.contains("no_keep_awake = true"),
             "{text}"
         );
         // Solid and blurred are the usual: a plain config says neither.

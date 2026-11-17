@@ -367,6 +367,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
   longer a part of Settings, which keeps what holds for this computer and
   for every plan. A plan's look can set its picture too, as a step's or a
   section's can.
+- Settings are this computer's, and take the whole window: a list in two
+  groups (This computer: Screens, Library, Appearance, Keys, Phone,
+  Service; Every plan: Default look) with the part on show named over it.
+  Screens shows each screen with what is on it, the screen the stage
+  prefers as a list, and a switch for keeping the screens on
+  (`no_keep_awake`). Service has the commands run as a service starts and
+  ends, which were only in the config file.
 
 ### Fixed
 
