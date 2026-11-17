@@ -356,6 +356,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - Drawing again in autofill gives other things even when nothing comes
   to what was asked: a draw may then stand a little further off than the
   nearest there is, and still says by how much.
+- What autofill proposes looks proposed: its rows and their dots have a
+  dashed outline, and over them a bar shows what the section holds, what
+  would be added (hatched) and the room left of its time.
 
 ### Fixed
 
