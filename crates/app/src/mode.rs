@@ -294,6 +294,8 @@ impl App {
     /// the service and left by ending it.
     pub(crate) fn set_mode(&mut self, to: Mode) -> Task<Message> {
         self.starting = None;
+        self.rehearsal = None;
+        self.rehearsed = None;
         match (self.mode, to) {
             (from, to) if from == to => {}
             (Mode::Run, _) | (_, Mode::Run) => {}
@@ -361,6 +363,8 @@ impl App {
         {
             log(format!("mode: the sound output was not kept: {error}"));
         }
+        self.rehearsal = None;
+        self.rehearsed = None;
         self.editing = None;
         self.adding = None;
         self.selected = None;

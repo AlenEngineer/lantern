@@ -1169,6 +1169,34 @@ impl App {
                 Message::SetShuffle(of, !flow.shuffle),
             ));
         }
+        // Rehearse it in the preview; while it is, the way to stop.
+        let rehearsing = self.rehearsal.as_ref().is_some_and(|r| r.of == of);
+        if self.mode == crate::mode::Mode::Plan && (all || rehearsing) {
+            buttons = buttons.push(crate::dashboard::hinted(
+                p,
+                button(look::icon(
+                    if rehearsing { Icon::Stop } else { Icon::Play },
+                    14.0,
+                    if rehearsing {
+                        p.on_primary
+                    } else {
+                        p.on_surface
+                    },
+                ))
+                .padding([3, 6])
+                .on_press(Message::Rehearse(of))
+                .style(look::pill(
+                    p,
+                    if rehearsing { Tone::Solid } else { Tone::Plain },
+                )),
+                if rehearsing {
+                    "Stop rehearsing".to_string()
+                } else {
+                    "Rehearse it in the preview: nothing goes on the projector".to_string()
+                },
+                tooltip::Position::Top,
+            ));
+        }
         buttons.into()
     }
 
@@ -1261,7 +1289,13 @@ impl App {
         let after = steps[index + 1..].iter().any(|step| !step.is_section());
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
-        let (planned, live, past) = (p.primary, p.tertiary, p.outline);
+        let (planned, past) = (p.primary, p.outline);
+        // A rehearsal is the plan's colour: nothing of it is live.
+        let rehearsed = self.rehearsed_part(step.id);
+        let (place, live) = match rehearsed {
+            Some(_) => (Place::Current, planned),
+            None => (place, p.tertiary),
+        };
         let faint = Palette::tint(live, 0.35);
         // How far the stage is into this step, when it is the one up.
         let played = match (place, &step.action, &self.stage.program) {
@@ -1271,7 +1305,8 @@ impl App {
                 Some(progress(&scene.media, &scene.resource).map_or(0.0, |(_, done)| done))
             }
             _ => None,
-        };
+        }
+        .or(rehearsed);
         let line = |colour: Option<iced::Color>, height: Length| {
             container(Space::new().width(RAIL_LINE).height(height)).style(move |_| {
                 container::Style {

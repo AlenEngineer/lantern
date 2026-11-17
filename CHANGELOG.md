@@ -303,6 +303,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   comes from, with **set here ✕** to give it back. The tick shows what
   isn't ready, each section against its time, and where sound and the
   stage go.
+- Rehearsal. ▶ on the plan's row or a selected section walks it through
+  in the preview as the service would take it, following its flow, with
+  nothing on the projector: pause, on to the next (Space), a speed for its
+  clock, stop, and at the end how long it took.
 
 ### Fixed
 
