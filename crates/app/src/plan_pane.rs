@@ -406,7 +406,14 @@ impl App {
             if hidden && Some(step.id) != current && !selected {
                 continue;
             }
-            let place = if Some(step.id) == current {
+            let place = if self
+                .rehearsal
+                .as_ref()
+                .is_some_and(|rehearsal| rehearsal.seen(step.id))
+            {
+                // What a rehearsal has been through is past, for now.
+                Place::Done
+            } else if Some(step.id) == current {
                 Place::Current
             } else if Some(step.id) == next {
                 Place::Next
@@ -767,7 +774,12 @@ impl App {
         if selected {
             content = content.push(row![Space::new().width(Fill), self.step_actions(step)]);
         }
-        let tone = if self.selected == Some(id) {
+        // Selected, or the one being rehearsed: lit.
+        let rehearsed = self
+            .rehearsal
+            .as_ref()
+            .is_some_and(|rehearsal| rehearsal.of == Some(id));
+        let tone = if self.selected == Some(id) || rehearsed {
             Tone::Selected
         } else {
             Tone::Plain
@@ -1531,7 +1543,13 @@ impl App {
         let after = steps[index + 1..].iter().any(|step| !step.is_section());
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
-        let (planned, past) = (p.primary, p.outline);
+        let planned = p.primary;
+        // Past is grey in a service. In a rehearsal it is the plan's
+        // colour, dimmed: nothing there has really happened.
+        let past = match self.rehearsal {
+            Some(_) => Palette::tint(planned, 0.5),
+            None => p.outline,
+        };
         // A rehearsal is the plan's colour: nothing of it is live.
         let rehearsed = self.rehearsed_part(step.id);
         let (place, live) = match rehearsed {

@@ -1103,18 +1103,28 @@ impl App {
             .filter(|step| !matches!(step.action, Action::Show { .. }));
         let mode = self.mode;
         let mut section: Vec<Element<'_, Message>> = vec![match mode {
-            crate::mode::Mode::Plan => row![
-                heading(p, "Preview"),
-                hinted(
-                    p,
-                    look::icon(Icon::ScreenOff, 16.0, p.on_surface_variant),
-                    "Seen here only: nothing reaches the projector while planning".to_string(),
-                    tooltip::Position::Bottom,
-                ),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
+            crate::mode::Mode::Plan => {
+                let mut head = row![
+                    heading(p, "Preview"),
+                    hinted(
+                        p,
+                        look::icon(Icon::ScreenOff, 16.0, p.on_surface_variant),
+                        "Seen here only: nothing reaches the projector while planning".to_string(),
+                        tooltip::Position::Bottom,
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center);
+                // In a rehearsal: which step of how many this is.
+                if let Some((at, all)) = self.rehearsal.as_ref().and_then(|r| r.place()) {
+                    head = head.push(Space::new().width(Fill)).push(chip(
+                        p,
+                        &format!("{at} / {all}"),
+                        Tone::Selected,
+                    ));
+                }
+                head.into()
+            }
             _ => heading(p, "Preview"),
         }];
         match (scene, &cued) {
