@@ -8,6 +8,7 @@
 //! after its last line (see [`script`]). `LANTERN_SHOT=<program>` is run
 //! for each `shot NAME` in it.
 
+mod before;
 mod bundle;
 mod config;
 mod cut;
@@ -405,6 +406,8 @@ enum Message {
     SetMode(mode::Mode),
     /// From planning to running the plan.
     StartService,
+    /// The look round said something, and the service is not started.
+    NotYet,
     /// From running back to planning: asked twice.
     EndService,
     /// Makes a plan of what was shown in Live.
@@ -586,6 +589,11 @@ struct App {
     /// A service was running when Lantern last stopped: the step and the
     /// slide it was at, until it is picked up there or ended.
     pub(crate) resuming: Option<(StepId, usize)>,
+    /// What the look round found as the service was asked to start: it
+    /// starts on the next ask, or not at all.
+    pub(crate) starting: Option<Vec<String>>,
+    /// Where sound went as the last service started.
+    pub(crate) last_sound: before::LastOutput,
     /// The place of the running service as it was last written down.
     kept: Option<plans::Running>,
     /// What the decks in the plan play or link to, a list for each slide,
@@ -650,6 +658,7 @@ impl App {
         // The stage feed's first message preloads the reopened plan.
         let layout = store.layout();
         let screens = outputs::Memory::new(&store.data());
+        let last_sound = before::LastOutput::new(&store.data());
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
@@ -725,6 +734,8 @@ impl App {
             unlocked: None,
             ending: None,
             resuming: None,
+            starting: None,
+            last_sound,
             kept: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
@@ -1089,7 +1100,15 @@ impl App {
                     }
                     Ui::Drop => self.update(Message::Pointer(None, false)),
                     Ui::Mode(to) => match (to.as_str(), mode::Mode::parse(&to)) {
-                        ("start", _) => self.update(Message::StartService),
+                        // Starting asks twice when the look round has
+                        // something to say.
+                        ("start", _) => {
+                            let started = self.update(Message::StartService);
+                            match self.starting {
+                                Some(_) => self.update(Message::StartService),
+                                None => started,
+                            }
+                        }
                         // Ending asks twice.
                         ("end", _) => {
                             let _ = self.update(Message::EndService);
@@ -1553,6 +1572,7 @@ impl App {
             Message::SetMode(to) => return self.set_mode(to),
             Message::StartService => return self.start_service(),
             Message::EndService => return self.end_service(),
+            Message::NotYet => self.starting = None,
             Message::SaveSession => return self.save_session(),
             Message::GotoFrame(frame) => {
                 self.engine.0.goto_frame(frame);
