@@ -44,6 +44,8 @@ impl NewStep {
                 Action::Section {
                     budget: None,
                     depth: 0,
+                    last: None,
+                    done_by: None,
                 },
             ),
             NewStep::LiveSlot => (

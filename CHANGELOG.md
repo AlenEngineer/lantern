@@ -420,6 +420,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The plan can now hold what brackets need, ahead of the plan pane
+  showing it: a section with an end of its own, so one can stop while the
+  one around it goes on; a time of day a section should be over by, with
+  when it is expected to end; a section made over steps that are there,
+  and unmade leaving them; and steps carried together, refused where that
+  would cut a loop or a drawn order unless they are cut loose or stripped
+  of their flows. Filling a section with an end of its own puts the steps
+  in it.
 - A section is a bracket to the right of the steps it holds, with its
   name, the time it is given and the time it takes beside it; sections
   one in another are brackets side by side. It has no row of its own
