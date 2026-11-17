@@ -77,6 +77,26 @@ impl Palette {
     pub fn tint(color: Color, alpha: f32) -> Color {
         Color { a: alpha, ..color }
     }
+
+    /// These colours with everything that is written or drawn on a
+    /// ground gone `far` of the way dim (0 not at all, 1 as dim as it
+    /// gets), and every ground as it was: for what lies under something
+    /// that should be the one thing read.
+    pub fn dimmed(self, far: f32) -> Palette {
+        let dim = |colour: Color| crate::motion::blend(colour, self.surface, 0.68 * far);
+        Palette {
+            primary: dim(self.primary),
+            on_primary_container: dim(self.on_primary_container),
+            tertiary: dim(self.tertiary),
+            on_tertiary_container: dim(self.on_tertiary_container),
+            error: dim(self.error),
+            on_surface: dim(self.on_surface),
+            on_surface_variant: dim(self.on_surface_variant),
+            outline: dim(self.outline),
+            outline_variant: dim(self.outline_variant),
+            ..self
+        }
+    }
 }
 
 const fn rgb(hex: u32) -> Color {

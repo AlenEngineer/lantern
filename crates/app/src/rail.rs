@@ -74,7 +74,8 @@ impl App {
         flow: lantern_engine::Flow,
     ) -> Element<'a, Message> {
         use lantern_engine::Ending;
-        let p = self.palette;
+        // The ring keeps its colours while all under it goes dim.
+        let p = self.bright;
         let ground = move |lit: bool| match lit {
             true => p.primary,
             false => crate::motion::blend(p.surface_container_highest, p.on_surface, 0.1),
@@ -312,21 +313,17 @@ impl App {
         let Some(ring) = self.ring else {
             return Vec::new();
         };
-        let p = self.palette;
+        // The ring keeps its colours while all under it goes dim.
+        let p = self.bright;
         let plan = self.engine.0.plan();
         // They fan out from the middle as it opens.
         let out = self.motion.lift();
         let close = Message::Rail(Act::RingClose);
         let mut layers: Vec<Element<'_, Message>> = vec![
-            // What is under the ring goes dim, so the ring is what reads.
-            mouse_area(
-                container(Space::new().width(Fill).height(Fill)).style(move |_| {
-                    container::Style::default().background(p.surface.scale_alpha(0.6 * out))
-                }),
-            )
-            .on_press(close.clone())
-            .on_right_press(close)
-            .into(),
+            mouse_area(Space::new().width(Fill).height(Fill))
+                .on_press(close.clone())
+                .on_right_press(close)
+                .into(),
         ];
         // Kept on the window: near its top or foot the ring moves in.
         let tall = self.dashboard_size.height;
