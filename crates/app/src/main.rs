@@ -19,6 +19,7 @@ mod drag;
 mod fit;
 mod keys;
 mod length;
+mod lengths;
 mod library;
 mod look;
 mod mode;
@@ -511,6 +512,8 @@ struct App {
     index_changes: u64,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
+    /// How long each library file plays, measured once and kept.
+    pub(crate) lengths: lengths::Lengths,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -717,6 +720,7 @@ impl App {
         let layout = store.layout();
         let screens = outputs::Memory::new(&store.data());
         let last_sound = outputs::Memory::named(&store.data(), "sound-output");
+        let lengths = lengths::Lengths::start(&store.data());
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
@@ -741,6 +745,7 @@ impl App {
             stage_lost: false,
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
+            lengths,
             attached: None,
             left: None,
             config,
