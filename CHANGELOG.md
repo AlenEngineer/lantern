@@ -379,6 +379,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the levels it could take, and the section it would be a part of lights
   up with a line down its side. A step's gap is as far in as where it
   lands. The card under the pointer rises as it is picked up.
+- The rail is worked by hand. A dot pulled up to another step's draws a
+  loop back to it: those steps come twice. The loop has no name and no
+  heading, only its curl, which says how often it comes; round all a
+  section holds, it is the section that repeats; it can't cross a
+  heading. A dot pulled down joins the steps between, each going on into
+  the next. A right click on a dot, on the line between two steps or on a
+  curl opens a ring of what that one can do, with how often it comes in
+  an outer row. Plans keep a loop as a section that ends at a step
+  (`through`).
 - Inside: the dashboard's small parts (pills, chips, the switch, the
   switch with several places, the line, the swatch, the bar) are made once,
   in one place, and the look's fields are one set shown by the Look lens

@@ -90,6 +90,7 @@ fn does(message: &Message) -> Does {
         | M::SetAdvance(id, _)
         | M::SetRepeat(Some(id), _)
         | M::SetShuffle(Some(id), _)
+        | M::Rail(crate::rail::Act::Unloop(Some(id)))
         | M::StepSound(id, _)
         | M::KeepCopy(id)
         | M::SoundFrom(id, _)
@@ -105,6 +106,7 @@ fn does(message: &Message) -> Does {
         | M::PlanAdvance(_)
         | M::PlanTarget(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
+        | M::Rail(crate::rail::Act::Unloop(None))
         | M::PlanPanel(
             crate::plan_panel::PlanEdit::Target(_)
             | crate::plan_panel::PlanEdit::Folder(..)
@@ -307,6 +309,8 @@ impl App {
         self.rehearsed = None;
         self.filling = None;
         self.plan_panel = false;
+        self.ring = None;
+        self.pull = None;
         self.plan_typed = None;
         match (self.mode, to) {
             (from, to) if from == to => {}
@@ -379,6 +383,8 @@ impl App {
         self.rehearsed = None;
         self.filling = None;
         self.plan_panel = false;
+        self.ring = None;
+        self.pull = None;
         self.plan_typed = None;
         self.editing = None;
         self.adding = None;

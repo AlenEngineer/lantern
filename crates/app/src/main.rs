@@ -35,6 +35,7 @@ mod plan_edit;
 mod plan_pane;
 mod plan_panel;
 mod plans;
+mod rail;
 mod ready;
 mod rehearse;
 mod relay;
@@ -329,6 +330,8 @@ enum Message {
     Fill(fill_panel::FillEdit),
     /// A change in the open plan's own panel.
     PlanPanel(plan_panel::PlanEdit),
+    /// Something done on the rail beside the plan's steps.
+    Rail(rail::Act),
     /// What the side panel shows.
     Lens(side::Lens),
     /// A value of the selected thing's look, as typed.
@@ -575,6 +578,14 @@ struct App {
     hovered: Option<(StepId, Half)>,
     /// The plan row the button went down on, while it's held.
     drag: Option<Drag>,
+    /// A step's dot held down on the rail, and the step whose rail the
+    /// pointer is on.
+    pub(crate) pull: Option<rail::Pull>,
+    rail_over: Option<StepId>,
+    /// The ring open on the rail, and where the pointer last was while
+    /// on the rail or holding something.
+    pub(crate) ring: Option<rail::Ring>,
+    pointer: iced::Point,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -790,6 +801,10 @@ impl App {
             last_click: None,
             hovered: None,
             drag: None,
+            pull: None,
+            rail_over: None,
+            ring: None,
+            pointer: iced::Point::ORIGIN,
             stepping: false,
             stray: None,
             spent: false,
@@ -1325,6 +1340,7 @@ impl App {
             Message::Hover(row) => {
                 self.hovered = row;
                 self.aim();
+                self.aim_pull();
             }
             Message::Unhover(row) => {
                 if self.hovered.is_some_and(|(over, _)| over == row) {
@@ -1387,7 +1403,12 @@ impl App {
                 if let Some(drag) = &mut self.drag {
                     drag.to(at);
                 }
+                if let Some(pull) = &mut self.pull {
+                    pull.to(at);
+                }
+                self.pointer = at;
                 self.aim();
+                self.aim_pull();
             }
             // Pressed on a file of the library: it may be carried into
             // the plan.
@@ -1421,13 +1442,89 @@ impl App {
                     return self.preload();
                 }
             }
+            Message::Rail(rail::Act::Press { step, toggle }) => {
+                self.drag = None;
+                self.pull = Some(rail::Pull::new(step, toggle));
+            }
+            Message::Rail(rail::Act::Ring(on)) => {
+                self.pull = None;
+                self.drag = None;
+                self.ring = Some(rail::Ring {
+                    on,
+                    at: self.pointer,
+                });
+                self.motion.picked_up();
+            }
+            Message::Rail(rail::Act::RingClose) => self.ring = None,
+            Message::Rail(rail::Act::Unloop(of)) => {
+                self.ring = None;
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| match of {
+                    Some(id) => {
+                        plan.unloop(id);
+                    }
+                    None => plan.flow = lantern_engine::Flow::default(),
+                });
+                return self.preload();
+            }
+            Message::Rail(rail::Act::Over(step)) => {
+                self.rail_over = Some(step);
+                self.aim_pull();
+            }
+            Message::Rail(rail::Act::Left(step)) => {
+                if self.rail_over == Some(step) {
+                    self.rail_over = None;
+                }
+                self.aim_pull();
+            }
+            // A dot let go: where it was pressed it is a click, and the
+            // step goes on or waits. Pulled to another step's, a loop is
+            // drawn back up to it, or the steps down to it are joined.
+            Message::Pointer(_, false) if self.pull.is_some() => {
+                let pull = self.pull.take().expect("checked above");
+                match (pull.moving, pull.would, pull.toggle) {
+                    (false, _, Some(on)) => return self.update(Message::SetAdvance(pull.from, on)),
+                    (true, Some(rail::Would::Loop { first, last }), _) => {
+                        self.remember(None);
+                        let looped = self.engine.0.edit_plan(|plan| {
+                            let (a, b) = (plan.steps()[last].id, plan.steps()[first].id);
+                            plan.loop_over(a, b)
+                        });
+                        if looped.is_some() {
+                            self.motion.changed(pull.from);
+                        }
+                        return self.preload();
+                    }
+                    (true, Some(rail::Would::Join { first, last }), _) => {
+                        self.remember(None);
+                        self.engine.0.edit_plan(|plan| {
+                            let ids: Vec<StepId> = plan.steps()[first..last]
+                                .iter()
+                                .filter(|step| !step.is_section())
+                                .map(|step| step.id)
+                                .collect();
+                            for id in ids {
+                                if let Some(step) = plan.get_mut(id) {
+                                    step.advance = Some(true);
+                                }
+                            }
+                        });
+                    }
+                    (true, Some(rail::Would::Not { .. }), _) => {
+                        self.motion.refuse("a loop stays inside one section");
+                    }
+                    _ => {}
+                }
+            }
             Message::Pointer(_, true) => {
                 let plan = self.engine.0.plan();
                 // Only a step the mode lets change is picked up: in a run,
                 // one still ahead, once the plan is unlocked.
                 let running = self.mode == mode::Mode::Run;
+                // Not from the rail: a dot pressed there is its own thing.
                 self.drag = self
                     .hovered
+                    .filter(|_| self.rail_over.is_none() && self.pull.is_none())
                     .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
                     .map(|(step, _)| Drag::new(&plan, step));
                 if running && self.drag.is_none() && self.hovered.is_some() {
@@ -2622,6 +2719,8 @@ impl App {
             Op::ClearSearch if self.settings.is_some() => return self.op(Op::Settings),
             // Esc lets go of a drag without moving anything.
             Op::ClearSearch if self.drag.is_some() => self.drag = None,
+            Op::ClearSearch if self.pull.is_some() => self.pull = None,
+            Op::ClearSearch if self.ring.is_some() => self.ring = None,
             Op::ClearSearch => {
                 // Esc also lets go of a name being typed, and of Add step.
                 if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
@@ -3413,6 +3512,16 @@ impl App {
         Task::none()
     }
 
+    /// Works out what a dot held down would do, let go where the
+    /// pointer is: over a step's rail, or over its row.
+    fn aim_pull(&mut self) {
+        let over = self.rail_over.or(self.hovered.map(|(step, _)| step));
+        let plan = self.engine.0.plan();
+        if let Some(pull) = &mut self.pull {
+            pull.aim(&plan, over);
+        }
+    }
+
     /// Points a moving drag at the row half under the pointer. Over the
     /// gap (no row) it keeps aiming where it was, so the gap stays put.
     fn aim(&mut self) {
@@ -3599,8 +3708,12 @@ impl App {
             iced::event::listen_with(keys::key_event),
             iced::event::listen_with(pointer_event),
         ];
-        // The pointer is followed only while it holds a row or a pane's edge.
+        // The pointer is followed only while it holds a row, a dot of the
+        // rail or a pane's edge.
         if self.drag.is_some()
+            || self.pull.is_some()
+            // On the rail too: a right click there opens where it is.
+            || self.rail_over.is_some()
             || self.resizing.is_some()
             || self.carried.is_some()
             || self.balk.is_some()
