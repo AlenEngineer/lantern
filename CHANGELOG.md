@@ -420,6 +420,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A drawn order is worked on by hand along its own line: pressed and
+  pulled along inside it, that part is rubbed out; pulled from a step it
+  shares with one, the two become one; a double click on its line takes
+  all of it away. Two that only touch stay two, each drawn by itself.
 - A pull that can't be says why beside the pointer, with a warning mark:
   too few steps, a drawn order across a heading, or a span that would cut
   another in two. Letting go says the same.
@@ -456,6 +460,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   shows it. With motion off, none of it moves.
 - The line of the step that is playing is hollow where it has not played
   yet and solid where it has: how far it has come is plain.
+
+### Removed
+
+- The buttons that took a section in or out a level. Dragging it still
+  does, and so do the keys.
 
 ### Fixed
 

@@ -26,6 +26,9 @@ pub enum Act {
         step: StepId,
         toggle: Option<bool>,
     },
+    /// The line of a drawn order was pressed beside a step: pulled along
+    /// from there, it draws more of the order or rubs some of it out.
+    PressOrder(StepId),
     /// The pointer came onto a step's rail, or left it.
     Over(StepId),
     Left(StepId),
@@ -667,6 +670,8 @@ pub enum Would {
     Join { first: usize, last: usize },
     /// They come in a drawn order.
     Shuffle { first: usize, last: usize },
+    /// They leave the drawn order they are in: it is rubbed out there.
+    Rub { first: usize, last: usize },
     /// Nothing: no loop or drawn order can be there, and why not.
     Not {
         first: usize,
@@ -695,6 +700,7 @@ impl Would {
             Would::Loop { first, last }
             | Would::Join { first, last }
             | Would::Shuffle { first, last }
+            | Would::Rub { first, last }
             | Would::Not { first, last, .. } => (first, last),
         }
     }
@@ -706,6 +712,9 @@ pub struct Pull {
     pub from: StepId,
     /// Which way it has gone, sideways, from where it began.
     pub side: Side,
+    /// The side it keeps whichever way it goes: one begun on a line, not
+    /// on a dot, is about that line.
+    held: Option<Side>,
     /// The step it was last over: it stays the one, past the rail's
     /// edge where there is no row under the pointer.
     over: Option<StepId>,
@@ -728,12 +737,23 @@ impl Pull {
         Pull {
             from,
             side: Side::Along,
+            held: None,
             over: None,
             toggle,
             origin: None,
             at: Point::ORIGIN,
             moving: false,
             would: None,
+        }
+    }
+
+    /// A press on the line of a drawn order beside `from`: a pull from
+    /// there is to that side, wherever it goes.
+    pub fn on_order(from: StepId) -> Pull {
+        Pull {
+            side: Side::Right,
+            held: Some(Side::Right),
+            ..Pull::new(from, None)
         }
     }
 
@@ -744,11 +764,11 @@ impl Pull {
         if origin.distance(at) > SLOP {
             self.moving = true;
         }
-        self.side = match at.x - origin.x {
+        self.side = self.held.unwrap_or(match at.x - origin.x {
             aside if aside < -ASIDE => Side::Left,
             aside if aside > ASIDE => Side::Right,
             _ => Side::Along,
-        };
+        });
     }
 
     /// Works out what letting go over `over` would do. To the left a
@@ -772,10 +792,13 @@ impl Pull {
                     Err(why) => Would::Not { first, last, why },
                 };
                 Some(match self.side {
-                    Side::Right => or_not(
-                        plan.would_shuffle_over(self.from, over),
-                        Would::Shuffle { first, last },
-                    ),
+                    // An order drawn by hand: new, joined to one it
+                    // meets, or rubbed out of one it is inside.
+                    Side::Right => match plan.would_draw_over(self.from, over) {
+                        Ok(lantern_engine::Drawn::Rubbed) => Would::Rub { first, last },
+                        Ok(_) => Would::Shuffle { first, last },
+                        Err(why) => Would::Not { first, last, why },
+                    },
                     Side::Along if to > from => Would::Join { first, last },
                     Side::Left | Side::Along => or_not(
                         plan.would_loop_over(self.from, over),

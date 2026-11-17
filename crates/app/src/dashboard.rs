@@ -354,6 +354,17 @@ impl App {
                 Would::Shuffle { .. } => {
                     (p.primary, look::icon(Icon::Shuffle, 14.0, p.primary).into())
                 }
+                // Out of the order they are in.
+                Would::Rub { .. } => (
+                    p.on_surface_variant,
+                    row![
+                        look::icon(Icon::Shuffle, 14.0, p.on_surface_variant),
+                        text("−").size(META).font(BOLD).color(p.on_surface_variant)
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center)
+                    .into(),
+                ),
                 // What can't be says why, beside the pointer.
                 Would::Not { why, .. } => (
                     p.error,
