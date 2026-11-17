@@ -3125,6 +3125,8 @@ mod tests {
             title: "Alabanza".into(),
             budget,
             phase,
+            done_by: None,
+            ends: None,
         }
     }
 

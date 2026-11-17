@@ -29,8 +29,9 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, DEEPEST, Drawn, Ending, Flow, FlowOf, LogEntry, Over, Plan, PlanError, Repeat, Session,
-    Span, SpanError, SpanId, Step, StepId, StepSound,
+    Action, BracketError, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Flow, FlowOf,
+    LogEntry, Over, Place, Plan, PlanError, Repeat, Session, Span, SpanError, SpanId, Step, StepId,
+    StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -143,6 +144,33 @@ impl Engine {
         lock(&self.session).edit(f)
     }
 
+    /// Carries steps of the plan to `to`. See [`Plan::carry`].
+    pub fn carry(&self, steps: &[StepId], to: Place, how: Carry) -> Result<Carried, CarryError> {
+        self.edit_plan(|plan| plan.carry(steps, to, how))
+    }
+
+    /// Puts a new section round the rows from `a` to `b`. See
+    /// [`Plan::bracket_over`].
+    pub fn bracket_over(
+        &self,
+        a: StepId,
+        b: StepId,
+        label: impl Into<String>,
+    ) -> Result<StepId, BracketError> {
+        self.edit_plan(|plan| plan.bracket_over(a, b, label))
+    }
+
+    /// Takes a section away and leaves its steps where they are. See
+    /// [`Plan::unbracket`].
+    pub fn unbracket(&self, section: StepId) -> bool {
+        self.edit_plan(|plan| plan.unbracket(section))
+    }
+
+    /// Has a section end at a row, or run on. See [`Plan::reach_section`].
+    pub fn reach_section(&self, section: StepId, last: Option<StepId>) -> Result<(), BracketError> {
+        self.edit_plan(|plan| plan.reach_section(section, last))
+    }
+
     /// Replaces the plan and rewinds to the start. The stage is left alone.
     pub fn load_plan(&self, plan: Plan) {
         lock(&self.session).replace_plan(plan);
@@ -246,6 +274,7 @@ impl Engine {
                 entered: &entered,
                 current_left,
                 loaded,
+                of_day: session.time_of_day(),
             },
         )
     }

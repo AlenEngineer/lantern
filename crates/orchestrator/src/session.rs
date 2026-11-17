@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{Action, Ending, Flow, FlowOf, Plan, Repeat, SpanId, Step, StepId};
+use crate::{Action, Ending, Flow, FlowOf, Place, Plan, Repeat, SpanId, Step, StepId};
 
 /// Something that was put on stage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -134,6 +134,11 @@ impl Session {
     /// time needs it.
     pub fn tell_time(&mut self, since_midnight: Duration) {
         self.now = Some(since_midnight);
+    }
+
+    /// The time of day last told, as time since midnight.
+    pub fn time_of_day(&self) -> Option<Duration> {
+        self.now
     }
 
     /// Where `next` would go, and what it does to the rounds counted: a
@@ -408,18 +413,37 @@ impl Session {
     /// Inserts a step right after `after`. Without one (or if it's gone),
     /// right after the current step, or at the end before the session
     /// starts, so a plan built ahead of time keeps its order. Handy for
-    /// turning something found live into part of the plan.
+    /// turning something found live into part of the plan. It is in the
+    /// section the step it follows is in, though that section ended at
+    /// that step; right after a heading, in that section.
     pub fn insert_after(
         &mut self,
         after: Option<StepId>,
         label: impl Into<String>,
         action: Action,
     ) -> StepId {
-        let index = after
+        let Some(at) = after
             .and_then(|id| self.plan.position(id))
             .or(self.current_index())
-            .map_or(self.plan.len(), |i| i + 1);
-        self.plan.insert(index, label, action)
+        else {
+            return self.plan.insert(self.plan.len(), label, action);
+        };
+        // In the same section as the step it follows, though that
+        // section ended at it; right after a heading, in that section.
+        let step = &self.plan.steps()[at];
+        let section = match step.is_section() {
+            true => Some(step.id),
+            false => self.plan.within(at).last().copied(),
+        };
+        let to = Place {
+            index: at + 1,
+            section,
+        };
+        let label = label.into();
+        match self.plan.insert_at(to, label.clone(), action.clone()) {
+            Ok(id) => id,
+            Err(_) => self.plan.insert(at + 1, label, action),
+        }
     }
 
     /// Everything shown so far, oldest first. Useful for song-usage reports.

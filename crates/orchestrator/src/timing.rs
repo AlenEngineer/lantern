@@ -8,6 +8,7 @@
 //! and the lengths of the steps after it, and compares that with the budget.
 //! Nothing here stops the service: it only reports.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, SystemTime};
 
@@ -149,6 +150,9 @@ impl From<TimeOfDay> for String {
 pub struct Schedule {
     /// Each section's marker and how long after the start it begins.
     pub sections: Vec<(StepId, Duration)>,
+    /// Each section's marker and how long after the start it ends, the
+    /// first time round: for its budget, or without one its steps.
+    pub ends: Vec<(StepId, Duration)>,
     /// Each step and how long after the start it first comes.
     pub steps: Vec<(StepId, Duration)>,
     /// From the start to the end. What repeats a number of times counts
@@ -164,6 +168,15 @@ impl Schedule {
     /// How long after the start the section `id` begins.
     pub fn start_of(&self, id: StepId) -> Option<Duration> {
         self.sections
+            .iter()
+            .find(|(section, _)| *section == id)
+            .map(|(_, after)| *after)
+    }
+
+    /// How long after the start the section `id` ends, the first time
+    /// round.
+    pub fn end_of(&self, id: StepId) -> Option<Duration> {
+        self.ends
             .iter()
             .find(|(section, _)| *section == id)
             .map(|(_, after)| *after)
@@ -313,6 +326,18 @@ pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Sche
     };
     let total = told.takes(0, plan.len(), Duration::ZERO);
     let mut schedule = told.schedule;
+    // A section a span cuts across ends when what follows it begins.
+    for (at, step) in plan.steps().iter().enumerate() {
+        if !step.is_section() || schedule.end_of(step.id).is_some() {
+            continue;
+        }
+        let end = plan.group_end(at);
+        let after = plan.steps()[end..]
+            .iter()
+            .find_map(|next| schedule.first_at(next.id))
+            .unwrap_or(total);
+        schedule.ends.push((step.id, after));
+    }
     schedule.open |= plan.flow.repeat.open();
     schedule.total = total * plan.flow.repeat.times();
     schedule
@@ -359,6 +384,7 @@ impl Told<'_> {
                     // it comes round.
                     let held = self.takes(at + 1, end, start + took);
                     took += budget.unwrap_or(held);
+                    self.schedule.ends.push((step.id, start + took));
                     at = end;
                 }
             } else {
@@ -464,6 +490,14 @@ pub struct SectionTiming {
     pub budget: Option<Duration>,
     /// Where it is in the service.
     pub phase: Phase,
+    /// The time of day it should be over by, if the operator said.
+    pub done_by: Option<TimeOfDay>,
+    /// The time of day it is over, to the minute below: as planned from
+    /// the plan's start time before the service runs, as expected from
+    /// now while it runs, and once done, when it was. `None` where that
+    /// can't be told: no start time before the service, or no time of
+    /// day while it runs.
+    pub ends: Option<TimeOfDay>,
 }
 
 impl SectionTiming {
@@ -477,6 +511,17 @@ impl SectionTiming {
             Phase::Done { took } => took.map(|took| Pace::of(took, budget)),
             Phase::Coming { .. } => None,
         }
+    }
+
+    /// How far past the time it should be over by it ends, to the
+    /// minute: `None` when it ends by then, or either time isn't known.
+    /// The difference is taken the short way round the clock.
+    pub fn late(&self) -> Option<Duration> {
+        const DAY: i64 = 24 * 60 * 60;
+        let (ends, by) = (self.ends?, self.done_by?);
+        let secs = |time: TimeOfDay| time.since_midnight().as_secs() as i64;
+        let past = (secs(ends) - secs(by) + DAY / 2).rem_euclid(DAY) - DAY / 2;
+        (past > 0).then(|| Duration::from_secs(past as u64))
     }
 }
 
@@ -513,6 +558,108 @@ pub struct Clock<'a> {
     pub current_left: Option<Duration>,
     /// A step's media length, once loaded.
     pub loaded: &'a dyn Fn(&Step) -> Option<Duration>,
+    /// The time of day now, as time since midnight, when it is known:
+    /// for saying at what time each section ends.
+    pub of_day: Option<Duration>,
+}
+
+/// The time of day `since_midnight` is, past midnight if need be.
+fn of_day(since_midnight: Duration) -> TimeOfDay {
+    TimeOfDay(0).plus(since_midnight)
+}
+
+/// The time of day each section of `plan` is over, where that can be
+/// told. Before the service it is as the [schedule] has it from the
+/// plan's start time. While the service runs it is from now: what is
+/// left of the step that is on, the steps after it, and each section
+/// still to come for its budget, or for its steps where they take
+/// longer; a section done says when it was.
+fn section_ends(
+    plan: &Plan,
+    clock: &Clock<'_>,
+    at: Option<usize>,
+    current_left: Option<Duration>,
+    length: &dyn Fn(&Step) -> Duration,
+) -> HashMap<StepId, TimeOfDay> {
+    let steps = plan.steps();
+    let mut found = HashMap::new();
+    let Some(at) = at else {
+        if let Some(starts) = plan.starts {
+            let schedule = schedule(plan, clock.loaded);
+            for (id, after) in schedule.ends {
+                found.insert(id, starts.plus(after));
+            }
+        }
+        return found;
+    };
+    let Some(now) = clock.of_day else {
+        return found;
+    };
+    let since = |time: SystemTime| clock.now.duration_since(time).unwrap_or_default();
+    let day = Duration::from_secs(24 * 60 * 60);
+    // Those done: when the first step after them was reached.
+    for (start, step) in steps.iter().enumerate().take(at) {
+        if !step.is_section() || plan.group_end(start) > at {
+            continue;
+        }
+        let ended = steps[plan.group_end(start)..]
+            .iter()
+            .filter_map(|s| (clock.entered)(s.id))
+            .min();
+        if let Some(ended) = ended {
+            found.insert(step.id, of_day(now + day - since(ended).min(day)));
+        }
+    }
+    // Those under way, innermost first, then all that comes after.
+    let mut after = HashMap::new();
+    let mut from = at + 1;
+    let mut took = current_left.unwrap_or_default();
+    let within = plan.within(at);
+    for id in within.iter().rev() {
+        let Some(stop) = plan.position(*id).map(|start| plan.group_end(start)) else {
+            continue;
+        };
+        took += ahead(plan, length, from, stop, took, &mut after);
+        after.insert(*id, took);
+        from = stop;
+    }
+    ahead(plan, length, from, steps.len(), took, &mut after);
+    for (id, after) in after {
+        found.insert(id, of_day(now + after));
+    }
+    found
+}
+
+/// How long the rows from `from` up to `to` take, from `start` on: each
+/// step for its length, each section for its budget or for its steps
+/// where they take longer, as often as the span attached to it has it
+/// come. Notes in `ends` when each section ends, from the same start.
+fn ahead(
+    plan: &Plan,
+    length: &dyn Fn(&Step) -> Duration,
+    from: usize,
+    to: usize,
+    start: Duration,
+    ends: &mut HashMap<StepId, Duration>,
+) -> Duration {
+    let steps = plan.steps();
+    let mut took = Duration::ZERO;
+    let mut at = from;
+    while at < to {
+        let step = &steps[at];
+        if let Action::Section { budget, .. } = step.action {
+            let stop = plan.group_end(at).min(to);
+            let times = plan.flow_of(step.id).unwrap_or_default().repeat.times();
+            let held = ahead(plan, length, at + 1, stop, start + took, ends) * times;
+            took += budget.map_or(held, |budget| budget.max(held));
+            ends.insert(step.id, start + took);
+            at = stop.max(at + 1);
+        } else {
+            took += length(step);
+            at += 1;
+        }
+    }
+    took
 }
 
 /// The timing of every section of `plan`.
@@ -535,21 +682,22 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
 
     let mut sections = Vec::new();
     let mut end = at.map(|_| clock.now + current_left.unwrap_or_default());
-    // Steps after the current one but before any section count too.
-    let first_section = steps
-        .iter()
-        .position(Step::is_section)
-        .unwrap_or(steps.len());
-    if let Some(i) = at.filter(|&i| i < first_section) {
-        let rest: Duration = steps[i + 1..first_section].iter().map(length).sum();
+    // Steps after the current one at the plan's own level, in no
+    // section, count too.
+    if let Some(i) = at {
+        let rest: Duration = (i + 1..steps.len())
+            .filter(|&row| !steps[row].is_section() && plan.level(row) == 0)
+            .map(|row| length(&steps[row]))
+            .sum();
         end = end.map(|end| end + rest);
     }
+    let ends = section_ends(plan, clock, at, current_left, &length);
 
     let markers = steps
         .iter()
         .enumerate()
         .filter_map(|(i, step)| match step.action {
-            Action::Section { budget, depth } => Some((i, step, budget, depth)),
+            Action::Section { budget, depth, .. } => Some((i, step, budget, depth)),
             _ => None,
         });
     for (start, step, budget, depth) in markers {
@@ -601,6 +749,8 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
             title: step.label.clone(),
             budget,
             phase,
+            done_by: step.done_by(),
+            ends: ends.get(&step.id).copied(),
         });
     }
     Timing { sections, end }
@@ -729,6 +879,7 @@ mod tests {
                 entered: &entered,
                 current_left: None,
                 loaded: &loaded,
+                of_day: None,
             },
         )
     }
@@ -804,6 +955,90 @@ mod tests {
         assert_eq!(behind(starts, schedule.total, of_day, ends_in), 6 * 60);
     }
 
+    /// The timing at `now`, which is `of_day` by the clock.
+    fn at_day(
+        plan: &Plan,
+        now: SystemTime,
+        current: Option<StepId>,
+        entered: &HashMap<StepId, SystemTime>,
+        of_day: &str,
+    ) -> Timing {
+        let entered = |id| entered.get(&id).copied();
+        let loaded = |_: &Step| None;
+        timing(
+            plan,
+            &Clock {
+                now,
+                current,
+                entered: &entered,
+                current_left: None,
+                loaded: &loaded,
+                of_day: TimeOfDay::parse(of_day).map(TimeOfDay::since_midnight),
+            },
+        )
+    }
+
+    #[test]
+    fn a_section_says_when_it_ends_and_how_far_past_its_time_that_is() {
+        let (mut plan, ids) = service();
+        let time = |text: &str| TimeOfDay::parse(text);
+        for (section, by) in [(ids[0], "10:12"), (ids[4], "11:00")] {
+            if let Action::Section { done_by, .. } = &mut plan.get_mut(section).unwrap().action {
+                *done_by = time(by);
+            }
+        }
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let none = HashMap::new();
+        // No start time, nothing running: no time it ends.
+        let timing = at(&plan, start, None, &none);
+        assert_eq!(timing.sections[0].done_by, time("10:12"));
+        assert_eq!(timing.sections[0].ends, None);
+        assert_eq!(timing.sections[0].late(), None);
+        // From the start time, by the schedule: Alabanza for its 15
+        // minutes, three past its time; Palabra in time.
+        plan.starts = time("10:00");
+        assert_eq!(schedule(&plan, &|_| None).end_of(ids[0]), Some(15 * MIN));
+        let timing = at(&plan, start, None, &none);
+        assert_eq!(timing.sections[0].ends, time("10:15"));
+        assert_eq!(timing.sections[0].late(), Some(3 * MIN));
+        assert_eq!(timing.sections[1].ends, time("10:45"));
+        assert_eq!(timing.sections[1].late(), None);
+        // Running, from now: B started a minute ago at 10:13, so 3 left
+        // of it and C's 4; then Palabra's 30.
+        let now = start + 7 * MIN;
+        let entered = HashMap::from([(ids[1], start), (ids[2], start + 6 * MIN)]);
+        let timing = at_day(&plan, now, Some(ids[2]), &entered, "10:13");
+        assert_eq!(timing.sections[0].ends, time("10:20"));
+        assert_eq!(timing.sections[0].late(), Some(8 * MIN));
+        assert_eq!(timing.sections[1].ends, time("10:50"));
+        // Without the time of day while it runs, it can't be told.
+        let timing = at(&plan, now, Some(ids[2]), &entered);
+        assert_eq!(timing.sections[0].ends, None);
+        // Done: when the step after it was reached, four minutes ago.
+        let entered = HashMap::from([(ids[1], start), (ids[5], start + 16 * MIN)]);
+        let timing = at_day(&plan, start + 20 * MIN, Some(ids[5]), &entered, "10:20");
+        assert_eq!(timing.sections[0].ends, time("10:16"));
+        assert_eq!(timing.sections[0].late(), Some(4 * MIN));
+    }
+
+    #[test]
+    fn a_step_after_a_sections_own_end_counts_toward_the_end_of_the_service() {
+        let (mut plan, ids) = service();
+        // Alabanza ends at B: C is the plan's own, after it.
+        plan.reach_section(ids[0], Some(ids[2])).unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let entered = HashMap::from([(ids[1], now)]);
+        let timing = at(&plan, now, Some(ids[1]), &entered);
+        // A's 4 and B's, the 7 Alabanza leaves over, C's 4, Palabra's 30.
+        assert_eq!(
+            timing.end,
+            Some(now + 4 * MIN + 4 * MIN + 7 * MIN + 4 * MIN + 30 * MIN)
+        );
+        let timing = at_day(&plan, now, Some(ids[1]), &entered, "10:00");
+        assert_eq!(timing.sections[0].ends, TimeOfDay::parse("10:08"));
+        assert_eq!(timing.sections[1].ends, TimeOfDay::parse("10:42"));
+    }
+
     #[test]
     fn a_done_section_reports_what_it_took() {
         let (plan, ids) = service();
@@ -863,6 +1098,7 @@ mod tests {
             entered: &entered,
             current_left: None,
             loaded: &loaded,
+            of_day: None,
         };
         let timing = timing(&plan, &clock);
         let planned = |id| match timing.sections.iter().find(|s| s.id == id).unwrap().phase {
@@ -1004,6 +1240,7 @@ mod tests {
             entered: &entered,
             current_left: None,
             loaded: &loaded,
+            of_day: None,
         };
         assert_eq!(
             timing(&plan, &clock).sections[0].phase,

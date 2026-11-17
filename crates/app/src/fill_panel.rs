@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use iced::widget::{Space, button, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Fill, Length};
-use lantern_engine::{Action, Kind, Resource, ResourceId, StepId};
+use lantern_engine::{Action, Kind, Place, Resource, ResourceId, StepId};
 
 use crate::fill::{Chosen, Fit, Order, Thing, Wish};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
@@ -309,13 +309,17 @@ impl App {
             let at = plan.position(fill.section)?;
             let mut last = None;
             for (end, pick) in (plan.group_end(at)..).zip(&fill.picks) {
-                let id = plan.insert(
-                    end,
-                    pick.title.clone(),
-                    Action::Show {
-                        resource: (**pick).clone(),
-                    },
-                );
+                let action = Action::Show {
+                    resource: (**pick).clone(),
+                };
+                // In the section at its end, though it was given one.
+                let to = Place {
+                    index: end,
+                    section: Some(fill.section),
+                };
+                let id = plan
+                    .insert_at(to, pick.title.clone(), action.clone())
+                    .unwrap_or_else(|_| plan.insert(end, pick.title.clone(), action));
                 if let Some(step) = plan.get_mut(id) {
                     // Put here by the fill, not picked: showing it says
                     // nothing of what is usually used.

@@ -1,0 +1,101 @@
+{
+  "title": "Sabbath",
+  "steps": [
+    {
+      "id": 0,
+      "label": "Welcome",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 1,
+      "label": "Music",
+      "action": {
+        "type": "section",
+        "budget": 900
+      },
+      "advance": true
+    },
+    {
+      "id": 2,
+      "label": "Praise",
+      "action": {
+        "type": "section",
+        "depth": 1
+      }
+    },
+    {
+      "id": 3,
+      "label": "A",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 4,
+      "label": "B",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 5,
+      "label": "Reading",
+      "action": {
+        "type": "section",
+        "depth": 1
+      }
+    },
+    {
+      "id": 6,
+      "label": "C",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 7,
+      "label": "Sermon",
+      "action": {
+        "type": "section",
+        "budget": 1800
+      }
+    },
+    {
+      "id": 8,
+      "label": "D",
+      "action": {
+        "type": "note"
+      }
+    }
+  ],
+  "next_id": 9,
+  "spans": [
+    {
+      "id": 0,
+      "over": {
+        "section": 1
+      },
+      "flow": {
+        "repeat": {
+          "times": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "over": {
+        "steps": {
+          "first": 3,
+          "last": 4
+        }
+      },
+      "flow": {
+        "repeat": "forever"
+      }
+    }
+  ],
+  "next_span": 2,
+  "starts": "10:30"
+}

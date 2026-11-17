@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -53,11 +54,11 @@ pub enum Action {
     Blank,
     /// A reminder for the operator only. Leaves the stage as it is.
     Note,
-    /// Starts a section: the steps after it, up to the next section, are
-    /// one part of the service, such as the music or the sermon. Stepping
-    /// through the plan passes over it. A section is a name over some
-    /// steps, with a time and what its steps do unless they say: how the
-    /// plan moves is not its to say, but a [`Span`]'s.
+    /// Starts a section: the steps after it, up to the next section or
+    /// to its own end, are one part of the service, such as the music or
+    /// the sermon. Stepping through the plan passes over it. A section is
+    /// a name over some steps, with a time and what its steps do unless
+    /// they say: how the plan moves is not its to say, but a [`Span`]'s.
     Section {
         /// How long the section should take.
         #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
@@ -65,9 +66,19 @@ pub enum Action {
         /// How far in it sits: 0 is a part of the plan, 1 a part of the
         /// section before it that sits less far in, and so on to
         /// [`DEEPEST`]. A section holds what follows it, up to the next
-        /// section no further in than itself.
+        /// section no further in than itself, or to its `last`.
         #[serde(default, skip_serializing_if = "is_zero")]
         depth: u8,
+        /// The last row it holds, when it ends before the next section
+        /// no further in than itself: what follows is back in whatever
+        /// holds it. Its own heading for a section that holds nothing.
+        /// Without one it runs to that next section, or until what holds
+        /// it ends. See [`Plan::reach_section`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last: Option<StepId>,
+        /// The time of day it should be over by, such as 11:45.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        done_by: Option<TimeOfDay>,
     },
 }
 
@@ -276,14 +287,123 @@ pub enum SpanError {
     /// A loop needs two steps, and a drawn order three.
     #[error("too few steps: a loop goes round two or more, a drawn order three or more")]
     TooFew,
-    /// A drawn order stays in one section: no heading comes among its
-    /// steps.
-    #[error("a drawn order can't cross a section's heading")]
+    /// A drawn order stays in one section: no heading, nor where a
+    /// section ends, comes among its steps.
+    #[error("a drawn order can't cross a section's heading or end")]
     AcrossHeading,
     /// It would take in a part of the span it names: two spans are
     /// apart, or one is wholly in the other.
     #[error("it would cut another loop or drawn order ({0}) in two")]
     HalfOver(SpanId),
+}
+
+/// Why a section can't be laid where it was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BracketError {
+    /// A step or a section it names isn't in the plan, or isn't a section
+    /// where one is wanted.
+    #[error("that is no longer in the plan")]
+    Missing,
+    /// The last row asked for comes before the section's heading.
+    #[error("a section can't end before its heading")]
+    EndsBefore,
+    /// It would take in a part of this section: two sections are apart,
+    /// or one is wholly in the other.
+    #[error("it would cut a section ({0}) in two")]
+    HalfOver(StepId),
+    /// A section would be further in than [`DEEPEST`].
+    #[error("sections go no more than three deep")]
+    TooDeep,
+    /// A drawn order would have a heading or a section's end among its
+    /// steps, which would end it.
+    #[error("it would cut a drawn order ({0})")]
+    Cuts(SpanId),
+}
+
+/// Why sections can't be laid out as asked, inside the plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Misfit {
+    /// A section would end before its heading.
+    Backwards,
+    /// Of these two sections, the second would start in the first and
+    /// end after it.
+    Half(StepId, StepId),
+    /// A section would be further in than [`DEEPEST`].
+    Deep,
+}
+
+impl Misfit {
+    /// As a [`BracketError`], naming the section other than `own` where
+    /// two would be half over each other.
+    fn about(self, own: StepId) -> BracketError {
+        match self {
+            Misfit::Backwards => BracketError::EndsBefore,
+            Misfit::Half(outer, inner) if outer == own => BracketError::HalfOver(inner),
+            Misfit::Half(outer, _) => BracketError::HalfOver(outer),
+            Misfit::Deep => BracketError::TooDeep,
+        }
+    }
+}
+
+/// Where carried steps land: see [`Plan::carry`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Place {
+    /// Where among the rows that stay, as [`Plan::move_steps`] takes it:
+    /// they go in before the row at this index once they are taken out
+    /// (clamped to the end).
+    pub index: usize,
+    /// The section they land in: `None` for the plan's own level. Where
+    /// a section ends at `index`, this says whether they go in at its
+    /// end or after it ([`Plan::landings`] lists which can be). A
+    /// section that holds nothing is landed in this way too.
+    pub section: Option<StepId>,
+}
+
+/// What a carry does to the loops and drawn orders it meets: which key
+/// is held while carrying. See [`Plan::carry`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Carry {
+    /// No key: the steps go only where no loop or drawn order is
+    /// crossed.
+    #[default]
+    Whole,
+    /// Ctrl: the steps leave every loop and drawn order they cross, and
+    /// take along the ones wholly among them.
+    CutLoose,
+    /// Alt: as [`CutLoose`](Carry::CutLoose), and the loops and drawn
+    /// orders wholly among them are taken away and each of them waits
+    /// for the operator.
+    Stripped,
+}
+
+/// What a carry did.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Carried {
+    /// The steps carried, in their new order.
+    pub steps: Vec<StepId>,
+    /// The loops and drawn orders they were cut loose from.
+    pub left: Vec<SpanId>,
+    /// The loops and drawn orders no longer in the plan: taken away, or
+    /// left with too few steps.
+    pub gone: Vec<SpanId>,
+}
+
+/// Why steps can't be carried where they were asked to go.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CarryError {
+    /// A step it names isn't in the plan, or it names none.
+    #[error("that is no longer in the plan")]
+    Missing,
+    /// It names a section's heading: a section is moved with all it
+    /// holds by [`Plan::move_group`].
+    #[error("a section ({0}) moves with all it holds, not as a step")]
+    Heading(StepId),
+    /// The section asked for can't be landed in there.
+    #[error("they can't land in that section there")]
+    Nowhere,
+    /// Carried whole, they would cross these loops and drawn orders.
+    #[error("they would leave a loop or drawn order behind")]
+    Crosses(Vec<SpanId>),
 }
 
 /// Where a span is: its first and last step, or `None` over no steps.
@@ -377,6 +497,82 @@ impl Step {
             _ => None,
         }
     }
+
+    /// The last row this section was given to hold, for one that ends
+    /// before the next section; `None` for a step that isn't one.
+    pub fn last(&self) -> Option<StepId> {
+        match self.action {
+            Action::Section { last, .. } => last,
+            _ => None,
+        }
+    }
+
+    /// The time of day this section should be over by; `None` for a step
+    /// that isn't one.
+    pub fn done_by(&self) -> Option<TimeOfDay> {
+        match self.action {
+            Action::Section { done_by, .. } => done_by,
+            _ => None,
+        }
+    }
+
+    /// Gives this section its last row, or none; nothing for a step.
+    fn set_last(&mut self, to: Option<StepId>) {
+        if let Action::Section { last, .. } = &mut self.action {
+            *last = to;
+        }
+    }
+
+    /// Sets how far in this section sits; nothing for a step.
+    fn set_depth(&mut self, to: u8) {
+        if let Action::Section { depth, .. } = &mut self.action {
+            *depth = to;
+        }
+    }
+}
+
+/// Where a section is: up to which row it holds, and how it ends there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Bound {
+    /// The row after the last it holds.
+    end: usize,
+    /// It ends at a last row given to it or to a section around it, not
+    /// at a heading or the plan's end: what is put at its end isn't in it.
+    shut: bool,
+}
+
+/// Where each row's group ends: for a section's heading, what it holds;
+/// for a step, the row after it. Sections close at the next heading no
+/// further in than they are, at their own last row, or where a section
+/// around them closes.
+fn bounds(steps: &[Step]) -> Vec<Bound> {
+    let n = steps.len();
+    let mut found: Vec<Bound> = (1..=n).map(|end| Bound { end, shut: false }).collect();
+    let position = |id: StepId| steps.iter().position(|step| step.id == id);
+    // Each open section: its heading, depth and the row after its last.
+    let mut open: Vec<(usize, u8, Option<usize>)> = Vec::new();
+    for at in 0..=n {
+        let depth = steps.get(at).and_then(Step::depth);
+        let closes = |(_, of, end): &(usize, u8, Option<usize>)| {
+            at == n || *end == Some(at) || depth.is_some_and(|depth| depth <= *of)
+        };
+        if let Some(from) = open.iter().position(closes) {
+            let mut shut = false;
+            for (heading, _, end) in open.drain(from..) {
+                shut |= end == Some(at);
+                found[heading] = Bound { end: at, shut };
+            }
+        }
+        if let Some(depth) = depth {
+            let end = steps[at]
+                .last()
+                .and_then(position)
+                .filter(|&last| last >= at)
+                .map(|last| last + 1);
+            open.push((at, depth, end));
+        }
+    }
+    found
 }
 
 /// An ordered list of steps, prepared ahead of time. Saved as JSON.
@@ -499,20 +695,8 @@ impl Plan {
 
     /// Inserts a step at `index` (clamped to the end).
     pub fn insert(&mut self, index: usize, label: impl Into<String>, action: Action) -> StepId {
-        let id = StepId(self.next_id);
-        self.next_id += 1;
-        let step = Step {
-            id,
-            label: label.into(),
-            notes: None,
-            action,
-            estimate: None,
-            advance: None,
-            flow: Flow::default(),
-            sound: None,
-            look: None,
-            filled: false,
-        };
+        let step = self.new_step(label, action);
+        let id = step.id;
         self.steps.insert(index.min(self.steps.len()), step);
         self.settle();
         id
@@ -547,33 +731,53 @@ impl Plan {
 
     /// Appends a section, which runs until the next one.
     pub fn section(&mut self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
-        self.push(title, Action::Section { budget, depth: 0 })
+        let action = Action::Section {
+            budget,
+            depth: 0,
+            last: None,
+            done_by: None,
+        };
+        self.push(title, action)
     }
 
-    /// Where what the section at `at` holds ends: the next section no
-    /// further in than it, or the end of the plan. `at + 1` for a step
-    /// that isn't a section.
+    /// Where what the section at `at` holds ends: the row after its last
+    /// row where it was given one, else the next section no further in
+    /// than it, and never past where the section around it ends; or the
+    /// end of the plan. `at + 1` for a step that isn't a section.
     pub fn group_end(&self, at: usize) -> usize {
-        let Some(depth) = self.steps.get(at).and_then(Step::depth) else {
-            return (at + 1).min(self.steps.len());
-        };
-        self.steps[at + 1..]
-            .iter()
-            .position(|step| step.depth().is_some_and(|other| other <= depth))
-            .map_or(self.steps.len(), |n| at + 1 + n)
+        match self.steps.get(at) {
+            Some(step) if step.is_section() => bounds(&self.steps)[at].end,
+            _ => (at + 1).min(self.steps.len()),
+        }
+    }
+
+    /// Whether the section at `at` ends at a last row given to it or to
+    /// a section around it, rather than at a heading or the plan's end:
+    /// then what is put at its end isn't in it. False for a step.
+    pub fn ends_shut(&self, at: usize) -> bool {
+        match self.steps.get(at) {
+            Some(step) if step.is_section() => bounds(&self.steps)[at].shut,
+            _ => false,
+        }
+    }
+
+    /// The last row the section `section` holds now: its own heading
+    /// when it holds nothing. `None` if it isn't a section.
+    pub fn last_of(&self, section: StepId) -> Option<StepId> {
+        let at = self.position(section)?;
+        if !self.steps[at].is_section() {
+            return None;
+        }
+        Some(self.steps[self.group_end(at) - 1].id)
     }
 
     /// The section that holds the row at `index` most closely, by where
-    /// it is in the plan: `None` at the plan's own level.
-    fn holder(&self, index: usize) -> Option<usize> {
-        let under = self
-            .steps
-            .get(index)
-            .and_then(Step::depth)
-            .unwrap_or(u8::MAX);
-        (0..index.min(self.steps.len())).rev().find(|&at| {
-            self.steps[at].depth().is_some_and(|depth| depth < under) && self.group_end(at) > index
-        })
+    /// it is in the plan, with every section's bounds: `None` at the
+    /// plan's own level.
+    fn holder_in(&self, bounds: &[Bound], index: usize) -> Option<usize> {
+        (0..index.min(self.steps.len()))
+            .rev()
+            .find(|&at| self.steps[at].is_section() && bounds[at].end > index)
     }
 
     /// How far in the row at `index` is: a section at its depth, a step
@@ -582,19 +786,22 @@ impl Plan {
         match self.steps.get(index).and_then(Step::depth) {
             Some(depth) => depth,
             None => self
-                .holder(index)
+                .holder_in(&bounds(&self.steps), index)
                 .and_then(|at| self.steps[at].depth())
                 .map_or(0, |depth| depth + 1),
         }
     }
 
     /// How far in something put at `at` would be, and the section that
-    /// would hold it: a section holds what is put at its end too.
+    /// would hold it: a section holds what is put at its end too, unless
+    /// it [ends shut](Plan::ends_shut) there.
     pub fn level_put_at(&self, at: usize) -> (u8, Option<StepId>) {
         let at = at.min(self.steps.len());
-        let holder = (0..at)
-            .rev()
-            .find(|&section| self.steps[section].is_section() && at <= self.group_end(section));
+        let bounds = bounds(&self.steps);
+        let holder = (0..at).rev().find(|&section| {
+            let bound = bounds[section];
+            self.steps[section].is_section() && (at < bound.end || (at == bound.end && !bound.shut))
+        });
         match holder {
             Some(section) => (
                 self.steps[section].depth().unwrap_or(0) + 1,
@@ -607,9 +814,10 @@ impl Plan {
     /// The sections the step at `index` is in, outermost first. A
     /// section is not in itself.
     pub fn within(&self, index: usize) -> Vec<StepId> {
+        let bounds = bounds(&self.steps);
         let mut found = Vec::new();
         let mut at = index;
-        while let Some(holder) = self.holder(at) {
+        while let Some(holder) = self.holder_in(&bounds, at) {
             found.push(self.steps[holder].id);
             at = holder;
         }
@@ -717,6 +925,18 @@ impl Plan {
         if !allowed {
             return false;
         }
+        // In, the section before it at its level takes it in, though
+        // that one was given an end before it.
+        let joins = self.steps[..at]
+            .iter()
+            .rposition(|step| step.depth().is_some_and(|before| before <= depth))
+            .filter(|&before| self.steps[before].depth() == Some(depth));
+        if let Some(before) = joins.filter(|_| inward)
+            && self.steps[before].last().is_some()
+        {
+            let last = self.steps[end - 1].id;
+            self.steps[before].set_last(Some(last));
+        }
         for step in &mut self.steps[at..end] {
             if let Action::Section { depth, .. } = &mut step.action {
                 *depth = if inward { *depth + 1 } else { *depth - 1 };
@@ -734,20 +954,50 @@ impl Plan {
     /// plan's order again. Of two spans left half over each other, the
     /// newer goes. Moving or removing steps can leave any of these.
     fn settle(&mut self) {
+        // Each section's depth, outermost first: the sections still open
+        // where it is are those around it.
+        let mut open: Vec<(u8, Option<usize>)> = Vec::new();
         for at in 0..self.steps.len() {
-            if self.steps[at].depth().is_none() {
+            open.retain(|(_, end)| end.is_none_or(|end| end > at));
+            let Some(depth) = self.steps[at].depth() else {
                 continue;
-            }
-            // Its holder is found among the sections before it, which
-            // are settled already.
-            let most = (0..at)
-                .rev()
-                .find(|&before| self.steps[before].is_section() && self.group_end(before) > at)
-                .and_then(|holder| self.steps[holder].depth())
-                .map_or(0, |holder| holder + 1)
-                .min(DEEPEST);
-            if let Action::Section { depth, .. } = &mut self.steps[at].action {
-                *depth = (*depth).min(most);
+            };
+            let close = |open: &mut Vec<(u8, Option<usize>)>, depth: u8| {
+                if let Some(from) = open.iter().position(|(of, _)| depth <= *of) {
+                    open.truncate(from);
+                }
+            };
+            close(&mut open, depth);
+            let most = open.last().map_or(0, |(holder, _)| holder + 1).min(DEEPEST);
+            let depth = depth.min(most);
+            close(&mut open, depth);
+            self.steps[at].set_depth(depth);
+            // Where it ends by its own last row, if that is after it.
+            let own = self.steps[at]
+                .last()
+                .and_then(|last| self.position(last))
+                .filter(|&last| last >= at)
+                .map(|last| last + 1);
+            // It ends where a section around it ends, at the latest.
+            let around = open.iter().filter_map(|(_, end)| *end).min();
+            let end = match (own, around) {
+                (Some(own), Some(around)) => Some(own.min(around)),
+                (own, around) => own.or(around),
+            };
+            open.push((depth, end));
+        }
+        // A last row it no longer holds is none: one moved before its
+        // heading, or past where it ends by a heading or what is around.
+        let bounds = bounds(&self.steps);
+        for (at, bound) in bounds.into_iter().enumerate() {
+            let Some(last) = self.steps[at].last() else {
+                continue;
+            };
+            let held = self
+                .position(last)
+                .is_some_and(|last| last >= at && last < bound.end);
+            if !held {
+                self.steps[at].set_last(None);
             }
         }
         let mut spans = std::mem::take(&mut self.spans);
@@ -848,10 +1098,11 @@ impl Plan {
         }
     }
 
-    /// Whether a section's heading is among the rows from one step to
-    /// another.
+    /// Whether a section's heading or a section's end is among the rows
+    /// from one step to another: they are not all in one section.
     fn heading_among(&self, (first, last): (usize, usize)) -> bool {
         self.steps[first..=last].iter().any(Step::is_section)
+            || self.within(first) != self.within(last)
     }
 
     /// Whether a span over `over` that moves as `flow` says can be in
@@ -1322,26 +1573,168 @@ impl Plan {
         }
     }
 
-    /// Removes a step. A section's steps stay, in the section before it,
-    /// and a span attached to it is gone.
+    /// When the rows `leaving` go from where they are, a section whose
+    /// last row is one of them ends at the nearest row before it that
+    /// stays: its own heading, at the least.
+    fn end_before(&mut self, leaving: &[StepId]) {
+        for at in 0..self.steps.len() {
+            let Some(last) = self.steps[at].last().filter(|last| leaving.contains(last)) else {
+                continue;
+            };
+            if leaving.contains(&self.steps[at].id) {
+                continue;
+            }
+            let Some(last) = self.position(last).filter(|&last| last >= at) else {
+                continue;
+            };
+            let stays = self.steps[at..last]
+                .iter()
+                .rev()
+                .find(|step| !leaving.contains(&step.id))
+                .map(|step| step.id);
+            self.steps[at].set_last(stays);
+        }
+    }
+
+    /// Removes a step. A section's own steps stay, in the section before
+    /// it where that one ran on to its heading, and otherwise in what
+    /// was around it; the sections it held move out one level, to where
+    /// it was. A span attached to it is gone.
     pub fn remove(&mut self, id: StepId) -> Option<Step> {
         self.let_go(&[id]);
+        self.end_before(&[id]);
         let index = self.position(id)?;
-        // The sections a removed section held move out one level, to
-        // where it was, and don't fall into the section before it.
-        if let Some(depth) = self.steps[index].depth() {
-            let end = self.group_end(index);
-            for step in &mut self.steps[index + 1..end] {
-                if let Action::Section { depth: inner, .. } = &mut step.action
-                    && *inner > depth
-                {
-                    *inner -= 1;
+        let Some(depth) = self.steps[index].depth() else {
+            let step = self.steps.remove(index);
+            self.settle();
+            return Some(step);
+        };
+        let bounds = bounds(&self.steps);
+        let end = bounds[index].end;
+        let mut lasts = self.lasts();
+        // The section before it at its level, that ran on to its heading,
+        // takes its own steps up to the first section in it.
+        let before = (0..index).rev().find(|&at| {
+            self.steps[at].depth() == Some(depth) && bounds[at].end == index && !bounds[at].shut
+        });
+        let own = self.steps[index + 1..end]
+            .iter()
+            .take_while(|step| !step.is_section())
+            .last()
+            .map(|step| step.id);
+        if let Some((before, own)) = before.zip(own) {
+            let before = self.steps[before].id;
+            for (section, last) in &mut lasts {
+                if *section == before {
+                    *last = own;
+                }
+            }
+        }
+        Some(self.unhead(index, lasts))
+    }
+
+    /// Takes the heading at `index` out, every other section holding
+    /// what `lasts` says, or what it held where that can't be. What
+    /// ended at the heading ends at the row before it.
+    fn unhead(&mut self, index: usize, mut lasts: Vec<(StepId, StepId)>) -> Step {
+        let id = self.steps[index].id;
+        lasts.retain(|(section, _)| *section != id);
+        if let Some(before) = index.checked_sub(1).map(|at| self.steps[at].id) {
+            for (_, last) in &mut lasts {
+                if *last == id {
+                    *last = before;
                 }
             }
         }
         let step = self.steps.remove(index);
+        if self.shape(&lasts).is_err() {
+            self.settle();
+        }
+        step
+    }
+
+    /// Each section's heading with the last row it holds now: its own
+    /// heading for one that holds nothing.
+    fn lasts(&self) -> Vec<(StepId, StepId)> {
+        let bounds = bounds(&self.steps);
+        self.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| step.is_section())
+            .map(|(at, step)| (step.id, self.steps[bounds[at].end - 1].id))
+            .collect()
+    }
+
+    /// Lays the sections out as `lasts` says: each holds from its
+    /// heading to the row given with it (a section not named holds
+    /// nothing). Each is as far in as there are sections around it, and
+    /// keeps a last row of its own where it had one, or where it would
+    /// otherwise run on past that row. Then all is settled. Nothing is
+    /// changed where two would be half over each other, or a section
+    /// would be further in than [`DEEPEST`].
+    fn shape(&mut self, lasts: &[(StepId, StepId)]) -> Result<(), Misfit> {
+        let n = self.steps.len();
+        let position: HashMap<StepId, usize> = self
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(at, step)| (step.id, at))
+            .collect();
+        // Each section's heading and last row, in the plan's order.
+        let mut laid: Vec<(usize, usize)> = Vec::new();
+        for (at, step) in self.steps.iter().enumerate() {
+            if !step.is_section() {
+                continue;
+            }
+            let last = lasts
+                .iter()
+                .find(|(section, _)| *section == step.id)
+                .and_then(|(_, last)| position.get(last).copied())
+                .unwrap_or(at);
+            if last < at {
+                return Err(Misfit::Backwards);
+            }
+            laid.push((at, last));
+        }
+        // How far in each is, and the one around it.
+        let mut depths: Vec<u8> = Vec::with_capacity(laid.len());
+        let mut around: Vec<Option<usize>> = Vec::with_capacity(laid.len());
+        let mut open: Vec<usize> = Vec::new();
+        for (k, &(at, last)) in laid.iter().enumerate() {
+            while open.last().is_some_and(|&top| laid[top].1 < at) {
+                open.pop();
+            }
+            if let Some(&top) = open.last()
+                && last > laid[top].1
+            {
+                let (outer, inner) = (self.steps[laid[top].0].id, self.steps[at].id);
+                return Err(Misfit::Half(outer, inner));
+            }
+            let depth = u8::try_from(open.len()).unwrap_or(u8::MAX);
+            if depth > DEEPEST {
+                return Err(Misfit::Deep);
+            }
+            depths.push(depth);
+            around.push(open.last().copied());
+            open.push(k);
+        }
+        for (k, &(at, last)) in laid.iter().enumerate() {
+            // Where it would end with no last row of its own.
+            let next = laid[k + 1..]
+                .iter()
+                .zip(&depths[k + 1..])
+                .find(|(_, depth)| **depth <= depths[k])
+                .map_or(n, |((heading, _), _)| *heading);
+            let outer = around[k].map_or(n, |outer| laid[outer].1 + 1);
+            let runs_to = next.min(outer);
+            let id = self.steps[last].id;
+            let step = &mut self.steps[at];
+            let given = step.last().is_some() || last + 1 < runs_to;
+            step.set_depth(depths[k]);
+            step.set_last(given.then_some(id));
+        }
         self.settle();
-        Some(step)
+        Ok(())
     }
 
     /// Moves a step to `index` in the plan without it (clamped to the
@@ -1412,12 +1805,435 @@ impl Plan {
             return !moving.is_empty();
         }
         self.let_go(ids);
+        self.end_before(ids);
         let (moving, mut rest): (Vec<Step>, Vec<Step>) = std::mem::take(&mut self.steps)
             .into_iter()
             .partition(|step| ids.contains(&step.id));
         rest.splice(at..at, moving);
         self.steps = rest;
         true
+    }
+
+    /// A step with a new id, not yet in the plan.
+    fn new_step(&mut self, label: impl Into<String>, action: Action) -> Step {
+        let id = StepId(self.next_id);
+        self.next_id += 1;
+        Step {
+            id,
+            label: label.into(),
+            notes: None,
+            action,
+            estimate: None,
+            advance: None,
+            flow: Flow::default(),
+            sound: None,
+            look: None,
+            filled: false,
+        }
+    }
+
+    /// Whether every drawn order in this plan still is one in `next`;
+    /// the first that isn't, if one isn't.
+    fn cut_order(&self, next: &Plan) -> Option<SpanId> {
+        self.spans
+            .iter()
+            .filter(|span| span.flow.shuffle)
+            .find(|span| !next.span(span.id).is_some_and(|span| span.flow.shuffle))
+            .map(|span| span.id)
+    }
+
+    /// What [`bracket_over`] would say, with the plan left as it is: the
+    /// id the new section would have, or why it can't be.
+    ///
+    /// [`bracket_over`]: Plan::bracket_over
+    pub fn would_bracket_over(&self, a: StepId, b: StepId) -> Result<StepId, BracketError> {
+        self.clone().bracket_over(a, b, "")
+    }
+
+    /// Puts a new section named `label` round the rows from `a` to `b`,
+    /// whichever comes first: its heading goes in before the first, and
+    /// it ends at the last. Ending on a section's heading, it takes in
+    /// all that section holds. It is in whatever section those rows are
+    /// in, and around the sections wholly among them, which go one level
+    /// further in. Returns the new section's id.
+    ///
+    /// Refused, with nothing changed, where it would take in a part of
+    /// a section ([`BracketError::HalfOver`]), put a section further in
+    /// than [`DEEPEST`], or end a drawn order by coming among its steps.
+    pub fn bracket_over(
+        &mut self,
+        a: StepId,
+        b: StepId,
+        label: impl Into<String>,
+    ) -> Result<StepId, BracketError> {
+        let a = self.position(a).ok_or(BracketError::Missing)?;
+        let b = self.position(b).ok_or(BracketError::Missing)?;
+        let (first, mut last) = (a.min(b), a.max(b));
+        if self.steps[last].is_section() {
+            last = self.group_end(last) - 1;
+        }
+        let mut next = self.clone();
+        let mut lasts = next.lasts();
+        let action = Action::Section {
+            budget: None,
+            depth: 0,
+            last: Some(self.steps[last].id),
+            done_by: None,
+        };
+        let heading = next.new_step(label, action);
+        let id = heading.id;
+        lasts.push((id, self.steps[last].id));
+        next.steps.insert(first, heading);
+        next.shape(&lasts).map_err(|misfit| misfit.about(id))?;
+        if let Some(cut) = self.cut_order(&next) {
+            return Err(BracketError::Cuts(cut));
+        }
+        *self = next;
+        Ok(id)
+    }
+
+    /// Takes the section `section` away and leaves its steps where they
+    /// are, in whatever section was around it; the sections it held go
+    /// one level out. A loop or drawn order attached to it is laid over
+    /// those steps instead. False if it isn't a section.
+    pub fn unbracket(&mut self, section: StepId) -> bool {
+        let Some(at) = self.position(section) else {
+            return false;
+        };
+        if !self.steps[at].is_section() {
+            return false;
+        }
+        let mut next = self.clone();
+        if let Some(span) = next.section_span(section).map(|span| span.id) {
+            let reach = next.reach(Over::Section(section)).ok().flatten();
+            match reach {
+                Some((first, last)) => {
+                    let over = Over::Steps {
+                        first: next.steps[first].id,
+                        last: next.steps[last].id,
+                    };
+                    if let Some(span) = next.spans.iter_mut().find(|other| other.id == span) {
+                        span.over = over;
+                    }
+                }
+                None => {
+                    next.remove_span(span);
+                }
+            }
+        }
+        let lasts = next.lasts();
+        next.unhead(at, lasts);
+        *self = next;
+        true
+    }
+
+    /// What [`reach_section`] would say, with the plan left as it is.
+    ///
+    /// [`reach_section`]: Plan::reach_section
+    pub fn would_reach_section(
+        &self,
+        section: StepId,
+        last: Option<StepId>,
+    ) -> Result<(), BracketError> {
+        self.clone().reach_section(section, last)
+    }
+
+    /// Has the section `section` end at the row `last`, by hand: what
+    /// comes after it is back in whatever holds the section. `last` may
+    /// be its own heading, for a section that holds nothing, and on
+    /// another section's heading it takes in all that one holds. With
+    /// `None` it runs on to the next section no further in than itself,
+    /// or until what holds it ends. Sections it comes to hold wholly go
+    /// one level further in, and ones it no longer holds one out.
+    ///
+    /// Refused, with nothing changed, as [`bracket_over`] is, or where
+    /// `last` comes before its heading.
+    ///
+    /// [`bracket_over`]: Plan::bracket_over
+    pub fn reach_section(
+        &mut self,
+        section: StepId,
+        last: Option<StepId>,
+    ) -> Result<(), BracketError> {
+        let at = self.position(section).ok_or(BracketError::Missing)?;
+        if !self.steps[at].is_section() {
+            return Err(BracketError::Missing);
+        }
+        let mut next = self.clone();
+        match last {
+            None => {
+                next.steps[at].set_last(None);
+                next.settle();
+            }
+            Some(last) => {
+                let mut to = self.position(last).ok_or(BracketError::Missing)?;
+                if to < at {
+                    return Err(BracketError::EndsBefore);
+                }
+                if to > at && self.steps[to].is_section() {
+                    to = self.group_end(to) - 1;
+                }
+                let last = self.steps[to].id;
+                let mut lasts = next.lasts();
+                for (own, end) in &mut lasts {
+                    if *own == section {
+                        *end = last;
+                    }
+                }
+                next.steps[at].set_last(Some(last));
+                next.shape(&lasts).map_err(|misfit| misfit.about(section))?;
+            }
+        }
+        if let Some(cut) = self.cut_order(&next) {
+            return Err(BracketError::Cuts(cut));
+        }
+        *self = next;
+        Ok(())
+    }
+
+    /// The sections that end at `index` in this plan, innermost first,
+    /// and the one around `index` that runs on past it.
+    fn ending_at(&self, index: usize) -> (Vec<StepId>, Option<StepId>) {
+        let index = index.min(self.steps.len());
+        let bounds = bounds(&self.steps);
+        let ending = (0..index)
+            .rev()
+            .filter(|&at| self.steps[at].is_section() && bounds[at].end == index)
+            .map(|at| self.steps[at].id)
+            .collect();
+        let around = self.holder_in(&bounds, index).map(|at| self.steps[at].id);
+        (ending, around)
+    }
+
+    /// The plan with the rows `ids` taken out: sections that ended at
+    /// one end at the row before it that stays, and spans drawn from or
+    /// to one are drawn to the nearest that stays. Nothing is settled.
+    fn without(&self, ids: &[StepId]) -> (Plan, Vec<Step>) {
+        let mut rest = self.clone();
+        rest.let_go(ids);
+        rest.end_before(ids);
+        let (taken, kept) = std::mem::take(&mut rest.steps)
+            .into_iter()
+            .partition(|step| ids.contains(&step.id));
+        rest.steps = kept;
+        (rest, taken)
+    }
+
+    /// The sections steps carried to `index` among the rows that stay
+    /// (without `steps`) can land in, innermost first, for a
+    /// [`Place`]: each section that ends there, landing at its end, and
+    /// last the section around `index`, or `None` at the plan's own
+    /// level.
+    pub fn landings(&self, steps: &[StepId], index: usize) -> Vec<Option<StepId>> {
+        let (rest, _) = self.without(steps);
+        let (ending, around) = rest.ending_at(index);
+        ending.into_iter().map(Some).chain([around]).collect()
+    }
+
+    /// Puts `rows` in at `to` in this plan, which they are not in: in
+    /// the section it names, and in every section around that one that
+    /// would otherwise end where they go in. A section among them holds
+    /// nothing.
+    fn lay_in(&mut self, rows: Vec<Step>, to: Place) -> Result<(), CarryError> {
+        let index = to.index.min(self.steps.len());
+        let (ending, around) = self.ending_at(index);
+        let grows = match ending.iter().position(|id| Some(*id) == to.section) {
+            Some(from) => &ending[from..],
+            None if around == to.section => &[],
+            None => return Err(CarryError::Nowhere),
+        };
+        let Some(last) = rows.last().map(|step| step.id) else {
+            return Ok(());
+        };
+        let mut lasts = self.lasts();
+        for (section, end) in &mut lasts {
+            if grows.contains(section) {
+                *end = last;
+            }
+        }
+        lasts.extend(
+            rows.iter()
+                .filter(|step| step.is_section())
+                .map(|step| (step.id, step.id)),
+        );
+        self.steps.splice(index..index, rows);
+        self.shape(&lasts).map_err(|_| CarryError::Nowhere)
+    }
+
+    /// Puts a new step in at `to`, in the section it names: see
+    /// [`Place`]. A new section put in so holds nothing. Returns its id,
+    /// or with nothing changed, [`CarryError::Nowhere`] where that
+    /// section can't be landed in there.
+    pub fn insert_at(
+        &mut self,
+        to: Place,
+        label: impl Into<String>,
+        action: Action,
+    ) -> Result<StepId, CarryError> {
+        let mut next = self.clone();
+        let step = next.new_step(label, action);
+        let id = step.id;
+        next.lay_in(vec![step], to)?;
+        *self = next;
+        Ok(id)
+    }
+
+    /// The steps the span `id` is over now, in the plan's order: what
+    /// carrying it along its line takes. Carrying just these never
+    /// crosses it. Empty if there is no such span.
+    pub fn span_steps(&self, id: SpanId) -> Vec<StepId> {
+        let Some((first, last)) = self.span_range(id) else {
+            return Vec::new();
+        };
+        self.steps[first..=last]
+            .iter()
+            .filter(|step| !step.is_section())
+            .map(|step| step.id)
+            .collect()
+    }
+
+    /// What [`carry`] would do, with the plan left as it is.
+    ///
+    /// [`carry`]: Plan::carry
+    pub fn would_carry(
+        &self,
+        steps: &[StepId],
+        to: Place,
+        how: Carry,
+    ) -> Result<Carried, CarryError> {
+        self.clone().carry(steps, to, how)
+    }
+
+    /// Carries the steps `steps`, a selection that need not be together,
+    /// to `to`: they land together there, in the plan's order. A
+    /// selection that names a section's heading is refused: a section
+    /// with all it holds is moved by [`move_group`], which keeps to no
+    /// span's rules, and `carry` is for the steps themselves.
+    ///
+    /// A loop or drawn order is crossed when some of its steps are
+    /// carried and others are not, unless the carried ones land inside
+    /// it again: moving about inside a loop crosses nothing. One
+    /// attached to a section is crossed too when all its steps leave
+    /// the section. One drawn from step to step wholly among the carried
+    /// steps goes with them. By `how`:
+    ///
+    /// - [`Carry::Whole`]: refused if any is crossed, naming them all.
+    /// - [`Carry::CutLoose`]: the steps leave each one crossed, which
+    ///   keeps its other steps, and is a loop no more with one step left,
+    ///   nor a drawn order with two.
+    /// - [`Carry::Stripped`]: as `CutLoose`, and those wholly among them
+    ///   are taken away and each step waits for the operator.
+    ///
+    /// Whether a step goes on by itself is its own, and never stops a
+    /// carry: but for `Stripped`, each goes on as it did where it was,
+    /// whatever the section it lands in says.
+    ///
+    /// [`move_group`]: Plan::move_group
+    pub fn carry(
+        &mut self,
+        steps: &[StepId],
+        to: Place,
+        how: Carry,
+    ) -> Result<Carried, CarryError> {
+        if steps.is_empty() {
+            return Err(CarryError::Missing);
+        }
+        for id in steps {
+            let step = self.get(*id).ok_or(CarryError::Missing)?;
+            if step.is_section() {
+                return Err(CarryError::Heading(*id));
+            }
+        }
+        let carried: Vec<StepId> = self
+            .steps
+            .iter()
+            .map(|step| step.id)
+            .filter(|id| steps.contains(id))
+            .collect();
+        let (mut next, rows) = self.without(&carried);
+        next.lay_in(rows, to)?;
+        // Each span's carried steps, and whether it is crossed.
+        let mut crossed = Vec::new();
+        let mut among = Vec::new();
+        for span in &self.spans {
+            let held = self.span_steps(span.id);
+            let moving: Vec<StepId> = held
+                .iter()
+                .copied()
+                .filter(|id| carried.contains(id))
+                .collect();
+            if moving.is_empty() {
+                continue;
+            }
+            let ranged = matches!(span.over, Over::Steps { .. });
+            if ranged && moving.len() == held.len() {
+                among.push(span.id);
+                continue;
+            }
+            let after = next.span_steps(span.id);
+            if !moving.iter().all(|id| after.contains(id)) {
+                crossed.push(span.id);
+            }
+        }
+        if how == Carry::Whole && !crossed.is_empty() {
+            return Err(CarryError::Crosses(crossed));
+        }
+        for id in &crossed {
+            next.too_few(*id);
+        }
+        for id in &carried {
+            let Some(at) = next.position(*id) else {
+                continue;
+            };
+            let advance = match how {
+                Carry::Stripped => Some(false),
+                Carry::Whole | Carry::CutLoose => {
+                    let was = self.position(*id).map(|was| self.goes_on(was));
+                    was.filter(|was| *was != next.goes_on(at))
+                }
+            };
+            if advance.is_some() {
+                next.steps[at].advance = advance;
+            }
+        }
+        if how == Carry::Stripped {
+            for id in &among {
+                next.remove_span(*id);
+            }
+        }
+        next.settle();
+        let gone = self
+            .spans
+            .iter()
+            .map(|span| span.id)
+            .filter(|id| next.span(*id).is_none())
+            .collect();
+        *self = next;
+        Ok(Carried {
+            steps: carried,
+            left: crossed,
+            gone,
+        })
+    }
+
+    /// A span from step to step left with too few steps for what it
+    /// does: no loop round one step, and no drawn order of two. One
+    /// attached to a section keeps what it does.
+    fn too_few(&mut self, id: SpanId) {
+        let count = self.span_steps(id).len();
+        let Some(span) = self.spans.iter_mut().find(|span| span.id == id) else {
+            return;
+        };
+        if !matches!(span.over, Over::Steps { .. }) {
+            return;
+        }
+        if count < 3 {
+            span.flow.shuffle = false;
+        }
+        if count < 2 {
+            span.flow.repeat = Repeat::Once;
+            span.flow.ends = Ending::default();
+        }
     }
 
     /// A new plan titled `title` from this one as a template: its sections,
@@ -1921,6 +2737,8 @@ mod tests {
             Action::Section {
                 budget: None,
                 depth: 0,
+                last: None,
+                done_by: None,
             },
         );
         assert!(plan.nest(inner, true));
@@ -2310,5 +3128,450 @@ mod tests {
         );
         // What can't be changes nothing: too few steps.
         assert_eq!(plan.draw_over(at(5), at(6)), Err(SpanError::TooFew));
+    }
+
+    /// Where a step is now.
+    fn pos(plan: &Plan, id: StepId) -> usize {
+        plan.position(id).unwrap()
+    }
+
+    /// The labels of the rows each section holds, by section.
+    fn holds(plan: &Plan, section: StepId) -> Vec<&str> {
+        let at = plan.position(section).unwrap();
+        plan.steps()[at + 1..plan.group_end(at)]
+            .iter()
+            .map(|step| step.label.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn a_plan_saved_before_brackets_loads_and_saves_unchanged() {
+        let saved = include_str!("../fixtures/plan_before_brackets.json");
+        let plan = Plan::from_json(saved).unwrap();
+        assert_eq!(plan.to_json(), saved.trim_end());
+        let id = |label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
+        // Each section runs to the next no further in, as it did.
+        assert_eq!(
+            holds(&plan, id("Music")),
+            ["Praise", "A", "B", "Reading", "C"]
+        );
+        assert_eq!(holds(&plan, id("Praise")), ["A", "B"]);
+        assert_eq!(holds(&plan, id("Sermon")), ["D"]);
+        assert!(plan.steps().iter().all(|step| step.last().is_none()));
+        assert_eq!(
+            plan.within(plan.position(id("C")).unwrap()),
+            [id("Music"), id("Reading")]
+        );
+        assert_eq!(plan.spans().len(), 2);
+    }
+
+    #[test]
+    fn a_section_with_its_own_end_stops_while_the_one_around_goes_on() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        let inner = plan.bracket_over(c, b, "Duet").unwrap();
+        // Its heading went in before B, and it ends at C: D is Music's.
+        assert_eq!(
+            labels(&plan),
+            ["Music", "A", "Duet", "B", "C", "D", "Sermon", "E"]
+        );
+        assert_eq!(plan.get(inner).and_then(Step::depth), Some(1));
+        assert_eq!(plan.get(inner).and_then(Step::last), Some(c));
+        assert_eq!(holds(&plan, inner), ["B", "C"]);
+        assert_eq!(holds(&plan, music), ["A", "Duet", "B", "C", "D"]);
+        assert_eq!(plan.within(pos(&plan, c)), [music, inner]);
+        assert_eq!(plan.within(pos(&plan, d)), [music]);
+        assert_eq!(plan.level(pos(&plan, d)), 1);
+        assert_eq!(plan.level(pos(&plan, c)), 2);
+        // What goes on by itself in it is its own to say.
+        plan.get_mut(inner).unwrap().advance = Some(true);
+        assert!(plan.goes_on(pos(&plan, b)) && plan.goes_on(pos(&plan, c)));
+        assert!(!plan.goes_on(pos(&plan, d)) && !plan.goes_on(pos(&plan, a)));
+        // Put at its end, a step is not in it; at Music's end it is
+        // Music's, which runs on to Sermon.
+        assert!(plan.ends_shut(pos(&plan, inner)));
+        assert_eq!(plan.level_put_at(pos(&plan, d)), (1, Some(music)));
+        assert_eq!(plan.level_put_at(pos(&plan, d) + 1), (1, Some(music)));
+        assert_eq!(plan.last_of(inner), Some(c));
+        assert_eq!(plan.last_of(music), Some(d));
+        // It is saved with its end, and reads back the same.
+        let json = plan.to_json();
+        assert!(json.contains("\"last\""), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        // A step at the plan's own level between two sections.
+        let sermon = plan.steps()[pos(&plan, e) - 1].id;
+        let x = plan.insert(pos(&plan, sermon), "X", Action::Blank);
+        assert_eq!(plan.within(pos(&plan, x)), [music], "it ran on to Sermon");
+        plan.reach_section(music, Some(d)).unwrap();
+        assert!(plan.within(pos(&plan, x)).is_empty());
+        assert_eq!(plan.level(pos(&plan, x)), 0);
+    }
+
+    #[test]
+    fn a_bracket_goes_round_the_sections_wholly_among_its_steps() {
+        let (mut plan, [music, praise, reading, sermon]) = nested();
+        let at =
+            |plan: &Plan, label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
+        let (a, c) = (at(&plan, "A"), at(&plan, "C"));
+        // From A it would cut Praise in two.
+        assert_eq!(
+            plan.bracket_over(a, c, "Half"),
+            Err(BracketError::HalfOver(praise))
+        );
+        // Round Praise and Reading: they go one further in.
+        let before = plan.clone();
+        let round = plan.would_bracket_over(praise, c).unwrap();
+        assert_eq!(plan, before, "a dry run changes nothing");
+        assert_eq!(plan.bracket_over(praise, c, "Round"), Ok(round));
+        assert_eq!(holds(&plan, round), ["Praise", "A", "B", "Reading", "C"]);
+        assert_eq!(plan.get(round).and_then(Step::depth), Some(1));
+        assert_eq!(plan.get(praise).and_then(Step::depth), Some(DEEPEST));
+        assert_eq!(
+            plan.within(plan.position(c).unwrap()),
+            [music, round, reading]
+        );
+        // And no deeper than that.
+        assert_eq!(
+            plan.bracket_over(a, a, "Deeper"),
+            Err(BracketError::TooDeep)
+        );
+        // Ending on a heading, it takes in all that section holds.
+        let mut flat = Plan::new("Flat");
+        let one = flat.section("One", None);
+        let x = flat.push("X", Action::Blank);
+        let two = flat.section("Two", None);
+        flat.push("Y", Action::Blank);
+        // Two beside One: from in One to out of it cuts One in two.
+        assert_eq!(
+            flat.bracket_over(x, two, "Both"),
+            Err(BracketError::HalfOver(one))
+        );
+        assert!(flat.nest(two, true));
+        let both = flat.bracket_over(x, two, "Both").unwrap();
+        assert_eq!(holds(&flat, both), ["X", "Two", "Y"]);
+        assert_eq!(flat.get(two).and_then(Step::depth), Some(2));
+        assert_eq!(flat.within(flat.len() - 1), [one, both, two]);
+        let _ = (music, reading, sermon);
+    }
+
+    #[test]
+    fn a_bracket_that_would_end_a_drawn_order_is_refused() {
+        let (mut plan, _, [a, b, c, d, _]) = hymns();
+        let drawn = plan.shuffle_over(a, d).unwrap();
+        assert_eq!(
+            plan.bracket_over(b, c, "In"),
+            Err(BracketError::Cuts(drawn))
+        );
+        assert!(plan.span(drawn).unwrap().flow.shuffle);
+        // Round all of it, it is no cut.
+        assert!(plan.bracket_over(a, d, "Round").is_ok());
+        assert!(plan.span(drawn).unwrap().flow.shuffle);
+        // Nor can a section's end come among it.
+        let (mut plan, music, [a, b, c, _, _]) = hymns();
+        let drawn = plan.shuffle_over(a, c).unwrap();
+        assert_eq!(
+            plan.reach_section(music, Some(b)),
+            Err(BracketError::Cuts(drawn))
+        );
+        assert_eq!(plan.reach_section(music, Some(c)), Ok(()));
+    }
+
+    #[test]
+    fn unbracketing_leaves_the_steps_where_they_are() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        let sermon = plan.steps()[5].id;
+        // The steps of Sermon don't fall into Music: they are the plan's.
+        let looped = plan.loop_section(sermon).unwrap();
+        let f = plan.push("F", Action::Blank);
+        assert!(plan.unbracket(sermon));
+        assert_eq!(holds(&plan, music), ["A", "B", "C", "D"]);
+        assert!(plan.within(plan.position(e).unwrap()).is_empty());
+        // Its loop is a loop over those steps now.
+        assert_eq!(
+            plan.span(looped).unwrap().over,
+            Over::Steps { first: e, last: f }
+        );
+        // A bracket inside one: its steps stay in the one around it.
+        let duet = plan.bracket_over(b, c, "Duet").unwrap();
+        assert!(plan.unbracket(duet));
+        assert_eq!(holds(&plan, music), ["A", "B", "C", "D"]);
+        assert!(!plan.unbracket(a), "a step isn't a section");
+        let _ = d;
+    }
+
+    #[test]
+    fn a_sections_end_is_moved_by_hand_with_the_same_refusals() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        let sermon = plan.steps()[5].id;
+        // Shorter: C and D are the plan's own.
+        plan.reach_section(music, Some(b)).unwrap();
+        assert_eq!(holds(&plan, music), ["A", "B"]);
+        assert!(plan.within(plan.position(c).unwrap()).is_empty());
+        // Longer, round Sermon: it goes one further in.
+        plan.reach_section(music, Some(e)).unwrap();
+        assert_eq!(holds(&plan, music), ["A", "B", "C", "D", "Sermon", "E"]);
+        assert_eq!(plan.get(sermon).and_then(Step::depth), Some(1));
+        // Holding nothing: its own heading is its last.
+        plan.reach_section(music, Some(music)).unwrap();
+        assert!(holds(&plan, music).is_empty());
+        assert_eq!(plan.get(sermon).and_then(Step::depth), Some(0));
+        // Running on again, to Sermon.
+        plan.reach_section(music, None).unwrap();
+        assert_eq!(holds(&plan, music), ["A", "B", "C", "D"]);
+        assert_eq!(plan.get(music).and_then(Step::last), None);
+        // Not before its heading, and not into a part of another.
+        let duet = plan.bracket_over(c, d, "Duet").unwrap();
+        assert_eq!(
+            plan.reach_section(duet, Some(a)),
+            Err(BracketError::EndsBefore)
+        );
+        assert_eq!(
+            plan.would_reach_section(music, Some(c)),
+            Err(BracketError::HalfOver(duet))
+        );
+        assert_eq!(
+            plan.reach_section(duet, Some(e)),
+            Err(BracketError::HalfOver(music))
+        );
+        assert_eq!(
+            plan.reach_section(StepId(99), None),
+            Err(BracketError::Missing)
+        );
+    }
+
+    #[test]
+    fn a_section_says_when_it_should_be_over_by() {
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        assert!(!plan.to_json().contains("done_by"));
+        if let Action::Section { done_by, .. } = &mut plan.get_mut(music).unwrap().action {
+            *done_by = TimeOfDay::parse("11:45");
+        }
+        let json = plan.to_json();
+        assert!(json.contains("\"done_by\": \"11:45\""), "{json}");
+        let back = Plan::from_json(&json).unwrap();
+        assert_eq!(
+            back.get(music).unwrap().done_by(),
+            TimeOfDay::parse("11:45")
+        );
+    }
+
+    #[test]
+    fn a_step_carried_out_of_a_loop_is_refused_then_cut_loose() {
+        let (mut plan, _, [a, b, c, _, _]) = hymns();
+        let sermon = plan.steps()[5].id;
+        let looped = plan.loop_over(a, c).unwrap();
+        // To the end of Sermon, among the rows without B.
+        let end = Place {
+            index: plan.len() - 1,
+            section: Some(sermon),
+        };
+        let before = plan.clone();
+        assert_eq!(
+            plan.carry(&[b], end, Carry::Whole),
+            Err(CarryError::Crosses(vec![looped]))
+        );
+        assert_eq!(plan, before, "nothing changed");
+        let carried = plan.carry(&[b], end, Carry::CutLoose).unwrap();
+        assert_eq!(carried.steps, [b]);
+        assert_eq!(carried.left, [looped]);
+        assert!(carried.gone.is_empty());
+        assert_eq!(over(&plan, looped), ["A", "C"], "the loop shrank");
+        assert_eq!(plan.within(plan.position(b).unwrap()), [sermon]);
+        // A loop left with one step is gone.
+        let carried = plan.carry(&[c], end, Carry::CutLoose).unwrap();
+        assert_eq!(carried.gone, [looped]);
+        assert_eq!(plan.span(looped), None);
+    }
+
+    #[test]
+    fn stripped_steps_leave_their_loops_behind_and_wait() {
+        let (mut plan, _, [a, b, c, d, _]) = hymns();
+        let sermon = plan.steps()[5].id;
+        let outer = plan.loop_over(a, d).unwrap();
+        let inner = plan.loop_over(b, c).unwrap();
+        plan.get_mut(b).unwrap().advance = Some(true);
+        let end = Place {
+            index: plan.len() - 2,
+            section: Some(sermon),
+        };
+        // Cut loose, the loop wholly among them goes with them.
+        let mut loose = plan.clone();
+        let carried = loose.carry(&[c, b], end, Carry::CutLoose).unwrap();
+        assert_eq!(carried.steps, [b, c], "in the plan's order");
+        assert_eq!(carried.left, [outer]);
+        assert_eq!(over(&loose, outer), ["A", "D"]);
+        assert_eq!(over(&loose, inner), ["B", "C"]);
+        // Stripped, it is taken away and each waits.
+        let carried = plan.carry(&[b, c], end, Carry::Stripped).unwrap();
+        assert_eq!(carried.left, [outer]);
+        assert_eq!(carried.gone, [inner]);
+        assert_eq!(plan.span(inner), None);
+        assert_eq!(over(&plan, outer), ["A", "D"]);
+        assert_eq!(plan.get(b).unwrap().advance, Some(false));
+        assert_eq!(plan.get(c).unwrap().advance, Some(false));
+    }
+
+    #[test]
+    fn joined_steps_keep_their_join_cut_loose_and_lose_it_stripped() {
+        let (mut plan, music, [a, b, _, _, _]) = hymns();
+        let sermon = plan.steps()[5].id;
+        // A goes on to B by itself: Music says so for all its steps.
+        plan.get_mut(music).unwrap().advance = Some(true);
+        let end = Place {
+            index: plan.len() - 2,
+            section: Some(sermon),
+        };
+        let mut loose = plan.clone();
+        loose.carry(&[a, b], end, Carry::CutLoose).unwrap();
+        let at = loose.position(a).unwrap();
+        assert!(loose.goes_on(at), "the join goes along though Sermon waits");
+        assert_eq!(loose.get(a).unwrap().advance, Some(true));
+        plan.carry(&[a, b], end, Carry::Stripped).unwrap();
+        assert!(!plan.goes_on(plan.position(a).unwrap()));
+        // Going on by itself never stops a carry.
+        let (mut plan, _, [a, _, _, d, _]) = hymns();
+        plan.get_mut(a).unwrap().advance = Some(true);
+        let to = Place {
+            index: plan.position(d).unwrap() - 1,
+            section: plan.within(1).first().copied(),
+        };
+        assert!(plan.carry(&[a], to, Carry::Whole).is_ok());
+    }
+
+    #[test]
+    fn a_selection_apart_lands_together_in_the_plans_order() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        let sermon = plan.steps()[5].id;
+        let end = Place {
+            index: plan.len() - 2,
+            section: Some(sermon),
+        };
+        plan.carry(&[c, a], end, Carry::Whole).unwrap();
+        assert_eq!(labels(&plan), ["Music", "B", "D", "Sermon", "E", "A", "C"]);
+        assert_eq!(holds(&plan, sermon), ["E", "A", "C"]);
+        // At Music's end, Music or the plan: as asked.
+        let at_end = plan.position(sermon).unwrap() - 1;
+        assert_eq!(plan.landings(&[e], at_end + 1), [Some(music), None]);
+        plan.carry(
+            &[e],
+            Place {
+                index: at_end + 1,
+                section: None,
+            },
+            Carry::Whole,
+        )
+        .unwrap();
+        assert!(plan.within(plan.position(e).unwrap()).is_empty());
+        assert_eq!(holds(&plan, music), ["B", "D"]);
+        // Not in a section that isn't there.
+        assert_eq!(
+            plan.carry(
+                &[b],
+                Place {
+                    index: 0,
+                    section: Some(sermon)
+                },
+                Carry::Whole
+            ),
+            Err(CarryError::Nowhere)
+        );
+        assert_eq!(
+            plan.carry(
+                &[music],
+                Place {
+                    index: 0,
+                    section: None
+                },
+                Carry::Whole
+            ),
+            Err(CarryError::Heading(music))
+        );
+        let _ = d;
+    }
+
+    #[test]
+    fn steps_carried_into_an_empty_section_are_in_it() {
+        let mut plan = Plan::new("Sabbath");
+        plan.section("Music", None);
+        let a = plan.push("A", Action::Blank);
+        plan.push("B", Action::Blank);
+        let empty = plan.section("Empty", None);
+        let x = plan.push("X", Action::Blank);
+        plan.reach_section(empty, Some(empty)).unwrap();
+        assert!(holds(&plan, empty).is_empty());
+        assert!(plan.within(plan.position(x).unwrap()).is_empty());
+        // Right after its heading, among the rows without A.
+        let index = plan.position(empty).unwrap();
+        assert!(plan.landings(&[a], index).contains(&Some(empty)));
+        let to = Place {
+            index,
+            section: Some(empty),
+        };
+        plan.carry(&[a], to, Carry::Whole).unwrap();
+        assert_eq!(holds(&plan, empty), ["A"]);
+        assert!(plan.within(plan.position(x).unwrap()).is_empty());
+        // A new step put there too.
+        let to = Place {
+            index: plan.position(a).unwrap() + 1,
+            section: Some(empty),
+        };
+        let new = plan.insert_at(to, "New", Action::Note).unwrap();
+        assert_eq!(holds(&plan, empty), ["A", "New"]);
+        assert_eq!(plan.get(new).unwrap().label, "New");
+    }
+
+    #[test]
+    fn moving_about_inside_a_loop_crosses_nothing() {
+        let (mut plan, music, [a, _, c, d, _]) = hymns();
+        let looped = plan.loop_over(a, d).unwrap();
+        // A to between C and D: still in the loop.
+        let to = Place {
+            index: plan.position(c).unwrap(),
+            section: Some(music),
+        };
+        let carried = plan.carry(&[a], to, Carry::Whole).unwrap();
+        assert!(carried.left.is_empty());
+        assert_eq!(over(&plan, looped), ["B", "C", "A", "D"]);
+        // A loop carried by its own line is never crossed.
+        let inner = plan.loop_over(c, a).unwrap();
+        let line = plan.span_steps(inner);
+        assert_eq!(line, [c, plan.steps()[3].id]);
+        let to = Place {
+            index: 1,
+            section: Some(music),
+        };
+        // Before B it is out of the outer loop, which is crossed.
+        assert_eq!(
+            plan.carry(&line, to, Carry::Whole),
+            Err(CarryError::Crosses(vec![looped]))
+        );
+        assert!(plan.carry(&line, to, Carry::CutLoose).is_ok());
+        assert_eq!(over(&plan, inner), ["C", "A"]);
+        assert_eq!(over(&plan, looped), ["B", "D"]);
+    }
+
+    #[test]
+    fn a_step_added_after_a_sections_last_stays_in_that_section() {
+        let (mut plan, music, [_, b, ..]) = hymns();
+        let duet = plan.bracket_over(b, b, "Duet").unwrap();
+        let mut session = crate::Session::new(plan);
+        let new = session.insert_after(Some(b), "New", Action::Note);
+        let plan = session.plan();
+        assert_eq!(holds(plan, duet), ["B", "New"]);
+        assert_eq!(plan.within(plan.position(new).unwrap()), [music, duet]);
+    }
+
+    #[test]
+    fn removing_a_section_with_its_own_end_leaves_what_followed_it_alone() {
+        let (mut plan, music, [a, b, c, d, _]) = hymns();
+        let duet = plan.bracket_over(b, c, "Duet").unwrap();
+        plan.remove(duet);
+        assert_eq!(holds(&plan, music), ["A", "B", "C", "D"]);
+        // A step that was a section's last: it ends at the one before.
+        let duet = plan.bracket_over(b, c, "Duet").unwrap();
+        plan.remove(c);
+        assert_eq!(holds(&plan, duet), ["B"]);
+        assert_eq!(plan.within(plan.position(d).unwrap()), [music]);
+        let _ = a;
     }
 }
