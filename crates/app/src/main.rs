@@ -592,8 +592,9 @@ struct App {
     /// What the look round found as the service was asked to start: it
     /// starts on the next ask, or not at all.
     pub(crate) starting: Option<Vec<String>>,
-    /// Where sound went as the last service started.
-    pub(crate) last_sound: before::LastOutput,
+    /// Where sound went as the last service started, for each set of
+    /// connected screens.
+    pub(crate) last_sound: outputs::Memory,
     /// The place of the running service as it was last written down.
     kept: Option<plans::Running>,
     /// What the decks in the plan play or link to, a list for each slide,
@@ -658,7 +659,7 @@ impl App {
         // The stage feed's first message preloads the reopened plan.
         let layout = store.layout();
         let screens = outputs::Memory::new(&store.data());
-        let last_sound = before::LastOutput::new(&store.data());
+        let last_sound = outputs::Memory::named(&store.data(), "sound-output");
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),

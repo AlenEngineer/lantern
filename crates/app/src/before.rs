@@ -1,11 +1,11 @@
 //! The look round as a service starts: what would go wrong in front of
 //! everyone, said while there is still time. The plan's steps that won't
 //! show, and the sound: muted, at nothing, or going somewhere it didn't
-//! go last time.
+//! go the last time these screens were connected. Sound at home on the
+//! speakers is no reason to warn at church, and the other way round.
 //!
 //! It warns and never refuses. With nothing to say, the service starts.
 
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::ready::Level;
@@ -62,32 +62,6 @@ fn described(inspect: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// Where sound went as the last service started, kept between runs.
-pub struct LastOutput {
-    file: PathBuf,
-}
-
-impl LastOutput {
-    pub fn new(data: &Path) -> LastOutput {
-        LastOutput {
-            file: data.join("sound-output"),
-        }
-    }
-
-    pub fn get(&self) -> Option<String> {
-        let kept = std::fs::read_to_string(&self.file).ok()?;
-        let kept = kept.trim();
-        (!kept.is_empty()).then(|| kept.to_string())
-    }
-
-    pub fn keep(&self, output: &str) -> std::io::Result<()> {
-        if let Some(dir) = self.file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&self.file, format!("{output}\n"))
-    }
-}
-
 /// A step that isn't ready: how bad, its name, and why.
 pub struct Trouble {
     pub level: Level,
@@ -97,8 +71,8 @@ pub struct Trouble {
 
 /// What to say before the service starts, worst first: empty when it can
 /// just start. `sound` is `None` when the plan
-/// plays none or there is no way to ask; `last` is where sound went last
-/// service.
+/// plays none or there is no way to ask; `last` is where sound went as
+/// the last service started with the same screens connected.
 pub fn worries(issues: &[Trouble], sound: Option<&Sound>, last: Option<&str>) -> Vec<String> {
     let mut worries = Vec::new();
     for (level, one, many) in [
@@ -123,9 +97,12 @@ pub fn worries(issues: &[Trouble], sound: Option<&Sound>, last: Option<&str>) ->
             worries.push("The volume is at 0".into());
         }
         match last {
-            Some(last) if !sound.output.is_empty() && last != sound.output => worries.push(
-                format!("Sound goes to {}. Last service: {last}", sound.output),
-            ),
+            Some(last) if !sound.output.is_empty() && last != sound.output => {
+                worries.push(format!(
+                    "Sound goes to {}. Last time with these screens: {last}",
+                    sound.output
+                ))
+            }
             _ => {}
         }
     }
@@ -184,7 +161,7 @@ mod tests {
                 "“Himno 99” won't show: file missing",
                 "“Himno 99” isn't downloaded yet: not downloaded yet",
                 "The sound is muted",
-                "Sound goes to HDMI. Last service: Speakers",
+                "Sound goes to HDMI. Last time with these screens: Speakers",
             ]
         );
     }
@@ -197,14 +174,5 @@ mod tests {
         ];
         let said = worries(&issues, Some(&sound("", 0.0, false)), None);
         assert_eq!(said, ["2 steps won't show", "The volume is at 0"]);
-    }
-
-    #[test]
-    fn keeps_the_last_output() {
-        let dir = tempfile::tempdir().unwrap();
-        let last = LastOutput::new(&dir.path().join("lantern"));
-        assert_eq!(last.get(), None);
-        last.keep("HDMI").unwrap();
-        assert_eq!(last.get().as_deref(), Some("HDMI"));
     }
 }

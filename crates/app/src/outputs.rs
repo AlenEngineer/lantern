@@ -130,8 +130,14 @@ pub struct Memory {
 
 impl Memory {
     pub fn new(data: &Path) -> Memory {
+        Memory::named(data, "screens")
+    }
+
+    /// Something else kept by setup, in the file `name`: one thing for
+    /// each set of screens.
+    pub fn named(data: &Path, name: &str) -> Memory {
         Memory {
-            file: data.join("screens"),
+            file: data.join(name),
         }
     }
 

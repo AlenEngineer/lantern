@@ -602,7 +602,10 @@ app id is `lantern-stage`, the dashboard's `lantern-dashboard`.
 **Start the service** looks round first, and says what it finds over the
 plan, with **Start anyway** and **Not yet**: a step that won't show or
 isn't downloaded, the sound muted or at 0, and sound going to a different
-output than as the last service started. It never refuses, and with
+output than as the last service started with the same screens connected
+(the speakers at home and the projector's sound at church are both
+remembered; which screens are connected is known on Hyprland, and
+elsewhere one output is remembered for all). It never refuses, and with
 nothing to say the service just starts. Sound is asked of PipeWire
 (`wpctl`), and only for a plan that plays any; without `wpctl` nothing is
 said about it.
