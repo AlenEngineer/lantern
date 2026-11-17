@@ -710,8 +710,8 @@ impl App {
             // The rail is as tall as the row and the room under it, so
             // its line meets the next row's.
             let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
-            let row = container(row![rail, apart(row)].height(Length::Shrink))
-                .padding(iced::Padding::default().left(inward));
+            let row =
+                row![self.indent(plan, index, inward), rail, apart(row)].height(Length::Shrink);
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -2119,6 +2119,38 @@ impl App {
         .on_exit(Message::Rail(crate::rail::Act::Left(id)))
         .into();
         (rail, stop)
+    }
+
+    /// The room left of the step at `index`, `inward` wide: a part for
+    /// each section it is in, outermost first. Down each part runs that
+    /// section's own line where it comes again, and a right click there
+    /// opens how often it does: the same as on any loop's line.
+    fn indent<'a>(&self, plan: &Plan, index: usize, inward: f32) -> Element<'a, Message> {
+        let sections: Vec<&Step> = plan
+            .within(index)
+            .into_iter()
+            .filter_map(|id| plan.get(id))
+            .filter(|step| !step.is_loop())
+            .collect();
+        if sections.is_empty() || !self.can_edit() {
+            return Space::new().width(inward).height(Fill).into();
+        }
+        let wide = inward / sections.len() as f32;
+        row(sections.into_iter().map(|section| {
+            let part = Space::new().width(wide).height(Fill);
+            match section.flow.repeat != Repeat::Once {
+                true => mouse_area(part)
+                    .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                        crate::rail::RingOn::Loop(Some(section.id)),
+                    )))
+                    .interaction(mouse::Interaction::Pointer)
+                    .into(),
+                false => part.into(),
+            }
+        }))
+        .width(inward)
+        .height(Fill)
+        .into()
     }
 
     /// Whether the pointer is on the row of `id` and the row can change:

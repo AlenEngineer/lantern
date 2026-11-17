@@ -442,6 +442,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A right click on the line of a section that comes again opens how
+  often it does, anywhere along the line: as on the line of a loop round
+  some steps.
 - The line under the step that is on looked half filled before anything
   had played: it was drawn in a faint stage colour until the stage had
   the step. It is the plan's colour until then.
