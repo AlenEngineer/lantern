@@ -458,7 +458,7 @@ anything else it can be shown, added to the plan or kept on standby.
 **The verse in the corner.** While a Bible passage is on stage, its lower
 right corner says where it is and in which Bible ("Juan 3:17 · RVG"),
 following the verse as you step through. It sits in the margin the text
-leaves free. Settings → Stage → **Verse** hides it (`no_reference = true`
+leaves free. Settings → Default look → **Verse** hides it (`no_reference = true`
 under `[stage]`), for all plans or for one with a look of its own.
 
 **Time on stage.** `!t` finds what shows time: **Clock** (the time of
@@ -471,7 +471,7 @@ anything else; a countdown counts from the moment it goes on stage, stops at
 on when it runs out. Their figures are set several times larger than a
 passage's text, in the stage's font and colours.
 
-**Stage look.** Settings → Stage sets what the audience sees: a background
+**Stage look.** Settings → Default look sets what the audience sees: a background
 colour and image (covering the screen, also shown when the stage is clear;
 blackout stays black), the text colour, the font (type to find an installed
 one), and a size range. Text is set as large as fits between the two sizes,
@@ -579,7 +579,11 @@ of it exactly.
 ### Configuration
 
 **Settings** (Ctrl+, or the gear in the strip) edits the config from the
-app: media folders, Bibles, the Brave key and the colours file. **Save**
+app, and takes the whole window while open. Its list has two groups.
+**This computer**: Screens, Library (media folders, Bibles, the Brave
+key), Appearance (the colours file, glass, motion), Keys, Phone and
+Service. **Every plan**: the Default look. What belongs to one plan is in
+that plan's own panel, not here. **Save**
 (Ctrl+S) writes the file and applies it at once: the folders and Bibles are
 reindexed and the colours reload, no restart. It rewrites the file, so
 comments in it are not kept. Path fields suggest what's on disk as you
@@ -657,8 +661,9 @@ said.
 Where the stage goes depends on the screens connected:
 
 1. **The preferred screen, whenever it is connected.** Settings →
-   **Output** lists the screens (`HDMI-A-1 · Epson · 1920×1080`); picking
-   one and saving keeps it as `stage_output`, by its make and model, so it
+   **Screens** shows each screen with what is on it (the stage, the
+   dashboard) and, under them, **The stage prefers**; picking a screen
+   there and saving keeps it as `stage_output`, by its make and model, so it
    is the same screen on any plug. While it is connected the stage is open
    on it, from the moment it is plugged in and in every mode, showing its
    background until something is shown.
@@ -698,13 +703,15 @@ With a service running, or anything on the projector, Lantern asks the
 desktop not to turn the screens off: a still slide through a sermon is
 not idleness. It asks `org.freedesktop.ScreenSaver` on the session bus,
 which hypridle, KDE and GNOME answer. Nothing is asked while planning,
-and it ends when Lantern does.
+and it ends when Lantern does. Settings → Screens → **Keep the screens
+on** switches this off (`no_keep_awake = true`).
 
 For the length of a service it also asks the notification service to
 hold its popups, with the `Inhibit` that KDE added to
 `org.freedesktop.Notifications`. Most other notification daemons have no
 such call. For those, name a command to run as a service starts and one
-as it ends (or as Lantern closes with one running):
+as it ends (or as Lantern closes with one running), under Settings →
+**Service** or in the config:
 
 ```toml
 on_service_start = "dunstctl set-paused true"
