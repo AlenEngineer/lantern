@@ -428,7 +428,12 @@ impl App {
             {
                 put!(proposed);
             }
-            let inward = INDENT * f32::from(plan.level(index));
+            // A loop round some steps has no row of its own: it is the
+            // curl beside them, and they stay in line with their section.
+            if step.is_loop() {
+                continue;
+            }
+            let inward = INDENT * f32::from(plan.shown_level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
                 // The section that was closing or opening ends here.
@@ -1224,7 +1229,10 @@ impl App {
         let parts = timing
             .sections
             .iter()
-            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .filter(|section| {
+                plan.get(section.id)
+                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+            })
             .map(|section| {
                 let part = |of: Duration, whole: Duration| match whole.is_zero() {
                     true => 1.0,
@@ -1362,7 +1370,10 @@ impl App {
         let parts = timing
             .sections
             .iter()
-            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .filter(|section| {
+                plan.get(section.id)
+                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+            })
             .map(|section| {
                 let planned = match section.phase {
                     Phase::Coming { planned } => planned,
@@ -1741,8 +1752,16 @@ impl App {
                 }
             })
         };
+        let would_above = self
+            .pull
+            .as_ref()
+            .and_then(|pull| pull.would)
+            .is_some_and(|would| {
+                matches!(would, crate::rail::Would::Join { first, last } if first < index && index <= last)
+            });
         let above = line(
-            joined_above.then_some(match place {
+            (joined_above || would_above).then_some(match place {
+                _ if would_above => planned,
                 Place::Done | Place::Current => past,
                 Place::Next => faint,
                 Place::Later => planned,
@@ -1783,7 +1802,24 @@ impl App {
             Place::Next if self.mode != crate::mode::Mode::Run => Place::Later,
             place => place,
         };
+        // A dot held down and pulled to another step's shows what letting
+        // go would do: the rows it is about are lit, with the loop back
+        // up or the line down drawn already. Where no loop can be, in
+        // the colour of what is wrong.
+        let would = self
+            .pull
+            .as_ref()
+            .and_then(|pull| pull.would)
+            .filter(|would| {
+                let (first, last) = would.rows();
+                (first..=last).contains(&index)
+            });
+        let would_ink = match would {
+            Some(crate::rail::Would::Not { .. }) => p.error,
+            _ => planned,
+        };
         let dot = match place {
+            _ if would.is_some() => filled(would_ink, Some(0.3)),
             // Up now: its dot, in a ring that is always there.
             Place::Current => container(filled(
                 live,
@@ -1803,7 +1839,9 @@ impl App {
             Place::Later if goes => filled(planned, None),
             Place::Later => hollow(p.on_surface_variant),
         };
+        let joining = |from: usize, to: usize| matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= from && to <= last);
         let below: Element<'a, Message> = match (joined_below, place, played) {
+            _ if joining(index, index + 1) => line(Some(planned), Fill).into(),
             (false, ..) => Space::new().height(Fill).into(),
             (true, Place::Current, Some(done)) => {
                 let done = (done.clamp(0.0, 1.0) * 100.0).round() as u16;
@@ -1847,17 +1885,71 @@ impl App {
             .into()
         };
         let ahead = matches!(place, Place::Next | Place::Later);
-        let lower: Element<'a, Message> = column![
-            dot,
-            container(below).width(RAIL).height(Fill).center_x(RAIL)
-        ]
-        .width(RAIL)
-        .height(Fill)
-        .align_x(Alignment::Center)
-        .into();
-        let lower = match ahead && after && can_change(step) {
-            true => pressed(lower, step, goes),
-            false => lower,
+        // A right click on the dot or on the line opens the ring of
+        // what that one can do, where the plan can change.
+        let ring = |on: crate::rail::RingOn| Message::Rail(crate::rail::Act::Ring(on));
+        let rings = self.mode == crate::mode::Mode::Plan && self.can_edit();
+        let dot: Element<'a, Message> = match rings {
+            true => mouse_area(dot)
+                .on_right_press(ring(crate::rail::RingOn::Dot(step.id)))
+                .into(),
+            false => dot.into(),
+        };
+        let below: Element<'a, Message> = container(below)
+            .width(RAIL)
+            .height(Fill)
+            .center_x(RAIL)
+            .into();
+        let below: Element<'a, Message> = match rings && after {
+            true => mouse_area(below)
+                .on_right_press(ring(crate::rail::RingOn::Line(step.id)))
+                .into(),
+            false => below,
+        };
+        let lower: Element<'a, Message> = column![dot, below]
+            .width(RAIL)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .into();
+        // A click on it makes the step go on or wait, where that may
+        // change. Held and pulled to another step's dot, it draws a loop
+        // or joins the steps between: while planning only.
+        let toggle = (ahead && after && can_change(step)).then_some(!goes);
+        let pulls = self.mode == crate::mode::Mode::Plan && self.can_edit();
+        let press = Message::Rail(crate::rail::Act::Press {
+            step: step.id,
+            toggle,
+        });
+        // It says what a click does only while nothing is held or open.
+        let quiet = self.pull.is_some() || self.ring.is_some();
+        let lower: Element<'a, Message> = match (toggle, pulls) {
+            (None, false) => lower,
+            (Some(_), _) if quiet => mouse_area(lower)
+                .on_press(press)
+                .interaction(mouse::Interaction::Pointer)
+                .into(),
+            (None, true) => mouse_area(lower)
+                .on_press(press)
+                .interaction(mouse::Interaction::Pointer)
+                .into(),
+            (Some(_), _) => tooltip(
+                mouse_area(lower)
+                    .on_press(press)
+                    .interaction(mouse::Interaction::Pointer),
+                container(
+                    text(if goes {
+                        "Goes straight on. Click to make it wait"
+                    } else {
+                        "Waits for you. Click to make it go straight on"
+                    })
+                    .size(META),
+                )
+                .padding([4, 8])
+                .style(look::tip(p)),
+                tooltip::Position::Right,
+            )
+            .delay(look::TIP_DELAY)
+            .into(),
         };
         let upper: Element<'a, Message> = container(above).center_x(RAIL).into();
         let upper = match before.map(|before| &steps[before]) {
@@ -1866,28 +1958,88 @@ impl App {
             }
             _ => upper,
         };
+        let upper: Element<'a, Message> = match before.map(|before| steps[before].id) {
+            Some(before) if rings => mouse_area(upper)
+                .on_right_press(ring(crate::rail::RingOn::Line(before)))
+                .into(),
+            _ => upper,
+        };
+        // The rail says when the pointer is on it, for a dot pulled here.
+        let id = step.id;
         let rail = column![upper, lower].width(RAIL).height(Fill);
         // Beside it, the line that curls back from the last step of
         // something that repeats to its first. Every row keeps its room,
         // so the dots stay in one line down the plan.
-        let curl: Element<'a, Message> = match curl_at(plan, index) {
-            Some(piece) => {
+        let pulled = match would {
+            Some(
+                crate::rail::Would::Loop { first, last } | crate::rail::Would::Not { first, last },
+            ) => Some((
+                match index {
+                    at if at == first => look::Curl::Into,
+                    at if at == last => look::Curl::Out,
+                    _ => look::Curl::Past,
+                },
+                None,
+            )),
+            _ => None,
+        };
+        let planned = match pulled {
+            Some(_) => would_ink,
+            None => planned,
+        };
+        let curl: Element<'a, Message> = match pulled.or_else(|| curl_at(plan, index)) {
+            Some((piece, count)) => {
                 let under: Element<'a, Message> = match piece {
                     look::Curl::Out => Space::new().height(Fill).into(),
                     _ => look::curl(look::Curl::Down, planned).into(),
                 };
-                column![look::curl(piece, planned), under]
+                let pieces = column![look::curl(piece, planned), under]
                     .width(look::CURL_WIDE)
-                    .height(Fill)
-                    .into()
+                    .height(Fill);
+                // A loop with no heading says how often on its own line.
+                match count {
+                    Some((words, low)) => stack![
+                        pieces,
+                        container(
+                            container(
+                                text(words)
+                                    .size(9.0)
+                                    .font(BOLD)
+                                    .color(planned)
+                                    .wrapping(text::Wrapping::None)
+                            )
+                            .style(move |_| container::Style::default().background(p.surface))
+                        )
+                        .width(look::CURL_WIDE)
+                        .height(Fill)
+                        .align_y(match low {
+                            true => iced::alignment::Vertical::Bottom,
+                            false => iced::alignment::Vertical::Center,
+                        })
+                    ]
+                    .into(),
+                    None => pieces.into(),
+                }
             }
             None => Space::new().width(look::CURL_WIDE).into(),
         };
         // A width of its own: laid out after the step beside it, a row
         // that takes what it needs would be left none.
-        row![curl, rail]
-            .width(look::CURL_WIDE + RAIL)
-            .height(Fill)
+        // A right click on the curl opens the ring of what repeats.
+        let curl: Element<'a, Message> = match repeating(plan, index) {
+            Some((group, ..)) if rings => mouse_area(curl)
+                .on_right_press(ring(crate::rail::RingOn::Loop(
+                    group.map(|at| steps[at].id),
+                )))
+                .interaction(mouse::Interaction::Pointer)
+                .into(),
+            _ => curl,
+        };
+        // The rail says when the pointer is on it, for a dot pulled here
+        // and for a ring opened here.
+        mouse_area(row![curl, rail].width(look::CURL_WIDE + RAIL).height(Fill))
+            .on_enter(Message::Rail(crate::rail::Act::Over(id)))
+            .on_exit(Message::Rail(crate::rail::Act::Left(id)))
             .into()
     }
 
@@ -2404,28 +2556,60 @@ fn ago(elapsed: Duration) -> String {
 }
 
 /// A dragged step lands indented inside a section; a section never does.
-/// The piece of the curl beside the step at `index`, when it is in
-/// something that repeats: the nearest section around it that does, or
-/// else the plan. `None` for a step in nothing that repeats, and for the
-/// only step of something that does (its own mark says so).
-fn curl_at(plan: &Plan, index: usize) -> Option<look::Curl> {
+/// What repeats round the step at `index`: the nearest section or loop
+/// that does (where it is in the plan), or else the plan (`None`), with
+/// where what it holds starts and ends.
+fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
     let steps = plan.steps();
-    let (start, end) = plan
-        .within(index)
+    plan.within(index)
         .into_iter()
         .rev()
         .filter_map(|id| plan.position(id))
         .find(|at| steps[*at].flow.repeat != Repeat::Once)
-        .map(|at| (at + 1, plan.group_end(at)))
-        .or((plan.flow.repeat != Repeat::Once).then_some((0, steps.len())))?;
-    let mut inside = (start..end).filter(|at| !steps[*at].is_section());
-    let first = inside.next()?;
-    let last = inside.next_back()?;
-    Some(match index {
+        .map(|at| (Some(at), at + 1, plan.group_end(at)))
+        .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))
+}
+
+/// The piece of the curl beside the step at `index`, when it is in
+/// something that repeats: the nearest section around it that does, or
+/// else the plan. `None` for a step in nothing that repeats, and for the
+/// only step of something that does (its own mark says so). With it,
+/// for a loop that has no heading, how often it comes, on the row that
+/// says so, and whether at that row's foot.
+fn curl_at(plan: &Plan, index: usize) -> Option<(look::Curl, Option<(String, bool)>)> {
+    let steps = plan.steps();
+    let (group, start, end) = repeating(plan, index)?;
+    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
+    // With something in it that repeats by itself, its own curl would be
+    // drawn in pieces round that one's: it is left to its heading to say.
+    if inside
+        .iter()
+        .any(|at| repeating(plan, *at).map(|(inner, ..)| inner) != Some(group))
+    {
+        return None;
+    }
+    let (first, last) = (*inside.first()?, *inside.last()?);
+    if first == last {
+        return None;
+    }
+    let piece = match index {
         at if at == first => look::Curl::Into,
         at if at == last => look::Curl::Out,
         _ => look::Curl::Past,
-    })
+    };
+    // A loop drawn round some steps has no heading to say how often it
+    // comes: its line says, half way down. With an even number of steps
+    // that is between two, at the foot of the upper one.
+    let low = inside.len().is_multiple_of(2);
+    let count = group
+        .map(|at| &steps[at])
+        .filter(|group| group.is_loop() && index == inside[(inside.len() - 1) / 2])
+        .and_then(|group| match group.flow.repeat {
+            Repeat::Until(_) => Some("◷".to_string()),
+            repeat => repeat_words(repeat),
+        })
+        .map(|words| (words, low));
+    Some((piece, count))
 }
 
 /// How often something comes, in a few characters; `None` for once.
@@ -2647,9 +2831,9 @@ mod tests {
         // Nothing repeats: no curl.
         assert_eq!(curl_at(&plan, 1), None);
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
-        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
-        assert_eq!(curl_at(&plan, 2), Some(Curl::Past));
-        assert_eq!(curl_at(&plan, 3), Some(Curl::Out));
+        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
+        assert_eq!(curl_at(&plan, 2), Some((Curl::Past, None)));
+        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
         assert_eq!(curl_at(&plan, 5), None, "Sermon doesn't repeat");
         // One step has nothing to curl round.
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever;
@@ -2658,7 +2842,19 @@ mod tests {
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
         plan.flow.repeat = Repeat::Forever;
-        assert_eq!(curl_at(&plan, 1), Some(Curl::Into));
-        assert_eq!(curl_at(&plan, 5), Some(Curl::Out));
+        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
+        assert_eq!(curl_at(&plan, 5), Some((Curl::Out, None)));
+        // A loop drawn round two steps has no heading: its line says how
+        // often, between the two.
+        plan.flow.repeat = Repeat::Once;
+        let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
+        plan.loop_over(a, b).unwrap();
+        // Music, the loop, A, B, C.
+        assert_eq!(
+            curl_at(&plan, 2),
+            Some((Curl::Into, Some(("×2".to_string(), true))))
+        );
+        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
+        assert_eq!(curl_at(&plan, 4), None, "C is out of it");
     }
 }

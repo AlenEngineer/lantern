@@ -524,6 +524,33 @@ mod tests {
     }
 
     #[test]
+    fn a_loop_round_some_steps_comes_again_and_what_follows_is_out_of_it() {
+        // Music: A B D, Sermon: C. A loop round A and B, twice.
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| {
+            let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
+            let d = plan.insert(3, "D", Action::Blank);
+            let looped = plan.loop_over(b, a).expect("a loop round A and B");
+            assert!(plan.get(looped).unwrap().is_loop());
+            assert_eq!(
+                plan.within(plan.position(d).unwrap()),
+                [music],
+                "D is out of it"
+            );
+        });
+        assert_eq!(walk(&mut session, 7), "A B A B D C -");
+        // Music twice too: the loop is gone round again each time.
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| {
+            let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
+            plan.insert(3, "D", Action::Blank);
+            plan.loop_over(a, b);
+            plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        });
+        assert_eq!(walk(&mut session, 12), "A B A B D A B A B D C -");
+    }
+
+    #[test]
     fn a_step_that_repeats_comes_again_before_its_section_does() {
         let (mut session, music, _) = two_sections();
         session.edit(|plan| {

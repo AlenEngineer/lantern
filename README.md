@@ -142,11 +142,32 @@ a second line with what can be done to it.
 
 The rail down the left of the steps shows how the plan moves. A filled dot
 with a line on to the next step goes on by itself; a hollow dot waits for
-you. Click under a dot to join it to the next step or part them. In a
+you. Click a dot, or the line under it, to join it to the next step or
+part them. In a
 service, grey is past, the stage's colour is on the projector now (its
 line fills as it plays), and a ring in that colour is next. Beside the steps of a
 section that repeats, a dotted line curls back from its last step to its
 first.
+
+While planning, the rail is worked by hand. **Pull a dot up** to the dot
+of a step above it and a loop is drawn from the one back to the other:
+those steps come twice, until you say otherwise. The loop has no name and
+no heading; it is the curl beside its steps, which says how often it comes
+(`×2`). Round all a section holds, it is the section that repeats. A loop
+stays inside one section: pulled across a heading it turns red and nothing
+happens. **Pull a dot down** to a step below and every step between goes
+on by itself into the next. A loop follows its steps: moved or removed,
+its last step hands the end to the one before, and a loop left empty is
+gone.
+
+**Right click** on the rail opens a ring of what that one thing can do. On
+a dot: go straight on, come again, take it out. On the line between two
+steps: go straight on, or wait here. On a curl: come again, in a drawn
+order, all of it by itself, or no loop. Where something comes again, an
+outer row of the ring says how often: twice, three times, until you move
+on, or (the clock) another number or a time of day. A step has no order
+to draw, so its ring doesn't offer one. Esc or a click elsewhere closes
+the ring.
 
 In a service the row over the plan shows how long it has run, the time
 it is held against, how far it runs late (↑) or early (↓), and when it is

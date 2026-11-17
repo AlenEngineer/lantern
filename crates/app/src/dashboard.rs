@@ -333,6 +333,46 @@ impl App {
                     .y(drag.at.y + 6.0 + 6.0 * (1.0 - lift)),
             );
         }
+        // A dot pulled along the rail says what letting go would do, in
+        // a mark beside the pointer.
+        if let Some(pull) = self.pull.as_ref().filter(|pull| pull.moving)
+            && let Some(would) = pull.would
+        {
+            use crate::rail::Would;
+            let (ink, mark): (Color, Element<'_, Message>) = match would {
+                Would::Loop { .. } => (
+                    p.primary,
+                    row![
+                        look::icon(Icon::Repeat, 14.0, p.primary),
+                        text("×2").size(META).font(BOLD).color(p.primary)
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center)
+                    .into(),
+                ),
+                Would::Join { .. } => (p.primary, look::icon(Icon::Joined, 14.0, p.primary).into()),
+                Would::Not { .. } => (
+                    p.error,
+                    text("⊘").size(BODY).font(BOLD).color(p.error).into(),
+                ),
+            };
+            let ground = crate::motion::blend(p.surface_container_highest, ink, 0.2);
+            let chip = container(mark)
+                .padding([4, 10])
+                .style(move |_| container::Style {
+                    background: Some(ground.into()),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                });
+            layers = layers.push(pin(chip).x(pull.at.x + 16.0).y(pull.at.y - 30.0));
+        }
+        // The ring open on the rail, over everything.
+        for layer in self.ring_layers() {
+            layers = layers.push(layer);
+        }
         layers.into()
     }
 

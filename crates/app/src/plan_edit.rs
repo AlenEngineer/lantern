@@ -44,6 +44,7 @@ impl NewStep {
                 Action::Section {
                     budget: None,
                     depth: 0,
+                    through: None,
                 },
             ),
             NewStep::LiveSlot => (
@@ -331,9 +332,10 @@ impl App {
         let Some(start) = plan.position(section) else {
             return Duration::ZERO;
         };
-        plan.steps()[start + 1..]
+        // All it holds, the steps of what is in it too.
+        plan.steps()[start + 1..plan.group_end(start)]
             .iter()
-            .take_while(|s| !s.is_section())
+            .filter(|s| !s.is_section())
             .map(|s| self.estimate(s).length)
             .sum()
     }

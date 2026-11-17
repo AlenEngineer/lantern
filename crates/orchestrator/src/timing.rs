@@ -390,7 +390,7 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
         .iter()
         .enumerate()
         .filter_map(|(i, step)| match step.action {
-            Action::Section { budget, depth } => Some((i, step, budget, depth)),
+            Action::Section { budget, depth, .. } => Some((i, step, budget, depth)),
             _ => None,
         });
     for (start, step, budget, depth) in markers {
