@@ -110,6 +110,16 @@ pub enum Needs {
     Images(Vec<String>),
 }
 
+/// Showing `resource` plays sound: a video, a sound file.
+pub fn has_sound(resource: &Resource) -> bool {
+    matches!(
+        Loader::for_resource(resource),
+        Ok(Some(
+            Loader::Video(_) | Loader::Audio(_) | Loader::Youtube(_)
+        ))
+    )
+}
+
 /// What showing `resource` takes, or why the stage can't show it.
 pub fn needs(resource: &Resource) -> Result<Needs, String> {
     Ok(match Loader::for_resource(resource)? {

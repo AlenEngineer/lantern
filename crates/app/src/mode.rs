@@ -269,6 +269,7 @@ impl App {
     /// The Plan or Live button of the switch. Run is entered by starting
     /// the service and left by ending it.
     pub(crate) fn set_mode(&mut self, to: Mode) -> Task<Message> {
+        self.starting = None;
         match (self.mode, to) {
             (from, to) if from == to => {}
             (Mode::Run, _) | (_, Mode::Run) => {}
@@ -297,6 +298,44 @@ impl App {
         if !matches!(self.plans.mode, plans::Mode::Steps) {
             self.plans.cancel();
             self.plans.mode = plans::Mode::Steps;
+        }
+        // The look round, once: what it finds is said, and the next ask
+        // starts the service anyway.
+        let sound = plan
+            .steps()
+            .iter()
+            .any(|step| match &step.action {
+                lantern_engine::Action::Show { resource } => {
+                    step.sound.is_some() || crate::stage::has_sound(resource)
+                }
+                _ => false,
+            })
+            .then(crate::before::sound)
+            .flatten();
+        if self.starting.take().is_none() {
+            let issues: Vec<crate::before::Trouble> = self
+                .issues(&plan)
+                .into_iter()
+                .map(|issue| crate::before::Trouble {
+                    level: issue.level,
+                    label: plan
+                        .get(issue.step)
+                        .map_or_else(String::new, |step| step.label.clone()),
+                    what: issue.what,
+                })
+                .collect();
+            let last = self.last_sound.get();
+            let worries = crate::before::worries(&issues, sound.as_ref(), last.as_deref());
+            if !worries.is_empty() {
+                log(format!("mode: before the service starts: {worries:?}"));
+                self.starting = Some(worries);
+                return Task::none();
+            }
+        }
+        if let Some(sound) = sound.filter(|sound| !sound.output.is_empty())
+            && let Err(error) = self.last_sound.keep(&sound.output)
+        {
+            log(format!("mode: the sound output was not kept: {error}"));
         }
         self.editing = None;
         self.adding = None;
@@ -536,6 +575,44 @@ impl App {
     /// other children keep their places.
     pub(crate) fn mode_note(&self) -> Element<'_, Message> {
         let p = self.palette;
+        // The look round found something: what, and the two ways on.
+        if let Some(worries) = &self.starting {
+            let mut card = column![
+                text("Before you start")
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.tertiary)
+            ]
+            .spacing(6);
+            for worry in worries {
+                card = card.push(text(worry.clone()).size(META).color(p.on_surface));
+            }
+            card = card.push(
+                row![
+                    pill(
+                        p,
+                        "Start anyway",
+                        Tone::Live,
+                        PILL,
+                        Some(Message::StartService)
+                    )
+                    .width(Fill),
+                    pill(p, "Not yet", Tone::Plain, PILL, Some(Message::NotYet)).width(Fill),
+                ]
+                .spacing(6),
+            );
+            return container(card)
+                .padding([8, 10])
+                .style(move |_| container::Style {
+                    background: Some(p.surface_container_highest.into()),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                })
+                .into();
+        }
         // A service cut short: where it was, and the way back to it.
         if let Some((step, frame)) = self.resuming {
             let label = self

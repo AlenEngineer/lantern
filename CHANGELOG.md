@@ -259,6 +259,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   notification service can be asked (`Inhibit`, as in KDE). For the
   others, `on_service_start` and `on_service_end` in the config name a
   command to run as a service starts and as it ends.
+- A look round as a service starts. If a step of the plan won't show, the
+  sound is muted or at 0, or sound goes to a different output than last
+  service, **Start the service** says so first, with **Start anyway** and
+  **Not yet**. With nothing to say, the service starts as before.
 
 ### Fixed
 

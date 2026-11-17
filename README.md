@@ -597,6 +597,16 @@ chosen one, and on Wayland only the compositor places windows, so Lantern
 asks Hyprland (`hyprctl`). Elsewhere, move the window yourself: the stage's
 app id is `lantern-stage`, the dashboard's `lantern-dashboard`.
 
+### Before it starts
+
+**Start the service** looks round first, and says what it finds over the
+plan, with **Start anyway** and **Not yet**: a step that won't show or
+isn't downloaded, the sound muted or at 0, and sound going to a different
+output than as the last service started. It never refuses, and with
+nothing to say the service just starts. Sound is asked of PipeWire
+(`wpctl`), and only for a plan that plays any; without `wpctl` nothing is
+said about it.
+
 ### While it shows
 
 With a service running, or anything on the projector, Lantern asks the
