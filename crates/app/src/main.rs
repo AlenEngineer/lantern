@@ -16,6 +16,8 @@ mod dashboard;
 mod deck;
 mod desktop;
 mod drag;
+#[allow(dead_code)] // the choosing; the panel that asks for it comes next
+mod fill;
 mod fit;
 mod keys;
 mod length;
