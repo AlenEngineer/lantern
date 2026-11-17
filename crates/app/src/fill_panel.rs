@@ -16,7 +16,7 @@ use lantern_engine::{Action, Kind, Resource, ResourceId, StepId};
 use crate::dashboard::hinted;
 use crate::fill::{Chosen, Fit, Order, Thing, Wish};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
-use crate::{App, Message, length};
+use crate::{App, Message, drawn, length};
 
 /// The kinds of file a fill can take, in the order their switches are.
 const KINDS: [Kind; 3] = [Kind::Video, Kind::Audio, Kind::Image];
@@ -602,7 +602,7 @@ impl App {
         let p = self.palette;
         let edit = |edit: FillEdit| Message::Fill(edit);
         let today = chrono::Local::now().date_naive();
-        let (planned, _) = self.section_room(fill.section);
+        let (planned, budget) = self.section_room(fill.section);
         // Over the rows: what is there, what is proposed, how far off.
         let mut sums = row![
             text(length::clock(planned))
@@ -634,7 +634,45 @@ impl App {
                     .color(p.tertiary),
             );
         }
-        let mut rows = column![sums].spacing(4);
+        // Over them, as a bar: what is there, what is proposed (hatched:
+        // not added yet), and what room is left of the section's time.
+        let whole = budget
+            .unwrap_or_default()
+            .max(planned + fill.chosen.total)
+            .as_secs_f32()
+            .max(1.0);
+        let part = |of: Duration| (of.as_secs_f32() / whole * 1000.0).round() as u16;
+        let (there, proposed) = (part(planned), part(fill.chosen.total));
+        let solid = |portion: u16, colour: iced::Color| {
+            container(Space::new())
+                .width(Length::FillPortion(portion.max(1)))
+                .height(Fill)
+                .style(move |_| container::Style::default().background(colour))
+        };
+        let mut parts = row![].height(8);
+        if there > 0 {
+            parts = parts.push(solid(there, p.primary));
+        }
+        if proposed > 0 {
+            parts = parts.push(
+                drawn::hatched(
+                    iced::Color {
+                        a: 0.75,
+                        ..p.primary
+                    },
+                    iced::Color {
+                        a: 0.4,
+                        ..p.primary
+                    },
+                )
+                .width(Length::FillPortion(proposed))
+                .height(Fill),
+            );
+        }
+        if there + proposed < 1000 {
+            parts = parts.push(solid(1000 - there - proposed, p.surface_container_highest));
+        }
+        let mut rows = column![parts, sums].spacing(6);
         for pick in &fill.picks {
             let kept = fill.kept.contains(&pick.id);
             let times = self.usage.times(&pick.id);
@@ -658,9 +696,10 @@ impl App {
             }
             .map(length::clock)
             .unwrap_or_default();
-            rows = rows.push(
+            rows = rows.push(drawn::dashed(
                 container(
                     row![
+                        drawn::dashed_dot(10.0, p.primary),
                         container(
                             text(pick.title.clone())
                                 .size(BODY)
@@ -700,19 +739,13 @@ impl App {
                     .spacing(8)
                     .align_y(Alignment::Center),
                 )
-                .padding([6, 8])
-                .style(move |_| container::Style {
-                    border: iced::Border {
-                        color: iced::Color {
-                            a: 0.5,
-                            ..p.primary
-                        },
-                        width: 1.0,
-                        radius: 12.0.into(),
-                    },
-                    ..container::Style::default()
-                }),
-            );
+                .padding([6, 8]),
+                iced::Color {
+                    a: 0.45,
+                    ..p.primary
+                },
+                12.0,
+            ));
         }
         let some = !fill.picks.is_empty();
         rows = rows.push(

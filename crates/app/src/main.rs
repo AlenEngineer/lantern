@@ -16,6 +16,7 @@ mod dashboard;
 mod deck;
 mod desktop;
 mod drag;
+mod drawn;
 mod fill;
 mod fill_panel;
 mod fit;
