@@ -345,6 +345,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   picks what comes to a time, a number of things, or both, within a
   margin that may run under, over, either way or not at all; in the
   order held, drawn at random, or with what is used most likeliest.
+- Lantern keeps what went on the projector in a service or in Live, and
+  on which day (`usage` in the data folder, on this machine only), so
+  that filling a section can prefer what is usually used.
 
 ### Fixed
 
