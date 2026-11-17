@@ -35,6 +35,10 @@ pub enum Act {
     /// Takes a loop away: one drawn round some steps, or how often a
     /// section or the plan (`None`) comes.
     Unloop(Option<StepId>),
+    /// How something that comes again until a time ends when it comes.
+    Ends(Option<StepId>, lantern_engine::Ending),
+    /// The pointer is over something else a ring opens from, or left it.
+    Track(bool),
 }
 
 /// What a ring is about.
@@ -57,9 +61,231 @@ pub struct Ring {
 
 /// How big a ring's buttons are, and the ones of its outer row.
 const PETAL: f32 = 34.0;
-const COUNT: f32 = 30.0;
+/// How tall the pills are that say how often.
+const PILL: f32 = 30.0;
 
 impl App {
+    /// How often `of` comes, beside the ring's repeat button: a number
+    /// of times with fewer and more, until you move on, or until a time
+    /// of day typed there. With a time, under it: how it ends when the
+    /// time comes, and what that comes to.
+    fn how_often<'a>(
+        &self,
+        plan: &Plan,
+        of: Option<StepId>,
+        flow: lantern_engine::Flow,
+    ) -> Element<'a, Message> {
+        use lantern_engine::Ending;
+        let p = self.palette;
+        let ground = move |lit: bool| match lit {
+            true => p.primary,
+            false => crate::motion::blend(p.surface_container_highest, p.on_surface, 0.1),
+        };
+        let ink = move |lit: bool| if lit { p.on_primary } else { p.on_surface };
+        let pill = move |lit: bool| {
+            move |_: &iced::Theme| container::Style {
+                background: Some(ground(lit).into()),
+                border: iced::Border {
+                    radius: (PILL / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::BLACK.scale_alpha(0.45),
+                    offset: iced::Vector::new(0.0, 2.0),
+                    blur_radius: 8.0,
+                },
+                ..container::Style::default()
+            }
+        };
+        // A button inside a pill: no ground of its own.
+        let bare = move |lit: bool, words: String, message: Message| {
+            button(text(words).size(META).font(BOLD).color(ink(lit)))
+                .padding([0, 8])
+                .height(PILL)
+                .on_press(message)
+                .style(move |_, status| button::Style {
+                    background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                        .then(|| p.on_surface.scale_alpha(0.12).into()),
+                    border: iced::Border {
+                        radius: (PILL / 2.0).into(),
+                        ..iced::Border::default()
+                    },
+                    ..button::Style::default()
+                })
+        };
+        // A number of times, with fewer and more.
+        let (times, counted) = match flow.repeat {
+            Repeat::Times(times) => (times, true),
+            _ => (2, false),
+        };
+        let set = |times: u16| Message::SetRepeat(of, Repeat::Times(times));
+        let stepper = hinted(
+            p,
+            container(
+                iced::widget::row![
+                    bare(counted, "−".into(), set(times.saturating_sub(1).max(2))),
+                    bare(counted, format!("×{times}"), set(times)),
+                    bare(counted, "+".into(), set(times.saturating_add(1).min(99))),
+                ]
+                .align_y(iced::Alignment::Center),
+            )
+            .style(pill(counted)),
+            "A number of times".to_string(),
+            tooltip::Position::Top,
+        );
+        let forever = flow.repeat == Repeat::Forever;
+        let endless = hinted(
+            p,
+            container(bare(
+                forever,
+                "∞".into(),
+                Message::SetRepeat(of, Repeat::Forever),
+            ))
+            .style(pill(forever)),
+            "Until you move on".to_string(),
+            tooltip::Position::Top,
+        );
+        // A time of day, typed here: it holds once it reads as one.
+        let time = match flow.repeat {
+            Repeat::Until(time) => Some(time),
+            _ => None,
+        };
+        let shown = match (&self.repeat_until, time) {
+            (typed, _) if !typed.is_empty() => typed.clone(),
+            (_, Some(time)) => time.to_string(),
+            _ => String::new(),
+        };
+        let timed = time.is_some();
+        let field = iced::widget::text_input("10:30", &shown)
+            .on_input(Message::RepeatUntil)
+            .size(META)
+            .font(BOLD)
+            .padding(0)
+            .width(40)
+            .style(move |_, _| iced::widget::text_input::Style {
+                background: iced::Color::TRANSPARENT.into(),
+                border: iced::Border::default(),
+                icon: ink(timed),
+                placeholder: ink(timed).scale_alpha(0.5),
+                value: ink(timed),
+                selection: p.on_surface.scale_alpha(0.3),
+            });
+        let until = hinted(
+            p,
+            container(
+                iced::widget::row![look::icon(Icon::Clock, 14.0, ink(timed)), field]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
+            )
+            .padding([0, 10])
+            .center_y(PILL)
+            .style(pill(timed)),
+            "Until a time of day, such as 10:30".to_string(),
+            tooltip::Position::Top,
+        );
+        let mut rows = iced::widget::column![
+            iced::widget::row![stepper, endless, until]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+        ]
+        .spacing(6);
+        let Some(time) = time else {
+            return rows.into();
+        };
+        // How it ends when the time comes: there and then, with the step
+        // that is on, or with the round.
+        let ends = |ending: Ending, icon: Icon, about: &str| {
+            let lit = flow.ends == ending;
+            crate::widgets::place(
+                p,
+                look::icon(icon, 14.0, ink(lit)),
+                lit,
+                6,
+                about,
+                Message::Rail(Act::Ends(of, ending)),
+            )
+        };
+        let ending = crate::widgets::places(
+            p,
+            [
+                ends(
+                    Ending::Sharp,
+                    Icon::Stop,
+                    "Ends at the time, cutting off what is on",
+                ),
+                ends(
+                    Ending::Step,
+                    Icon::SkipNext,
+                    "Ends when the step that is on ends",
+                ),
+                ends(
+                    Ending::Round,
+                    Icon::Replay,
+                    "Ends when once round is finished",
+                ),
+            ],
+            PILL / 2.0,
+        )
+        .width(112);
+        // What that comes to.
+        let said = |words: String, colour: iced::Color, bold: bool| {
+            text(words)
+                .size(META)
+                .font(if bold { BOLD } else { look::MEDIUM })
+                .color(colour)
+        };
+        let lands = lantern_engine::timing::lands(plan, of, time, flow.ends, &|step| {
+            self.loaded_length(step)
+        });
+        let mut readout = iced::widget::row![]
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+        match lands.map(|lands| (lands.round, lands.ends)) {
+            Some((_, Some(ends))) => {
+                readout = readout
+                    .push(said(format!("×{}", ends.rounds), p.primary, true))
+                    .push(said(format!("→ {}", ends.at), p.on_surface, false));
+                if ends.over >= std::time::Duration::from_secs(1) {
+                    readout = readout.push(said(
+                        format!("+{}", crate::length::clock(ends.over)),
+                        p.tertiary,
+                        true,
+                    ));
+                }
+                if let Some((_, into)) = ends.cut {
+                    readout = readout
+                        .push(look::icon(Icon::Stop, 12.0, p.tertiary))
+                        .push(said(crate::length::clock(into), p.tertiary, true));
+                }
+            }
+            // No start time to count from: only how long once round is.
+            Some((round, None)) => {
+                readout = readout
+                    .push(look::icon(Icon::Repeat, 12.0, p.on_surface_variant))
+                    .push(said(crate::length::clock(round), p.on_surface, false))
+                    .push(said("?".into(), p.on_surface_variant, true));
+            }
+            None => {}
+        }
+        let readout = container(readout)
+            .padding([0, 12])
+            .center_y(PILL)
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.into()),
+                border: iced::Border {
+                    radius: (PILL / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
+        rows = rows.push(
+            iced::widget::row![ending, readout]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
+        );
+        rows.into()
+    }
+
     /// The ring that is open, as layers over the dashboard: something
     /// behind it to press to close it, then each of its buttons where it
     /// goes. Empty when none is open, or what it was about is gone.
@@ -86,45 +312,14 @@ impl App {
         let glyph = |icon: Icon, lit: bool| -> Element<'static, Message> {
             look::icon(icon, 16.0, ink(lit)).into()
         };
-        let word = |words: &'static str, lit: bool| -> Element<'static, Message> {
-            text(words).size(META).font(BOLD).color(ink(lit)).into()
+        // Where a button of the ring sits, from the ring's middle.
+        let place = |angle: f32, far: f32| {
+            let (sin, cos) = angle.to_radians().sin_cos();
+            Point::new(middle.x + far * out * cos, middle.y + far * out * sin)
         };
-        // How often: an outer row of the ring, round the repeat button.
-        let counts = |of: Option<StepId>, repeat: Repeat, from: f32, far: f32| -> Vec<Petal> {
-            let mut petals = Vec::new();
-            let choices: [(&'static str, Repeat, &str); 3] = [
-                ("×2", Repeat::Times(2), "Twice"),
-                ("×3", Repeat::Times(3), "Three times"),
-                ("∞", Repeat::Forever, "Until you move on"),
-            ];
-            for (n, (words, choice, about)) in choices.into_iter().enumerate() {
-                let lit = repeat == choice;
-                petals.push(petal(
-                    from + 20.0 * n as f32,
-                    far,
-                    COUNT,
-                    lit,
-                    word(words, lit),
-                    about,
-                    Some(Message::SetRepeat(of, choice)),
-                ));
-            }
-            // Another number, or until a time: typed where the choices are.
-            let other = !matches!(
-                repeat,
-                Repeat::Once | Repeat::Times(2 | 3) | Repeat::Forever
-            );
-            petals.push(petal(
-                from + 60.0,
-                far,
-                COUNT,
-                other,
-                glyph(Icon::Clock, other),
-                "Another number of times, or until a time",
-                Some(Message::RepeatPanel(of)),
-            ));
-            petals
-        };
+        // What comes again, and where its button is: how often is set
+        // beside it.
+        let mut again_at: Option<(Option<StepId>, lantern_engine::Flow, Point)> = None;
         match ring.on {
             RingOn::Dot(id) => {
                 let Some(at) = plan.position(id) else {
@@ -134,7 +329,7 @@ impl App {
                 let goes = plan.goes_on(at);
                 let again = step.flow.repeat != Repeat::Once;
                 petals.push(petal(
-                    -60.0,
+                    -30.0,
                     46.0,
                     PETAL,
                     goes,
@@ -149,7 +344,7 @@ impl App {
                         .then_some(Message::SetAdvance(id, !goes)),
                 ));
                 petals.push(petal(
-                    0.0,
+                    30.0,
                     46.0,
                     PETAL,
                     again,
@@ -168,17 +363,8 @@ impl App {
                         },
                     )),
                 ));
-                petals.push(petal(
-                    60.0,
-                    46.0,
-                    PETAL,
-                    false,
-                    word("✕", false),
-                    "Take it out of the plan",
-                    Some(Message::Remove(id)),
-                ));
                 if again {
-                    petals.extend(counts(Some(id), step.flow.repeat, -30.0, 90.0));
+                    again_at = Some((Some(id), step.flow, place(30.0, 46.0)));
                 }
             }
             RingOn::Line(id) => {
@@ -206,34 +392,37 @@ impl App {
                 ));
             }
             RingOn::Loop(of) => {
-                let (flow, all_go) = match of {
+                let (flow, all_go, drawn) = match of {
                     Some(id) => {
                         let Some(step) = plan.get(id) else {
                             return Vec::new();
                         };
-                        (step.flow, step.advance == Some(true))
+                        (step.flow, step.advance == Some(true), step.is_loop())
                     }
-                    None => (plan.flow, plan.advance),
+                    None => (plan.flow, plan.advance, false),
                 };
                 let again = flow.repeat != Repeat::Once;
                 petals.push(petal(
-                    -72.0,
+                    -48.0,
                     50.0,
                     PETAL,
                     again,
                     glyph(Icon::Repeat, again),
-                    "Comes again",
-                    Some(Message::SetRepeat(
-                        of,
-                        if again {
-                            Repeat::Once
-                        } else {
-                            Repeat::Times(2)
-                        },
-                    )),
+                    if again {
+                        "Comes again. Press for once"
+                    } else {
+                        "Come again"
+                    },
+                    // A loop drawn round some steps is nothing but that
+                    // it comes again: once, it is gone.
+                    Some(match (again, drawn) {
+                        (true, true) => Message::Rail(Act::Unloop(of)),
+                        (true, false) => Message::SetRepeat(of, Repeat::Once),
+                        (false, _) => Message::SetRepeat(of, Repeat::Times(2)),
+                    }),
                 ));
                 petals.push(petal(
-                    -24.0,
+                    0.0,
                     50.0,
                     PETAL,
                     flow.shuffle,
@@ -242,7 +431,7 @@ impl App {
                     Some(Message::SetShuffle(of, !flow.shuffle)),
                 ));
                 petals.push(petal(
-                    24.0,
+                    48.0,
                     50.0,
                     PETAL,
                     all_go,
@@ -253,19 +442,19 @@ impl App {
                         None => Message::PlanAdvance(!all_go),
                     }),
                 ));
-                petals.push(petal(
-                    72.0,
-                    50.0,
-                    PETAL,
-                    false,
-                    word("✕", false),
-                    "No loop",
-                    Some(Message::Rail(Act::Unloop(of))),
-                ));
                 if again {
-                    petals.extend(counts(of, flow.repeat, -78.0, 98.0));
+                    again_at = Some((of, flow, place(-48.0, 50.0)));
                 }
             }
+        }
+        if let Some((of, flow, at)) = again_at {
+            layers.push(
+                // Clear of the ring's buttons, level with the repeat one.
+                pin(self.how_often(&plan, of, flow))
+                    .x((at.x + PETAL / 2.0 + 8.0).max(middle.x + 50.0 + PETAL / 2.0 + 8.0))
+                    .y(at.y - PILL / 2.0)
+                    .into(),
+            );
         }
         for petal in petals {
             let Petal {

@@ -352,12 +352,9 @@ enum Message {
     SetRepeat(Option<StepId>, lantern_engine::Repeat),
     /// Whether a section's steps, or the plan's, come in a drawn order.
     SetShuffle(Option<StepId>, bool),
-    /// Opens the choices of how often it comes, or closes them.
-    RepeatPanel(Option<StepId>),
-    /// The time of day a repeat ends at, as typed.
+    /// The time of day a repeat ends at, as typed in the ring that is
+    /// open: it holds as soon as it reads as one.
     RepeatUntil(String),
-    /// The typed time is the one: the repeat ends then.
-    RepeatUntilSet,
     /// Gives a step a sound to play with it, or takes it away.
     StepSound(StepId, Option<Arc<lantern_engine::Resource>>),
     /// Copies what a step shows, a file outside the media folders, to
@@ -586,6 +583,9 @@ struct App {
     /// on the rail or holding something.
     pub(crate) ring: Option<rail::Ring>,
     pointer: iced::Point,
+    /// The pointer is over a heading or the plan's row, where a right
+    /// click opens a ring too.
+    tracking: bool,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -659,9 +659,6 @@ struct App {
     shown_since: Option<(Option<SceneId>, usize, Instant)>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
-    /// Whose choices of how often it comes are open: a step or section,
-    /// or the plan (`Some(None)`).
-    pub(crate) repeat_panel: Option<Option<StepId>>,
     /// The time a repeat ends at, as typed so far.
     pub(crate) repeat_until: String,
     /// The slide a step's sound starts at, as it is being typed: it may
@@ -805,6 +802,7 @@ impl App {
             rail_over: None,
             ring: None,
             pointer: iced::Point::ORIGIN,
+            tracking: false,
             stepping: false,
             stray: None,
             spent: false,
@@ -836,7 +834,6 @@ impl App {
             arrived_at: None,
             shown_since: None,
             drafts: HashMap::new(),
-            repeat_panel: None,
             repeat_until: String::new(),
             from_typed: None,
             mode: mode::Mode::Plan,
@@ -1453,9 +1450,25 @@ impl App {
                     on,
                     at: self.pointer,
                 });
+                self.repeat_until.clear();
                 self.motion.picked_up();
             }
-            Message::Rail(rail::Act::RingClose) => self.ring = None,
+            Message::Rail(rail::Act::RingClose) => {
+                self.ring = None;
+                self.repeat_until.clear();
+            }
+            Message::Rail(rail::Act::Track(on)) => self.tracking = on,
+            Message::Rail(rail::Act::Ends(of, ending)) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| match of {
+                    Some(id) => {
+                        if let Some(step) = plan.get_mut(id) {
+                            step.flow.ends = ending;
+                        }
+                    }
+                    None => plan.flow.ends = ending,
+                });
+            }
             Message::Rail(rail::Act::Unloop(of)) => {
                 self.ring = None;
                 self.remember(None);
@@ -2192,23 +2205,23 @@ impl App {
                     None => plan.flow.shuffle = on,
                 });
             }
-            Message::RepeatPanel(of) => {
-                self.repeat_panel = (self.repeat_panel != Some(of)).then_some(of);
-                self.repeat_until.clear();
-            }
             Message::RepeatUntil(typed) => {
                 self.repeat_until = typed
                     .chars()
                     .filter(|c| c.is_ascii_digit() || *c == ':')
                     .take(5)
                     .collect();
-            }
-            Message::RepeatUntilSet => {
-                if let (Some(of), Some(time)) = (
-                    self.repeat_panel,
-                    lantern_engine::TimeOfDay::parse(&self.repeat_until),
-                ) {
-                    self.repeat_until.clear();
+                // Whose it is: what the open ring is about.
+                let of = match self.ring.map(|ring| ring.on) {
+                    Some(rail::RingOn::Dot(id)) => Some(Some(id)),
+                    Some(rail::RingOn::Loop(of)) => Some(of),
+                    _ => None,
+                };
+                // A whole time of day, hour and minutes: 10:3 is not yet.
+                let time = Some(self.repeat_until.as_str())
+                    .filter(|typed| typed.contains(':'))
+                    .and_then(lantern_engine::TimeOfDay::parse);
+                if let (Some(of), Some(time)) = (of, time) {
                     return self
                         .update(Message::SetRepeat(of, lantern_engine::Repeat::Until(time)));
                 }
@@ -2720,7 +2733,10 @@ impl App {
             // Esc lets go of a drag without moving anything.
             Op::ClearSearch if self.drag.is_some() => self.drag = None,
             Op::ClearSearch if self.pull.is_some() => self.pull = None,
-            Op::ClearSearch if self.ring.is_some() => self.ring = None,
+            Op::ClearSearch if self.ring.is_some() => {
+                self.ring = None;
+                self.repeat_until.clear();
+            }
             Op::ClearSearch => {
                 // Esc also lets go of a name being typed, and of Add step.
                 if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
@@ -3506,7 +3522,10 @@ impl App {
     /// by itself once its time is up.
     fn go_on(&mut self) -> Task<Message> {
         self.mark_shown();
-        if self.goes_on_in().is_some_and(|left| left.is_zero()) {
+        // What comes again until a time and ends there and then is cut
+        // off when the time comes.
+        let cut = self.mode == mode::Mode::Run && self.engine.0.cut_now();
+        if cut || self.goes_on_in().is_some_and(|left| left.is_zero()) {
             return self.op(Op::Next);
         }
         Task::none()
@@ -3712,8 +3731,11 @@ impl App {
         // rail or a pane's edge.
         if self.drag.is_some()
             || self.pull.is_some()
-            // On the rail too: a right click there opens where it is.
+            // On the rail too, and on a row or the plan's own: a right
+            // click there opens a ring where the pointer is.
             || self.rail_over.is_some()
+            || self.tracking
+            || (self.hovered.is_some() && self.can_edit())
             || self.resizing.is_some()
             || self.carried.is_some()
             || self.balk.is_some()

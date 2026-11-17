@@ -160,14 +160,32 @@ on by itself into the next. A loop follows its steps: moved or removed,
 its last step hands the end to the one before, and a loop left empty is
 gone.
 
-**Right click** on the rail opens a ring of what that one thing can do. On
-a dot: go straight on, come again, take it out. On the line between two
-steps: go straight on, or wait here. On a curl: come again, in a drawn
-order, all of it by itself, or no loop. Where something comes again, an
-outer row of the ring says how often: twice, three times, until you move
-on, or (the clock) another number or a time of day. A step has no order
-to draw, so its ring doesn't offer one. Esc or a click elsewhere closes
-the ring.
+**Right click** opens a ring of what that one thing can do, and it is the
+one place where how often something comes is set. On a dot: go straight
+on, come again. On the line between two steps: go straight on, or wait
+here. On a curl, on a section's heading, and on the plan's own row at the
+top: come again, in a drawn order, all of it by itself. A step has no
+order to draw, so its ring doesn't offer one. Pressing the lit repeat
+button takes the repeat away, and with it a loop drawn round some steps.
+Esc or a click elsewhere closes the ring.
+
+Beside the repeat button, once it is lit, is how often: **− ×2 +** for a
+number of times, **∞** until you move on, and a clock with a box to type
+a time of day in (`10:30`), which holds as soon as it reads as one. With
+a time, a second row says how it ends when the time comes, and what that
+comes to:
+
+- ■ **there and then**: what is on is cut off, and the plan goes on.
+- ⏭ **with the step**: the step that is on is finished, and the rest of
+  the round is left out.
+- ↺ **with the round**: once round is finished first. This is the usual.
+
+`×4 → 10:33 +3:28` reads: four times round, ending at 10:33, three
+minutes twenty-eight past the time. Cut off, it says how far into the
+step (`■ 1:47`). It is worked out from the plan's start time and what
+comes before; a plan with no start time can only say how long once round
+takes (`↻ 8:22 ?`). A section that comes again until a time says so
+beside its name, with the minutes it runs past (`↻ 10:30 +1`).
 
 In a service the row over the plan shows how long it has run, the time
 it is held against, how far it runs late (↑) or early (↓), and when it is
@@ -189,11 +207,12 @@ a start time the row says when the service ends. The bar under it has a
 part for each section, as wide as its time and as full as its steps.
 
 A section, and the plan itself on its row at the top, has three small
-buttons for how it moves: its steps go straight on or wait, it comes again
-(once, a number of times, until you go elsewhere, or until a time of day),
-and its steps come in a drawn order. What is on shows beside the name; a
-selected section shows all three. A step has the repeat button among its
-actions. Space follows a repeat, innermost first.
+buttons for how it moves: its steps go straight on or wait, it comes
+again or once, and its steps come in a drawn order. Each is a click on
+and a click off; how often it comes is set in the ring a right click
+opens. What is on shows beside the name; a selected section shows all
+three. A step has the repeat button among its actions. Space follows a
+repeat, innermost first.
 
 Ctrl+K opens the search, and while it's open typing goes to its box, so
 every shortcut is a key that doesn't type. Esc empties the box, and closes

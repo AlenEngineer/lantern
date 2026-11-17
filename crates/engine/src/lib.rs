@@ -29,7 +29,8 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, DEEPEST, Flow, LogEntry, Plan, PlanError, Repeat, Session, Step, StepId, StepSound,
+    Action, DEEPEST, Ending, Flow, LogEntry, Plan, PlanError, Repeat, Session, Step, StepId,
+    StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -181,6 +182,13 @@ impl Engine {
     /// (`None`): 0 the first time.
     pub fn round_of(&self, of: Option<StepId>) -> u16 {
         lock(&self.session).round_of(of)
+    }
+
+    /// Whether what is on should be cut off now: it is in something
+    /// that comes again until a time of day and ends there and then, and
+    /// the time has come. Going on then leaves it.
+    pub fn cut_now(&self) -> bool {
+        lock(&self.session).cut_now()
     }
 
     /// The time of day, as time since midnight, for a repeat that ends

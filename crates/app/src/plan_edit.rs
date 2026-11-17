@@ -251,8 +251,15 @@ impl App {
                 } else {
                     Tone::Selected
                 },
-                "How many times it comes".into(),
-                Message::RepeatPanel(Some(id)),
+                "Comes again, or once. Right click its dot for how often".into(),
+                Message::SetRepeat(
+                    Some(id),
+                    if step.flow.repeat == lantern_engine::Repeat::Once {
+                        lantern_engine::Repeat::Times(2)
+                    } else {
+                        lantern_engine::Repeat::Once
+                    },
+                ),
             ));
         }
         // A section goes into the one before it, and out again.

@@ -388,6 +388,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
   curl opens a ring of what that one can do, with how often it comes in
   an outer row. Plans keep a loop as a section that ends at a step
   (`through`).
+- How often something comes is set in one place, the ring: a number of
+  times with fewer and more, until you move on, or until a time of day
+  typed there. The ring opens from a section's heading and from the
+  plan's own row too. The card of choices that opened from a repeat
+  button is gone, and those buttons are a click on and a click off.
+- Coming again until a time of day ends one of three ways when the time
+  comes: there and then, cutting off what is on; with the step that is
+  on; or with the round, as before. The ring says what each comes to: how
+  many times round, when it ends, and how far past the time or how far
+  into the step that is cut. A section that comes again until a time
+  says by its name how many minutes past it runs. Kept in a plan as
+  `ends` (`step`, `sharp`).
 - Inside: the dashboard's small parts (pills, chips, the switch, the
   switch with several places, the line, the swatch, the bar) are made once,
   in one place, and the look's fields are one set shown by the Look lens
