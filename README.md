@@ -241,9 +241,13 @@ Ctrl+1 pressed twice ends the service, as the button does.
   slides, and the pane lists what was shown this session. **Save these as
   a plan** makes one of them and opens it in Plan.
 
-While planning, the plan pane is a tree: the open plan, its sections (an
-arrow folds one away) and their steps, and under them the other plans and
-the templates, each a click from being opened in its place. A section can
+While planning, the plan pane is an outline: the plan's sections and their
+steps (‹ in the strip goes back to the list of plans). A section is one
+line: its name, a bar for how full its time is, the same in numbers
+(`9/15`), how it moves, and ▶ to rehearse it. Under the pointer or
+selected it shows an arrow to fold it away. A selected row stays one
+line; what can be done to it comes up at its end while the pointer is on
+it. A section can
 sit inside another, three levels deep (Alt+→ and Alt+←, or the arrows on
 its row): it then folds, moves and counts its time with the one that
 holds it. A step shows
@@ -395,8 +399,8 @@ The plan pane holds the rundown you build with Ctrl+Enter. Click its name to
 rename it. **Save** (Ctrl+S) writes it to
 `~/.local/share/lantern/plans/<name>.json` (or under `$XDG_DATA_HOME`); a
 plan that already has a file saves over it, and a new plan never replaces
-another one with the same name (`sunday-service-2.json`). "unsaved" next
-to the name means it has changes since. **Open** (Ctrl+O) lists the saved plans, newest
+another one with the same name (`sunday-service-2.json`). **Save** shows
+in the strip while it has changes since. **Open** (Ctrl+O) lists the saved plans, newest
 first. **New** (Ctrl+N) starts an empty one. Leaving a plan saves it first if
 it has a file, and otherwise asks before discarding it. The app reopens the
 last plan you opened or saved, and says why if it can't.
@@ -525,11 +529,11 @@ now**, or a double click) puts it on stage and moves the plan there, so
 nothing reaches the projector from a stray single click.
 
 **Sections and time.** Split the plan into parts with a time budget, such as
-"Alabanza, 15 min" and "Palabra, 30 min": a new section offers **Set a
-time**, or click it and type its time (`15` is fifteen minutes, `4:30` four
-and a half). Each section header says in words how it's doing, "12 min of
-15 min planned" over a bar while you plan, "6:40 of 15 min · on track"
-while it runs. Once a section starts, its header shows the time
+"Alabanza, 15 min" and "Palabra, 30 min": select a section and click its
+numbers (◎ when it has no time yet) and type its time (`15` is fifteen
+minutes, `4:30` four and a half). Each section header shows how it's
+doing as a bar and numbers: `12/15` minutes planned, turning the stage's
+colour when over, and `6:40 / 15:00` while it runs. Once a section starts, its header shows the time
 against its budget, and the strip shows how much is left, or how
 far over it is, plus when the service should end. It warns, it never stops
 you: "on track", "tight" when it should end in the last minute or tenth of

@@ -150,7 +150,8 @@ impl App {
         let taken = 2.0 * EDGE
             + self.plan_width()
             + GAP
-            + 2.0 * CARD_PADDING
+            // The picture's card and the card beside it.
+            + 4.0 * CARD_PADDING
             + SEAM_GRIP
             + self.side_width();
         (self.dashboard_size.width - taken).max(120.0)
@@ -200,11 +201,15 @@ impl App {
                 .into(),
             None => self.stage_centre(&seam),
         };
-        let stage = container(middle)
-            .center_x(Fill)
-            .height(Fill)
-            .padding(CARD_PADDING)
-            .style(look::card(p, glass, look::CARD_RADIUS));
+        // The settings are one card. Otherwise the picture and what is
+        // beside it are a card each, made where they are laid out.
+        let stage = container(middle).center_x(Fill).height(Fill);
+        let stage = match self.settings {
+            Some(_) => stage
+                .padding(CARD_PADDING)
+                .style(look::card(p, glass, look::CARD_RADIUS)),
+            None => stage,
+        };
         let window = container(
             // The strip's room: the strip itself is drawn last, over what
             // drops from it.
@@ -944,9 +949,28 @@ impl App {
                 .into();
             column(next).spacing(10).width(width).into()
         };
-        row![live, seam(Side::Stage, SEAM_GRIP), side]
-            .height(Fill)
-            .into()
+        let glass = self.see_through();
+        let card = |content: Element<'a, Message>| {
+            container(content)
+                .height(Fill)
+                .padding(CARD_PADDING)
+                .style(look::card(p, glass, look::CARD_RADIUS))
+        };
+        // Nothing beside it: the picture has the room.
+        if !self.search_open
+            && !planning
+            && self.mode == crate::mode::Mode::Live
+            && self.stage.preview.is_none()
+        {
+            return card(live.into()).width(Fill).into();
+        }
+        row![
+            card(live.into()).width(Fill),
+            seam(Side::Stage, SEAM_GRIP),
+            card(side)
+        ]
+        .height(Fill)
+        .into()
     }
 
     /// The stage window should be open by the mode and the screens, and
@@ -1078,7 +1102,21 @@ impl App {
             .cued()
             .filter(|step| !matches!(step.action, Action::Show { .. }));
         let mode = self.mode;
-        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Preview")];
+        let mut section: Vec<Element<'_, Message>> = vec![match mode {
+            crate::mode::Mode::Plan => row![
+                heading(p, "Preview"),
+                hinted(
+                    p,
+                    look::icon(Icon::ScreenOff, 16.0, p.on_surface_variant),
+                    "Seen here only: nothing reaches the projector while planning".to_string(),
+                    tooltip::Position::Bottom,
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+            _ => heading(p, "Preview"),
+        }];
         match (scene, &cued) {
             (Some(scene), _) => {
                 let content = self.media.preloaded(&scene.resource.id);
