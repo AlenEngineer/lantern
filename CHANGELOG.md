@@ -408,6 +408,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The curl beside steps that come again is one even dashed line: its
+  pieces were pictures stretched to each row, so the dashes changed size
+  and broke where rows met, and the arrow at its head was ragged.
+- The ring dims what is under it, so its buttons read; they sat straight
+  on the steps' names. The minus, the number, the plus and the ∞ sit in
+  the middle of their pills.
 - The line down the plan's dots is unbroken from one step to the next: it
   stopped short at each row's edge. A step's dot is pressed like the line
   under it, to join the step to the next or part them; before, only the

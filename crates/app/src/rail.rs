@@ -98,20 +98,27 @@ impl App {
             }
         };
         // A button inside a pill: no ground of its own.
-        let bare = move |lit: bool, words: String, message: Message| {
-            button(text(words).size(META).font(BOLD).color(ink(lit)))
-                .padding([0, 8])
-                .height(PILL)
-                .on_press(message)
-                .style(move |_, status| button::Style {
-                    background: matches!(status, button::Status::Hovered | button::Status::Pressed)
-                        .then(|| p.on_surface.scale_alpha(0.12).into()),
-                    border: iced::Border {
-                        radius: (PILL / 2.0).into(),
-                        ..iced::Border::default()
-                    },
-                    ..button::Style::default()
-                })
+        // Its words sit in the middle of its room, `wide` across, whatever
+        // their shape: a minus is not a letter's height.
+        let bare = move |lit: bool, words: String, wide: f32, size: f32, message: Message| {
+            button(
+                container(text(words).size(size).font(BOLD).color(ink(lit)))
+                    .center_x(wide)
+                    .center_y(PILL),
+            )
+            .padding(0)
+            .width(wide)
+            .height(PILL)
+            .on_press(message)
+            .style(move |_, status| button::Style {
+                background: matches!(status, button::Status::Hovered | button::Status::Pressed)
+                    .then(|| p.on_surface.scale_alpha(0.12).into()),
+                border: iced::Border {
+                    radius: (PILL / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..button::Style::default()
+            })
         };
         // A number of times, with fewer and more.
         let (times, counted) = match flow.repeat {
@@ -123,9 +130,21 @@ impl App {
             p,
             container(
                 iced::widget::row![
-                    bare(counted, "−".into(), set(times.saturating_sub(1).max(2))),
-                    bare(counted, format!("×{times}"), set(times)),
-                    bare(counted, "+".into(), set(times.saturating_add(1).min(99))),
+                    bare(
+                        counted,
+                        "−".into(),
+                        PILL,
+                        look::BODY,
+                        set(times.saturating_sub(1).max(2))
+                    ),
+                    bare(counted, format!("×{times}"), 30.0, META, set(times)),
+                    bare(
+                        counted,
+                        "+".into(),
+                        PILL,
+                        look::BODY,
+                        set(times.saturating_add(1).min(99))
+                    ),
                 ]
                 .align_y(iced::Alignment::Center),
             )
@@ -139,6 +158,8 @@ impl App {
             container(bare(
                 forever,
                 "∞".into(),
+                PILL,
+                look::HEADING,
                 Message::SetRepeat(of, Repeat::Forever),
             ))
             .style(pill(forever)),
@@ -299,10 +320,15 @@ impl App {
         let out = self.motion.lift();
         let close = Message::Rail(Act::RingClose);
         let mut layers: Vec<Element<'_, Message>> = vec![
-            mouse_area(Space::new().width(Fill).height(Fill))
-                .on_press(close.clone())
-                .on_right_press(close)
-                .into(),
+            // What is under the ring goes dim, so the ring is what reads.
+            mouse_area(
+                container(Space::new().width(Fill).height(Fill)).style(move |_| {
+                    container::Style::default().background(p.surface.scale_alpha(0.6 * out))
+                }),
+            )
+            .on_press(close.clone())
+            .on_right_press(close)
+            .into(),
         ];
         // Kept on the window: near its top or foot the ring moves in.
         let tall = self.dashboard_size.height;

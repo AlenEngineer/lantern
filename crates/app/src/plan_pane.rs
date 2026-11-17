@@ -1846,13 +1846,9 @@ impl App {
         };
         let curl: Element<'a, Message> = match pulled.or_else(|| curl_at(plan, index)) {
             Some((piece, count)) => {
-                let under: Element<'a, Message> = match piece {
-                    look::Curl::Out => Space::new().height(Fill).into(),
-                    _ => look::curl(look::Curl::Down, planned).into(),
-                };
-                let pieces = column![look::curl(piece, planned), under]
-                    .width(look::CURL_WIDE)
-                    .height(Fill);
+                // One drawing the whole height of the row, so it meets
+                // the pieces above and below it.
+                let pieces = crate::drawn::curl(piece, planned, RAIL_TOP + RAIL_DOT / 2.0);
                 // A loop with no heading says how often on its own line.
                 match count {
                     Some((words, low)) => stack![
