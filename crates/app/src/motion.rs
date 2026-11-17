@@ -33,6 +33,10 @@ pub const SLIDE: Duration = Duration::from_millis(220);
 pub const FOLD: Duration = Duration::from_millis(180);
 /// The gap opening where what is carried would land.
 pub const GAP: Duration = Duration::from_millis(150);
+/// The gap going in or out as what is carried changes level.
+pub const LEVEL: Duration = Duration::from_millis(140);
+/// The card of what was just picked up, rising under the pointer.
+pub const LIFT: Duration = Duration::from_millis(160);
 /// The phone's press and what it put on stage are this close together.
 const SOON: Duration = Duration::from_millis(1500);
 
@@ -92,6 +96,12 @@ pub struct Motion {
     gap: Option<(usize, Run)>,
     /// Where it would have landed before that, closing.
     closing: Option<(usize, Run)>,
+    /// How far in the gap is, in pixels: from where, to where.
+    indent: Option<(f32, f32, Run)>,
+    /// What is carried was just picked up.
+    picked: Option<Run>,
+    /// The section what is carried would be a part of, lighting up.
+    host: Option<(StepId, Run)>,
 }
 
 impl Motion {
@@ -114,6 +124,9 @@ impl Motion {
             fold: None,
             gap: None,
             closing: None,
+            indent: None,
+            picked: None,
+            host: None,
         }
     }
 
@@ -257,6 +270,51 @@ impl Motion {
     pub fn nothing_held(&mut self) {
         self.gap = None;
         self.closing = None;
+        self.indent = None;
+        self.picked = None;
+        self.host = None;
+    }
+
+    /// What is carried would be a part of `section` now, or of none.
+    pub fn hosted_by(&mut self, section: Option<StepId>) {
+        if section != self.host.as_ref().map(|(host, _)| *host) {
+            self.host = section.map(|host| (host, self.run(LEVEL, Instant::now())));
+        }
+    }
+
+    /// How far the section it would be a part of has lit up: 1 when lit.
+    pub fn host_lit(&self) -> f32 {
+        self.along(self.host.as_ref().map(|(_, run)| run))
+            .unwrap_or(1.0)
+    }
+
+    /// Something was just picked up: its card rises under the pointer.
+    pub fn picked_up(&mut self) {
+        self.picked = Some(self.run(LIFT, Instant::now()));
+    }
+
+    /// How far the card of what is carried has risen: 1 once it is up.
+    pub fn lift(&self) -> f32 {
+        self.along(self.picked.as_ref()).unwrap_or(1.0)
+    }
+
+    /// The gap is `indent` pixels in now. It slides there from where it
+    /// is, so going in or out a level is seen to happen.
+    pub fn gap_is_in(&mut self, indent: f32) {
+        if self.indent.as_ref().is_some_and(|(_, to, _)| *to == indent) {
+            return;
+        }
+        let from = self.gap_indent().unwrap_or(indent);
+        self.indent = Some((from, indent, self.run(LEVEL, Instant::now())));
+    }
+
+    /// How far in the gap is drawn, on its way to where it is going.
+    pub fn gap_indent(&self) -> Option<f32> {
+        let (from, to, slide) = self.indent.as_ref()?;
+        Some(match self.along(Some(slide)) {
+            Some(along) => between(*from, *to, along),
+            None => *to,
+        })
     }
 
     /// No gap is open or closing: a drag that starts now starts fresh.
@@ -278,12 +336,15 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs = [
+        let runs: [Option<&Run>; 10] = [
             self.went_up.as_ref(),
             self.left.as_ref().map(|(_, run)| run),
             self.fold.as_ref().map(|(_, _, run)| run),
             self.gap.as_ref().map(|(_, run)| run),
             self.closing.as_ref().map(|(_, run)| run),
+            self.indent.as_ref().map(|(_, _, run)| run),
+            self.picked.as_ref(),
+            self.host.as_ref().map(|(_, run)| run),
             self.refused.as_ref().map(|(_, light, _)| light),
             self.changed.as_ref().map(|(_, run)| run),
         ];
@@ -405,6 +466,17 @@ mod tests {
         motion.nothing_held();
         assert!(motion.no_gap());
         // Picked up: the gap is where the row was, open already.
+        motion.lands_open(4);
+        motion.picked_up();
+        assert!(motion.lift() < 1.0 && motion.moving());
+        // It goes in a level: on its way there from where it was.
+        motion.gap_is_in(0.0);
+        assert_eq!(motion.gap_indent(), Some(0.0), "it starts where it is");
+        motion.gap_is_in(12.0);
+        let sliding = motion.gap_indent().unwrap();
+        assert!((0.0..12.0).contains(&sliding), "{sliding}");
+        motion.nothing_held();
+        assert_eq!(motion.gap_indent(), None);
         motion.lands_open(4);
         assert!(motion.gap().is_none() && motion.closing_gap().is_none());
         assert!(!motion.no_gap());

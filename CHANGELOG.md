@@ -374,6 +374,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   prefers as a list, and a switch for keeping the screens on
   (`no_keep_awake`). Service has the commands run as a service starts and
   ends, which were only in the config file.
+- Dragging a section left or right puts it inside the section before it,
+  or takes it out a level: the gap slides in and out, marks under it show
+  the levels it could take, and the section it would be a part of lights
+  up with a line down its side. A step's gap is as far in as where it
+  lands. The card under the pointer rises as it is picked up.
 
 ### Fixed
 

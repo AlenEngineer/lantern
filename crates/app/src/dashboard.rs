@@ -294,29 +294,43 @@ impl App {
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
         if let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) {
+            // It rises as it is picked up: fainter and a little lower at
+            // first, then held.
+            let lift = self.motion.lift();
+            let ground = crate::motion::blend(p.surface_container_highest, p.primary, 0.2);
             let card = container(
-                text(drag.label(&self.engine.0.plan()))
+                single_line(drag.label(&self.engine.0.plan()))
                     .size(BODY)
                     .font(BOLD)
-                    .color(p.primary),
+                    .color(p.primary.scale_alpha(lift)),
             )
-            .padding([10, 14])
-            .max_width(320)
+            .padding([9, 14])
+            .max_width(300)
+            .clip(true)
             .style(move |_| container::Style {
-                background: Some(p.surface_container_highest.into()),
+                background: Some(
+                    Color {
+                        a: 0.94 * lift,
+                        ..ground
+                    }
+                    .into(),
+                ),
                 border: iced::Border {
-                    color: p.primary,
-                    width: 1.0,
-                    radius: 14.0.into(),
+                    radius: 12.0.into(),
+                    ..iced::Border::default()
                 },
                 shadow: iced::Shadow {
-                    color: Color::BLACK.scale_alpha(0.4),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 12.0,
+                    color: Color::BLACK.scale_alpha(0.5 * lift),
+                    offset: iced::Vector::new(0.0, 4.0 + 4.0 * lift),
+                    blur_radius: 8.0 + 16.0 * lift,
                 },
                 ..container::Style::default()
             });
-            layers = layers.push(pin(card).x(drag.at.x + 16.0).y(drag.at.y + 8.0));
+            layers = layers.push(
+                pin(card)
+                    .x(drag.at.x + 14.0)
+                    .y(drag.at.y + 6.0 + 6.0 * (1.0 - lift)),
+            );
         }
         layers.into()
     }
