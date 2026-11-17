@@ -1249,7 +1249,25 @@ impl App {
             ];
         }
         let next = self.engine.0.up_next();
-        let mut section: Vec<Element<'_, Message>> = vec![heading(p, "Up next")];
+        // Its heading wears the rail's mark for what is next, and counts
+        // down when the step on now goes on by itself.
+        let ring = container(Space::new().width(10).height(10)).style(move |_| container::Style {
+            border: iced::Border {
+                color: p.tertiary,
+                width: 2.0,
+                radius: 5.0.into(),
+            },
+            ..container::Style::default()
+        });
+        let mut head = row![ring, heading(p, "Up next"), Space::new().width(Fill)]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        if let Some(left) = self.goes_on_in().filter(|_| next.is_some()) {
+            head = head
+                .push(look::icon(Icon::Joined, 13.0, p.tertiary))
+                .push(text(length::clock(left)).size(META).color(p.tertiary));
+        }
+        let mut section: Vec<Element<'_, Message>> = vec![head.into()];
         section.push(match &next {
             Some(step) => self.step_picture(step),
             // Nothing next isn't always the end: there may be no plan, or

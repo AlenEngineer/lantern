@@ -172,6 +172,17 @@ impl Engine {
             .is_some_and(|at| session.plan().goes_on(at))
     }
 
+    /// When the service began: when its first step was reached.
+    pub fn started(&self) -> Option<std::time::SystemTime> {
+        lock(&self.session).started()
+    }
+
+    /// Which time round a repeating step or section is on, or the plan
+    /// (`None`): 0 the first time.
+    pub fn round_of(&self, of: Option<StepId>) -> u16 {
+        lock(&self.session).round_of(of)
+    }
+
     /// The time of day, as time since midnight, for a repeat that ends
     /// at one.
     pub fn tell_time(&self, since_midnight: Duration) {
