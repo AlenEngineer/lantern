@@ -467,6 +467,8 @@ pub enum Icon {
     /// On to the next.
     SkipNext,
     Stop,
+    /// A screen struck through: not on the projector.
+    ScreenOff,
 }
 
 impl Icon {
@@ -519,6 +521,9 @@ impl Icon {
             ),
             Icon::SkipNext => mdi!("M16,18H18V6H16M6,18L14.5,12L6,6V18Z"),
             Icon::Stop => mdi!("M18,18H6V6H18V18Z"),
+            Icon::ScreenOff => mdi!(
+                "M1,4.27L2.28,3L20,20.72L18.73,22L15.73,19H13V21H16V23H8V21H11V19H3A2,2 0 0,1 1,17V5C1,4.82 1.03,4.64 1.07,4.47L1,4.27M3,6.27V17H13.73L3,6.27M21,17C21,17.24 20.96,17.47 20.88,17.68L19,15.8V5H8.2L6.2,3H21A2,2 0 0,1 23,5V17Z"
+            ),
             Icon::Plus => mdi!("M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"),
             Icon::Tune => mdi!(
                 "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"

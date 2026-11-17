@@ -307,6 +307,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
   in the preview as the service would take it, following its flow, with
   nothing on the projector: pause, on to the next (Space), a speed for its
   clock, stop, and at the end how long it took.
+- The plan pane redrawn as an outline. A section is one line: name, a bar,
+  `9/15`, how it moves, ▶. The time row leads with what is planned so far
+  against the target, with what is left under it. A selected row stays one
+  line and shows its actions at its end under the pointer. The preview and
+  the side panel are a card each, the lenses one switch, and the preview
+  wears a mark for "not on the projector". Gone from the plan view: the
+  plan's title row, "unsaved", the other plans and templates under it,
+  the standing fold arrows and the words "Add step".
 
 ### Fixed
 

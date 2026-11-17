@@ -290,7 +290,11 @@ impl App {
                     .width(Fill)
                     .padding([6, 0])
                     .on_press(Message::Lens(lens))
-                    .style(look::pill(p, if on { Tone::Solid } else { Tone::Plain })),
+                    .style(if on {
+                        look::pill(p, Tone::Solid)
+                    } else {
+                        look::pill(p, Tone::Plain)
+                    }),
                 about.to_string(),
                 tooltip::Position::Bottom,
             )
@@ -305,7 +309,18 @@ impl App {
             ),
             lens(Lens::Check, Icon::Check, "Check: what isn't ready", waiting),
         ]
-        .spacing(4);
+        .spacing(2);
+        // One switch with three places, not three buttons.
+        let lenses = container(lenses)
+            .padding(3)
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.into()),
+                border: iced::Border {
+                    radius: 16.0.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            });
         let body: Element<'_, Message> = match self.lens {
             Lens::Add => self.shelf_pane(),
             Lens::Look => scrollable(self.look_lens(&plan)).height(Fill).into(),
