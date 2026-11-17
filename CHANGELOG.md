@@ -420,6 +420,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Steps are picked together: Ctrl and a click adds one or drops it, Shift
+  and a click takes all from the selected step to there. A mark beside
+  the last of them makes a section of them, and asks its name. Held and
+  moved, one of them carries them all.
+- Carried steps keep to the flows they are in. Where letting go would cut
+  a loop or a drawn order, the card beside the pointer says so and names
+  the keys that allow it; let go there, nothing moves, and the steps and
+  the line that would have been cut shake and flash. With Ctrl they are
+  cut loose from it and keep what is among themselves; with Alt they lose
+  every flow. A loop's line held and moved carries all it holds.
+- A section that holds others writes its name beside its own steps, in
+  the room the innermost brackets use, so each one further out costs only
+  the width of a brace.
 - The plan can now hold what brackets need, ahead of the plan pane
   showing it: a section with an end of its own, so one can stop while the
   one around it goes on; a time of day a section should be over by, with

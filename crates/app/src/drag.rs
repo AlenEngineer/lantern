@@ -27,6 +27,9 @@ pub struct Drag {
     pub carried: Vec<StepId>,
     /// Whether the row is a section's header.
     section: bool,
+    /// It was picked up by the line of a loop or a drawn order: all that
+    /// line holds comes with it.
+    pub by_line: bool,
     /// Where it was picked up from, as an index in the rest: let go
     /// there, nothing has moved.
     pub home: usize,
@@ -107,6 +110,7 @@ impl Drag {
                 .iter()
                 .find(|s| s.id == step)
                 .is_some_and(|s| s.is_section()),
+            by_line: false,
             home: plan.position(step).unwrap_or(0),
             origin: None,
             at: Point::ORIGIN,
@@ -128,7 +132,8 @@ impl Drag {
             .find(|step| step.id == self.step)
             .map_or_else(String::new, |step| step.label.clone());
         match self.carried.len() - 1 {
-            _ if !self.section => name,
+            0 if !self.section => name,
+            more if !self.section => format!("{name} + {more}"),
             0 => format!("{name} · empty"),
             1 => format!("{name} · 1 step"),
             n => format!("{name} · {n} steps"),
