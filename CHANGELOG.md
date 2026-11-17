@@ -420,6 +420,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- What you usually use is taken from what you picked yourself: looked
+  up and shown, or put in the plan from a search or the library. A step
+  that autofill put in the plan no longer counts when it is shown, so
+  filling with whatever fits does not teach Lantern that you like it.
+  Replacing such a step with something you picked makes it count again.
 - In the ring, a time to come again until is a pill that grows into a
   small card once a time is set, with how it ends and what that comes to
   inside it: they were a row of their own under all three choices. A thin

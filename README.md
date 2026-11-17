@@ -350,7 +350,12 @@ margin. What it proposes shows under the section as rows that are not
 steps yet, each with how often it has been used, how long since, and its
 length. ● keeps one through a new draw, ✕ leaves one out, the crossed
 arrows draw again, and the tick adds them to the section. Pictures, which
-have no length, share what is left of the time. Files are measured the
+have no length, share what is left of the time. What you usually use is
+what you picked yourself and put on the projector, in a service or in
+Live: looked up in a search, or taken from the library. A step the fill
+put in the plan doesn't count when it is shown, so filling with whatever
+fits teaches it nothing; replace such a step with something you picked
+and it counts again. Files are measured the
 first time a folder is asked about; the ring with a number says how many
 are still to be measured.
 

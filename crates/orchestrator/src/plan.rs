@@ -220,6 +220,10 @@ pub struct Step {
     /// what it changes for everything in it. See [`Plan::look_at`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<LookChange>,
+    /// It was put here to fill a section, not picked by hand. An app
+    /// that keeps what the operator usually uses leaves it out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub filled: bool,
 }
 
 impl Step {
@@ -371,6 +375,7 @@ impl Plan {
             flow: Flow::default(),
             sound: None,
             look: None,
+            filled: false,
         };
         self.steps.insert(index.min(self.steps.len()), step);
         self.settle();
@@ -792,6 +797,7 @@ impl Plan {
                 flow,
                 sound: None,
                 look: None,
+                filled: false,
             },
         );
         self.settle();
@@ -1336,6 +1342,19 @@ mod tests {
         let at = plan.position(b).unwrap();
         plan.move_steps(&[d], at);
         assert_eq!(plan.carried(looped), [looped, a, d, b, c]);
+    }
+
+    #[test]
+    fn a_step_put_there_by_a_fill_says_so_and_is_kept_with_the_plan() {
+        let mut plan = Plan::new("Sabbath");
+        let picked = plan.show(resource("Picked"));
+        let filled = plan.show(resource("Filled"));
+        plan.get_mut(filled).unwrap().filled = true;
+        let json = plan.to_json();
+        assert_eq!(json.matches("\"filled\"").count(), 1, "only where it is so");
+        let back = Plan::from_json(&json).unwrap();
+        assert!(!back.get(picked).unwrap().filled);
+        assert!(back.get(filled).unwrap().filled);
     }
 
     #[test]

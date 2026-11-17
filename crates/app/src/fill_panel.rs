@@ -316,11 +316,14 @@ impl App {
                         resource: (**pick).clone(),
                     },
                 );
-                // Something still gets its share of the time.
-                if pick.kind == Kind::Image
-                    && let Some(step) = plan.get_mut(id)
-                {
-                    step.estimate = each;
+                if let Some(step) = plan.get_mut(id) {
+                    // Put here by the fill, not picked: showing it says
+                    // nothing of what is usually used.
+                    step.filled = true;
+                    // Something still gets its share of the time.
+                    if pick.kind == Kind::Image {
+                        step.estimate = each;
+                    }
                 }
                 last = Some(id);
             }
