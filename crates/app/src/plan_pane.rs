@@ -96,6 +96,34 @@ impl App {
         if let Some(notice) = self.plan_notice(&plan) {
             status = status.push(notice);
         }
+        // While planning, the rail's three marks, named once at the foot.
+        if self.mode == crate::mode::Mode::Plan
+            && matches!(
+                self.plans.mode,
+                plans::Mode::Steps | plans::Mode::Renaming(_)
+            )
+        {
+            let quiet = p.on_surface_variant;
+            let named = |mark: Element<'static, Message>, name: &'static str| {
+                row![mark, text(name).size(META).color(quiet)]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+            };
+            pane = pane.push(
+                container(
+                    row![
+                        named(
+                            look::icon(Icon::Joined, 13.0, p.primary).into(),
+                            "by itself"
+                        ),
+                        named(look::icon(Icon::Pause, 13.0, quiet).into(), "waits"),
+                        named(look::ring(0.4, 13.0, p.tertiary).into(), "downloading"),
+                    ]
+                    .spacing(16),
+                )
+                .padding([0, 8]),
+            );
+        }
         pane = pane.push(container(status).padding([0, 8]));
         let pane = pane.padding([16, 12]).height(Fill);
         iced::widget::stack![pane, self.refusal_over()]
