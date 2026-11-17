@@ -260,6 +260,14 @@ A section's look holds for everything in it. The tick is the **check**:
 what isn't ready (a click goes to the step), each section against its
 time, and where sound and the stage go.
 
+▶ on the plan's row, or on a selected section, **rehearses** it: its
+steps come up in the preview one after another as the service would take
+them, and nothing goes on the projector. A step that goes on stays for
+its length; one that waits stays until Space or the lit button moves it
+on. Under the preview are pause, on to the next, how far the step is, the
+speed its clock runs at (1×, 4×, 16×) and stop, and what comes next. At
+the end it says how long it took. A video is a still for its length.
+
 The **library** is the media folders as a tree: a click looks at a file on this
 screen, a double click or Enter adds it to the plan after the selected
 step, and it can be dragged to where it should go. F6 gives it the arrows

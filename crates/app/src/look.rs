@@ -464,6 +464,9 @@ pub enum Icon {
     /// Sliders: how something is set.
     Tune,
     Check,
+    /// On to the next.
+    SkipNext,
+    Stop,
 }
 
 impl Icon {
@@ -514,6 +517,8 @@ impl Icon {
             Icon::Joined => mdi!(
                 "M12,2A3,3 0 0,1 15,5A3,3 0 0,1 13,7.83V16.17A3,3 0 0,1 15,19A3,3 0 0,1 12,22A3,3 0 0,1 9,19A3,3 0 0,1 11,16.17V7.83A3,3 0 0,1 9,5A3,3 0 0,1 12,2Z"
             ),
+            Icon::SkipNext => mdi!("M16,18H18V6H16M6,18L14.5,12L6,6V18Z"),
+            Icon::Stop => mdi!("M18,18H6V6H18V18Z"),
             Icon::Plus => mdi!("M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"),
             Icon::Tune => mdi!(
                 "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"

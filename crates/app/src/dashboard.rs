@@ -1091,6 +1091,10 @@ impl App {
             }
             (None, None) => section.push(empty_monitor(p, "")),
         }
+        // A rehearsal's buttons sit under what it shows.
+        if let Some(controls) = self.rehearsal_controls() {
+            section.push(controls);
+        }
         let has = scene.is_some() || cued.is_some();
         // Looking at a step of the plan (not a search result): adding it
         // would add it a second time, so the button says so.

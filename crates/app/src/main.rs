@@ -31,6 +31,7 @@ mod plan_edit;
 mod plan_pane;
 mod plans;
 mod ready;
+mod rehearse;
 mod relay;
 mod script;
 mod search;
@@ -307,6 +308,16 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// Rehearse a section, or the plan (`None`), in the preview; or stop.
+    Rehearse(Option<StepId>),
+    /// The rehearsal goes on to its next step now.
+    RehearseNext,
+    /// The rehearsal's clock stops, or runs again.
+    RehearsePause,
+    /// The rehearsal's clock runs at its next speed.
+    RehearseSpeed,
+    /// The rehearsal's clock ticked.
+    RehearseTick,
     /// What the side panel shows.
     Lens(side::Lens),
     /// A value of the selected thing's look, as typed.
@@ -586,6 +597,10 @@ struct App {
     /// The plan's target time as typed, while its field is open.
     pub(crate) target_typed: Option<String>,
     /// What the side panel shows while planning.
+    /// The rehearsal under way.
+    pub(crate) rehearsal: Option<rehearse::Rehearsal>,
+    /// The rehearsal just over: of what, and how long it took.
+    pub(crate) rehearsed: Option<(Option<StepId>, Duration)>,
     pub(crate) lens: side::Lens,
     /// A look value as typed so far: whose, which, and the text.
     pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
@@ -764,6 +779,8 @@ impl App {
             importing: None,
             starts_typed: None,
             target_typed: None,
+            rehearsal: None,
+            rehearsed: None,
             lens: side::Lens::default(),
             look_typed: None,
             sound_now: None,
@@ -1976,6 +1993,11 @@ impl App {
                 });
                 self.from_typed = Some((id, typed));
             }
+            Message::Rehearse(of) => return self.rehearse(of),
+            Message::RehearseNext => return self.rehearse_next(),
+            Message::RehearsePause => self.rehearse_pause(),
+            Message::RehearseSpeed => self.rehearse_speed(),
+            Message::RehearseTick => return self.rehearse_tick(),
             Message::Lens(lens) => {
                 self.lens = lens;
                 self.look_typed = None;
@@ -2236,6 +2258,10 @@ impl App {
 
     fn op(&mut self, op: Op) -> Task<Message> {
         let engine = self.engine.0.clone();
+        // In a rehearsal, Space moves it on as it would the service.
+        if op == Op::Next && self.rehearsal.is_some() {
+            return self.rehearse_next();
+        }
         let op = match self.op_in_mode(op) {
             Ok(op) => op,
             Err(why) => {
@@ -3584,6 +3610,11 @@ impl App {
         if playing {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
+        }
+        // A rehearsal's clock.
+        if self.rehearsal.is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(200)).map(|_| Message::RehearseTick));
         }
         // Section clocks tick while the service runs.
         if self.engine.0.current_step().is_some() {

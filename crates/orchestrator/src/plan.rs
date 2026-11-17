@@ -426,6 +426,26 @@ impl Plan {
         .unwrap_or(self.advance)
     }
 
+    /// What the section `id` holds, as a plan of its own: its steps and
+    /// the sections in it, with its flow as the plan's and the way its
+    /// steps go on as it stood in this plan. For running a part of the
+    /// plan by itself. `None` if `id` isn't a section.
+    pub fn part(&self, id: StepId) -> Option<Plan> {
+        let at = self.position(id)?;
+        let depth = self.steps[at].depth()?;
+        let mut part = self.clone();
+        part.advance = self.goes_on(at);
+        part.flow = self.steps[at].flow;
+        part.steps = self.steps[at + 1..self.group_end(at)].to_vec();
+        for step in &mut part.steps {
+            if let Action::Section { depth: inner, .. } = &mut step.action {
+                *inner = inner.saturating_sub(depth + 1);
+            }
+        }
+        part.settle();
+        Some(part)
+    }
+
     /// The look of the step at `index`. Each level changes what it is
     /// given: `usual` is the look for all plans, the plan's own replaces
     /// it, then every section the step is in changes it, outermost first,
@@ -899,5 +919,24 @@ mod tests {
         });
         assert_eq!(plan.look_at(c_at, &usual).text, red);
         assert_eq!(plan.look_at(c_at, &usual).background, blue);
+    }
+
+    #[test]
+    fn a_section_is_a_plan_of_its_own() {
+        let (mut plan, [music, praise, _, sermon]) = nested();
+        plan.get_mut(music).unwrap().advance = Some(true);
+        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        let part = plan.part(music).unwrap();
+        assert_eq!(labels(&part), ["Praise", "A", "B", "Reading", "C"]);
+        // The sections in it are its own sections now.
+        assert_eq!(part.get(praise).and_then(Step::depth), Some(0));
+        // It moves as Music did.
+        assert!(part.advance);
+        assert_eq!(part.flow.repeat, Repeat::Times(2));
+        assert!(part.goes_on(1));
+        // The same steps, by the same ids.
+        assert_eq!(part.steps()[1].id, plan.steps()[2].id);
+        assert_eq!(labels(&plan.part(sermon).unwrap()), ["D"]);
+        assert!(plan.part(part.steps()[1].id).is_none(), "a step isn't one");
     }
 }
