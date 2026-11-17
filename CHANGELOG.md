@@ -335,6 +335,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   screen.
 - Rehearsal says which step of how many it is at ("2 / 4"), dims the
   steps it has been through, and lights the section being rehearsed.
+- The step that is up has a standing ring round its dot on the rail.
 
 ### Fixed
 
