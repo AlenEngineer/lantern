@@ -127,27 +127,6 @@ pub fn row_fill(p: Palette, tone: Tone) -> Color {
     }
 }
 
-/// A dot, with a glow around it `ring` of the way out: 0 is tight and
-/// bright, 1 is wide and gone. `None` is the dot alone.
-pub fn dot(colour: Color, ring: Option<f32>) -> impl Fn(&iced::Theme) -> container::Style {
-    move |_| container::Style {
-        background: Some(Background::Color(colour)),
-        border: Border {
-            radius: 4.0.into(),
-            ..Border::default()
-        },
-        shadow: ring.map_or_else(iced::Shadow::default, |ring| iced::Shadow {
-            color: Color {
-                a: 0.75 * (1.0 - ring),
-                ..colour
-            },
-            offset: iced::Vector::ZERO,
-            blur_radius: 3.0 + 15.0 * ring,
-        }),
-        ..container::Style::default()
-    }
-}
-
 fn styled(
     p: Palette,
     fill: Color,
@@ -435,21 +414,8 @@ pub fn icon<'a>(icon: Icon, size: f32, color: Color) -> svg::Svg<'a> {
         .style(move |_, _| svg::Style { color: Some(color) })
 }
 
-/// A piece of the line that curls back beside the steps of something
-/// that repeats: from its last step, out and up, and into its first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Curl {
-    /// Beside the first step: in from the side to its dot, with the
-    /// arrow's head, and on down.
-    Into,
-    /// Beside a step between: straight down.
-    Past,
-    /// Beside the last step: down to its dot and out to the side.
-    Out,
-}
-
-/// How wide the curl's pieces are: room for the line and, on it, what
-/// it says of itself. They are drawn by [`crate::drawn::curl`].
+/// How wide the room for a loop's line is: for the line and, on it,
+/// what it says of itself. It is drawn by [`crate::track`].
 pub const CURL_WIDE: f32 = 30.0;
 /// How wide the line of a drawn order is, on the other side of the dots.
 pub const DRAWN_WIDE: f32 = 14.0;
