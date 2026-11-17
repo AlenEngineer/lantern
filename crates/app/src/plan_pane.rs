@@ -821,8 +821,13 @@ impl App {
         // what's wrong with the step, how far the stage is into it, when
         // it goes on by itself, what kind it is; else how long it takes.
         let length = self.step_length(step);
+        // A download under way is a ring at the row's end, not words.
+        let coming = match &step.action {
+            Action::Show { resource } => self.download_part(resource),
+            _ => None,
+        };
         let kind = match &step.action {
-            Action::Show { resource } => self.download_state(resource),
+            Action::Show { resource } => self.download_state(resource).filter(|_| coming.is_none()),
             Action::Live { hint, shown } => Some(slot_detail(hint.as_ref(), shown.len())),
             Action::Blank => Some("black".to_string()),
             Action::Note => Some("note".to_string()),
@@ -830,7 +835,7 @@ impl App {
         }
         // "Note · note" says nothing twice: the kind shows once renamed.
         .filter(|kind| !kind.eq_ignore_ascii_case(step.label.trim()));
-        let (said, said_color) = match (issue, place) {
+        let (said, said_color) = match (issue.filter(|_| coming.is_none()), place) {
             (Some(issue), _) => (
                 Some(issue.what.clone()),
                 level_tone(Some(issue.level)).text(p),
@@ -924,6 +929,15 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
+        let line = match coming {
+            Some(part) => line.push(crate::dashboard::hinted(
+                p,
+                look::ring(part, 16.0, p.tertiary),
+                format!("Downloading: {:.0}%", part * 100.0),
+                tooltip::Position::Top,
+            )),
+            None => line,
+        };
         let line = match acting {
             true => line.push(self.step_actions(step)).push(end),
             false => line.push(end),
