@@ -149,28 +149,41 @@ line fills as it plays), and a ring in that colour is next. Beside the steps of 
 section that repeats, a dotted line curls back from its last step to its
 first.
 
-While planning, the rail is worked by hand. **Pull a dot up** to the dot
-of a step above it and a loop is drawn from the one back to the other:
-those steps come twice, until you say otherwise. The loop has no name and
-no heading; it is the curl beside its steps, which says how often it comes
-(`×2`). Round all a section holds, it is the section that repeats. A loop
-stays inside one section: pulled across a heading it turns red and nothing
-happens. **Pull a dot down** to a step below and every step between goes
-on by itself into the next. A loop follows its steps: moved or removed,
-its last step hands the end to the one before, and a loop left empty is
-gone.
+While planning, the rail is worked by hand, and every line on it says
+what it is set to, in a gap at its middle.
 
-**Right click** opens a ring of what that one thing can do, and it is the
-one place where how often something comes is set. On a dot: go straight
-on, come again. On the line between two steps: go straight on, or wait
-here. On a curl, on a section's heading, and on the plan's own row at the
-top: come again, in a drawn order, all of it by itself. A step has no
-order to draw, so its ring doesn't offer one. Pressing the lit repeat
-button takes the repeat away, and with it a loop drawn round some steps.
-Esc or a click elsewhere closes the ring.
+- **Pull a dot up** to the dot of a step above it and a loop is drawn from
+  the one back to the other, on the left of the dots: those steps come
+  twice, until you say otherwise. Its line says how often (`×2`, `∞`,
+  `10:30`).
+- **Pull a dot down** to a step below and every step between goes on by
+  itself into the next: the line down the dots.
+- **Pull down the right side** of the dots, over three steps or more, and
+  they come in an order drawn afresh each time: a line that wanders, on
+  the right of the dots, with the crossed arrows at its middle.
 
-Beside the repeat button, once it is lit, is how often: **− ×2 +** for a
-number of times, **∞** until you move on, and a clock with a box to type
+A loop or a drawn order round some steps has no name and no heading; it is
+its line. Round all a section holds, it is the section that is set. One
+group can be both, and a loop can go round a drawn order. Neither crosses
+a section's heading: pulled there it turns red and nothing happens, as
+does a drawn order over fewer than three. They follow their steps: moved
+or removed, the last step hands the end to the one before, and a group
+left with nothing to say is gone.
+
+A section has a dot of its own, on the rail by its name: a click folds it
+away or opens it.
+
+**Right click** opens a ring that holds only what is that thing's own.
+On a section's dot or anywhere on its heading, and on the plan's own row
+at the top: every step goes straight on, all of it comes again, all of it
+in a drawn order. On a step's dot: go straight on, come again. On the line
+between two steps: go straight on, or wait here. On a loop's line: how
+often it comes. On a drawn order's line: one button, lit, that takes the
+order away. Beside a section's name are marks for what is on; they are
+not buttons. Esc or a click elsewhere closes the ring.
+
+How often is: **− ×2 +** for a number of times (fewer than twice is
+once: the loop is gone), **∞** until you move on, and a clock with a box to type
 a time of day in (`10:30`), which holds as soon as it reads as one. With
 a time, its pill grows into a small card that holds what is the time's
 own: how it ends when the time comes, and what that comes to:
@@ -206,13 +219,10 @@ themselves add up to, when the sections' times make the plan longer. With
 a start time the row says when the service ends. The bar under it has a
 part for each section, as wide as its time and as full as its steps.
 
-A section, and the plan itself on its row at the top, has three small
-buttons for how it moves: its steps go straight on or wait, it comes
-again or once, and its steps come in a drawn order. Each is a click on
-and a click off; how often it comes is set in the ring a right click
-opens. What is on shows beside the name; a selected section shows all
-three. A step has the repeat button among its actions. Space follows a
-repeat, innermost first.
+The plan itself, on its row at the top, has three small buttons for how
+it moves: its steps go straight on or wait, it comes again or once, and
+its steps come in a drawn order. A step has the repeat button among its
+actions. Space follows a repeat, innermost first.
 
 Ctrl+K opens the search, and while it's open typing goes to its box, so
 every shortcut is a key that doesn't type. Esc empties the box, and closes

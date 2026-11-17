@@ -20,11 +20,13 @@ use crate::{App, Message};
 /// What is done on the rail.
 #[derive(Debug, Clone)]
 pub enum Act {
-    /// A dot was pressed. `toggle` is what a click there would make of
-    /// whether the step goes on by itself, where a click may.
+    /// A dot was pressed, or the right side beside it. `toggle` is what
+    /// a click there would make of whether the step goes on by itself,
+    /// where a click may.
     Press {
         step: StepId,
         toggle: Option<bool>,
+        side: Side,
     },
     /// The pointer came onto a step's rail, or left it.
     Over(StepId),
@@ -35,19 +37,37 @@ pub enum Act {
     /// Takes a loop away: one drawn round some steps, or how often a
     /// section or the plan (`None`) comes.
     Unloop(Option<StepId>),
+    /// Takes a drawn order away: of a group drawn round some steps, of a
+    /// section, or of the plan (`None`).
+    Unshuffle(Option<StepId>),
     /// How something that comes again until a time ends when it comes.
     Ends(Option<StepId>, lantern_engine::Ending),
 }
 
-/// What a ring is about.
+/// Where on the rail a press began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// On a step's dot: pulled up it draws a loop, pulled down it joins.
+    Dot,
+    /// To the right of the dots: pulled along, it draws an order.
+    Right,
+}
+
+/// What a ring is about. Each holds only what is that thing's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RingOn {
     /// A step, by its dot.
     Dot(StepId),
-    /// The line from a step to the next.
+    /// The line from a step to the next: goes on, or waits.
     Line(StepId),
-    /// What repeats: a loop, a section, or the plan (`None`).
+    /// A loop's line: how often it comes. Of a loop drawn round some
+    /// steps, of a section, or of the plan (`None`).
     Loop(Option<StepId>),
+    /// A drawn order's line: of a group, a section, or the plan.
+    Shuffle(Option<StepId>),
+    /// A section, by its dot, or the plan by its own row (`None`): what
+    /// holds for all of it.
+    All(Option<StepId>),
 }
 
 /// A ring that is open, and where: round the pointer as it was.
@@ -136,7 +156,11 @@ impl App {
                         "−".into(),
                         PILL,
                         look::BODY,
-                        set(times.saturating_sub(1).max(2))
+                        // Fewer than twice is once: no repeat at all.
+                        match counted && times <= 2 {
+                            true => Message::Rail(Act::Unloop(of)),
+                            false => set(times.saturating_sub(1).max(2)),
+                        }
                     ),
                     bare(counted, format!("×{times}"), 30.0, META, set(times)),
                     bare(
@@ -421,60 +445,104 @@ impl App {
                     Some(Message::SetAdvance(id, false)),
                 ));
             }
+            // A loop's line holds only how often it comes: there, by the
+            // pointer, with no button of the ring to hang from.
             RingOn::Loop(of) => {
-                let (flow, all_go, drawn) = match of {
-                    Some(id) => {
-                        let Some(step) = plan.get(id) else {
-                            return Vec::new();
-                        };
-                        (step.flow, step.advance == Some(true), step.is_loop())
-                    }
-                    None => (plan.flow, plan.advance, false),
+                let flow = match of {
+                    Some(id) => match plan.get(id) {
+                        Some(step) => step.flow,
+                        None => return Vec::new(),
+                    },
+                    None => plan.flow,
+                };
+                if flow.repeat == Repeat::Once {
+                    return Vec::new();
+                }
+                layers.push(
+                    pin(self.how_often(&plan, of, flow))
+                        .x(middle.x + 14.0)
+                        .y(middle.y - PILL / 2.0 - CARD)
+                        .into(),
+                );
+            }
+            // A drawn order's line holds one thing: that it is there.
+            RingOn::Shuffle(of) => {
+                let drawn = match of {
+                    Some(id) => plan.get(id).is_some_and(|step| step.flow.shuffle),
+                    None => plan.flow.shuffle,
+                };
+                if !drawn {
+                    return Vec::new();
+                }
+                petals.push(petal(
+                    0.0,
+                    34.0,
+                    PETAL,
+                    true,
+                    glyph(Icon::Shuffle, true),
+                    "In a drawn order. Press for the plan's order",
+                    Some(Message::Rail(Act::Unshuffle(of))),
+                ));
+            }
+            // A section's dot, or the plan's own row: what holds for all
+            // of it. How often it comes again is its loop's line's.
+            RingOn::All(of) => {
+                let (flow, all_go) = match of {
+                    Some(id) => match plan.get(id) {
+                        Some(step) => (step.flow, step.advance == Some(true)),
+                        None => return Vec::new(),
+                    },
+                    None => (plan.flow, plan.advance),
                 };
                 let again = flow.repeat != Repeat::Once;
                 petals.push(petal(
                     -48.0,
                     50.0,
                     PETAL,
-                    again,
-                    glyph(Icon::Repeat, again),
-                    if again {
-                        "Comes again. Press for once"
+                    all_go,
+                    glyph(Icon::Joined, all_go),
+                    if all_go {
+                        "Every step in it goes straight on. Press to have them wait"
                     } else {
-                        "Come again"
+                        "Every step in it goes straight on"
                     },
-                    // A loop drawn round some steps is nothing but that
-                    // it comes again: once, it is gone.
-                    Some(match (again, drawn) {
-                        (true, true) => Message::Rail(Act::Unloop(of)),
-                        (true, false) => Message::SetRepeat(of, Repeat::Once),
-                        (false, _) => Message::SetRepeat(of, Repeat::Times(2)),
+                    Some(match of {
+                        Some(id) => Message::SetAdvance(id, !all_go),
+                        None => Message::PlanAdvance(!all_go),
                     }),
                 ));
                 petals.push(petal(
                     0.0,
                     50.0,
                     PETAL,
-                    flow.shuffle,
-                    glyph(Icon::Shuffle, flow.shuffle),
-                    "In an order drawn afresh each time",
-                    Some(Message::SetShuffle(of, !flow.shuffle)),
+                    again,
+                    glyph(Icon::Repeat, again),
+                    if again {
+                        "All of it comes again. Press for once"
+                    } else {
+                        "All of it comes again"
+                    },
+                    Some(match again {
+                        true => Message::Rail(Act::Unloop(of)),
+                        false => Message::SetRepeat(of, Repeat::Times(2)),
+                    }),
                 ));
                 petals.push(petal(
                     48.0,
                     50.0,
                     PETAL,
-                    all_go,
-                    glyph(Icon::Joined, all_go),
-                    "All of it goes on by itself",
-                    Some(match of {
-                        Some(id) => Message::SetAdvance(id, !all_go),
-                        None => Message::PlanAdvance(!all_go),
+                    flow.shuffle,
+                    glyph(Icon::Shuffle, flow.shuffle),
+                    if flow.shuffle {
+                        "All of it in a drawn order. Press for the plan's order"
+                    } else {
+                        "All of it in an order drawn afresh each time"
+                    },
+                    Some(match flow.shuffle {
+                        true => Message::Rail(Act::Unshuffle(of)),
+                        false => Message::SetShuffle(of, true),
                     }),
                 ));
-                if again {
-                    again_at = Some((of, flow, place(-48.0, 50.0)));
-                }
             }
         }
         if let Some((of, flow, at)) = again_at {
@@ -597,6 +665,8 @@ pub enum Would {
     Loop { first: usize, last: usize },
     /// Each goes on into the next.
     Join { first: usize, last: usize },
+    /// They come in a drawn order.
+    Shuffle { first: usize, last: usize },
     /// Nothing: no loop can be drawn there.
     Not { first: usize, last: usize },
 }
@@ -607,6 +677,7 @@ impl Would {
         match self {
             Would::Loop { first, last }
             | Would::Join { first, last }
+            | Would::Shuffle { first, last }
             | Would::Not { first, last } => (first, last),
         }
     }
@@ -616,6 +687,8 @@ impl Would {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pull {
     pub from: StepId,
+    /// Where the press began: on the dot, or to its right.
+    pub side: Side,
     /// What a click would do: see [`Act::Press`].
     pub toggle: Option<bool>,
     origin: Option<Point>,
@@ -631,9 +704,10 @@ pub struct Pull {
 const SLOP: f32 = 5.0;
 
 impl Pull {
-    pub fn new(from: StepId, toggle: Option<bool>) -> Pull {
+    pub fn new(from: StepId, toggle: Option<bool>, side: Side) -> Pull {
         Pull {
             from,
+            side,
             toggle,
             origin: None,
             at: Point::ORIGIN,
@@ -662,6 +736,14 @@ impl Pull {
                 let (from, to) = (plan.position(self.from)?, plan.position(over)?);
                 if plan.steps()[to].is_section() {
                     return None;
+                }
+                let (first, last) = (from.min(to), from.max(to));
+                // From the right side, either way: a drawn order.
+                if self.side == Side::Right {
+                    return Some(match plan.clone().shuffle_over(self.from, over).is_some() {
+                        true => Would::Shuffle { first, last },
+                        false => Would::Not { first, last },
+                    });
                 }
                 Some(if to > from {
                     Would::Join {
@@ -696,7 +778,7 @@ mod tests {
         let [a, b, c] = ["A", "B", "C"].map(|name| plan.push(name, Action::Blank));
         plan.section("Sermon", None);
         let d = plan.push("D", Action::Blank);
-        let mut pull = Pull::new(c, Some(true));
+        let mut pull = Pull::new(c, Some(true), Side::Dot);
         pull.to(Point::new(10.0, 100.0));
         pull.aim(&plan, Some(a));
         assert_eq!(pull.would, None, "not moved yet: a click");
@@ -708,13 +790,22 @@ mod tests {
         pull.aim(&plan, None);
         assert_eq!(pull.would, None);
         // From A down to C: A and B go on.
-        let mut pull = Pull::new(a, None);
+        let mut pull = Pull::new(a, None, Side::Dot);
         pull.to(Point::new(10.0, 40.0));
         pull.to(Point::new(10.0, 100.0));
         pull.aim(&plan, Some(c));
         assert_eq!(pull.would, Some(Would::Join { first: 1, last: 3 }));
+        // Down the right side from A to C: the three in a drawn order.
+        let mut pull = Pull::new(a, None, Side::Right);
+        pull.to(Point::new(30.0, 40.0));
+        pull.to(Point::new(30.0, 100.0));
+        pull.aim(&plan, Some(c));
+        assert_eq!(pull.would, Some(Would::Shuffle { first: 1, last: 3 }));
+        // Over two only there is no order to draw.
+        pull.aim(&plan, Some(b));
+        assert_eq!(pull.would, Some(Would::Not { first: 1, last: 2 }));
         // From D up to B: across Sermon's heading.
-        let mut pull = Pull::new(d, None);
+        let mut pull = Pull::new(d, None, Side::Dot);
         pull.to(Point::new(10.0, 140.0));
         pull.to(Point::new(10.0, 60.0));
         pull.aim(&plan, Some(b));

@@ -351,6 +351,9 @@ impl App {
                     .into(),
                 ),
                 Would::Join { .. } => (p.primary, look::icon(Icon::Joined, 14.0, p.primary).into()),
+                Would::Shuffle { .. } => {
+                    (p.primary, look::icon(Icon::Shuffle, 14.0, p.primary).into())
+                }
                 Would::Not { .. } => (
                     p.error,
                     text("⊘").size(BODY).font(BOLD).color(p.error).into(),

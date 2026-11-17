@@ -12,19 +12,19 @@ use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme, mouse}
 /// worked out afresh every time.
 struct Kept<K> {
     cache: canvas::Cache,
-    of: std::cell::Cell<Option<K>>,
+    of: std::cell::RefCell<Option<K>>,
 }
 
 impl<K> Default for Kept<K> {
     fn default() -> Self {
         Kept {
             cache: canvas::Cache::new(),
-            of: std::cell::Cell::new(None),
+            of: std::cell::RefCell::new(None),
         }
     }
 }
 
-impl<K: Copy + PartialEq> Kept<K> {
+impl<K: PartialEq> Kept<K> {
     fn draw(
         &self,
         of: K,
@@ -32,9 +32,9 @@ impl<K: Copy + PartialEq> Kept<K> {
         size: Size,
         draw: impl FnOnce(&mut Frame),
     ) -> Geometry {
-        if self.of.get() != Some(of) {
+        if self.of.borrow().as_ref() != Some(&of) {
             self.cache.clear();
-            self.of.set(Some(of));
+            *self.of.borrow_mut() = Some(of);
         }
         self.cache.draw(renderer, size, draw)
     }
@@ -136,17 +136,43 @@ struct CurlPiece {
     color: Color,
     /// How far down the row the step's dot is.
     dot: f32,
+    /// What the line says of itself, in a gap at the middle of this
+    /// piece: how often it comes.
+    mark: Option<String>,
 }
 
-/// Where the line runs down, the dashes' length, about how far from one
-/// to the next, and how wide the bend to the dot is.
-const CURL_X: f32 = 3.0;
+/// Where the line runs down in its column, the dashes' length, about
+/// how far from one to the next, how wide the bend to the dot is, and
+/// how much of the line a mark takes, above and below its middle.
+const CURL_X: f32 = 14.0;
 const CURL_DASH: f32 = 2.5;
 const CURL_STEP: f32 = 5.0;
 const CURL_BEND: f32 = 4.0;
+const MARK_ROOM: f32 = 8.0;
+
+/// Dashes along a straight line from `from` to `to`, as many as fit,
+/// each in the middle of its share: half a gap at either end.
+fn dashes(frame: &mut Frame, stroke: Stroke<'_>, from: Point, to: Point) {
+    let long = from.distance(to);
+    if long < CURL_DASH {
+        return;
+    }
+    let count = (long / CURL_STEP).round().max(1.0);
+    let share = long / count;
+    let along = |far: f32| {
+        Point::new(
+            from.x + (to.x - from.x) * far / long,
+            from.y + (to.y - from.y) * far / long,
+        )
+    };
+    for n in 0..count as usize {
+        let start = share * n as f32 + (share - CURL_DASH) / 2.0;
+        frame.stroke(&Path::line(along(start), along(start + CURL_DASH)), stroke);
+    }
+}
 
 impl<Message> canvas::Program<Message> for CurlPiece {
-    type State = Kept<(crate::look::Curl, Color, f32)>;
+    type State = Kept<(crate::look::Curl, Color, f32, Option<String>)>;
 
     fn draw(
         &self,
@@ -157,89 +183,222 @@ impl<Message> canvas::Program<Message> for CurlPiece {
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
         use crate::look::Curl;
-        vec![kept.draw(
-            (self.piece, self.color, self.dot),
-            renderer,
-            bounds.size(),
-            |frame| {
-                let stroke = Stroke {
-                    line_cap: canvas::LineCap::Round,
-                    line_join: canvas::LineJoin::Round,
-                    ..Stroke::default().with_color(self.color).with_width(1.5)
-                };
-                // Dashes down from `from` to `to`, as many as fit, each in the
-                // middle of its share: half a gap at either end.
-                let mut down = |from: f32, to: f32| {
-                    let tall = to - from;
-                    if tall < CURL_DASH {
-                        return;
-                    }
-                    let count = (tall / CURL_STEP).round().max(1.0);
-                    let share = tall / count;
-                    for n in 0..count as usize {
-                        let top = from + share * n as f32 + (share - CURL_DASH) / 2.0;
-                        frame.stroke(
-                            &Path::line(
-                                Point::new(CURL_X, top),
-                                Point::new(CURL_X, top + CURL_DASH),
-                            ),
-                            stroke,
-                        );
-                    }
-                };
-                let (tall, wide, dot) = (bounds.height, bounds.width, self.dot);
-                // The bend between the line and the dot's level, one stroke.
-                let bend = |down: bool| {
-                    let sign = if down { 1.0 } else { -1.0 };
-                    Path::new(|path| {
-                        path.move_to(Point::new(CURL_X, dot + sign * CURL_BEND));
-                        path.quadratic_curve_to(
-                            Point::new(CURL_X, dot),
-                            Point::new(CURL_X + CURL_BEND, dot),
-                        );
-                    })
-                };
-                match self.piece {
-                    Curl::Past => down(0.0, tall),
-                    // In to the dot, with the arrow's head, from the line below.
-                    Curl::Into => {
-                        down(dot + CURL_BEND, tall);
-                        frame.stroke(&bend(true), stroke);
-                        let head = Path::new(|path| {
-                            path.move_to(Point::new(wide - 4.5, dot - 3.0));
-                            path.line_to(Point::new(wide - 1.0, dot));
-                            path.line_to(Point::new(wide - 4.5, dot + 3.0));
-                        });
-                        frame.stroke(&head, stroke);
-                    }
-                    // Down the line and out to the dot.
-                    Curl::Out => {
-                        down(0.0, dot - CURL_BEND);
-                        frame.stroke(&bend(false), stroke);
-                        frame.stroke(
-                            &Path::line(
-                                Point::new(CURL_X + CURL_BEND + 2.0, dot),
-                                Point::new(wide - 0.5, dot),
-                            ),
-                            stroke,
-                        );
-                    }
+        let key = (self.piece, self.color, self.dot, self.mark.clone());
+        vec![kept.draw(key, renderer, bounds.size(), |frame| {
+            let stroke = Stroke {
+                line_cap: canvas::LineCap::Round,
+                line_join: canvas::LineJoin::Round,
+                ..Stroke::default().with_color(self.color).with_width(1.5)
+            };
+            let (tall, wide, dot) = (bounds.height, bounds.width, self.dot);
+            // The run down this piece: all of it for one between, from
+            // under the bend for the first, to over it for the last.
+            let (from, to) = match self.piece {
+                Curl::Past => (0.0, tall),
+                Curl::Into => (dot + CURL_BEND, tall),
+                Curl::Out => (0.0, dot - CURL_BEND),
+            };
+            let down = |frame: &mut Frame, from: f32, to: f32| {
+                dashes(
+                    frame,
+                    stroke,
+                    Point::new(CURL_X, from),
+                    Point::new(CURL_X, to),
+                );
+            };
+            match &self.mark {
+                // What it says sits in a gap at the middle of the run.
+                Some(words) => {
+                    let middle = (from + to) / 2.0;
+                    down(frame, from, middle - MARK_ROOM);
+                    down(frame, middle + MARK_ROOM, to);
+                    frame.fill_text(canvas::Text {
+                        content: words.clone(),
+                        position: Point::new(CURL_X, middle),
+                        color: self.color,
+                        size: 9.5.into(),
+                        font: crate::look::BOLD,
+                        align_x: iced::widget::text::Alignment::Center,
+                        align_y: iced::alignment::Vertical::Center,
+                        ..canvas::Text::default()
+                    });
                 }
-            },
-        )]
+                None => down(frame, from, to),
+            }
+            // The bend between the line and the dot's level, one stroke.
+            let bend = |down: bool| {
+                let sign = if down { 1.0 } else { -1.0 };
+                Path::new(|path| {
+                    path.move_to(Point::new(CURL_X, dot + sign * CURL_BEND));
+                    path.quadratic_curve_to(
+                        Point::new(CURL_X, dot),
+                        Point::new(CURL_X + CURL_BEND, dot),
+                    );
+                })
+            };
+            match self.piece {
+                Curl::Past => {}
+                // In to the dot, with the arrow's head, from the line below.
+                Curl::Into => {
+                    frame.stroke(&bend(true), stroke);
+                    dashes(
+                        frame,
+                        stroke,
+                        Point::new(CURL_X + CURL_BEND + 1.0, dot),
+                        Point::new(wide - 5.0, dot),
+                    );
+                    let head = Path::new(|path| {
+                        path.move_to(Point::new(wide - 4.5, dot - 3.0));
+                        path.line_to(Point::new(wide - 1.0, dot));
+                        path.line_to(Point::new(wide - 4.5, dot + 3.0));
+                    });
+                    frame.stroke(&head, stroke);
+                }
+                // Down the line and out to the dot.
+                Curl::Out => {
+                    frame.stroke(&bend(false), stroke);
+                    dashes(
+                        frame,
+                        stroke,
+                        Point::new(CURL_X + CURL_BEND + 1.0, dot),
+                        Point::new(wide, dot),
+                    );
+                }
+            }
+        })]
     }
 }
 
 /// The piece of the curl beside one step, the whole height it is given;
-/// `dot` is how far down the step's dot is.
+/// `dot` is how far down the step's dot is, and `mark` what the line
+/// says of itself there, if this is the piece that says it.
 pub fn curl<'a, Message: 'a>(
     piece: crate::look::Curl,
     color: Color,
     dot: f32,
+    mark: Option<String>,
 ) -> iced::widget::Canvas<impl canvas::Program<Message> + 'a, Message> {
-    draw(CurlPiece { piece, color, dot })
-        .width(crate::look::CURL_WIDE)
-        .height(Fill)
+    draw(CurlPiece {
+        piece,
+        color,
+        dot,
+        mark,
+    })
+    .width(crate::look::CURL_WIDE)
+    .height(Fill)
+}
+
+/// The line beside steps that come in a drawn order, the piece of it
+/// beside one step: it wanders from side to side as it runs down, as a
+/// loop's is dashed, and one row's piece meets the next.
+struct WavePiece {
+    /// Beside the first of them, one between, or the last.
+    piece: crate::look::Curl,
+    color: Color,
+    dot: f32,
+    /// This is the piece that carries the mark of a drawn order, in a
+    /// gap at its middle.
+    mark: bool,
+}
+
+/// About how tall each swing of the line is, and how far it swings.
+const WAVE_TALL: f32 = 8.0;
+const WAVE_OUT: f32 = 3.5;
+
+impl<Message> canvas::Program<Message> for WavePiece {
+    type State = Kept<(crate::look::Curl, Color, f32, bool)>;
+
+    fn draw(
+        &self,
+        kept: &Self::State,
+        renderer: &Renderer,
+        _: &Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        use crate::look::Curl;
+        let key = (self.piece, self.color, self.dot, self.mark);
+        vec![kept.draw(key, renderer, bounds.size(), |frame| {
+            let stroke = Stroke {
+                line_cap: canvas::LineCap::Round,
+                line_join: canvas::LineJoin::Round,
+                ..Stroke::default().with_color(self.color).with_width(1.5)
+            };
+            let (tall, x) = (bounds.height, bounds.width / 2.0);
+            let (from, to) = match self.piece {
+                Curl::Past => (0.0, tall),
+                Curl::Into => (self.dot, tall),
+                Curl::Out => (0.0, self.dot),
+            };
+            // Swings down from `from` to `to`: an even number of them,
+            // so a run ends on the side it began and meets the next.
+            let wander = |frame: &mut Frame, from: f32, to: f32| {
+                let long = to - from;
+                if long < 2.0 {
+                    return;
+                }
+                let swings = ((long / (2.0 * WAVE_TALL)).round().max(1.0) * 2.0) as usize;
+                let each = long / swings as f32;
+                let line = Path::new(|path| {
+                    path.move_to(Point::new(x, from));
+                    for n in 0..swings {
+                        let side = if n % 2 == 0 { -WAVE_OUT } else { WAVE_OUT };
+                        let top = from + each * n as f32;
+                        path.quadratic_curve_to(
+                            Point::new(x + side, top + each / 2.0),
+                            Point::new(x, top + each),
+                        );
+                    }
+                });
+                frame.stroke(&line, stroke);
+            };
+            if !self.mark {
+                wander(frame, from, to);
+                return;
+            }
+            // The mark of a drawn order: two lines that cross, each
+            // with an arrow's head, small.
+            let middle = (from + to) / 2.0;
+            wander(frame, from, middle - MARK_ROOM);
+            wander(frame, middle + MARK_ROOM, to);
+            let at = |dx: f32, dy: f32| Point::new(x + dx * 0.72, middle + dy * 0.72);
+            let lines: [&[(f32, f32)]; 5] = [
+                &[(-7.0, -4.0), (-4.5, -4.0), (2.5, 4.0), (6.0, 4.0)],
+                &[(-7.0, 4.0), (-4.5, 4.0), (-2.5, 1.7)],
+                &[(1.5, -2.5), (2.5, -4.0), (6.0, -4.0)],
+                &[(4.0, -6.5), (6.5, -4.0), (4.0, -1.5)],
+                &[(4.0, 1.5), (6.5, 4.0), (4.0, 6.5)],
+            ];
+            for points in lines {
+                let line = Path::new(|path| {
+                    path.move_to(at(points[0].0, points[0].1));
+                    for (dx, dy) in &points[1..] {
+                        path.line_to(at(*dx, *dy));
+                    }
+                });
+                frame.stroke(&line, stroke);
+            }
+        })]
+    }
+}
+
+/// The piece of a drawn order's line beside one step: `piece` says
+/// whether the step is the first of them, one between or the last, and
+/// `mark` whether this piece carries the mark.
+pub fn wave<'a, Message: 'a>(
+    piece: crate::look::Curl,
+    color: Color,
+    dot: f32,
+    mark: bool,
+) -> iced::widget::Canvas<impl canvas::Program<Message> + 'a, Message> {
+    draw(WavePiece {
+        piece,
+        color,
+        dot,
+        mark,
+    })
+    .width(crate::look::DRAWN_WIDE)
+    .height(Fill)
 }
 
 /// Slanted stripes of two colours.
