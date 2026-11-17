@@ -270,6 +270,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   section inside the one before it and **Alt+←** moves it out a level; the
   same two arrows are on a selected section's row. A section holds the
   sections in it: folding, dragging and its time count them all.
+- A section or a step can change the look it is given: a `look` on it in
+  the plan file sets only what it names (background, image, text colour,
+  font, sizes, dim, the reference line), and the rest carries down from
+  the plan and the sections around it. There is no panel for it yet; the
+  dashboard and the stage already follow it.
 
 ### Fixed
 

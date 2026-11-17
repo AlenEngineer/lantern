@@ -971,12 +971,23 @@ impl App {
     /// none), whatever changed it: opening a plan, editing its look, saving
     /// the settings. Text is split again only when the look changed.
     fn sync_look(&mut self) {
-        let look = self
+        // The look of the step in hand: the one on the projector, or
+        // while nothing is, the one picked in the plan. Its sections and
+        // the step itself each change what the plan gives.
+        let plan = self.engine.0.plan();
+        let on_stage = self
             .engine
             .0
-            .plan()
-            .look
-            .unwrap_or_else(|| self.config.stage.clone());
+            .current_step()
+            .filter(|_| self.stage.program.is_some())
+            .map(|step| step.id);
+        let look = match on_stage.or(self.selected).and_then(|id| plan.position(id)) {
+            Some(at) => plan.look_at(at, &self.config.stage),
+            None => plan
+                .look
+                .clone()
+                .unwrap_or_else(|| self.config.stage.clone()),
+        };
         if look != self.look && !self.look_held {
             self.look = look;
             if self.slides.set_look(&self.look) {

@@ -40,8 +40,8 @@ pub use lantern_searcher::{
 };
 use lantern_showman::Showman;
 pub use lantern_showman::{
-    Look, Media, MediaReport, Playback, Rgb, Scene, SceneId, StageEvent, StageFeed, StageState,
-    Timed, fit_frames, fit_stanzas, slide_labels,
+    Look, LookChange, Media, MediaReport, Playback, Rgb, Scene, SceneId, StageEvent, StageFeed,
+    StageState, Timed, fit_frames, fit_stanzas, slide_labels,
 };
 
 /// Errors from the engine.
