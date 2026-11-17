@@ -53,6 +53,13 @@ const ROW_TALL: f32 = 44.0;
 const PART_TALL: f32 = 22.0;
 const GAP_TALL: f32 = 48.0;
 
+/// `row` with the room there is between two rows of the plan under it.
+fn apart<'a>(row: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(row)
+        .padding(iced::Padding::default().bottom(2.0))
+        .into()
+}
+
 /// A section's steps, cut to as much of their height as is in sight.
 fn cut<'a>(
     (steps, tall, open): (iced::widget::Column<'a, Message>, f32, f32),
@@ -364,12 +371,21 @@ impl App {
         // The rows of the section something would land in are kept apart
         // while they are gathered, to have one line down their side.
         let mut hosting: Option<iced::widget::Column<'_, Message>> = None;
-        macro_rules! put {
+        // The steps and what sits among them, with no room between two:
+        // each brings its own under it, but for a step's rail, which runs
+        // the whole of its row so the line down the dots is unbroken.
+        let mut list = column![];
+        macro_rules! put_whole {
             ($row:expr $(,)?) => {
                 match hosting.take() {
                     Some(held) => hosting = Some(held.push($row)),
-                    None => rows = rows.push($row),
+                    None => list = list.push($row),
                 }
+            };
+        }
+        macro_rules! put {
+            ($row:expr $(,)?) => {
+                put_whole!(apart($row))
             };
         }
         // Up to where rows are folded away with the section that holds
@@ -398,10 +414,10 @@ impl App {
             if host.is_some_and(|(_, end)| end == rest)
                 && let Some(held) = hosting.take()
             {
-                rows = rows.push(hosted(p, held, host_in, host_lit));
+                list = list.push(hosted(p, held, host_in, host_lit));
             }
             if host.is_some_and(|(start, _)| start == rest) {
-                hosting = Some(column![].spacing(2));
+                hosting = Some(column![]);
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
@@ -419,7 +435,7 @@ impl App {
                 if index >= folding_to
                     && let Some(steps) = folding.take()
                 {
-                    put!(cut(steps));
+                    put_whole!(cut(steps));
                 }
                 // Folded away with the section it is in.
                 if hidden && !selected {
@@ -504,7 +520,7 @@ impl App {
                 // goes under the cut with its steps.
                 match folding.take() {
                     Some((steps, so_far, open)) => {
-                        folding = Some((steps.push(heading), so_far + ROW_TALL, open));
+                        folding = Some((steps.push(apart(heading)), so_far + ROW_TALL, open));
                     }
                     None => put!(heading),
                 }
@@ -514,7 +530,7 @@ impl App {
                 if folding.is_none()
                     && let Some(open) = self.motion.open(step.id)
                 {
-                    folding = Some((column![].spacing(2), 0.0, open));
+                    folding = Some((column![], 0.0, open));
                     folding_to = plan.group_end(index);
                     hidden_by_moving = hidden_to == folding_to;
                 }
@@ -559,26 +575,29 @@ impl App {
                 row = row.push(part);
             }
             // The rail runs down beside the step and what is inside it.
-            let row = container(row![self.rail(plan, index, place), row].height(Length::Shrink))
-                .padding(iced::Padding::default().left(inward));
+            // The rail is as tall as the row and the room under it, so
+            // its line meets the next row's.
+            let row =
+                container(row![self.rail(plan, index, place), apart(row)].height(Length::Shrink))
+                    .padding(iced::Padding::default().left(inward));
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
             let stays = Some(step.id) == current || selected;
             match folding.take() {
                 Some((steps, so_far, open)) if stays => {
-                    put!(cut((steps, so_far, open)));
-                    put!(row);
-                    folding = Some((column![].spacing(2), 0.0, open));
+                    put_whole!(cut((steps, so_far, open)));
+                    put_whole!(row);
+                    folding = Some((column![], 0.0, open));
                 }
                 Some((steps, so_far, open)) => {
                     folding = Some((steps.push(row), so_far + tall, open));
                 }
-                None => put!(row),
+                None => put_whole!(row),
             }
         }
         if let Some(steps) = folding.take() {
-            put!(cut(steps));
+            put_whole!(cut(steps));
         }
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
@@ -592,8 +611,9 @@ impl App {
             put!(closing_gap(left));
         }
         if let Some(held) = hosting.take() {
-            rows = rows.push(hosted(p, held, host_in, host_lit));
+            list = list.push(hosted(p, held, host_in, host_lit));
         }
+        rows = rows.push(list);
         if adds
             && self.selected.is_none()
             && current.is_none()
@@ -1797,37 +1817,56 @@ impl App {
             (true, Place::Done, _) => line(Some(past), Fill).into(),
             (true, ..) => line(Some(planned), Fill).into(),
         };
-        let below = container(below).width(RAIL).height(Fill).center_x(RAIL);
-        // What is still ahead can be joined to the next step or parted
-        // from it, where the plan can change.
-        let ahead = matches!(place, Place::Next | Place::Later);
-        let below: Element<'a, Message> =
-            if ahead && after && self.can_edit() && goes_on_when(step).is_some() {
-                tooltip(
-                    mouse_area(below)
-                        .on_press(Message::SetAdvance(step.id, !goes))
-                        .interaction(mouse::Interaction::Pointer),
-                    container(
-                        text(if goes {
-                            "Goes straight on. Click to make it wait"
-                        } else {
-                            "Waits for you. Click to make it go straight on"
-                        })
-                        .size(META),
-                    )
-                    .padding([4, 8])
-                    .style(look::tip(p)),
-                    tooltip::Position::Right,
+        // The dot and the line under it are one thing to press: what is
+        // still ahead can be joined to the next step or parted from it,
+        // where the plan can change. The line over the dot is the join
+        // from the step before, and pressing it changes that one.
+        let can_change = |step: &Step| {
+            self.can_edit()
+                && goes_on_when(step).is_some()
+                && (self.mode != crate::mode::Mode::Run || self.ahead(plan, step.id))
+        };
+        let pressed = |part: Element<'a, Message>, of: &Step, goes: bool| -> Element<'a, Message> {
+            tooltip(
+                mouse_area(part)
+                    .on_press(Message::SetAdvance(of.id, !goes))
+                    .interaction(mouse::Interaction::Pointer),
+                container(
+                    text(if goes {
+                        "Goes straight on. Click to make it wait"
+                    } else {
+                        "Waits for you. Click to make it go straight on"
+                    })
+                    .size(META),
                 )
-                .delay(look::TIP_DELAY)
-                .into()
-            } else {
-                below.into()
-            };
-        let rail = column![above, dot, below]
-            .width(RAIL)
-            .height(Fill)
-            .align_x(Alignment::Center);
+                .padding([4, 8])
+                .style(look::tip(p)),
+                tooltip::Position::Right,
+            )
+            .delay(look::TIP_DELAY)
+            .into()
+        };
+        let ahead = matches!(place, Place::Next | Place::Later);
+        let lower: Element<'a, Message> = column![
+            dot,
+            container(below).width(RAIL).height(Fill).center_x(RAIL)
+        ]
+        .width(RAIL)
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .into();
+        let lower = match ahead && after && can_change(step) {
+            true => pressed(lower, step, goes),
+            false => lower,
+        };
+        let upper: Element<'a, Message> = container(above).center_x(RAIL).into();
+        let upper = match before.map(|before| &steps[before]) {
+            Some(before) if joined_above && ahead && can_change(before) => {
+                pressed(upper, before, true)
+            }
+            _ => upper,
+        };
+        let rail = column![upper, lower].width(RAIL).height(Fill);
         // Beside it, the line that curls back from the last step of
         // something that repeats to its first. Every row keeps its room,
         // so the dots stay in one line down the plan.

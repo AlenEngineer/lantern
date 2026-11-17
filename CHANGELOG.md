@@ -387,6 +387,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The line down the plan's dots is unbroken from one step to the next: it
+  stopped short at each row's edge. A step's dot is pressed like the line
+  under it, to join the step to the next or part them; before, only the
+  line was, and a click on the dot did nothing.
 - A long plan name is cut at its edge instead of drawn over the step count.
 - Enter on a search that found nothing no longer shows what was looked at
   before, or jumps the plan to the selected step.
