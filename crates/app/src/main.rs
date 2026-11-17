@@ -579,13 +579,8 @@ struct App {
     /// pointer is on.
     pub(crate) pull: Option<rail::Pull>,
     rail_over: Option<StepId>,
-    /// The ring open on the rail, and where the pointer last was while
-    /// on the rail or holding something.
+    /// The ring open on the rail.
     pub(crate) ring: Option<rail::Ring>,
-    pointer: iced::Point,
-    /// The pointer is over a heading or the plan's row, where a right
-    /// click opens a ring too.
-    tracking: bool,
     /// Something just went on stage and nothing's been typed since: the
     /// arrows step its slides even with text in the search box.
     stepping: bool,
@@ -801,8 +796,6 @@ impl App {
             pull: None,
             rail_over: None,
             ring: None,
-            pointer: iced::Point::ORIGIN,
-            tracking: false,
             stepping: false,
             stray: None,
             spent: false,
@@ -1403,7 +1396,6 @@ impl App {
                 if let Some(pull) = &mut self.pull {
                     pull.to(at);
                 }
-                self.pointer = at;
                 self.aim();
                 self.aim_pull();
             }
@@ -1448,7 +1440,7 @@ impl App {
                 self.drag = None;
                 self.ring = Some(rail::Ring {
                     on,
-                    at: self.pointer,
+                    at: pointer_at(),
                 });
                 self.repeat_until.clear();
                 self.motion.picked_up();
@@ -1457,7 +1449,6 @@ impl App {
                 self.ring = None;
                 self.repeat_until.clear();
             }
-            Message::Rail(rail::Act::Track(on)) => self.tracking = on,
             Message::Rail(rail::Act::Ends(of, ending)) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| match of {
@@ -3731,11 +3722,6 @@ impl App {
         // rail or a pane's edge.
         if self.drag.is_some()
             || self.pull.is_some()
-            // On the rail too, and on a row or the plan's own: a right
-            // click there opens a ring where the pointer is.
-            || self.rail_over.is_some()
-            || self.tracking
-            || (self.hovered.is_some() && self.can_edit())
             || self.resizing.is_some()
             || self.carried.is_some()
             || self.balk.is_some()
@@ -3989,8 +3975,26 @@ fn pointer_event(
         iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
             Some(Message::Pointer(Some(window), false))
         }
+        // Where the pointer is, is only noted: nothing is told, so a
+        // moving pointer draws nothing again. A right click reads it.
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            POINTER_X.store(position.x.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            POINTER_Y.store(position.y.to_bits(), std::sync::atomic::Ordering::Relaxed);
+            None
+        }
         _ => None,
     }
+}
+
+/// Where the pointer last was, in whichever window it was in.
+static POINTER_X: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static POINTER_Y: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn pointer_at() -> iced::Point {
+    let read = |at: &std::sync::atomic::AtomicU32| {
+        f32::from_bits(at.load(std::sync::atomic::Ordering::Relaxed))
+    };
+    iced::Point::new(read(&POINTER_X), read(&POINTER_Y))
 }
 
 /// Where the pointer moved, while a plan row or a pane's edge is held.

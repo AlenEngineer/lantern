@@ -408,6 +408,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A service with a video playing does less work: the curl and the other
+  drawings are kept from frame to frame instead of worked out for each,
+  and a pointer moving over the plan no longer draws the whole dashboard
+  again at every move (it did, so a right click knew where to open).
+- In a service, the step that is on fills the line from its dot to the
+  next step's as it plays, in place of the bar under its row, and the
+  ring round its dot is centred on the rail.
+- Scripts: `mode start` and the like were refused as taking no argument.
+  `loop N M` and `loop N M until 10:30` draw a loop.
 - The curl beside steps that come again is one even dashed line: its
   pieces were pictures stretched to each row, so the dashes changed size
   and broke where rows met, and the arrow at its head was ragged.

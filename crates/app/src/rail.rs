@@ -37,8 +37,6 @@ pub enum Act {
     Unloop(Option<StepId>),
     /// How something that comes again until a time ends when it comes.
     Ends(Option<StepId>, lantern_engine::Ending),
-    /// The pointer is over something else a ring opens from, or left it.
-    Track(bool),
 }
 
 /// What a ring is about.
