@@ -56,6 +56,9 @@ pub struct Draft {
     pub remote: bool,
     /// The remote's port as the config has it; not edited here.
     remote_port: Option<u16>,
+    /// Set only in the config file, kept as they are.
+    on_service_start: Option<String>,
+    on_service_end: Option<String>,
     /// The screen for the stage; `None` leaves it to the compositor.
     pub output: Option<String>,
     /// The screens connected when the settings opened, or why they can't
@@ -356,6 +359,8 @@ impl Draft {
             stream: !config.always_download,
             remote: config.remote,
             remote_port: config.remote_port,
+            on_service_start: config.on_service_start.clone(),
+            on_service_end: config.on_service_end.clone(),
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
@@ -711,6 +716,8 @@ impl Draft {
             always_download: !self.stream,
             remote: self.remote,
             remote_port: self.remote_port,
+            on_service_start: self.on_service_start.clone(),
+            on_service_end: self.on_service_end.clone(),
             folders,
             bibles,
             stage,

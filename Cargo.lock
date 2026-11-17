@@ -2314,6 +2314,7 @@ dependencies = [
  "toml",
  "ureq",
  "url",
+ "zbus",
  "zip",
 ]
 
