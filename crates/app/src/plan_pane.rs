@@ -22,7 +22,7 @@ use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
 use crate::palette::Palette;
-use crate::plan_edit::{NewStep, Part, insertion_mark};
+use crate::plan_edit::{NewStep, Part, goes_on_when, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::{App, Clicked, Message};
@@ -32,6 +32,13 @@ pub const ROWS: &str = "plan-rows";
 
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
+
+/// The rail beside the steps: how wide its column is, its dots, its
+/// line, and how far down a row its dot sits, level with the step's name.
+const RAIL: f32 = 20.0;
+const RAIL_DOT: f32 = 10.0;
+const RAIL_LINE: f32 = 2.0;
+const RAIL_TOP: f32 = 15.0;
 
 /// About how tall a step's row is, and each line under it, and the gap a
 /// drag opens: for what is cut to a height on its way open or closed. A
@@ -284,7 +291,6 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        let mut number = 0;
         let mut in_section = false;
         // Up to where rows are folded away with the section that holds
         // them, and whether that section is the one closing or opening
@@ -369,7 +375,6 @@ impl App {
                 }
                 continue;
             }
-            number += 1;
             // Folded away with its section, unless it is the step the
             // service is at or the one being worked on. On its way there
             // it is still drawn, under the cut.
@@ -386,10 +391,7 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let mut row = column![self.draggable(
-                step.id,
-                self.step_row(number, step, place, issue, plan.goes_on(index))
-            )];
+            let mut row = column![self.draggable(step.id, self.step_row(step, place, issue))];
             // The result would go after the selected step, or with nothing
             // selected after the current one.
             let after = selected
@@ -404,7 +406,9 @@ impl App {
             for part in parts {
                 row = row.push(part);
             }
-            let row = container(row).padding(iced::Padding::default().left(inward));
+            // The rail runs down beside the step and what is inside it.
+            let row = container(row![self.rail(plan, index, place), row].height(Length::Shrink))
+                .padding(iced::Padding::default().left(inward));
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -745,14 +749,7 @@ impl App {
             .into()
     }
 
-    fn step_row(
-        &self,
-        number: usize,
-        step: &Step,
-        place: Place,
-        issue: Option<&Issue>,
-        goes_on: bool,
-    ) -> Element<'_, Message> {
+    fn step_row(&self, step: &Step, place: Place, issue: Option<&Issue>) -> Element<'_, Message> {
         let p = self.palette;
         // The current step is on stage unless something off the plan was
         // shown since.
@@ -773,12 +770,6 @@ impl App {
         let progress = match (place, &self.stage.program) {
             (Place::Current, Some(scene)) if shown => progress(&scene.media, &scene.resource),
             _ => None,
-        };
-        // Where the step is, in a mark: on now, next, or its number.
-        let marker = match place {
-            Place::Current => "●".to_string(),
-            Place::Next => "○".to_string(),
-            Place::Done | Place::Later => number.to_string(),
         };
         let label_color = match (place, tone) {
             (Place::Done, _) => p.outline,
@@ -849,11 +840,9 @@ impl App {
         } else {
             // What there is to say, else the length; a step that goes on
             // by itself is marked.
-            let words = match (&said, goes_on) {
-                (Some(said), _) => said.clone(),
-                (None, true) if !length.is_empty() => format!("{length} ↦"),
-                (None, _) => length.clone(),
-            };
+            // What there is to say, else the length. Whether it goes on
+            // by itself is the rail's to show.
+            let words = said.clone().unwrap_or_else(|| length.clone());
             let color = if said.is_some() {
                 said_color
             } else {
@@ -887,18 +876,10 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        // The step on the projector has a dot, which rings once as it
-        // goes up; one the phone put there says so beside it.
+        // Its dot is on the rail beside it. One the phone put on the
+        // projector says so here.
         let ring = self.motion.ring().filter(|_| shown);
-        let mark: Element<'_, Message> = match place {
-            Place::Current if shown => container(
-                container(Space::new().width(8).height(8)).style(look::dot(label_color, ring)),
-            )
-            .width(16)
-            .into(),
-            _ => text(marker).size(META).color(label_color).width(16).into(),
-        };
-        let mut line = row![mark, container(label).width(Fill).clip(true)]
+        let mut line = row![container(label).width(Fill).clip(true)]
             .spacing(8)
             .align_y(Alignment::Center);
         // Under the pointer, a row that can change says so: what would
@@ -944,6 +925,132 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// The rail beside the step at `index`: its dot, the line down to
+    /// it from the step before when that one goes on by itself, and the
+    /// line on to the next when this one does. A gap is a step that
+    /// waits. Planned is the plan's colour, live the stage's, past grey;
+    /// under the step on the projector the line fills as it plays.
+    /// A click under the dot joins the step to the next, or parts them.
+    fn rail<'a>(&self, plan: &Plan, index: usize, place: Place) -> Element<'a, Message> {
+        let p = self.palette;
+        let steps = plan.steps();
+        let step = &steps[index];
+        let goes = plan.goes_on(index);
+        let before = steps[..index].iter().rposition(|step| !step.is_section());
+        let after = steps[index + 1..].iter().any(|step| !step.is_section());
+        let joined_above = before.is_some_and(|before| plan.goes_on(before));
+        let joined_below = goes && after;
+        let (planned, live, past) = (p.primary, p.tertiary, p.outline);
+        let faint = Palette::tint(live, 0.35);
+        // How far the stage is into this step, when it is the one up.
+        let played = match (place, &step.action, &self.stage.program) {
+            (Place::Current, Action::Show { resource }, Some(scene))
+                if scene.resource.id == resource.id =>
+            {
+                Some(progress(&scene.media, &scene.resource).map_or(0.0, |(_, done)| done))
+            }
+            _ => None,
+        };
+        let line = |colour: Option<iced::Color>, height: Length| {
+            container(Space::new().width(RAIL_LINE).height(height)).style(move |_| {
+                container::Style {
+                    background: colour.map(Into::into),
+                    ..container::Style::default()
+                }
+            })
+        };
+        let above = line(
+            joined_above.then_some(match place {
+                Place::Done | Place::Current => past,
+                Place::Next => faint,
+                Place::Later => planned,
+            }),
+            Length::Fixed(RAIL_TOP),
+        );
+        let filled = |colour: iced::Color, ring: Option<f32>| {
+            container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |theme| {
+                container::Style {
+                    border: iced::Border {
+                        radius: (RAIL_DOT / 2.0).into(),
+                        ..iced::Border::default()
+                    },
+                    ..look::dot(colour, ring)(theme)
+                }
+            })
+        };
+        let hollow = |colour: iced::Color| {
+            container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |_| {
+                container::Style {
+                    border: iced::Border {
+                        color: colour,
+                        width: 2.0,
+                        radius: (RAIL_DOT / 2.0).into(),
+                    },
+                    ..container::Style::default()
+                }
+            })
+        };
+        // "Next" is the service's word: while planning, a step is only
+        // one that goes on or one that waits.
+        let place = match place {
+            Place::Next if self.mode != crate::mode::Mode::Run => Place::Later,
+            place => place,
+        };
+        let dot = match place {
+            Place::Current => filled(live, self.motion.ring().filter(|_| played.is_some())),
+            Place::Next => hollow(live),
+            Place::Done => filled(past, None),
+            Place::Later if goes => filled(planned, None),
+            Place::Later => hollow(p.on_surface_variant),
+        };
+        let below: Element<'a, Message> = match (joined_below, place, played) {
+            (false, ..) => Space::new().height(Fill).into(),
+            (true, Place::Current, Some(done)) => {
+                let done = (done.clamp(0.0, 1.0) * 100.0).round() as u16;
+                column![
+                    line(Some(live), Length::FillPortion(done.max(1))),
+                    line(Some(faint), Length::FillPortion((100 - done).max(1))),
+                ]
+                .into()
+            }
+            (true, Place::Current, None) => line(Some(faint), Fill).into(),
+            (true, Place::Done, _) => line(Some(past), Fill).into(),
+            (true, ..) => line(Some(planned), Fill).into(),
+        };
+        let below = container(below).width(RAIL).height(Fill).center_x(RAIL);
+        // What is still ahead can be joined to the next step or parted
+        // from it, where the plan can change.
+        let ahead = matches!(place, Place::Next | Place::Later);
+        let below: Element<'a, Message> =
+            if ahead && after && self.can_edit() && goes_on_when(step).is_some() {
+                tooltip(
+                    mouse_area(below)
+                        .on_press(Message::SetAdvance(step.id, !goes))
+                        .interaction(mouse::Interaction::Pointer),
+                    container(
+                        text(if goes {
+                            "Goes straight on. Click to make it wait"
+                        } else {
+                            "Waits for you. Click to make it go straight on"
+                        })
+                        .size(META),
+                    )
+                    .padding([4, 8])
+                    .style(look::tip(p)),
+                    tooltip::Position::Right,
+                )
+                .delay(look::TIP_DELAY)
+                .into()
+            } else {
+                below.into()
+            };
+        column![above, dot, below]
+            .width(RAIL)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .into()
     }
 
     /// Whether the pointer is on the row of `id` and the row can change:

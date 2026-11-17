@@ -282,6 +282,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   section or the plan, its steps do it unless one says otherwise. Space
   follows the flow, innermost repeat first, and Up next shows what will
   really come.
+- A rail down the left of the plan's steps shows how it moves: a filled
+  dot joined to the next step goes on by itself, a hollow one waits. A click
+  under a dot joins or parts two steps, in place of the **auto** switch.
+  In a service the rail is grey where it has been, the stage's colour
+  where it is (the line fills as the step plays), and ringed at what is
+  next. Step numbers and the ↦ mark are gone.
 
 ### Fixed
 

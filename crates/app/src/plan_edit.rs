@@ -173,23 +173,6 @@ impl App {
                 Message::EditStep(Some((id, Part::Search))),
             ));
         }
-        if let Some(when) = goes_on_when(step) {
-            // As it says, or as its sections or the plan say for it.
-            let plan = self.engine.0.plan();
-            let on = plan.position(id).is_some_and(|at| plan.goes_on(at));
-            actions = actions.push(small(
-                text("auto")
-                    .size(META)
-                    .color(if on { p.primary } else { p.on_surface_variant })
-                    .into(),
-                if on { Tone::Selected } else { Tone::Plain },
-                format!(
-                    "Go on when done ({when}): {}",
-                    if on { "on" } else { "off" }
-                ),
-                Message::SetAdvance(id, !on),
-            ));
-        }
         if takes_sound(step) {
             let picked = self
                 .search
@@ -381,7 +364,7 @@ fn takes_sound(step: &Step) -> bool {
 /// When a step that goes on by itself would: a video when it ends, a still
 /// after its length. `None` for steps that can't (sections, live slots,
 /// notes), which wait for the operator.
-fn goes_on_when(step: &Step) -> Option<&'static str> {
+pub(crate) fn goes_on_when(step: &Step) -> Option<&'static str> {
     match &step.action {
         Action::Show { resource } if matches!(resource.kind, Kind::Video | Kind::Audio) => {
             Some("when it ends")
