@@ -396,6 +396,8 @@ enum Message {
     StepSlide(StepId, usize),
     /// Folds a section of the plan away, or opens it again.
     Fold(StepId),
+    /// The section goes into the one before it (`true`), or out a level.
+    Nest(StepId, bool),
     /// Opens a folder of the library tree, or closes it.
     ShelfFold(String),
     /// What is typed in the library's filter.
@@ -1947,6 +1949,24 @@ impl App {
                 });
                 return self.preload();
             }
+            Message::Nest(id, inward) => {
+                // Asked before the edit is kept for undo: one that moves
+                // nothing leaves nothing to take back.
+                let mut tried = self.engine.0.plan();
+                if tried.get(id).is_some_and(|step| !step.is_section()) {
+                    self.motion.refuse("only a section goes inside another");
+                } else if !tried.nest(id, inward) {
+                    self.motion.refuse(match inward {
+                        true => "it can't go further in",
+                        false => "it is as far out as it goes",
+                    });
+                } else {
+                    self.remember(None);
+                    self.engine.0.edit_plan(|plan| {
+                        plan.nest(id, inward);
+                    });
+                }
+            }
             Message::FromTemplate(path) => return self.switch_plan(Switch::FromTemplate(path)),
             Message::SetTemplate(path, template) => {
                 if let Err(err) = self.plans.store().set_template(&path, template) {
@@ -2124,7 +2144,8 @@ impl App {
                 let step = &steps[at];
                 if step.is_section() {
                     let folded = self.folded.contains(&step.id);
-                    let inside = steps.get(at + 1).filter(|s| !s.is_section());
+                    // Into it: its first row, a step or a section in it.
+                    let inside = steps.get(at + 1).filter(|_| plan.group_end(at) > at + 1);
                     match (into, folded, inside) {
                         (true, true, _) | (false, false, _) => {
                             return self.update(Message::Fold(step.id));
@@ -2134,8 +2155,8 @@ impl App {
                         }
                         _ => {}
                     }
-                } else if !into && let Some(above) = steps[..at].iter().rfind(|s| s.is_section()) {
-                    return self.update(Message::Select(above.id));
+                } else if !into && let Some(above) = plan.within(at).last() {
+                    return self.update(Message::Select(*above));
                 }
             }
             // A service cut short is picked up where it was: its step
@@ -2343,18 +2364,22 @@ impl App {
                     // them. A folded section's steps are passed over.
                     let plan = engine.plan();
                     let current = engine.current_step().map(|step| step.id);
-                    let mut folded = false;
+                    let mut hidden_to = 0;
                     let seen: Vec<StepId> = plan
                         .steps()
                         .iter()
-                        .filter(|step| {
+                        .enumerate()
+                        .filter(|(index, step)| {
+                            let hidden = *index < hidden_to;
                             if step.is_section() {
-                                folded = self.folded.contains(&step.id);
-                                return true;
+                                if !hidden && self.folded.contains(&step.id) {
+                                    hidden_to = plan.group_end(*index);
+                                }
+                                return !hidden;
                             }
-                            !folded || Some(step.id) == current || Some(step.id) == self.selected
+                            !hidden || Some(step.id) == current || Some(step.id) == self.selected
                         })
-                        .map(|step| step.id)
+                        .map(|(_, step)| step.id)
                         .collect();
                     let steps = seen.len();
                     let at = match self
@@ -2515,6 +2540,11 @@ impl App {
                 if let Some(step) = self.selected {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
                     return self.update(Message::Move(step, by));
+                }
+            }
+            Op::NestIn | Op::NestOut => {
+                if let Some(step) = self.selected {
+                    return self.update(Message::Nest(step, op == Op::NestIn));
                 }
             }
             Op::Complete if self.settings.is_some() => {
@@ -3502,7 +3532,7 @@ fn typed_into(old: &str, new: &str) -> Option<String> {
 fn set_length(plan: &mut Plan, id: StepId, value: Option<Duration>) {
     let Some(step) = plan.get_mut(id) else { return };
     match &mut step.action {
-        Action::Section { budget } => *budget = value,
+        Action::Section { budget, .. } => *budget = value,
         _ => step.estimate = value,
     }
 }

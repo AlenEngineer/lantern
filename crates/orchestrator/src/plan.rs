@@ -60,7 +60,21 @@ pub enum Action {
         /// How long the section should take.
         #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
         budget: Option<Duration>,
+        /// How far in it sits: 0 is a part of the plan, 1 a part of the
+        /// section before it that sits less far in, and so on to
+        /// [`DEEPEST`]. A section holds what follows it, up to the next
+        /// section no further in than itself.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        depth: u8,
     },
+}
+
+/// The furthest in a section sits: three levels of section in all.
+pub const DEEPEST: u8 = 2;
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(depth: &u8) -> bool {
+    *depth == 0
 }
 
 /// A sound that plays with a step, over what the step shows: music under
@@ -108,6 +122,14 @@ impl Step {
     /// Whether this step starts a section rather than doing something.
     pub fn is_section(&self) -> bool {
         matches!(self.action, Action::Section { .. })
+    }
+
+    /// How far in this section sits; `None` for a step that isn't one.
+    pub fn depth(&self) -> Option<u8> {
+        match self.action {
+            Action::Section { depth, .. } => Some(depth),
+            _ => None,
+        }
     }
 }
 
@@ -216,6 +238,7 @@ impl Plan {
             sound: None,
         };
         self.steps.insert(index.min(self.steps.len()), step);
+        self.settle();
         id
     }
 
@@ -248,13 +271,124 @@ impl Plan {
 
     /// Appends a section, which runs until the next one.
     pub fn section(&mut self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
-        self.push(title, Action::Section { budget })
+        self.push(title, Action::Section { budget, depth: 0 })
+    }
+
+    /// Where what the section at `at` holds ends: the next section no
+    /// further in than it, or the end of the plan. `at + 1` for a step
+    /// that isn't a section.
+    pub fn group_end(&self, at: usize) -> usize {
+        let Some(depth) = self.steps.get(at).and_then(Step::depth) else {
+            return (at + 1).min(self.steps.len());
+        };
+        self.steps[at + 1..]
+            .iter()
+            .position(|step| step.depth().is_some_and(|other| other <= depth))
+            .map_or(self.steps.len(), |n| at + 1 + n)
+    }
+
+    /// How far in the row at `index` is drawn: a section at its depth, a
+    /// step one further in than the section it is in.
+    pub fn level(&self, index: usize) -> u8 {
+        match self.steps.get(index).and_then(Step::depth) {
+            Some(depth) => depth,
+            None => self.steps[..index.min(self.steps.len())]
+                .iter()
+                .rev()
+                .find_map(Step::depth)
+                .map_or(0, |depth| depth + 1),
+        }
+    }
+
+    /// The sections the step at `index` is in, outermost first. A
+    /// section is not in itself.
+    pub fn within(&self, index: usize) -> Vec<StepId> {
+        let mut found: Vec<(u8, StepId)> = Vec::new();
+        let mut under = self
+            .steps
+            .get(index)
+            .and_then(Step::depth)
+            .unwrap_or(u8::MAX);
+        for step in self.steps[..index.min(self.steps.len())].iter().rev() {
+            if let Some(depth) = step.depth()
+                && depth < under
+            {
+                found.push((depth, step.id));
+                under = depth;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        found.into_iter().rev().map(|(_, id)| id).collect()
+    }
+
+    /// Moves the section `id`, with every section it holds, one level
+    /// in (`true`) or out. In, it becomes a part of the section before
+    /// it; nothing goes further in than [`DEEPEST`], or in with no
+    /// section before it to be a part of. Returns whether it moved.
+    pub fn nest(&mut self, id: StepId, inward: bool) -> bool {
+        let Some(at) = self.position(id) else {
+            return false;
+        };
+        let Some(depth) = self.steps[at].depth() else {
+            return false;
+        };
+        let end = self.group_end(at);
+        let deepest = self.steps[at..end]
+            .iter()
+            .filter_map(Step::depth)
+            .max()
+            .unwrap_or(depth);
+        let before = self.steps[..at].iter().rev().find_map(Step::depth);
+        let allowed = match inward {
+            true => deepest < DEEPEST && before.is_some_and(|before| depth <= before),
+            false => depth > 0,
+        };
+        if !allowed {
+            return false;
+        }
+        for step in &mut self.steps[at..end] {
+            if let Action::Section { depth, .. } = &mut step.action {
+                *depth = if inward { *depth + 1 } else { *depth - 1 };
+            }
+        }
+        self.settle();
+        true
+    }
+
+    /// Keeps every section where it can be: the first at the plan's own
+    /// level, and none more than one level further in than the section
+    /// before it. Moving or removing steps can leave one stranded.
+    fn settle(&mut self) {
+        let mut before: Option<u8> = None;
+        for step in &mut self.steps {
+            if let Action::Section { depth, .. } = &mut step.action {
+                let most = before.map_or(0, |before| before + 1).min(DEEPEST);
+                *depth = (*depth).min(most);
+                before = Some(*depth);
+            }
+        }
     }
 
     /// Removes a step.
     pub fn remove(&mut self, id: StepId) -> Option<Step> {
         let index = self.position(id)?;
-        Some(self.steps.remove(index))
+        // The sections a removed section held move out one level, to
+        // where it was, and don't fall into the section before it.
+        if let Some(depth) = self.steps[index].depth() {
+            let end = self.group_end(index);
+            for step in &mut self.steps[index + 1..end] {
+                if let Action::Section { depth: inner, .. } = &mut step.action
+                    && *inner > depth
+                {
+                    *inner -= 1;
+                }
+            }
+        }
+        let step = self.steps.remove(index);
+        self.settle();
+        Some(step)
     }
 
     /// Moves a step to `index` (clamped to the end). Returns whether it exists.
@@ -264,25 +398,21 @@ impl Plan {
         };
         let step = self.steps.remove(from);
         self.steps.insert(index.min(self.steps.len()), step);
+        self.settle();
         true
     }
 
     /// What moving `id` takes along: the step alone, or a section with
-    /// every step up to the next section. Empty if there's no such step.
+    /// everything it holds, sections in it too. Empty if there's no such
+    /// step.
     pub fn carried(&self, id: StepId) -> Vec<StepId> {
         let Some(at) = self.position(id) else {
             return Vec::new();
         };
-        let mut ids = vec![id];
-        if self.steps[at].is_section() {
-            ids.extend(
-                self.steps[at + 1..]
-                    .iter()
-                    .take_while(|step| !step.is_section())
-                    .map(|step| step.id),
-            );
-        }
-        ids
+        self.steps[at..self.group_end(at)]
+            .iter()
+            .map(|step| step.id)
+            .collect()
     }
 
     /// Moves the steps `ids`, in their plan order, to `index` in the plan
@@ -295,6 +425,7 @@ impl Plan {
         let at = index.min(rest.len());
         rest.splice(at..at, moving);
         self.steps = rest;
+        self.settle();
         moved
     }
 
@@ -325,6 +456,7 @@ impl Plan {
         // Hand-edited files may have a stale counter; never reuse an id.
         let max = plan.steps.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         plan.next_id = plan.next_id.max(max);
+        plan.settle();
         Ok(plan)
     }
 
@@ -523,5 +655,82 @@ mod tests {
         plan.push("Prayer", Action::Blank);
         plan.save(&path).unwrap();
         assert_eq!(Plan::load(&path).unwrap(), plan);
+    }
+
+    /// Music { Praise { A, B }, Reading { C } }, Sermon { D }.
+    fn nested() -> (Plan, [StepId; 4]) {
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let praise = plan.section("Praise", None);
+        plan.show(resource("A"));
+        plan.show(resource("B"));
+        let reading = plan.section("Reading", None);
+        plan.show(resource("C"));
+        let sermon = plan.section("Sermon", None);
+        plan.show(resource("D"));
+        assert!(plan.nest(praise, true));
+        assert!(plan.nest(reading, true));
+        (plan, [music, praise, reading, sermon])
+    }
+
+    #[test]
+    fn a_section_holds_the_sections_in_it() {
+        let (plan, [music, praise, reading, sermon]) = nested();
+        let depths: Vec<_> = plan.steps().iter().filter_map(Step::depth).collect();
+        assert_eq!(depths, [0, 1, 1, 0]);
+        // Music holds everything up to Sermon; Praise only its two.
+        assert_eq!(plan.carried(music).len(), 6);
+        assert_eq!(plan.carried(praise).len(), 3);
+        assert_eq!(plan.carried(reading).len(), 2);
+        assert_eq!(plan.carried(sermon).len(), 2);
+        // Rows are drawn one further in than the section they are in.
+        let levels: Vec<_> = (0..plan.len()).map(|at| plan.level(at)).collect();
+        assert_eq!(levels, [0, 1, 2, 2, 1, 2, 0, 1]);
+        // C is in Music, then Reading.
+        assert_eq!(plan.within(5), [music, reading]);
+        assert_eq!(plan.within(1), [music]);
+        assert!(plan.within(0).is_empty());
+    }
+
+    #[test]
+    fn nesting_has_its_limits() {
+        let (mut plan, [music, praise, reading, _]) = nested();
+        // The first section has nothing to be a part of.
+        assert!(!plan.nest(music, true));
+        // Praise is the first in Music: nothing before it at its level.
+        assert!(!plan.nest(praise, true));
+        // Reading can go into Praise, and no further than the deepest.
+        assert!(plan.nest(reading, true));
+        assert_eq!(plan.get(reading).and_then(Step::depth), Some(DEEPEST));
+        assert!(!plan.nest(reading, true));
+        // Out again, twice, and no further than the plan's own level.
+        assert!(plan.nest(reading, false));
+        assert!(plan.nest(reading, false));
+        assert!(!plan.nest(reading, false));
+    }
+
+    #[test]
+    fn a_section_moves_with_what_it_holds_and_none_is_left_stranded() {
+        let (mut plan, [music, praise, _, sermon]) = nested();
+        // Moving Music takes its sections along.
+        let ids = plan.carried(music);
+        assert!(plan.move_steps(&ids, 2));
+        assert_eq!(
+            labels(&plan),
+            ["Sermon", "D", "Music", "Praise", "A", "B", "Reading", "C"]
+        );
+        // Removing Music leaves Praise with nothing to be in: it moves out.
+        plan.remove(music);
+        assert_eq!(plan.get(praise).and_then(Step::depth), Some(0));
+        assert_eq!(plan.get(sermon).and_then(Step::depth), Some(0));
+    }
+
+    #[test]
+    fn depth_is_saved_only_when_there_is_some() {
+        let (plan, [_, praise, ..]) = nested();
+        let json = plan.to_json();
+        assert_eq!(json.matches("\"depth\"").count(), 2);
+        let back = Plan::from_json(&json).unwrap();
+        assert_eq!(back.get(praise).and_then(Step::depth), Some(1));
     }
 }

@@ -286,7 +286,13 @@ impl App {
         }
         let mut number = 0;
         let mut in_section = false;
-        let mut folded = false;
+        // Up to where rows are folded away with the section that holds
+        // them, and whether that section is the one closing or opening
+        // now: then they are still drawn, under the cut.
+        let mut hidden_to = 0;
+        let mut hidden_by_moving = false;
+        // Up to where the section that is closing or opening reaches.
+        let mut folding_to = 0;
         let mut rest = 0;
         // The steps of a section that is closing or opening, kept apart
         // to be cut to the height they have so far: with how tall they
@@ -304,12 +310,25 @@ impl App {
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
+            let inward = INDENT * f32::from(plan.level(index));
+            let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
-                if let Some(steps) = folding.take() {
+                // The section that was closing or opening ends here.
+                if index >= folding_to
+                    && let Some(steps) = folding.take()
+                {
                     rows = rows.push(cut(steps));
                 }
                 in_section = true;
-                folded = self.folded.contains(&step.id);
+                // Folded away with the section it is in.
+                if hidden && !selected {
+                    continue;
+                }
+                let folded = self.folded.contains(&step.id);
+                if folded && index >= hidden_to {
+                    hidden_to = plan.group_end(index);
+                    hidden_by_moving = false;
+                }
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 let due = due.as_ref().and_then(|due| due(step.id));
                 // Its arrow folds its steps away, and opens them again.
@@ -322,18 +341,31 @@ impl App {
                 .padding([4, 6])
                 .on_press(Message::Fold(id))
                 .style(look::row(p, Tone::Plain));
-                rows = rows.push(
+                let heading = container(
                     row![
                         arrow,
                         self.draggable(step.id, self.section_row(plan, step, section, due))
                     ]
                     .align_y(Alignment::Center),
-                );
-                if selected && adds {
-                    rows = rows.push(insertion_mark(p, INDENT));
+                )
+                .padding(iced::Padding::default().left(inward));
+                // A section inside the one that is closing or opening
+                // goes under the cut with its steps.
+                match folding.take() {
+                    Some((steps, so_far, open)) => {
+                        folding = Some((steps.push(heading), so_far + ROW_TALL, open));
+                    }
+                    None => rows = rows.push(heading),
                 }
-                if let Some(open) = self.motion.open(step.id) {
+                if selected && adds {
+                    rows = rows.push(insertion_mark(p, inward + INDENT));
+                }
+                if folding.is_none()
+                    && let Some(open) = self.motion.open(step.id)
+                {
                     folding = Some((column![].spacing(2), 0.0, open));
+                    folding_to = plan.group_end(index);
+                    hidden_by_moving = hidden_to == folding_to;
                 }
                 continue;
             }
@@ -341,7 +373,7 @@ impl App {
             // Folded away with its section, unless it is the step the
             // service is at or the one being worked on. On its way there
             // it is still drawn, under the cut.
-            if folded && in_section && folding.is_none() && Some(step.id) != current && !selected {
+            if hidden && Some(step.id) != current && !selected {
                 continue;
             }
             let place = if Some(step.id) == current {
@@ -370,8 +402,7 @@ impl App {
             for part in parts {
                 row = row.push(part);
             }
-            let indent = if in_section { INDENT } else { 0.0 };
-            let row = container(row).padding(iced::Padding::default().left(indent));
+            let row = container(row).padding(iced::Padding::default().left(inward));
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -605,7 +636,7 @@ impl App {
         let p = self.palette;
         let id = step.id;
         let budget = match step.action {
-            Action::Section { budget } => budget,
+            Action::Section { budget, .. } => budget,
             _ => None,
         };
         let phase = timing.map_or(

@@ -163,23 +163,52 @@ impl Schedule {
 
 /// The schedule of `plan`. `loaded` is a step's media length, once loaded.
 pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Schedule {
+    let steps = plan.steps();
     let mut schedule = Schedule::default();
-    // What the section under way adds up to, and its budget.
-    let mut planned = Duration::ZERO;
-    let mut budget = None;
-    for step in plan.steps() {
-        match step.action {
-            Action::Section { budget: next } => {
-                schedule.total += budget.unwrap_or(planned);
-                schedule.sections.push((step.id, schedule.total));
-                planned = Duration::ZERO;
-                budget = next;
-            }
-            _ => planned += estimate(step, loaded(step)).length,
+    let mut at = 0;
+    while at < steps.len() {
+        if steps[at].is_section() {
+            let (takes, next) = group(plan, at, schedule.total, loaded, &mut schedule.sections);
+            schedule.total += takes;
+            at = next;
+        } else {
+            schedule.total += estimate(&steps[at], loaded(&steps[at])).length;
+            at += 1;
         }
     }
-    schedule.total += budget.unwrap_or(planned);
     schedule
+}
+
+/// How long the section at `at` takes, starting `start` into the service,
+/// and where it ends: its budget, or without one its steps and the
+/// sections in it. Notes when it and each section in it starts.
+fn group(
+    plan: &Plan,
+    at: usize,
+    start: Duration,
+    loaded: &dyn Fn(&Step) -> Option<Duration>,
+    starts: &mut Vec<(StepId, Duration)>,
+) -> (Duration, usize) {
+    let steps = plan.steps();
+    let end = plan.group_end(at);
+    starts.push((steps[at].id, start));
+    let mut planned = Duration::ZERO;
+    let mut inside = at + 1;
+    while inside < end {
+        if steps[inside].is_section() {
+            let (takes, next) = group(plan, inside, start + planned, loaded, starts);
+            planned += takes;
+            inside = next;
+        } else {
+            planned += estimate(&steps[inside], loaded(&steps[inside])).length;
+            inside += 1;
+        }
+    }
+    let budget = match steps[at].action {
+        Action::Section { budget, .. } => budget,
+        _ => None,
+    };
+    (budget.unwrap_or(planned), end)
 }
 
 /// How far behind its schedule a service runs (negative: ahead), in
@@ -337,14 +366,15 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
         .iter()
         .enumerate()
         .filter_map(|(i, step)| match step.action {
-            Action::Section { budget } => Some((i, step, budget)),
+            Action::Section { budget, depth } => Some((i, step, budget, depth)),
             _ => None,
         });
-    for (start, step, budget) in markers {
-        let stop = steps[start + 1..]
-            .iter()
-            .position(Step::is_section)
-            .map_or(steps.len(), |n| start + 1 + n);
+    for (start, step, budget, depth) in markers {
+        // A section holds the sections in it: their steps are its steps.
+        // Only the plan's own sections add to when the service ends, or
+        // a section in another would be counted twice.
+        let outer = depth == 0;
+        let stop = plan.group_end(start);
         let members = &steps[start + 1..stop];
         let planned: Duration = members.iter().map(length).sum();
         let began = members.iter().filter_map(|s| (clock.entered)(s.id)).min();
@@ -356,7 +386,9 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
                 // Like one still to come, it counts for its budget when
                 // its steps would end sooner: the time is its to use.
                 let spare = budget.map_or(Duration::ZERO, |b| b.saturating_sub(elapsed + left));
-                end = end.map(|end| end + after + spare);
+                if outer {
+                    end = end.map(|end| end + after + spare);
+                }
                 Phase::Running {
                     elapsed,
                     expected: elapsed + left,
@@ -373,7 +405,9 @@ pub fn timing(plan: &Plan, clock: &Clock<'_>) -> Timing {
                 Phase::Done { took }
             }
             _ => {
-                end = end.map(|end| end + budget.map_or(planned, |b| b.max(planned)));
+                if outer {
+                    end = end.map(|end| end + budget.map_or(planned, |b| b.max(planned)));
+                }
                 Phase::Coming { planned }
             }
         };
@@ -612,5 +646,46 @@ mod tests {
             Pace::Tight,
             "a tenth of 30 is 3"
         );
+    }
+
+    #[test]
+    fn a_section_in_another_counts_once() {
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let praise = plan.section("Praise", Some(10 * MIN));
+        plan.show(video("A", Some(120)));
+        let reading = plan.section("Reading", None);
+        plan.show(video("B", Some(60)));
+        let sermon = plan.section("Sermon", None);
+        plan.show(video("C", Some(300)));
+        assert!(plan.nest(praise, true));
+        assert!(plan.nest(reading, true));
+
+        // Music has no budget: Praise for its 10 min, Reading for its step.
+        let schedule = schedule(&plan, &|_| None);
+        assert_eq!(schedule.start_of(music), Some(Duration::ZERO));
+        assert_eq!(schedule.start_of(praise), Some(Duration::ZERO));
+        assert_eq!(schedule.start_of(reading), Some(10 * MIN));
+        assert_eq!(schedule.start_of(sermon), Some(11 * MIN));
+        assert_eq!(schedule.total, 16 * MIN);
+
+        // Before the service, Music says what all its steps add up to.
+        let entered = |_| None;
+        let loaded = |_: &Step| None;
+        let clock = Clock {
+            now: SystemTime::UNIX_EPOCH,
+            current: None,
+            entered: &entered,
+            current_left: None,
+            loaded: &loaded,
+        };
+        let timing = timing(&plan, &clock);
+        let planned = |id| match timing.sections.iter().find(|s| s.id == id).unwrap().phase {
+            Phase::Coming { planned } => planned,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(planned(music), 3 * MIN);
+        assert_eq!(planned(praise), 2 * MIN);
+        assert_eq!(planned(reading), MIN);
     }
 }

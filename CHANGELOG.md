@@ -266,6 +266,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The look round remembers where sound went for each set of connected
   screens. Rehearsing at home on the speakers no longer makes it warn at
   church, where the projector is plugged in, or the other way round.
+- Sections inside sections, three levels deep. **Alt+→** puts the selected
+  section inside the one before it and **Alt+←** moves it out a level; the
+  same two arrows are on a selected section's row. A section holds the
+  sections in it: folding, dragging and its time count them all.
 
 ### Fixed
 

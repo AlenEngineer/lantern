@@ -66,6 +66,9 @@ pub enum Op {
     /// Moves the selected step up or down.
     MoveUp,
     MoveDown,
+    /// The selected section goes into the one before it, or out a level.
+    NestIn,
+    NestOut,
     /// Takes the bang chip off the search, so it asks every source again.
     DropBang,
     /// Opens or closes the settings.
@@ -448,6 +451,20 @@ pub const ACTIONS: &[Action] = &[
         Op::MoveDown,
         When::Always,
         "Move the selected step down",
+    ),
+    action(
+        "nest-in",
+        "alt+right",
+        Op::NestIn,
+        When::Always,
+        "Put the selected section inside the one before it",
+    ),
+    action(
+        "nest-out",
+        "alt+left",
+        Op::NestOut,
+        When::Always,
+        "Move the selected section out a level",
     ),
     action("settings", "ctrl+,", Op::Settings, When::Always, "Settings"),
     action(
