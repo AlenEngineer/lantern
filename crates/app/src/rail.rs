@@ -59,8 +59,10 @@ pub struct Ring {
 
 /// How big a ring's buttons are, and the ones of its outer row.
 const PETAL: f32 = 34.0;
-/// How tall the pills are that say how often.
+/// How tall the pills are that say how often, and how far the card
+/// round the time stands off its pill.
 const PILL: f32 = 30.0;
+const CARD: f32 = 6.0;
 
 impl App {
     /// How often `of` comes, beside the ring's repeat button: a number
@@ -203,14 +205,16 @@ impl App {
             "Until a time of day, such as 10:30".to_string(),
             tooltip::Position::Top,
         );
-        let mut rows = iced::widget::column![
-            iced::widget::row![stepper, endless, until]
-                .spacing(8)
-                .align_y(iced::Alignment::Center)
-        ]
-        .spacing(6);
+        // The pills sit level, with the room a card round the time takes
+        // over them: the time's pill grows into that card once a time is
+        // set, with what belongs to the time inside it.
+        let level = |pill: Element<'a, Message>| {
+            container(pill).padding(iced::Padding::default().top(CARD))
+        };
         let Some(time) = time else {
-            return rows.into();
+            return iced::widget::row![level(stepper), level(endless), level(until)]
+                .spacing(8)
+                .into();
         };
         // How it ends when the time comes: there and then, with the step
         // that is on, or with the round.
@@ -287,23 +291,28 @@ impl App {
             }
             None => {}
         }
-        let readout = container(readout)
-            .padding([0, 12])
-            .center_y(PILL)
-            .style(move |_| container::Style {
-                background: Some(p.surface_container_highest.into()),
-                border: iced::Border {
-                    radius: (PILL / 2.0).into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            });
-        rows = rows.push(
-            iced::widget::row![ending, readout]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-        );
-        rows.into()
+        // The time's own card: the time on top, then how it ends, then
+        // what that comes to.
+        let card = container(
+            iced::widget::column![until, ending, container(readout).padding([2, 8]),].spacing(8),
+        )
+        .padding(CARD)
+        .style(move |_| container::Style {
+            background: Some(p.surface_container.into()),
+            border: iced::Border {
+                radius: (PILL / 2.0 + CARD).into(),
+                ..iced::Border::default()
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::BLACK.scale_alpha(0.45),
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 10.0,
+            },
+            ..container::Style::default()
+        });
+        iced::widget::row![level(stepper), level(endless), card]
+            .spacing(8)
+            .into()
     }
 
     /// The ring that is open, as layers over the dashboard: something
@@ -469,12 +478,29 @@ impl App {
             }
         }
         if let Some((of, flow, at)) = again_at {
+            let clear = (at.x + PETAL / 2.0 + 8.0).max(middle.x + 50.0 + PETAL / 2.0 + 8.0);
             layers.push(
                 // Clear of the ring's buttons, level with the repeat one.
                 pin(self.how_often(&plan, of, flow))
-                    .x((at.x + PETAL / 2.0 + 8.0).max(middle.x + 50.0 + PETAL / 2.0 + 8.0))
-                    .y(at.y - PILL / 2.0)
+                    .x(clear)
+                    .y(at.y - PILL / 2.0 - CARD)
                     .into(),
+            );
+            // A thin line from the repeat button to its choices: they
+            // are its own.
+            let from = at.x + PETAL / 2.0;
+            layers.push(
+                pin(
+                    container(Space::new().width((clear - from).max(0.0)).height(1.5)).style(
+                        move |_| {
+                            container::Style::default()
+                                .background(p.primary.scale_alpha(0.55 * out))
+                        },
+                    ),
+                )
+                .x(from)
+                .y(at.y - 0.75)
+                .into(),
             );
         }
         for petal in petals {
