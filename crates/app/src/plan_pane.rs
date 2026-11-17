@@ -42,6 +42,8 @@ const RAIL: f32 = 20.0;
 const RAIL_DOT: f32 = 10.0;
 const RAIL_LINE: f32 = 2.0;
 const RAIL_TOP: f32 = 15.0;
+/// How far the ring round the dot of the step that is up stands off it.
+const RAIL_RING: f32 = 4.0;
 
 /// About how tall a step's row is, and each line under it, and the gap a
 /// drag opens: for what is cut to a height on its way open or closed. A
@@ -1581,7 +1583,12 @@ impl App {
                 Place::Next => faint,
                 Place::Later => planned,
             }),
-            Length::Fixed(RAIL_TOP),
+            // The one that is up has a ring round its dot, which takes
+            // its room from the line above: the dot stays where it was.
+            Length::Fixed(match place {
+                Place::Current => RAIL_TOP - RAIL_RING,
+                _ => RAIL_TOP,
+            }),
         );
         let filled = |colour: iced::Color, ring: Option<f32>| {
             container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |theme| {
@@ -1613,7 +1620,20 @@ impl App {
             place => place,
         };
         let dot = match place {
-            Place::Current => filled(live, self.motion.ring().filter(|_| played.is_some())),
+            // Up now: its dot, in a ring that is always there.
+            Place::Current => container(filled(
+                live,
+                self.motion.ring().filter(|_| played.is_some()),
+            ))
+            .padding(RAIL_RING - 1.5)
+            .style(move |_| container::Style {
+                border: iced::Border {
+                    color: Palette::tint(live, 0.5),
+                    width: 1.5,
+                    radius: (RAIL_DOT / 2.0 + RAIL_RING).into(),
+                },
+                ..container::Style::default()
+            }),
             Place::Next => hollow(live),
             Place::Done => filled(past, None),
             Place::Later if goes => filled(planned, None),
