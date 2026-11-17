@@ -33,6 +33,9 @@ pub const ROWS: &str = "plan-rows";
 /// How far a section's steps sit in from its header.
 const INDENT: f32 = 12.0;
 
+/// The field the plan's target time is typed in.
+pub(crate) const TARGET_BOX: &str = "plan-target";
+
 /// The rail beside the steps: how wide its column is, its dots, its
 /// line, and how far down a row its dot sits, level with the step's name.
 const RAIL: f32 = 20.0;
@@ -267,6 +270,7 @@ impl App {
         // and their steps, and under them the other plans.
         let tree = self.mode == crate::mode::Mode::Plan;
         if tree {
+            rows = rows.push(self.time_row(plan, timing));
             rows = rows.push(
                 row![
                     text("▾").size(META).color(p.primary),
@@ -961,6 +965,134 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// How long the plan takes, large, over everything else in the
+    /// pane: what is planned, the target to hold it against and how far
+    /// off it is, when it starts and ends, and a bar with a part for each
+    /// section, as wide as its time and as full as its steps make it.
+    fn time_row<'a>(&self, plan: &Plan, timing: &Timing) -> Element<'a, Message> {
+        let p = self.palette;
+        let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
+        let total = schedule.total;
+        // A repeat with no number to it: at least this long.
+        let planned = match schedule.open {
+            true => format!("{}+", length::clock(total)),
+            false => length::clock(total),
+        };
+        let mut top = row![
+            look::icon(Icon::Clock, 16.0, p.primary),
+            text(planned).size(22).font(BOLD).color(p.on_surface),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let target: Element<'a, Message> = match &self.target_typed {
+            Some(typed) => text_input("45", typed)
+                .id(TARGET_BOX)
+                .on_input(Message::PlanTarget)
+                .on_submit(Message::TargetDone)
+                .size(META)
+                .padding([3, 8])
+                .width(64)
+                .style(look::input(p))
+                .into(),
+            None => crate::dashboard::hinted(
+                p,
+                button(
+                    text(match plan.target {
+                        Some(target) => format!("◎ {}", length::clock(target)),
+                        None => "◎".to_string(),
+                    })
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.primary),
+                )
+                .padding([3, 8])
+                .on_press_maybe(self.can_edit().then_some(Message::EditTarget))
+                .style(look::pill(p, Tone::Plain)),
+                "How long the whole service is meant to take".to_string(),
+                tooltip::Position::Bottom,
+            ),
+        };
+        top = top.push(target);
+        if let Some(target) = plan.target {
+            let (sign, off, colour) = match total > target {
+                true => ("↑", total - target, p.tertiary),
+                false => ("↓", target - total, p.on_surface_variant),
+            };
+            if !off.is_zero() {
+                top = top.push(
+                    text(format!("{sign} {}", length::clock(off)))
+                        .size(META)
+                        .color(colour),
+                );
+            }
+        }
+        // What the steps themselves add up to, when sections with a time
+        // of their own make the plan longer than that.
+        let mut bare = plan.clone();
+        let sections: Vec<StepId> = bare
+            .steps()
+            .iter()
+            .filter(|step| step.is_section())
+            .map(|step| step.id)
+            .collect();
+        for id in sections {
+            if let Some(Step {
+                action: Action::Section { budget, .. },
+                ..
+            }) = bare.get_mut(id)
+            {
+                *budget = None;
+            }
+        }
+        let filled =
+            lantern_engine::timing::schedule(&bare, &|step| self.loaded_length(step)).total;
+        if filled != total {
+            top = top.push(crate::dashboard::hinted(
+                p,
+                text(format!("▪ {}", length::clock(filled)))
+                    .size(META)
+                    .color(p.on_surface_variant),
+                "What the steps add up to".to_string(),
+                tooltip::Position::Bottom,
+            ));
+        }
+        top = top.push(Space::new().width(Fill));
+        if let Some(starts) = plan.starts {
+            top = top.push(
+                text(format!("{starts} → {}", starts.plus(total)))
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+        }
+        // One part for each of the plan's own sections.
+        let parts = timing
+            .sections
+            .iter()
+            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .map(|section| {
+                let planned = match section.phase {
+                    Phase::Coming { planned } => planned,
+                    Phase::Running { expected, .. } => expected,
+                    Phase::Done { took } => took.unwrap_or_default(),
+                };
+                let wide = section.budget.unwrap_or(planned).as_secs().clamp(1, 60_000) as u16;
+                let (full, colour) = match section.budget {
+                    Some(budget) if planned > budget => (1.0, p.tertiary),
+                    Some(budget) if !budget.is_zero() => {
+                        (planned.as_secs_f32() / budget.as_secs_f32(), p.primary)
+                    }
+                    _ => (1.0, p.primary),
+                };
+                container(bar(p, full, colour, 0.0))
+                    .width(Length::FillPortion(wide))
+                    .into()
+            });
+        column![top, row(parts).spacing(3)]
+            .spacing(8)
+            .padding(iced::Padding::default().left(8.0).right(8.0).bottom(8.0))
+            .into()
     }
 
     /// How a section or the plan (`None`) moves, as its buttons: its

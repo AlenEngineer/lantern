@@ -103,6 +103,8 @@ fn does(message: &Message) -> Does {
         | M::Unstandby(_)
         | M::PlanStarts(_)
         | M::PlanAdvance(_)
+        | M::PlanTarget(_)
+        | M::EditTarget
         | M::SetRepeat(None, _)
         | M::SetShuffle(None, _) => Does::EditsPlan,
         M::RenamePlan(_)

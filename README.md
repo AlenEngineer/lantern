@@ -146,6 +146,15 @@ you. Click under a dot to join it to the next step or part them. In a
 service, grey is past, the stage's colour is on the projector now (its
 line fills as it plays), and a ring in that colour is next.
 
+Over the plan, large, is how long it takes: sections count for their
+time, steps outside one for their length, and what repeats a number of
+times counts that often (a `+` after it means something repeats with no
+number to it). ◎ beside it sets a target for the whole service, and then
+↑ or ↓ says how far over or under the plan is. ▪ is what the steps
+themselves add up to, when the sections' times make the plan longer. With
+a start time the row says when the service ends. The bar under it has a
+part for each section, as wide as its time and as full as its steps.
+
 A section, and the plan itself on its row at the top, has three small
 buttons for how it moves: its steps go straight on or wait, it comes again
 (once, a number of times, until you go elsewhere, or until a time of day),

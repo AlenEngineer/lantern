@@ -292,6 +292,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   shows three: its steps go straight on or wait, it repeats (once, ×N, ∞ or
   until a time), its steps are shuffled. A step has repeat among its
   actions and wears a mark when it comes again.
+- How long the plan takes, large, over the plan: the total, a target for
+  the whole service (◎) with how far over or under it is, what the steps
+  themselves add up to, when it ends, and a bar with a part for each
+  section. What repeats a number of times counts that often, in the total
+  and in each section's time.
 
 ### Fixed
 
