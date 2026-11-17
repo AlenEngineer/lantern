@@ -552,6 +552,10 @@ pub enum Icon {
     ScreenOff,
     /// A loudspeaker.
     Sound,
+    /// A number of things.
+    Count,
+    /// Fill from the library.
+    Fill,
 }
 
 impl Icon {
@@ -610,6 +614,14 @@ impl Icon {
             Icon::Sound => mdi!(
                 "M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z"
             ),
+            Icon::Count => mdi!(
+                "M5.41,21L6.12,17H2.12L2.47,15H6.47L7.53,9H3.53L3.88,7H7.88L8.59,3H10.59L9.88,7H15.88L16.59,3H18.59L17.88,7H21.88L21.53,9H17.53L16.47,15H20.47L20.12,17H16.12L15.41,21H13.41L14.12,17H8.12L7.41,21H5.41M9.53,9L8.47,15H14.47L15.53,9H9.53Z"
+            ),
+            Icon::Fill => {
+                mdi!(
+                    "M3,16H10V14H3M18,14V10H16V14H12V16H16V20H18V16H22V14M14,6H3V8H14M14,10H3V12H14V10Z"
+                )
+            }
             Icon::Plus => mdi!("M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"),
             Icon::Tune => mdi!(
                 "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"

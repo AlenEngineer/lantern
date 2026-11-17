@@ -69,13 +69,11 @@ impl Usage {
     }
 
     /// On how many days `id` has been used.
-    #[allow(dead_code)] // read by the fill panel, which comes next
     pub fn times(&self, id: &ResourceId) -> usize {
         self.days.get(&id.to_string()).map_or(0, Vec::len)
     }
 
     /// How many whole weeks before `today` it was last used.
-    #[allow(dead_code)] // read by the fill panel, which comes next
     pub fn weeks_since(&self, id: &ResourceId, today: NaiveDate) -> Option<i64> {
         let last = *self.days.get(&id.to_string())?.last()?;
         Some((today - last).num_days().max(0) / 7)

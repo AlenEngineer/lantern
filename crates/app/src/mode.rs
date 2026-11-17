@@ -104,6 +104,7 @@ fn does(message: &Message) -> Does {
         | M::PlanStarts(_)
         | M::PlanAdvance(_)
         | M::PlanTarget(_)
+        | M::Fill(crate::fill_panel::FillEdit::Accept)
         | M::LookEdit(..)
         | M::LookReset(_)
         | M::EditTarget
@@ -296,6 +297,7 @@ impl App {
         self.starting = None;
         self.rehearsal = None;
         self.rehearsed = None;
+        self.filling = None;
         match (self.mode, to) {
             (from, to) if from == to => {}
             (Mode::Run, _) | (_, Mode::Run) => {}
@@ -365,6 +367,7 @@ impl App {
         }
         self.rehearsal = None;
         self.rehearsed = None;
+        self.filling = None;
         self.editing = None;
         self.adding = None;
         self.selected = None;

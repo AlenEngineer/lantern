@@ -16,8 +16,8 @@ mod dashboard;
 mod deck;
 mod desktop;
 mod drag;
-#[allow(dead_code)] // the choosing; the panel that asks for it comes next
 mod fill;
+mod fill_panel;
 mod fit;
 mod keys;
 mod length;
@@ -322,6 +322,8 @@ enum Message {
     RehearseSpeed,
     /// The rehearsal's clock ticked.
     RehearseTick,
+    /// A change to the fill of a section from the library.
+    Fill(fill_panel::FillEdit),
     /// What the side panel shows.
     Lens(side::Lens),
     /// A value of the selected thing's look, as typed.
@@ -609,6 +611,8 @@ struct App {
     pub(crate) rehearsal: Option<rehearse::Rehearsal>,
     /// The rehearsal just over: of what, and how long it took.
     pub(crate) rehearsed: Option<(Option<StepId>, Duration)>,
+    /// The fill of a section under way.
+    pub(crate) filling: Option<fill_panel::Filling>,
     pub(crate) lens: side::Lens,
     /// A look value as typed so far: whose, which, and the text.
     pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
@@ -793,6 +797,7 @@ impl App {
             target_typed: None,
             rehearsal: None,
             rehearsed: None,
+            filling: None,
             lens: side::Lens::default(),
             look_typed: None,
             sound_now: None,
@@ -2010,6 +2015,7 @@ impl App {
             Message::RehearsePause => self.rehearse_pause(),
             Message::RehearseSpeed => self.rehearse_speed(),
             Message::RehearseTick => return self.rehearse_tick(),
+            Message::Fill(edit) => self.fill_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;
                 self.look_typed = None;
@@ -3630,6 +3636,13 @@ impl App {
         if playing {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
+        }
+        // A fill waiting on files being measured looks again as they come.
+        if self.fill_measuring() {
+            subscriptions.push(
+                iced::time::every(Duration::from_secs(1))
+                    .map(|_| Message::Fill(fill_panel::FillEdit::Measured)),
+            );
         }
         // A rehearsal's clock.
         if self.rehearsal.is_some() {

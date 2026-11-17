@@ -311,6 +311,16 @@ impl App {
             let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
             move |id| schedule.start_of(id).map(|after| starts.plus(after))
         });
+        // Where a fill's proposed rows go: the end of its section, as far
+        // in as that section's steps.
+        let fill_of = self
+            .filling
+            .as_ref()
+            .and_then(|fill| plan.position(fill.section));
+        let fill_at = fill_of.map(|at| plan.group_end(at));
+        let fill_indent = fill_of.map_or(0.0, |at| {
+            INDENT * f32::from(plan.level(at) + 1) + look::CURL_WIDE
+        });
         let mut in_section = false;
         // Up to where rows are folded away with the section that holds
         // them, and whether that section is the one closing or opening
@@ -336,6 +346,13 @@ impl App {
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
+            // What a fill proposes sits at the end of its section,
+            // before whatever comes after it.
+            if fill_at == Some(index)
+                && let Some(proposed) = self.fill_rows(fill_indent)
+            {
+                rows = rows.push(proposed);
+            }
             let inward = INDENT * f32::from(plan.level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
@@ -488,6 +505,11 @@ impl App {
         }
         if let Some(steps) = folding.take() {
             rows = rows.push(cut(steps));
+        }
+        if fill_at == Some(plan.len())
+            && let Some(proposed) = self.fill_rows(fill_indent)
+        {
+            rows = rows.push(proposed);
         }
         if landing == Some(rest) {
             rows = rows.push(gap(gap_indent(moving, in_section)));
@@ -802,7 +824,24 @@ impl App {
         // What can be done to the selected section, on a line of its
         // own: nothing on the first line moves as the pointer comes.
         if selected {
-            content = content.push(row![Space::new().width(Fill), self.step_actions(step)]);
+            // With them, while planning: fill it from the library.
+            let mut second = row![].align_y(Alignment::Center);
+            if self.mode == crate::mode::Mode::Plan {
+                second = second.push(crate::dashboard::hinted(
+                    p,
+                    button(look::icon(Icon::Fill, 14.0, p.primary))
+                        .padding([3, 6])
+                        .on_press(Message::Fill(crate::fill_panel::FillEdit::Open(id)))
+                        .style(look::row(p, Tone::Plain)),
+                    "Fill it from the library, to its time or to a number of things".to_string(),
+                    tooltip::Position::Top,
+                ));
+            }
+            content = content.push(
+                second
+                    .push(Space::new().width(Fill))
+                    .push(self.step_actions(step)),
+            );
         }
         // Selected, or the one being rehearsed: lit.
         let rehearsed = self

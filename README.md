@@ -284,6 +284,21 @@ on. Under the preview are pause, on to the next, how far the step is, the
 speed its clock runs at (1×, 4×, 16×) and stop, and what comes next. At
 the end it says how long it took. A video is a still for its length.
 
+**Filling a section.** Select a section and press the fill button on
+its second line. The side panel becomes the fill's: a time to fill (what
+is left of the section's time) and a number of things, each with its own
+switch, so either or both can be asked; the kinds of file to take; the
+folder to take them from; the order (as the library holds them, drawn at
+random, or what you usually use, leaving out what was on in the last two
+weeks); and how the total may stand to the time (≤, =, ≥, ±) with a
+margin. What it proposes shows under the section as rows that are not
+steps yet, each with how often it has been used, how long since, and its
+length. ● keeps one through a new draw, ✕ leaves one out, the crossed
+arrows draw again, and the tick adds them to the section. Pictures, which
+have no length, share what is left of the time. Files are measured the
+first time a folder is asked about; the ring with a number says how many
+are still to be measured.
+
 The **library** is the media folders as a tree: a click looks at a file on this
 screen, a double click or Enter adds it to the plan after the selected
 step, and it can be dragged to where it should go. F6 gives it the arrows

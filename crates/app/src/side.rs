@@ -285,6 +285,10 @@ impl App {
 
     /// The panel: its three lenses, and what the one in use shows.
     pub(crate) fn side_panel(&self) -> Element<'_, Message> {
+        // A fill under way has the panel to itself.
+        if let Some(fill) = self.fill_card() {
+            return fill;
+        }
         let p = self.palette;
         let plan = self.engine.0.plan();
         let waiting = self.issues(&plan).len();
