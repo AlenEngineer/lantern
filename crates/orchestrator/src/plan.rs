@@ -3146,8 +3146,10 @@ mod tests {
 
     #[test]
     fn a_plan_saved_before_brackets_loads_and_saves_unchanged() {
-        let saved = include_str!("../fixtures/plan_before_brackets.json");
-        let plan = Plan::from_json(saved).unwrap();
+        // As it is saved, whatever line endings the checkout gave the
+        // file: a plan is always written with plain ones.
+        let saved = include_str!("../fixtures/plan_before_brackets.json").replace("\r\n", "\n");
+        let plan = Plan::from_json(&saved).unwrap();
         assert_eq!(plan.to_json(), saved.trim_end());
         let id = |label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
         // Each section runs to the next no further in, as it did.
