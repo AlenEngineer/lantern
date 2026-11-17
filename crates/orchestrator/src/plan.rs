@@ -256,6 +256,17 @@ impl From<SpanId> for FlowOf {
     }
 }
 
+/// What drawing an order by hand did: see [`Plan::draw_over`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drawn {
+    /// A new order, of its own.
+    Made(SpanId),
+    /// One that was there, now over more steps: it took in what it met.
+    Grown(SpanId),
+    /// A part of one that was there was rubbed out.
+    Rubbed,
+}
+
 /// Why a span can't be where it was asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SpanError {
@@ -998,6 +1009,101 @@ impl Plan {
         self.lay(Over::Steps { first: a, last: b }, 3, |flow| {
             flow.shuffle = true;
         })
+    }
+
+    /// What [`draw_over`] would do, with the plan left as it is.
+    ///
+    /// [`draw_over`]: Plan::draw_over
+    pub fn would_draw_over(&self, a: StepId, b: StepId) -> Result<Drawn, SpanError> {
+        self.clone().draw_over(a, b)
+    }
+
+    /// Draws an order over the steps from `a` to `b` as a hand does it
+    /// along the plan, which may meet orders drawn there already (those
+    /// from one step to another; one attached to a section is left to
+    /// [`shuffle_over`]'s rules):
+    ///
+    /// - wholly inside one, it rubs that part of it out: what is left
+    ///   either side stays in a drawn order where three steps or more
+    ///   are left, and what came again still does;
+    /// - sharing a step with one or more, without being inside one, it
+    ///   and they become one order over all of their steps;
+    /// - otherwise it is an order of its own, as [`shuffle_over`] makes
+    ///   one: two that only touch stay two, each drawn by itself.
+    ///
+    /// Nothing is changed where the result can't be (see [`loop_over`]).
+    ///
+    /// [`shuffle_over`]: Plan::shuffle_over
+    /// [`loop_over`]: Plan::loop_over
+    pub fn draw_over(&mut self, a: StepId, b: StepId) -> Result<Drawn, SpanError> {
+        let (a, b) = (
+            self.position(a).ok_or(SpanError::Missing)?,
+            self.position(b).ok_or(SpanError::Missing)?,
+        );
+        let step = |plan: &Plan, at: &usize| !plan.steps[*at].is_section();
+        let (first, last) = (a.min(b)..=a.max(b))
+            .find(|at| step(self, at))
+            .zip((a.min(b)..=a.max(b)).rfind(|at| step(self, at)))
+            .ok_or(SpanError::TooFew)?;
+        // The orders drawn from step to step that share a step with it.
+        let met: Vec<(SpanId, usize, usize)> = self
+            .spans
+            .iter()
+            .filter(|span| span.flow.shuffle && matches!(span.over, Over::Steps { .. }))
+            .filter_map(|span| {
+                let (from, to) = self.reach(span.over).ok().flatten()?;
+                (from <= last && first <= to).then_some((span.id, from, to))
+            })
+            .collect();
+        let id_at = |plan: &Plan, at: usize| plan.steps[at].id;
+        let mut next = self.clone();
+        let done = match met
+            .iter()
+            .find(|(_, from, to)| *from <= first && last <= *to)
+        {
+            // Inside one: that part of it is rubbed out.
+            Some(&(inside, from, to)) => {
+                next.unshuffle(inside);
+                let steps = |plan: &Plan, of: std::ops::Range<usize>| {
+                    of.filter(|at| step(plan, at)).collect::<Vec<usize>>()
+                };
+                for left in [steps(&next, from..first), steps(&next, last + 1..to + 1)] {
+                    if let (Some(from), Some(to), true) =
+                        (left.first(), left.last(), left.len() >= 3)
+                    {
+                        let (from, to) = (id_at(&next, *from), id_at(&next, *to));
+                        next.shuffle_over(from, to)?;
+                    }
+                }
+                Drawn::Rubbed
+            }
+            None if met.is_empty() => {
+                let (first, last) = (id_at(&next, first), id_at(&next, last));
+                Drawn::Made(next.shuffle_over(first, last)?)
+            }
+            // Meeting some: one order over all of them.
+            None => {
+                let first = met
+                    .iter()
+                    .map(|(_, from, _)| *from)
+                    .min()
+                    .unwrap_or(first)
+                    .min(first);
+                let last = met
+                    .iter()
+                    .map(|(_, _, to)| *to)
+                    .max()
+                    .unwrap_or(last)
+                    .max(last);
+                for (id, ..) in &met {
+                    next.unshuffle(*id);
+                }
+                let (first, last) = (id_at(&next, first), id_at(&next, last));
+                Drawn::Grown(next.shuffle_over(first, last)?)
+            }
+        };
+        *self = next;
+        Ok(done)
     }
 
     /// Has all the section `section` holds come again: twice, until that
@@ -2150,5 +2256,59 @@ mod tests {
         assert_eq!(part.steps()[1].id, plan.steps()[2].id);
         assert_eq!(labels(&plan.part(sermon).unwrap()), ["D"]);
         assert!(plan.part(part.steps()[1].id).is_none(), "a step isn't one");
+    }
+
+    #[test]
+    fn an_order_drawn_by_hand_grows_what_it_meets_and_rubs_out_what_it_is_inside() {
+        let mut plan = Plan::new("Sabbath");
+        let steps: Vec<StepId> = ["A", "B", "C", "D", "E", "F", "G", "H"]
+            .into_iter()
+            .map(|name| plan.push(name, Action::Blank))
+            .collect();
+        let at = |n: usize| steps[n];
+        let orders = |plan: &Plan| -> Vec<(usize, usize)> {
+            plan.laid_spans()
+                .into_iter()
+                .filter(|(span, ..)| span.flow.shuffle)
+                .map(|(_, first, last)| (first, last))
+                .collect()
+        };
+        // Over nothing drawn: an order of its own.
+        assert!(matches!(plan.draw_over(at(0), at(2)), Ok(Drawn::Made(_))));
+        assert_eq!(orders(&plan), vec![(0, 2)]);
+        // One that only touches it stays apart: each is drawn by itself.
+        assert!(matches!(plan.draw_over(at(3), at(5)), Ok(Drawn::Made(_))));
+        assert_eq!(orders(&plan), vec![(0, 2), (3, 5)]);
+        // One that starts on the last step of another joins it; and here
+        // it meets the second too, so all three are one.
+        assert!(matches!(plan.draw_over(at(2), at(3)), Ok(Drawn::Grown(_))));
+        assert_eq!(orders(&plan), vec![(0, 5)]);
+        // Growing on past its end.
+        assert!(matches!(plan.draw_over(at(5), at(7)), Ok(Drawn::Grown(_))));
+        assert_eq!(orders(&plan), vec![(0, 7)]);
+        // Inside it: that part is rubbed out, and each side stays an
+        // order where three are left.
+        assert_eq!(plan.would_draw_over(at(3), at(4)), Ok(Drawn::Rubbed));
+        assert_eq!(orders(&plan), vec![(0, 7)], "a dry run changes nothing");
+        assert_eq!(plan.draw_over(at(3), at(4)), Ok(Drawn::Rubbed));
+        assert_eq!(orders(&plan), vec![(0, 2), (5, 7)]);
+        // Two left is no order: rubbing one step off the end of three
+        // takes the order away.
+        assert_eq!(plan.draw_over(at(7), at(7)), Ok(Drawn::Rubbed));
+        assert_eq!(orders(&plan), vec![(0, 2)]);
+        // Rubbing out all of one.
+        assert_eq!(plan.draw_over(at(0), at(2)), Ok(Drawn::Rubbed));
+        assert_eq!(orders(&plan), vec![]);
+        // What comes again as well still does, with the order off.
+        let both = plan.shuffle_over(at(0), at(3)).unwrap();
+        plan.loop_over(at(0), at(3)).unwrap();
+        assert_eq!(plan.draw_over(at(1), at(2)), Ok(Drawn::Rubbed));
+        assert_eq!(orders(&plan), vec![]);
+        assert!(
+            plan.span(both)
+                .is_some_and(|span| span.is_loop() && !span.is_drawn())
+        );
+        // What can't be changes nothing: too few steps.
+        assert_eq!(plan.draw_over(at(5), at(6)), Err(SpanError::TooFew));
     }
 }

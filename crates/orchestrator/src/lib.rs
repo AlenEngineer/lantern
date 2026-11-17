@@ -22,7 +22,7 @@ mod session;
 pub mod timing;
 
 pub use plan::{
-    Action, DEEPEST, Ending, Flow, FlowOf, Over, Plan, PlanError, Repeat, Span, SpanError, SpanId,
-    Step, StepId, StepSound,
+    Action, DEEPEST, Drawn, Ending, Flow, FlowOf, Over, Plan, PlanError, Repeat, Span, SpanError,
+    SpanId, Step, StepId, StepSound,
 };
 pub use session::{LogEntry, Session};

@@ -1448,6 +1448,10 @@ impl App {
                 self.drag = None;
                 self.pull = Some(rail::Pull::new(step, toggle));
             }
+            Message::Rail(rail::Act::PressOrder(step)) => {
+                self.drag = None;
+                self.pull = Some(rail::Pull::on_order(step));
+            }
             Message::Rail(rail::Act::Ring(on)) => {
                 self.pull = None;
                 self.drag = None;
@@ -1527,11 +1531,17 @@ impl App {
                             }
                         });
                     }
-                    (true, Some(rail::Would::Shuffle { first, last }), _) => {
+                    (
+                        true,
+                        Some(
+                            rail::Would::Shuffle { first, last } | rail::Would::Rub { first, last },
+                        ),
+                        _,
+                    ) => {
                         self.remember(None);
                         let drawn = self.engine.0.edit_plan(|plan| {
                             let (a, b) = (plan.steps()[first].id, plan.steps()[last].id);
-                            plan.shuffle_over(a, b)
+                            plan.draw_over(a, b)
                         });
                         if drawn.is_ok() {
                             self.motion.changed(pull.from);

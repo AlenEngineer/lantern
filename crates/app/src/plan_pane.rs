@@ -622,7 +622,7 @@ impl App {
                 let arrow = row![
                     self.loop_lanes(lanes, &covers, false),
                     mark,
-                    self.order_lanes(lanes, &covers, false),
+                    self.order_lanes(lanes, &covers, false, None),
                     Space::new().width(inward),
                     hinted(
                         p,
@@ -950,6 +950,14 @@ impl App {
                     &would(first, last, lanes.orders),
                     p.primary,
                     track::Mark::Crossed,
+                    true,
+                )),
+                // The part that would be rubbed out, over the order it
+                // is in.
+                Some(Would::Rub { first, last }) => drawn_orders.extend(span(
+                    &would(first, last, &[]),
+                    p.error,
+                    track::Mark::Nothing,
                     true,
                 )),
                 Some(Would::Not { first, last, .. }) if pull.side == Side::Right => drawn_orders
@@ -1958,6 +1966,7 @@ impl App {
             });
         let would_ink = match would {
             Some(crate::rail::Would::Not { .. }) => p.error,
+            Some(crate::rail::Would::Rub { .. }) => p.on_surface_variant,
             _ => planned,
         };
         // How the dot looks: drawn by the one drawing over the list.
@@ -2139,7 +2148,7 @@ impl App {
         let pulling = would.is_some();
         let covers = |laid: &Laid| (laid.first..=laid.last).contains(&index);
         let curl = self.loop_lanes(lanes, &covers, pulling);
-        let drawn = self.order_lanes(lanes, &covers, pulling);
+        let drawn = self.order_lanes(lanes, &covers, pulling, Some(step.id));
         // The rail says when the pointer is on it, for a dot pulled here
         // and for a ring opened here, and where it is, for what is drawn
         // over it. A width of its own: laid out after the step beside
@@ -2197,13 +2206,17 @@ impl App {
     }
 
     /// The same to the right of the dots, the innermost lane first, for
-    /// the lines of a drawn order.
+    /// the lines of a drawn order. Beside a step (`beside`), a line
+    /// pressed and pulled along draws more of the order or rubs some of
+    /// it out, and a double click takes all of it away.
     fn order_lanes<'a>(
         &self,
         lanes: Lanes<'_>,
         covers: &dyn Fn(&Laid) -> bool,
         quiet: bool,
+        beside: Option<StepId>,
     ) -> Element<'a, Message> {
+        let pulls = self.mode == crate::mode::Mode::Plan;
         let rings = self.can_edit() && !quiet;
         let parts = (0..lanes.order_lanes).map(|lane| {
             let wide = match lane + 1 == lanes.order_lanes {
@@ -2216,12 +2229,20 @@ impl App {
                 .iter()
                 .find(|laid| laid.lane == lane && covers(laid))
             {
-                Some(laid) if rings => mouse_area(part)
-                    .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                        crate::rail::RingOn::Shuffle(laid.of),
-                    )))
-                    .interaction(mouse::Interaction::Pointer)
-                    .into(),
+                Some(laid) if rings => {
+                    let line = mouse_area(part)
+                        .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                            crate::rail::RingOn::Shuffle(laid.of),
+                        )))
+                        .on_double_click(Message::Rail(crate::rail::Act::Unshuffle(laid.of)))
+                        .interaction(mouse::Interaction::Pointer);
+                    match beside.filter(|_| pulls) {
+                        Some(step) => line
+                            .on_press(Message::Rail(crate::rail::Act::PressOrder(step)))
+                            .into(),
+                        None => line.into(),
+                    }
+                }
                 _ => part.into(),
             }
         });

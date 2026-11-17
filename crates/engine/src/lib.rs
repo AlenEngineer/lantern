@@ -29,8 +29,8 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, DEEPEST, Ending, Flow, FlowOf, LogEntry, Over, Plan, PlanError, Repeat, Session, Span,
-    SpanError, SpanId, Step, StepId, StepSound,
+    Action, DEEPEST, Drawn, Ending, Flow, FlowOf, LogEntry, Over, Plan, PlanError, Repeat, Session,
+    Span, SpanError, SpanId, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
