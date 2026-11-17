@@ -460,6 +460,10 @@ pub enum Icon {
     Shuffle,
     /// Two steps joined: the one goes straight on to the other.
     Joined,
+    Plus,
+    /// Sliders: how something is set.
+    Tune,
+    Check,
 }
 
 impl Icon {
@@ -510,6 +514,11 @@ impl Icon {
             Icon::Joined => mdi!(
                 "M12,2A3,3 0 0,1 15,5A3,3 0 0,1 13,7.83V16.17A3,3 0 0,1 15,19A3,3 0 0,1 12,22A3,3 0 0,1 9,19A3,3 0 0,1 11,16.17V7.83A3,3 0 0,1 9,5A3,3 0 0,1 12,2Z"
             ),
+            Icon::Plus => mdi!("M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"),
+            Icon::Tune => mdi!(
+                "M3,17V19H9V17H3M3,5V7H13V5H3M13,21V19H21V17H13V15H11V21H13M7,9V11H3V13H7V15H9V9H7M21,13V11H11V13H21M15,9H17V7H21V5H17V3H15V9Z"
+            ),
+            Icon::Check => mdi!("M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z"),
             Icon::Screen => mdi!(
                 "M21,16H3V4H21M21,2H3C1.89,2 1,2.89 1,4V16A2,2 0 0,0 3,18H10V20H8V22H16V20H14V18H21A2,2 0 0,0 23,16V4C23,2.89 22.1,2 21,2Z"
             ),

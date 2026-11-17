@@ -337,6 +337,11 @@ impl App {
     /// with nothing picked, they start on its first row.
     pub(crate) fn switch_pane(&mut self) -> Task<Message> {
         self.in_library = !self.in_library;
+        // The library is one lens of the side panel: the arrows can only
+        // go to it while it is the one in sight.
+        if self.in_library {
+            self.lens = crate::side::Lens::Add;
+        }
         if self.in_library && self.shelf_at().is_none() {
             return self.shelf_move(Go::First);
         }

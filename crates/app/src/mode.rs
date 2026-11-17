@@ -104,6 +104,8 @@ fn does(message: &Message) -> Does {
         | M::PlanStarts(_)
         | M::PlanAdvance(_)
         | M::PlanTarget(_)
+        | M::LookEdit(..)
+        | M::LookReset(_)
         | M::EditTarget
         | M::SetRepeat(None, _)
         | M::SetShuffle(None, _) => Does::EditsPlan,

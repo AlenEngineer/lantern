@@ -922,8 +922,9 @@ impl App {
         let side: Element<'_, Message> = if self.search_open {
             Space::new().width(self.search_width()).into()
         } else if planning {
-            // Beside the plan: the library, to build it from.
-            container(self.shelf_pane())
+            // Beside the plan: the library to build it from, how what is
+            // selected looks, and what isn't ready.
+            container(self.side_panel())
                 .width(self.side_width().max(260.0))
                 .into()
         } else if self.mode == crate::mode::Mode::Live && self.stage.preview.is_none() {
