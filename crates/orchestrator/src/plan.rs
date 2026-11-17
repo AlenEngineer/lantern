@@ -22,7 +22,7 @@ pub enum PlanError {
 /// Identifies a step within its plan. Stays the same when steps are reordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct StepId(u64);
+pub struct StepId(pub(crate) u64);
 
 impl fmt::Display for StepId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -77,6 +77,51 @@ fn is_zero(depth: &u8) -> bool {
     *depth == 0
 }
 
+/// How many times a step, a section or the plan comes before the plan
+/// moves past it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Repeat {
+    /// Once: the usual.
+    #[default]
+    Once,
+    /// This many times in all.
+    Times(u16),
+    /// Until the operator goes somewhere else.
+    Forever,
+    /// Again while it is before this time of day; what is on when the
+    /// time comes is finished first.
+    Until(crate::timing::TimeOfDay),
+}
+
+/// How a step, a section or the plan moves: how often it comes, and for
+/// a section or the plan, in what order its steps do. Unlike
+/// [`Step::advance`], none of it carries down: it is about the one thing
+/// it is set on.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Flow {
+    /// How many times it comes.
+    #[serde(skip_serializing_if = "Repeat::is_once")]
+    pub repeat: Repeat,
+    /// Its steps come in an order drawn afresh each time round.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub shuffle: bool,
+}
+
+impl Repeat {
+    fn is_once(&self) -> bool {
+        *self == Repeat::Once
+    }
+}
+
+impl Flow {
+    /// Once and in order: nothing to keep.
+    pub fn is_usual(&self) -> bool {
+        *self == Flow::default()
+    }
+}
+
 /// A sound that plays with a step, over what the step shows: music under
 /// a passage, or under the last slides of a deck.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,9 +154,16 @@ pub struct Step {
     #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
     pub estimate: Option<Duration>,
     /// Go on to the next step by itself when done: a video when it ends,
-    /// anything else after its length. Off, the operator moves on.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub advance: bool,
+    /// anything else after its length. `Some(false)` waits for the
+    /// operator; unset, it does as the section it is in, or the plan,
+    /// says. On a section, it is what its steps do unless they say.
+    /// See [`Plan::goes_on`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advance: Option<bool>,
+    /// How many times it comes, and for a section in what order its
+    /// steps do.
+    #[serde(default, skip_serializing_if = "Flow::is_usual")]
+    pub flow: Flow,
     /// A sound that plays with the step. Only a step that shows something
     /// still (slides, a passage, a picture, pages) plays one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,6 +220,13 @@ pub struct Plan {
     /// to move a car. Shown when wanted, without moving the plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub standby: Vec<Resource>,
+    /// Whether steps go on by themselves unless a section or a step says
+    /// otherwise. See [`Plan::goes_on`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub advance: bool,
+    /// How many times the plan comes, and in what order its steps do.
+    #[serde(default, skip_serializing_if = "Flow::is_usual")]
+    pub flow: Flow,
 }
 
 impl Default for Plan {
@@ -190,6 +249,8 @@ impl Plan {
             bibles: Vec::new(),
             starts: None,
             standby: Vec::new(),
+            advance: false,
+            flow: Flow::default(),
         }
     }
 
@@ -238,7 +299,8 @@ impl Plan {
             notes: None,
             action,
             estimate: None,
-            advance: false,
+            advance: None,
+            flow: Flow::default(),
             sound: None,
             look: None,
         };
@@ -326,6 +388,20 @@ impl Plan {
             }
         }
         found.into_iter().rev().map(|(_, id)| id).collect()
+    }
+
+    /// Whether the step at `index` goes on by itself when done: what it
+    /// says itself, or else the nearest section it is in that says, or
+    /// else the plan.
+    pub fn goes_on(&self, index: usize) -> bool {
+        let own = self.steps.get(index).and_then(|step| step.advance);
+        own.or_else(|| {
+            self.within(index)
+                .into_iter()
+                .rev()
+                .find_map(|id| self.get(id).and_then(|section| section.advance))
+        })
+        .unwrap_or(self.advance)
     }
 
     /// The look of the step at `index`. Each level changes what it is
@@ -608,7 +684,7 @@ mod tests {
         template.section("Alabanza", Some(Duration::from_secs(15 * 60)));
         let slot = template.live("Himnos", Some(Query::new("!h")));
         let welcome = template.show(resource("Bienvenida"));
-        template.get_mut(welcome).unwrap().advance = true;
+        template.get_mut(welcome).unwrap().advance = Some(true);
         if let Action::Live { shown, .. } = &mut template.get_mut(slot).unwrap().action {
             shown.push(resource("Himno 436"));
         }
@@ -619,7 +695,11 @@ mod tests {
         assert_eq!(sunday.title, "Domingo 2026-11-15");
         assert!(!sunday.template);
         assert_eq!(labels(&sunday), labels(&template));
-        assert!(sunday.get(welcome).unwrap().advance, "settings come along");
+        assert_eq!(
+            sunday.get(welcome).unwrap().advance,
+            Some(true),
+            "settings come along"
+        );
         match &sunday.get(slot).unwrap().action {
             Action::Live { hint, shown } => {
                 assert_eq!(hint.as_ref().map(|q| q.text.as_str()), Some("!h"));

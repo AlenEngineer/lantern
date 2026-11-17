@@ -174,7 +174,9 @@ impl App {
             ));
         }
         if let Some(when) = goes_on_when(step) {
-            let on = step.advance;
+            // As it says, or as its sections or the plan say for it.
+            let plan = self.engine.0.plan();
+            let on = plan.position(id).is_some_and(|at| plan.goes_on(at));
             actions = actions.push(small(
                 text("auto")
                     .size(META)

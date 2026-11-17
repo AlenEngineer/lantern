@@ -275,6 +275,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
   font, sizes, dim, the reference line), and the rest carries down from
   the plan and the sections around it. There is no panel for it yet; the
   dashboard and the stage already follow it.
+- Flow, in the plan file for now. A step, a section or the plan can
+  repeat (`"flow": {"repeat": {"times": 2}}`, `"forever"`, or
+  `{"until": "10:30"}`) and a section or the plan can shuffle its steps,
+  drawn afresh each round. Going on by itself carries down: set on a
+  section or the plan, its steps do it unless one says otherwise. Space
+  follows the flow, innermost repeat first, and Up next shows what will
+  really come.
 
 ### Fixed
 

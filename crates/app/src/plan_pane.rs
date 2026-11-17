@@ -386,8 +386,10 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let mut row =
-                column![self.draggable(step.id, self.step_row(number, step, place, issue))];
+            let mut row = column![self.draggable(
+                step.id,
+                self.step_row(number, step, place, issue, plan.goes_on(index))
+            )];
             // The result would go after the selected step, or with nothing
             // selected after the current one.
             let after = selected
@@ -749,6 +751,7 @@ impl App {
         step: &Step,
         place: Place,
         issue: Option<&Issue>,
+        goes_on: bool,
     ) -> Element<'_, Message> {
         let p = self.palette;
         // The current step is on stage unless something off the plan was
@@ -810,7 +813,7 @@ impl App {
                 Some(issue.what.clone()),
                 level_tone(Some(issue.level)).text(p),
             ),
-            (None, Place::Current) if step.advance && self.goes_on_in().is_some() => (
+            (None, Place::Current) if self.goes_on_in().is_some() => (
                 self.goes_on_in()
                     .map(|left| format!("goes on in {}", seconds_left(left))),
                 label_color,
@@ -846,7 +849,7 @@ impl App {
         } else {
             // What there is to say, else the length; a step that goes on
             // by itself is marked.
-            let words = match (&said, step.advance) {
+            let words = match (&said, goes_on) {
                 (Some(said), _) => said.clone(),
                 (None, true) if !length.is_empty() => format!("{length} ↦"),
                 (None, _) => length.clone(),

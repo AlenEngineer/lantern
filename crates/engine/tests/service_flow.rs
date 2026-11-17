@@ -424,7 +424,7 @@ fn a_video_that_goes_on_by_itself_moves_the_plan_when_it_ends() {
     let intro = plan.show(video("Intro"));
     let welcome = plan.show(image("Welcome"));
     let outro = plan.show(video("Outro"));
-    plan.get_mut(intro).unwrap().advance = true;
+    plan.get_mut(intro).unwrap().advance = Some(true);
     engine.load_plan(plan);
 
     engine.next();

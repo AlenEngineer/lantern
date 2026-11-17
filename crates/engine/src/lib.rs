@@ -29,7 +29,7 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, DEEPEST, LogEntry, Plan, PlanError, Session, Step, StepId, StepSound,
+    Action, DEEPEST, Flow, LogEntry, Plan, PlanError, Repeat, Session, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -161,6 +161,21 @@ impl Engine {
     /// The step the session is at.
     pub fn current_step(&self) -> Option<Step> {
         lock(&self.session).current().cloned()
+    }
+
+    /// Whether the current step goes on by itself when done: as it
+    /// says, or the sections it is in, or the plan ([`Plan::goes_on`]).
+    pub fn goes_on(&self) -> bool {
+        let session = lock(&self.session);
+        session
+            .current_index()
+            .is_some_and(|at| session.plan().goes_on(at))
+    }
+
+    /// The time of day, as time since midnight, for a repeat that ends
+    /// at one.
+    pub fn tell_time(&self, since_midnight: Duration) {
+        lock(&self.session).tell_time(since_midnight);
     }
 
     /// The step that [`next`](Self::next) would move to.
@@ -408,7 +423,7 @@ impl Engine {
     /// Whether `scene` is on program for the current step, and that step
     /// goes on by itself.
     fn goes_on_after(&self, scene: SceneId) -> bool {
-        let Some(step) = self.current_step().filter(|step| step.advance) else {
+        let Some(step) = self.current_step().filter(|_| self.goes_on()) else {
             return false;
         };
         let Action::Show { resource } = &step.action else {

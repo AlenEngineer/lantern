@@ -886,6 +886,9 @@ impl App {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        // A repeat that ends at a time of day needs the time, whatever
+        // moves the plan on.
+        self.engine.0.tell_time(length::now_of_day());
         // A frame changes nothing: the view is drawn again, further along.
         if matches!(message, Message::Frame) {
             return Task::none();
@@ -1931,7 +1934,7 @@ impl App {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {
                     if let Some(step) = plan.get_mut(id) {
-                        step.advance = on;
+                        step.advance = Some(on);
                     }
                 })
             }
@@ -3136,7 +3139,11 @@ impl App {
     /// among its slides, counted from when the current slide went up. A
     /// video goes on when it ends, which the engine does.
     pub(crate) fn goes_on_in(&self) -> Option<Duration> {
-        let step = self.engine.0.current_step().filter(|step| step.advance)?;
+        let step = self
+            .engine
+            .0
+            .current_step()
+            .filter(|_| self.engine.0.goes_on())?;
         if !matches!(step.action, Action::Show { .. } | Action::Blank) {
             return None;
         }

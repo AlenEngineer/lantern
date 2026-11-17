@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{Action, Plan, Step, StepId};
+use crate::{Action, Flow, Plan, Repeat, Step, StepId};
 
 /// Something that was put on stage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,7 +31,23 @@ pub struct Session {
     log: Vec<LogEntry>,
     /// When each step was first reached, for timing sections.
     entered: HashMap<StepId, SystemTime>,
+    /// How many times round each repeating thing has gone already: a
+    /// step or a section by its id, the plan as `None`.
+    rounds: HashMap<Option<StepId>, u16>,
+    /// What shuffled orders are drawn from, so the same round of the
+    /// same section reads the same each time it is asked.
+    seed: u64,
+    /// The time of day, as time since midnight, for a repeat that ends
+    /// at one. Unknown, such a repeat goes on.
+    now: Option<Duration>,
 }
+
+/// A section by its id, or the plan.
+type Group = Option<StepId>;
+
+/// What going on does to the rounds counted: a new count for something
+/// that comes again, `None` for something that is over.
+type Rounds = Vec<(Group, Option<u16>)>;
 
 impl Session {
     /// A session that hasn't started yet.
@@ -41,6 +57,11 @@ impl Session {
             cursor: None,
             log: Vec::new(),
             entered: HashMap::new(),
+            rounds: HashMap::new(),
+            seed: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(1, |since| since.as_nanos() as u64 | 1),
+            now: None,
         }
     }
 
@@ -83,16 +104,161 @@ impl Session {
 
     /// The step [`next`](Self::next) would move to, for an "up next" panel.
     pub fn peek_next(&self) -> Option<&Step> {
-        let from = self.current_index().map_or(0, |i| i + 1);
-        self.plan.steps().get(self.forward(from)?)
+        let (index, _) = self.following()?;
+        self.plan.steps().get(index)
     }
 
-    /// Moves to the next step (or the first, if not started). At the end,
-    /// stays on the last step and returns `None`.
+    /// Moves to the next step (or the first, if not started), following
+    /// the plan's flow: a step, a section or the plan that repeats comes
+    /// again, innermost first, and a shuffled section gives its steps in
+    /// its drawn order. At the end, stays on the last step and returns
+    /// `None`.
     #[allow(clippy::should_implement_trait)] // a cursor, not an iterator: it moves both ways
     pub fn next(&mut self) -> Option<&Step> {
-        let index = self.forward(self.current_index().map_or(0, |i| i + 1))?;
+        let (index, rounds) = self.following()?;
+        for (of, round) in rounds {
+            match round {
+                Some(round) => self.rounds.insert(of, round),
+                None => self.rounds.remove(&of),
+            };
+        }
         self.move_to_index(index)
+    }
+
+    /// The time of day, as time since midnight: a repeat that ends at a
+    /// time needs it.
+    pub fn tell_time(&mut self, since_midnight: Duration) {
+        self.now = Some(since_midnight);
+    }
+
+    /// Where `next` would go, and what it does to the rounds counted: a
+    /// new count, or `None` for one that is over.
+    fn following(&self) -> Option<(usize, Rounds)> {
+        let steps = self.plan.steps();
+        let mut rounds = Vec::new();
+        let Some(at) = self.current_index() else {
+            return Some((self.entering(self.forward(0)?, None), rounds));
+        };
+        // The step itself comes again.
+        let own = Some(steps[at].id);
+        if self.again(steps[at].flow, self.round(own)) {
+            rounds.push((own, Some(self.round(own) + 1)));
+            return Some((at, rounds));
+        }
+        rounds.push((own, None));
+        // Then the sections it is in, innermost first, and the plan.
+        let groups = self
+            .plan
+            .within(at)
+            .into_iter()
+            .rev()
+            .map(Some)
+            .chain([None]);
+        // What follows in the plan's own order, inside a section that
+        // isn't over; and where the plan goes on after one that is.
+        let mut inside = None;
+        let mut after = at + 1;
+        for group in groups {
+            let flow = self.flow_of(group);
+            let order = self.order(group, self.round(group));
+            let place = order.iter().position(|&index| index == at);
+            if place.is_none_or(|place| place + 1 < order.len()) {
+                // Not over. Shuffled, its order says what follows.
+                if flow.shuffle
+                    && let Some(place) = place
+                {
+                    return Some((order[place + 1], rounds));
+                }
+                inside.get_or_insert(after);
+                continue;
+            }
+            // Over: once more round, or out of it.
+            if self.again(flow, self.round(group)) {
+                let round = self.round(group) + 1;
+                rounds.push((group, Some(round)));
+                return self
+                    .order(group, round)
+                    .first()
+                    .map(|&first| (first, rounds));
+            }
+            rounds.push((group, None));
+            inside = None;
+            after = self.span(group).1;
+        }
+        let index = self.forward(inside.unwrap_or(after))?;
+        Some((self.entering(index, Some(at)), rounds))
+    }
+
+    /// Going to `index` from `from` in the plan's order: into a shuffled
+    /// section that `from` wasn't in, its first step is the one drawn
+    /// first. The outermost such section says.
+    fn entering(&self, index: usize, from: Option<usize>) -> usize {
+        let was_in: Vec<StepId> = from.map_or_else(Vec::new, |from| self.plan.within(from));
+        let mut groups = vec![None];
+        groups.extend(self.plan.within(index).into_iter().map(Some));
+        groups
+            .into_iter()
+            .filter(|group| self.flow_of(*group).shuffle)
+            .find(|group| match group {
+                Some(id) => !was_in.contains(id),
+                None => from.is_none(),
+            })
+            .and_then(|group| self.order(group, self.round(group)).first().copied())
+            .unwrap_or(index)
+    }
+
+    fn round(&self, of: Group) -> u16 {
+        self.rounds.get(&of).copied().unwrap_or(0)
+    }
+
+    fn flow_of(&self, group: Group) -> Flow {
+        match group {
+            Some(id) => self.plan.get(id).map(|step| step.flow).unwrap_or_default(),
+            None => self.plan.flow,
+        }
+    }
+
+    /// Where a section's steps start and end in the plan; all of it for
+    /// the plan.
+    fn span(&self, group: Group) -> (usize, usize) {
+        match group.and_then(|id| self.plan.position(id)) {
+            Some(at) => (at + 1, self.plan.group_end(at)),
+            None => (0, self.plan.len()),
+        }
+    }
+
+    /// The steps of a section, or the plan, in the order they come this
+    /// `round`: the plan's, or a drawn one when it is shuffled.
+    fn order(&self, group: Group, round: u16) -> Vec<usize> {
+        let (start, end) = self.span(group);
+        let steps = self.plan.steps();
+        let mut order: Vec<usize> = (start..end).filter(|&i| !steps[i].is_section()).collect();
+        if self.flow_of(group).shuffle {
+            let of: u64 = group.map_or(0, |id| id.0 + 1);
+            let mut state =
+                self.seed ^ of.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(round) << 32;
+            let mut draw = move || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            for last in (1..order.len()).rev() {
+                order.swap(last, (draw() % (last as u64 + 1)) as usize);
+            }
+        }
+        order
+    }
+
+    /// Whether something that has come `done` times more than once comes
+    /// again.
+    fn again(&self, flow: Flow, done: u16) -> bool {
+        match flow.repeat {
+            Repeat::Once => false,
+            Repeat::Times(times) => done.saturating_add(1) < times,
+            Repeat::Forever => true,
+            Repeat::Until(time) => self.now.is_none_or(|now| now < time.since_midnight()),
+        }
     }
 
     /// Moves to the previous step. At the first step, stays and returns `None`.
@@ -114,6 +280,7 @@ impl Session {
     pub fn reset(&mut self) {
         self.cursor = None;
         self.entered.clear();
+        self.rounds.clear();
     }
 
     /// When a step was first reached in this session.
@@ -318,5 +485,117 @@ mod tests {
             "Intro",
             "right after the one asked for"
         );
+    }
+
+    /// Music { A, B }, Sermon { C }.
+    fn two_sections() -> (Session, StepId, StepId) {
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        plan.show(resource("A"));
+        plan.show(resource("B"));
+        let sermon = plan.section("Sermon", None);
+        plan.show(resource("C"));
+        (Session::new(plan), music, sermon)
+    }
+
+    fn walk(session: &mut Session, steps: usize) -> String {
+        (0..steps)
+            .map(|_| label(session.next()).unwrap_or("-").to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn a_section_that_repeats_comes_again_then_the_plan_goes_on() {
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2));
+        assert_eq!(walk(&mut session, 6), "A B A B C -");
+    }
+
+    #[test]
+    fn a_step_that_repeats_comes_again_before_its_section_does() {
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| {
+            let b = plan.steps()[2].id;
+            plan.get_mut(b).unwrap().flow.repeat = Repeat::Times(2);
+            plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        });
+        // B twice each time round, and Music twice round.
+        assert_eq!(walk(&mut session, 7), "A B B A B B C");
+    }
+
+    #[test]
+    fn a_plan_that_repeats_starts_over_and_forever_never_ends() {
+        let (mut session, _, sermon) = two_sections();
+        session.edit(|plan| plan.flow.repeat = Repeat::Times(2));
+        assert_eq!(walk(&mut session, 7), "A B C A B C -");
+        let (mut session, ..) = two_sections();
+        session.edit(|plan| plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever);
+        assert_eq!(walk(&mut session, 6), "A B C C C C");
+        // Going somewhere else is the way out.
+        let first = session.plan().steps()[1].id;
+        assert_eq!(label(session.goto(first)), Some("A"));
+    }
+
+    #[test]
+    fn a_repeat_until_a_time_ends_when_the_time_has_come() {
+        use crate::timing::TimeOfDay;
+        let (mut session, music, _) = two_sections();
+        let at = |text: &str| TimeOfDay::parse(text).unwrap();
+        session.edit(|plan| plan.get_mut(music).unwrap().flow.repeat = Repeat::Until(at("10:30")));
+        session.tell_time(at("10:00").since_midnight());
+        assert_eq!(walk(&mut session, 4), "A B A B");
+        // What is on is finished, then the plan goes on.
+        session.tell_time(at("10:31").since_midnight());
+        assert_eq!(walk(&mut session, 2), "C -");
+    }
+
+    #[test]
+    fn a_shuffled_section_gives_each_step_once_a_round_and_up_next_agrees() {
+        let mut plan = Plan::new("Before");
+        let music = plan.section("Music", None);
+        for title in ["A", "B", "C", "D", "E"] {
+            plan.show(resource(title));
+        }
+        plan.section("Sermon", None);
+        plan.show(resource("Z"));
+        plan.get_mut(music).unwrap().flow = Flow {
+            repeat: Repeat::Times(2),
+            shuffle: true,
+        };
+        let mut session = Session::new(plan);
+        let mut rounds = Vec::new();
+        for _ in 0..2 {
+            let mut round = Vec::new();
+            for _ in 0..5 {
+                let coming = label(session.peek_next()).map(str::to_string);
+                let came = label(session.next()).map(str::to_string);
+                assert_eq!(coming, came, "up next is what comes");
+                round.push(came.unwrap());
+            }
+            let mut sorted = round.clone();
+            sorted.sort();
+            assert_eq!(sorted, ["A", "B", "C", "D", "E"], "each once");
+            rounds.push(round);
+        }
+        // Out of the section when its rounds are over.
+        assert_eq!(label(session.next()), Some("Z"));
+    }
+
+    #[test]
+    fn going_on_carries_down_and_a_step_can_say_otherwise() {
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| {
+            plan.get_mut(music).unwrap().advance = Some(true);
+            let b = plan.steps()[2].id;
+            plan.get_mut(b).unwrap().advance = Some(false);
+        });
+        let plan = session.plan();
+        assert!(plan.goes_on(1), "A does as Music says");
+        assert!(!plan.goes_on(2), "B says it waits");
+        assert!(!plan.goes_on(4), "C is in Sermon, which says nothing");
+        let mut plan = plan.clone();
+        plan.advance = true;
+        assert!(plan.goes_on(4), "then the plan says");
     }
 }
