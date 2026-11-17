@@ -43,6 +43,7 @@ mod shelf;
 mod side;
 mod stage;
 mod thumbs;
+mod usage;
 mod watch;
 mod youtube;
 
@@ -516,6 +517,8 @@ struct App {
     thumbs: thumbs::Thumbs,
     /// How long each library file plays, measured once and kept.
     pub(crate) lengths: lengths::Lengths,
+    /// What has been shown in services and in Live, and when.
+    pub(crate) usage: usage::Usage,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -723,6 +726,7 @@ impl App {
         let screens = outputs::Memory::new(&store.data());
         let last_sound = outputs::Memory::named(&store.data(), "sound-output");
         let lengths = lengths::Lengths::start(&store.data());
+        let usage = usage::Usage::read(&store.data());
         let plans = Plans::start(store, &engine.0);
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
@@ -748,6 +752,7 @@ impl App {
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
             lengths,
+            usage,
             attached: None,
             left: None,
             config,
@@ -3284,6 +3289,14 @@ impl App {
 
     fn program_changed(&mut self) -> Task<Message> {
         self.follow_deck();
+        // What goes on the projector in a service or in Live has been
+        // used today. Looking at something while planning is not that.
+        if self.mode != mode::Mode::Plan
+            && let Some(scene) = &self.stage.program
+        {
+            self.usage
+                .note(&scene.resource.id, chrono::Local::now().date_naive());
+        }
         let load = self
             .media
             .program_changed(&self.stage, &self.engine.0)
