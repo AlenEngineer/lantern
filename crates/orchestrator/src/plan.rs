@@ -601,6 +601,10 @@ impl Plan {
     /// ends as any other does, and a loop left holding nothing is gone.
     /// Moving or removing steps can leave any of these.
     fn settle(&mut self) {
+        // A group with no name is there only for how its steps come:
+        // coming once, in the plan's order, it is nothing.
+        self.steps
+            .retain(|step| !(step.is_loop() && step.flow == Flow::default()));
         // What a section ends at must be a step after it, before the
         // next section no further in.
         for at in (0..self.steps.len()).rev() {
@@ -678,35 +682,100 @@ impl Plan {
     /// `None` where no loop can be: across a heading, round one step, or
     /// further in than [`DEEPEST`].
     pub fn loop_over(&mut self, a: StepId, b: StepId) -> Option<StepId> {
+        self.round(a, b, 2, |flow| {
+            if flow.repeat == Repeat::Once {
+                flow.repeat = Repeat::Times(2);
+            }
+        })
+    }
+
+    /// Has the steps from `a` to `b` come in an order drawn afresh each
+    /// time, as [`loop_over`] has them come again: round all a section
+    /// holds it is the section, otherwise a section with no name round
+    /// them. Fewer than three have no order worth drawing: `None`, as
+    /// where no loop can be.
+    ///
+    /// [`loop_over`]: Plan::loop_over
+    pub fn shuffle_over(&mut self, a: StepId, b: StepId) -> Option<StepId> {
+        self.round(a, b, 3, |flow| flow.shuffle = true)
+    }
+
+    /// The group round the steps from `a` to `b`, made if there is none,
+    /// with its flow changed by `set`: the section or the loop that
+    /// holds just these, or a new section with no name round them. A
+    /// loop or a drawn order already round some of them stays, inside
+    /// the new one, when all of it is among them. `None` with fewer
+    /// than `least` steps, across a section's heading, part way into a
+    /// loop, or further in than [`DEEPEST`].
+    fn round(
+        &mut self,
+        a: StepId,
+        b: StepId,
+        least: usize,
+        set: impl FnOnce(&mut Flow),
+    ) -> Option<StepId> {
         let (a, b) = (self.position(a)?, self.position(b)?);
-        let (first, last) = (a.min(b), a.max(b));
-        if first == last
-            || self.steps[first..=last].iter().any(Step::is_section)
-            || self.holder(first) != self.holder(last)
-        {
+        let (mut first, last) = (a.min(b), a.max(b));
+        let bare = |step: &Step| step.is_section() && !step.is_loop();
+        let steps = self.steps[first..=last]
+            .iter()
+            .filter(|step| !step.is_section())
+            .count();
+        if steps < least || self.steps[first..=last].iter().any(bare) {
             return None;
         }
-        let holder = self.holder(first);
-        // All a section holds: the section itself comes again.
-        if let Some(section) = holder
+        // Just what a section or a loop holds: that one is the group.
+        if let Some(section) = self.holder(first)
             && section + 1 == first
             && self.group_end(section) == last + 1
         {
-            let step = &mut self.steps[section];
-            if step.flow.repeat == Repeat::Once {
-                step.flow.repeat = Repeat::Times(2);
+            set(&mut self.steps[section].flow);
+            return Some(self.steps[section].id);
+        }
+        // A loop that starts with the first of them is among them, if
+        // all of it is: the new group goes round it.
+        while first > 0 && self.steps[first - 1].is_loop() && self.group_end(first - 1) <= last + 1
+        {
+            first -= 1;
+        }
+        // Every loop among them is whole, and the last of them is in
+        // nothing that starts before the first.
+        let holder = self.holder(first);
+        let whole = (first..=last)
+            .filter(|at| self.steps[*at].is_section())
+            .all(|at| self.group_end(at) <= last + 1);
+        let mut inner = self.holder(last);
+        while inner != holder {
+            match inner {
+                Some(at) if at >= first => inner = self.holder(at),
+                _ => return None,
             }
-            return Some(step.id);
+        }
+        if !whole {
+            return None;
         }
         let depth = holder
             .and_then(|section| self.steps[section].depth())
             .map_or(0, |depth| depth + 1);
-        if depth > DEEPEST {
+        let deepest = self.steps[first..=last]
+            .iter()
+            .filter_map(Step::depth)
+            .max()
+            .map_or(depth, |inner| inner + 1);
+        if deepest > DEEPEST {
             return None;
+        }
+        // What is among them goes one further in, with the new group.
+        for step in &mut self.steps[first..=last] {
+            if let Action::Section { depth, .. } = &mut step.action {
+                *depth += 1;
+            }
         }
         let through = Some(self.steps[last].id);
         let id = StepId(self.next_id);
         self.next_id += 1;
+        let mut flow = Flow::default();
+        set(&mut flow);
         self.steps.insert(
             first,
             Step {
@@ -720,10 +789,7 @@ impl Plan {
                 },
                 estimate: None,
                 advance: None,
-                flow: Flow {
-                    repeat: Repeat::Times(2),
-                    ..Flow::default()
-                },
+                flow,
                 sound: None,
                 look: None,
             },
@@ -732,21 +798,30 @@ impl Plan {
         self.position(id).map(|_| id)
     }
 
-    /// Takes the loop `id` away: a loop drawn round some steps is gone
-    /// and they stay; a section that repeats comes once again, in its
-    /// own order. Returns whether there was one.
+    /// Takes away that `id` comes again: a section comes once, and a
+    /// loop drawn round some steps is gone unless it is there for their
+    /// order too. Returns whether it came again.
     pub fn unloop(&mut self, id: StepId) -> bool {
-        let Some(at) = self.position(id) else {
+        let Some(step) = self.get_mut(id) else {
             return false;
         };
-        if self.steps[at].is_loop() {
-            self.steps.remove(at);
-            self.settle();
-            return true;
-        }
-        let flow = &mut self.steps[at].flow;
-        let was = *flow != Flow::default();
-        *flow = Flow::default();
+        let was = step.flow.repeat != Repeat::Once;
+        step.flow.repeat = Repeat::Once;
+        step.flow.ends = Ending::default();
+        self.settle();
+        was
+    }
+
+    /// Takes away the drawn order of `id`: its steps come in the plan's
+    /// order, and a group drawn round some steps is gone unless it comes
+    /// again too. Returns whether it had one.
+    pub fn unshuffle(&mut self, id: StepId) -> bool {
+        let Some(step) = self.get_mut(id) else {
+            return false;
+        };
+        let was = step.flow.shuffle;
+        step.flow.shuffle = false;
+        self.settle();
         was
     }
 
@@ -1193,6 +1268,51 @@ mod tests {
         assert_eq!(plan.len(), 7);
         assert!(plan.unloop(music));
         assert_eq!(plan.get(music).unwrap().flow.repeat, Repeat::Once);
+    }
+
+    #[test]
+    fn a_drawn_order_goes_round_three_steps_or_more_and_sits_with_a_loop() {
+        let (mut plan, music, [a, b, c, d, _]) = hymns();
+        // Two steps have no order worth drawing.
+        assert_eq!(plan.shuffle_over(a, b), None);
+        // B to D, in a drawn order: a group with no name round them.
+        let drawn = plan.shuffle_over(d, b).expect("a drawn order");
+        assert!(plan.get(drawn).unwrap().is_loop());
+        assert!(plan.get(drawn).unwrap().flow.shuffle);
+        assert_eq!(plan.carried(drawn), [drawn, b, c, d]);
+        // A loop round all four goes round the drawn order too.
+        let looped = plan.loop_over(a, d).expect("round all Music holds");
+        assert_eq!(looped, music, "all Music holds: Music comes again");
+        plan.unloop(music);
+        // Round A to C only would cut the drawn order in two.
+        assert_eq!(plan.loop_over(a, c), None);
+        // The same three again: the group they have comes again too.
+        assert_eq!(plan.loop_over(b, d), Some(drawn));
+        assert_eq!(plan.get(drawn).unwrap().flow.repeat, Repeat::Times(2));
+        // Neither taken away alone takes the group; both do.
+        assert!(plan.unshuffle(drawn));
+        assert!(plan.position(drawn).is_some());
+        assert!(plan.unloop(drawn));
+        assert_eq!(plan.position(drawn), None);
+        assert_eq!(plan.len(), 7);
+    }
+
+    #[test]
+    fn a_loop_goes_round_a_drawn_order_that_is_whole_among_its_steps() {
+        let mut plan = Plan::new("Sabbath");
+        let ids = ["A", "B", "C", "D", "E"].map(|name| plan.show(resource(name)));
+        let [a, b, _, d, e] = ids;
+        let drawn = plan.shuffle_over(b, d).unwrap();
+        // From A to D: the drawn order is all among them.
+        let looped = plan.loop_over(a, d).unwrap();
+        assert_ne!(looped, drawn);
+        let within = |plan: &Plan, id| plan.within(plan.position(id).unwrap());
+        assert_eq!(within(&plan, b), [looped, drawn]);
+        assert_eq!(within(&plan, a), [looped]);
+        assert!(within(&plan, e).is_empty());
+        let depths: Vec<u8> = plan.steps().iter().filter_map(Step::depth).collect();
+        assert_eq!(depths, [0, 1]);
+        assert_eq!(Plan::from_json(&plan.to_json()).unwrap(), plan);
     }
 
     #[test]

@@ -90,7 +90,11 @@ fn does(message: &Message) -> Does {
         | M::SetAdvance(id, _)
         | M::SetRepeat(Some(id), _)
         | M::SetShuffle(Some(id), _)
-        | M::Rail(crate::rail::Act::Unloop(Some(id)) | crate::rail::Act::Ends(Some(id), _))
+        | M::Rail(
+            crate::rail::Act::Unloop(Some(id))
+            | crate::rail::Act::Unshuffle(Some(id))
+            | crate::rail::Act::Ends(Some(id), _),
+        )
         | M::StepSound(id, _)
         | M::KeepCopy(id)
         | M::SoundFrom(id, _)
@@ -106,7 +110,11 @@ fn does(message: &Message) -> Does {
         | M::PlanAdvance(_)
         | M::PlanTarget(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
-        | M::Rail(crate::rail::Act::Unloop(None) | crate::rail::Act::Ends(None, _))
+        | M::Rail(
+            crate::rail::Act::Unloop(None)
+            | crate::rail::Act::Unshuffle(None)
+            | crate::rail::Act::Ends(None, _),
+        )
         | M::PlanPanel(
             crate::plan_panel::PlanEdit::Target(_)
             | crate::plan_panel::PlanEdit::Folder(..)

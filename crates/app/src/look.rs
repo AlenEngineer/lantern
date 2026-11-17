@@ -448,8 +448,11 @@ pub enum Curl {
     Out,
 }
 
-/// How wide the curl's pieces are. They are drawn by [`crate::drawn::curl`].
-pub const CURL_WIDE: f32 = 12.0;
+/// How wide the curl's pieces are: room for the line and, on it, what
+/// it says of itself. They are drawn by [`crate::drawn::curl`].
+pub const CURL_WIDE: f32 = 30.0;
+/// How wide the line of a drawn order is, on the other side of the dots.
+pub const DRAWN_WIDE: f32 = 14.0;
 
 /// A ring that fills as something comes in, such as a download: `done`
 /// from 0 to 1, in twentieths.

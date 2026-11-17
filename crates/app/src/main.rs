@@ -1443,9 +1443,9 @@ impl App {
                     return self.preload();
                 }
             }
-            Message::Rail(rail::Act::Press { step, toggle }) => {
+            Message::Rail(rail::Act::Press { step, toggle, side }) => {
                 self.drag = None;
-                self.pull = Some(rail::Pull::new(step, toggle));
+                self.pull = Some(rail::Pull::new(step, toggle, side));
             }
             Message::Rail(rail::Act::Ring(on)) => {
                 self.pull = None;
@@ -1474,12 +1474,27 @@ impl App {
             }
             Message::Rail(rail::Act::Unloop(of)) => {
                 self.ring = None;
+                self.repeat_until.clear();
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| match of {
                     Some(id) => {
                         plan.unloop(id);
                     }
-                    None => plan.flow = lantern_engine::Flow::default(),
+                    None => {
+                        plan.flow.repeat = lantern_engine::Repeat::Once;
+                        plan.flow.ends = lantern_engine::Ending::default();
+                    }
+                });
+                return self.preload();
+            }
+            Message::Rail(rail::Act::Unshuffle(of)) => {
+                self.ring = None;
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| match of {
+                    Some(id) => {
+                        plan.unshuffle(id);
+                    }
+                    None => plan.flow.shuffle = false,
                 });
                 return self.preload();
             }
@@ -1526,8 +1541,22 @@ impl App {
                             }
                         });
                     }
+                    (true, Some(rail::Would::Shuffle { first, last }), _) => {
+                        self.remember(None);
+                        self.engine.0.edit_plan(|plan| {
+                            let (a, b) = (plan.steps()[first].id, plan.steps()[last].id);
+                            plan.shuffle_over(a, b)
+                        });
+                        self.motion.changed(pull.from);
+                        return self.preload();
+                    }
                     (true, Some(rail::Would::Not { .. }), _) => {
-                        self.motion.refuse("a loop stays inside one section");
+                        self.motion.refuse(match pull.side {
+                            rail::Side::Dot => "a loop stays inside one section",
+                            rail::Side::Right => {
+                                "a drawn order takes three steps or more, in one section"
+                            }
+                        });
                     }
                     _ => {}
                 }

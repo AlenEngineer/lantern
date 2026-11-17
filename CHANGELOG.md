@@ -388,6 +388,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
   curl opens a ring of what that one can do, with how often it comes in
   an outer row. Plans keep a loop as a section that ends at a step
   (`through`).
+- Pulled down the right side of the dots, three steps or more come in an
+  order drawn afresh each time: a line that wanders, on the right of the
+  dots, as a loop's is on the left. Every line says what it is set to in
+  a gap at its middle: a loop how often (`×2`, `∞`, `10:30`), a drawn
+  order its crossed arrows. A loop can go round a drawn order, and one
+  group can be both.
+- A section has a dot on the rail by its name. A click folds it; a right
+  click, there or anywhere on the heading, opens what holds for all of
+  it: every step goes on, it comes again, a drawn order. Each ring holds
+  only its own: a loop's line how often, a drawn order's line the one
+  button that takes it away. The three small buttons on a section's
+  heading are gone; marks beside its name say what is on.
 - How often something comes is set in one place, the ring: a number of
   times with fewer and more, until you move on, or until a time of day
   typed there. The ring opens from a section's heading and from the
