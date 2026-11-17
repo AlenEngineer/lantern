@@ -83,6 +83,79 @@ impl Look {
     }
 }
 
+/// What one level changes of the look it is given: a plan's section or a
+/// single step. Whatever it leaves unset comes from the level above, so a
+/// section can change only the background and keep the plan's font.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LookChange {
+    /// The colour behind everything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<Rgb>,
+    /// An image over the background colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<PathBuf>,
+    /// Take away the image the levels above give. `image` here wins.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub no_image: bool,
+    /// The colour of slide text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<Rgb>,
+    /// A font family installed on the system.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// The largest text is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u16>,
+    /// The smallest text is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<u16>,
+    /// How far the image is dimmed under text, in percent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dim: Option<u8>,
+    /// Whether a passage says which verse it is at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<bool>,
+}
+
+impl LookChange {
+    /// Whether it changes nothing: then it need not be kept.
+    pub fn is_empty(&self) -> bool {
+        *self == LookChange::default()
+    }
+
+    /// Changes `look` where this level says something.
+    pub fn apply(&self, look: &mut Look) {
+        if let Some(background) = self.background {
+            look.background = background;
+        }
+        if self.no_image {
+            look.image = None;
+        }
+        if let Some(image) = &self.image {
+            look.image = Some(image.clone());
+        }
+        if let Some(text) = self.text {
+            look.text = text;
+        }
+        if let Some(font) = &self.font {
+            look.font = Some(font.clone());
+        }
+        if let Some(max) = self.max_size {
+            look.max_size = max;
+        }
+        if let Some(min) = self.min_size {
+            look.min_size = min;
+        }
+        if let Some(dim) = self.dim {
+            look.dim = dim;
+        }
+        if let Some(reference) = self.reference {
+            look.no_reference = !reference;
+        }
+    }
+}
+
 /// A colour, written `#rrggbb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb(pub [u8; 3]);
@@ -167,5 +240,33 @@ mod tests {
             json,
             r##"{"background":"#000000","text":"#ffffff","max_size":96,"min_size":40}"##
         );
+    }
+
+    #[test]
+    fn a_change_touches_only_what_it_sets() {
+        let mut look = Look {
+            image: Some("sky.jpg".into()),
+            font: Some("Georgia".into()),
+            ..Look::default()
+        };
+        let change: LookChange =
+            serde_json::from_str(r##"{"background": "#102030", "reference": false}"##).unwrap();
+        change.apply(&mut look);
+        assert_eq!(look.background, Rgb([0x10, 0x20, 0x30]));
+        assert!(look.no_reference);
+        assert_eq!(
+            look.font.as_deref(),
+            Some("Georgia"),
+            "left as it was given"
+        );
+        assert_eq!(look.image, Some("sky.jpg".into()));
+        let plain = LookChange {
+            no_image: true,
+            ..LookChange::default()
+        };
+        plain.apply(&mut look);
+        assert_eq!(look.image, None);
+        assert!(LookChange::default().is_empty());
+        assert_eq!(serde_json::to_string(&LookChange::default()).unwrap(), "{}");
     }
 }

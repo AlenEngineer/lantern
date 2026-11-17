@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lantern_resource::{Query, Resource};
-use lantern_showman::Look;
+use lantern_showman::{Look, LookChange};
 use serde::{Deserialize, Serialize};
 
 use crate::timing::TimeOfDay;
@@ -116,6 +116,10 @@ pub struct Step {
     /// still (slides, a passage, a picture, pages) plays one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<StepSound>,
+    /// What this step changes of the look it is given, or for a section
+    /// what it changes for everything in it. See [`Plan::look_at`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<LookChange>,
 }
 
 impl Step {
@@ -236,6 +240,7 @@ impl Plan {
             estimate: None,
             advance: false,
             sound: None,
+            look: None,
         };
         self.steps.insert(index.min(self.steps.len()), step);
         self.settle();
@@ -321,6 +326,23 @@ impl Plan {
             }
         }
         found.into_iter().rev().map(|(_, id)| id).collect()
+    }
+
+    /// The look of the step at `index`. Each level changes what it is
+    /// given: `usual` is the look for all plans, the plan's own replaces
+    /// it, then every section the step is in changes it, outermost first,
+    /// and last the step itself.
+    pub fn look_at(&self, index: usize, usual: &Look) -> Look {
+        let mut look = self.look.clone().unwrap_or_else(|| usual.clone());
+        let levels = self
+            .within(index)
+            .into_iter()
+            .filter_map(|id| self.get(id))
+            .chain(self.steps.get(index));
+        for change in levels.filter_map(|step| step.look.as_ref()) {
+            change.apply(&mut look);
+        }
+        look
     }
 
     /// Moves the section `id`, with every section it holds, one level
@@ -732,5 +754,48 @@ mod tests {
         assert_eq!(json.matches("\"depth\"").count(), 2);
         let back = Plan::from_json(&json).unwrap();
         assert_eq!(back.get(praise).and_then(Step::depth), Some(1));
+    }
+
+    #[test]
+    fn the_look_carries_down_and_each_level_can_change_it() {
+        use lantern_showman::Rgb;
+        let (mut plan, [music, _, reading, _]) = nested();
+        let usual = Look::default();
+        let red = Rgb([0x80, 0, 0]);
+        let blue = Rgb([0, 0, 0x80]);
+        // Music turns the background red for everything in it.
+        plan.get_mut(music).unwrap().look = Some(LookChange {
+            background: Some(red),
+            ..LookChange::default()
+        });
+        // Reading, inside it, sets a font and keeps the red.
+        plan.get_mut(reading).unwrap().look = Some(LookChange {
+            font: Some("Georgia".into()),
+            ..LookChange::default()
+        });
+        // C, in Reading, has its own background.
+        let c = plan.steps()[5].id;
+        plan.get_mut(c).unwrap().look = Some(LookChange {
+            background: Some(blue),
+            ..LookChange::default()
+        });
+        let at = |label: &str| plan.steps().iter().position(|s| s.label == label).unwrap();
+        assert_eq!(plan.look_at(at("A"), &usual).background, red);
+        assert_eq!(plan.look_at(at("A"), &usual).font, None);
+        assert_eq!(plan.look_at(at("C"), &usual).background, blue);
+        assert_eq!(
+            plan.look_at(at("C"), &usual).font.as_deref(),
+            Some("Georgia")
+        );
+        // Sermon is outside Music: the look for all plans.
+        assert_eq!(plan.look_at(at("D"), &usual), usual);
+        // A plan with its own look starts from that.
+        let c_at = at("C");
+        plan.look = Some(Look {
+            text: red,
+            ..Look::default()
+        });
+        assert_eq!(plan.look_at(c_at, &usual).text, red);
+        assert_eq!(plan.look_at(c_at, &usual).background, blue);
     }
 }
