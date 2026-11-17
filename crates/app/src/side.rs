@@ -10,10 +10,10 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, text
 use iced::{Alignment, Element, Fill, Length};
 use lantern_engine::{Look, LookChange, Phase, Plan, Rgb, Step, StepId};
 
-use crate::dashboard::hinted;
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::outputs::Place;
 use crate::ready::Level;
+use crate::widgets::{self, Filled, hinted};
 use crate::{App, Message, length};
 
 /// What the side panel shows.
@@ -191,14 +191,14 @@ impl Field {
 /// A bar on a card: how full, over a track that shows on the card's
 /// ground.
 fn track<'a>(p: crate::palette::Palette, done: f32, colour: iced::Color) -> Element<'a, Message> {
-    let part = |portion: f32| (portion.clamp(0.0, 1.0) * 1000.0).round().max(1.0) as u16;
-    let piece = |colour: iced::Color, portion: f32| {
-        container(Space::new())
-            .height(3)
-            .width(Length::FillPortion(part(portion)))
-            .style(move |_| container::Style::default().background(colour))
-    };
-    row![piece(colour, done), piece(p.outline_variant, 1.0 - done)].into()
+    widgets::bar(
+        [
+            (done, Filled::Solid(colour)),
+            (1.0 - done, Filled::Solid(p.outline_variant)),
+        ],
+        3.0,
+    )
+    .into()
 }
 
 /// Where a value in the Look lens comes from.
@@ -241,7 +241,75 @@ pub(crate) fn origin(plan: &Plan, usual: &Look, target: Option<StepId>, field: F
         .map_or_else(from_plan, |section| From::Section(section.label.clone()))
 }
 
+/// What sets `field` of a look: a box to type in, with the colour beside
+/// one that is a colour; for the reference line, a pill that shows or
+/// hides it. `typed` is what the box holds.
+pub(crate) fn look_control<'a>(
+    p: crate::palette::Palette,
+    field: Field,
+    look: &Look,
+    typed: &str,
+) -> Element<'a, Message> {
+    if field == Field::Reference {
+        let shown = !look.no_reference;
+        return button(text(if shown { "Shown" } else { "Hidden" }).size(META))
+            .padding([4, 10])
+            .on_press(Message::LookEdit(
+                field,
+                if shown { "hidden" } else { "shown" }.to_string(),
+            ))
+            .style(look::pill(
+                p,
+                if shown { Tone::Selected } else { Tone::Plain },
+            ))
+            .into();
+    }
+    let input = text_input(field.name(), typed)
+        .on_input(move |typed| Message::LookEdit(field, typed))
+        .size(META)
+        .padding([4, 8])
+        .style(look::input(p));
+    match field.colour(look) {
+        Some(Rgb([r, g, b])) => row![
+            widgets::swatch(iced::Color::from_rgb8(r, g, b), 16.0, 4.0, p.outline),
+            input
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
+        None => input.into(),
+    }
+}
+
+/// A value set at this level says so, and a press on it gives the value
+/// back to the level above.
+pub(crate) fn set_here<'a>(
+    p: crate::palette::Palette,
+    field: Field,
+    size: f32,
+    about: &str,
+) -> Element<'a, Message> {
+    hinted(
+        p,
+        button(text("set here ✕").size(size).font(BOLD).color(p.primary))
+            .padding([3, 8])
+            .on_press(Message::LookReset(field))
+            .style(look::pill(p, Tone::Selected)),
+        about.to_string(),
+        tooltip::Position::Left,
+    )
+}
+
 impl App {
+    /// What the box of `field` shows for the look of `target`: what is
+    /// being typed there, or else what `look` says.
+    pub(crate) fn look_shown(&self, target: Option<StepId>, field: Field, look: &Look) -> String {
+        match &self.look_typed {
+            Some((of, typing, typed)) if *of == target && *typing == field => typed.clone(),
+            _ => field.of(look),
+        }
+    }
+
     /// Whose look the Look lens edits: the selected step or section, or
     /// with nothing selected the plan (`None`).
     fn look_target(&self) -> Option<StepId> {
@@ -338,51 +406,30 @@ impl App {
         let waiting = self.issues(&plan).len();
         let lens = |lens: Lens, icon: Icon, about: &str, count: usize| {
             let on = self.lens == lens;
-            let ink = if on { p.on_primary } else { p.on_surface };
+            let ink = widgets::place_ink(p, on);
             let mut content = row![look::icon(icon, 16.0, ink)]
                 .spacing(6)
                 .align_y(Alignment::Center);
             if count > 0 {
                 content = content.push(text(count.to_string()).size(META).font(BOLD).color(ink));
             }
-            hinted(
-                p,
-                button(container(content).center_x(Fill))
-                    .width(Fill)
-                    .padding([6, 0])
-                    .on_press(Message::Lens(lens))
-                    // The place in use is lit; the others are flat on the
-                    // switch's own ground.
-                    .style(move |theme, status| match on {
-                        true => look::pill(p, Tone::Solid)(theme, status),
-                        false => look::row(p, Tone::Plain)(theme, status),
-                    }),
-                about.to_string(),
-                tooltip::Position::Bottom,
-            )
+            widgets::place(p, content, on, 6, about, Message::Lens(lens))
         };
-        let lenses = row![
-            lens(Lens::Add, Icon::Plus, "Add: the library", 0),
-            lens(
-                Lens::Look,
-                Icon::Tune,
-                "Look: how what is selected looks",
-                0
-            ),
-            lens(Lens::Check, Icon::Check, "Check: what isn't ready", waiting),
-        ]
-        .spacing(2);
         // One switch with three places, not three buttons.
-        let lenses = container(lenses)
-            .padding(3)
-            .style(move |_| container::Style {
-                background: Some(p.surface_container_highest.into()),
-                border: iced::Border {
-                    radius: 16.0.into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
-            });
+        let lenses = widgets::places(
+            p,
+            [
+                lens(Lens::Add, Icon::Plus, "Add: the library", 0),
+                lens(
+                    Lens::Look,
+                    Icon::Tune,
+                    "Look: how what is selected looks",
+                    0,
+                ),
+                lens(Lens::Check, Icon::Check, "Check: what isn't ready", waiting),
+            ],
+            16.0,
+        );
         let body: Element<'_, Message> = match self.lens {
             Lens::Add => self.shelf_pane(),
             Lens::Look => scrollable(self.look_lens(&plan)).height(Fill).into(),
@@ -392,11 +439,7 @@ impl App {
         // its choices are open.
         let mut panel = column![].spacing(12).height(Fill);
         if let Some(card) = self.repeat_card(&plan) {
-            panel = panel.push(card).push(
-                container(Space::new().height(1))
-                    .width(Fill)
-                    .style(move |_| container::Style::default().background(p.outline_variant)),
-            );
+            panel = panel.push(card).push(widgets::rule(p));
         }
         panel.push(lenses).push(body).into()
     }
@@ -465,63 +508,10 @@ impl App {
         for field in Field::ALL {
             let from = origin(plan, &self.config.stage, target, field);
             let here = matches!(from, From::Here);
-            let typed = match &self.look_typed {
-                Some((of, typing, typed)) if *of == target && *typing == field => typed.clone(),
-                _ => field.of(&look),
-            };
-            let control: Element<'a, Message> = match field {
-                Field::Reference => {
-                    let shown = !look.no_reference;
-                    button(text(if shown { "Shown" } else { "Hidden" }).size(META))
-                        .padding([4, 10])
-                        .on_press(Message::LookEdit(
-                            field,
-                            if shown { "hidden" } else { "shown" }.to_string(),
-                        ))
-                        .style(look::pill(
-                            p,
-                            if shown { Tone::Selected } else { Tone::Plain },
-                        ))
-                        .into()
-                }
-                _ => {
-                    let input = text_input(field.name(), &typed)
-                        .on_input(move |typed| Message::LookEdit(field, typed))
-                        .size(META)
-                        .padding([4, 8])
-                        .style(look::input(p));
-                    match field.colour(&look) {
-                        Some(Rgb([r, g, b])) => row![
-                            container(Space::new().width(16).height(16)).style(move |_| {
-                                container::Style {
-                                    background: Some(iced::Color::from_rgb8(r, g, b).into()),
-                                    border: iced::Border {
-                                        color: p.outline,
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                }
-                            }),
-                            input
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .into(),
-                        None => input.into(),
-                    }
-                }
-            };
+            let typed = self.look_shown(target, field, &look);
+            let control = look_control(p, field, &look, &typed);
             let origin: Element<'a, Message> = match from {
-                From::Here => hinted(
-                    p,
-                    button(text("set here ✕").size(META).font(BOLD).color(p.primary))
-                        .padding([3, 8])
-                        .on_press(Message::LookReset(field))
-                        .style(look::pill(p, Tone::Selected)),
-                    "Back to what the level above gives".to_string(),
-                    tooltip::Position::Left,
-                ),
+                From::Here => set_here(p, field, META, "Back to what the level above gives"),
                 From::Section(name) => text(format!("from {name}"))
                     .size(META)
                     .color(p.on_surface_variant)

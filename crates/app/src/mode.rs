@@ -16,10 +16,10 @@ use iced::widget::{Space, button, column, container, row, scrollable, text, tool
 use iced::{Alignment, Element, Fill, Task};
 use lantern_engine::{Plan, StepId};
 
-use crate::dashboard::{chip, hinted, pill, single_line};
 use crate::keys::{self, Op};
 use crate::look::{self, BODY, BOLD, Icon, MEDIUM, META, PILL, Tone};
 use crate::plans::{self, Notice};
+use crate::widgets::{chip, hinted, pill, single_line};
 use crate::{App, Message, log};
 
 /// What Lantern is being used for.

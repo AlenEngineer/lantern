@@ -12,13 +12,13 @@ use iced::{Alignment, Element, Fill};
 use lantern_engine::{Look, Rgb, fold};
 
 use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
-use crate::dashboard::{chip, hinted, pill, scrolling, wide};
 use crate::fit;
 use crate::keys::{self, Keymap, Op};
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::outputs::Output;
 use crate::palette::Palette;
 use crate::paths::{self, Suggestion, Want};
+use crate::widgets::{self, chip, hinted, pill, scrolling, wide};
 use crate::{App, Message};
 
 const LABEL_FIELD: f32 = 160.0;
@@ -777,7 +777,7 @@ impl App {
                     .push(chip(p, "● live", Tone::Live))
                     .push(
                         iced::widget::container(
-                            crate::dashboard::single_line(scene.resource.title.clone())
+                            widgets::single_line(scene.resource.title.clone())
                                 .size(META)
                                 .color(p.on_surface),
                         )
@@ -1252,7 +1252,7 @@ impl App {
                 );
             }
         }
-        let awake = button(crate::plan_panel::switch(p, draft.keep_awake))
+        let awake = button(widgets::switch(p, draft.keep_awake))
             .padding(0)
             .on_press(settings(Edit::KeepAwake(!draft.keep_awake)))
             .style(look::row(p, Tone::Plain));
@@ -1325,13 +1325,8 @@ impl App {
         // The list: what holds for this computer, then what holds for
         // every plan.
         let group = |words: &'static str| {
-            iced::widget::container(
-                text(words)
-                    .size(11.0)
-                    .font(BOLD)
-                    .color(p.on_surface_variant),
-            )
-            .padding(iced::Padding::default().left(12.0).bottom(6.0))
+            iced::widget::container(widgets::caption(p, words))
+                .padding(iced::Padding::default().left(12.0).bottom(6.0))
         };
         let item = |category: Category| {
             let on = draft.category == category;
@@ -1358,13 +1353,7 @@ impl App {
         }
         list = list
             .push(Space::new().height(6))
-            .push(
-                iced::widget::container(Space::new().height(1))
-                    .width(Fill)
-                    .style(move |_| {
-                        iced::widget::container::Style::default().background(p.outline_variant)
-                    }),
-            )
+            .push(widgets::rule(p))
             .push(Space::new().height(6))
             .push(group("EVERY PLAN"));
         for category in Category::PLANS {
@@ -1591,19 +1580,12 @@ fn swatch<'a>(typed: &str) -> Element<'a, Message> {
     let Ok(rgb) = typed.parse::<Rgb>() else {
         return Space::new().width(18).into();
     };
-    let colour = fit::color(rgb);
-    iced::widget::container(Space::new())
-        .width(18)
-        .height(18)
-        .style(move |_| iced::widget::container::Style {
-            background: Some(colour.into()),
-            border: iced::Border::default()
-                .rounded(9)
-                .width(1)
-                .color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3)),
-            ..Default::default()
-        })
-        .into()
+    widgets::swatch(
+        fit::color(rgb),
+        18.0,
+        9.0,
+        iced::Color::from_rgba(1.0, 1.0, 1.0, 0.3),
+    )
 }
 
 fn settings(edit: Edit) -> Message {

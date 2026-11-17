@@ -15,8 +15,8 @@ use iced::widget::{Space, button, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Fill, Task};
 use lantern_engine::{Session, Step, StepId};
 
-use crate::dashboard::hinted;
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
+use crate::widgets::hinted;
 use crate::{App, Message, length, plan_pane};
 
 /// The speeds, in the order the button goes through them.

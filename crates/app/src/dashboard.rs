@@ -23,6 +23,7 @@ use crate::ready::{self, Issue, Level};
 use crate::search::{Group, Live, supported};
 use crate::stage;
 use crate::stage::Content;
+use crate::widgets::{chip, hinted, pill, scrolling, single_line, wide};
 use crate::youtube::YoutubeVideo;
 use crate::{App, Clicked, Message};
 
@@ -1928,18 +1929,6 @@ pub(crate) fn unit(resource: &Resource) -> &'static str {
     }
 }
 
-/// A list that scrolls, with its scrollbar beside the rows instead of over them.
-pub(crate) fn scrolling<'a>(
-    content: impl Into<Element<'a, Message>>,
-) -> scrollable::Scrollable<'a, Message> {
-    scrollable(content).spacing(6).height(Fill)
-}
-
-/// One line of text; what doesn't fit is cut at the row's edge.
-pub(crate) fn single_line(content: impl Into<String>) -> crate::cut::Cut {
-    crate::cut::cut(content)
-}
-
 /// How a text starts, on one line, for a row's second line: its first
 /// words, up to about a row's width. `None` for an empty text.
 pub(crate) fn opening(body: &str) -> Option<String> {
@@ -1957,13 +1946,6 @@ pub(crate) fn opening(body: &str) -> Option<String> {
 /// A section heading: bold `primary`.
 fn heading(p: Palette, label: &str) -> Element<'_, Message> {
     text(label).size(HEADING).font(BOLD).color(p.primary).into()
-}
-
-pub(crate) fn chip<'a>(p: Palette, label: &str, tone: Tone) -> Element<'a, Message> {
-    container(text(label.to_string()).size(META).font(BOLD))
-        .padding([3, 10])
-        .style(look::chip(p, tone))
-        .into()
 }
 
 /// A source's name over its rows, with how many there are.
@@ -2050,50 +2032,6 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .height(Fill)
         .content_fit(iced::ContentFit::Contain)
         .into()
-}
-
-pub(crate) fn pill<'a>(
-    p: Palette,
-    label: &str,
-    tone: Tone,
-    height: f32,
-    message: Option<Message>,
-) -> button::Button<'a, Message> {
-    let weight = if tone == Tone::Plain { MEDIUM } else { BOLD };
-    button(
-        container(text(label.to_string()).size(BODY).font(weight))
-            .center_x(Length::Shrink)
-            .center_y(Fill),
-    )
-    .height(height)
-    .padding([0, 16])
-    .on_press_maybe(message)
-    .style(look::pill(p, tone))
-}
-
-/// `control`, saying what it does and its key once the pointer rests on
-/// it. The control keeps its size: the key is beside it, not in it.
-pub(crate) fn hinted<'a>(
-    p: Palette,
-    control: impl Into<Element<'a, Message>>,
-    words: String,
-    position: tooltip::Position,
-) -> Element<'a, Message> {
-    tooltip(
-        control,
-        // A long one wraps: it never runs off the window.
-        container(text(words).size(META))
-            .padding([4, 8])
-            .max_width(380)
-            .style(look::tip(p)),
-        position,
-    )
-    .delay(look::TIP_DELAY)
-    .into()
-}
-
-pub(crate) fn wide(button: button::Button<'_, Message>) -> button::Button<'_, Message> {
-    button.width(Fill)
 }
 
 #[cfg(test)]

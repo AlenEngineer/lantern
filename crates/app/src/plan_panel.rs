@@ -8,13 +8,12 @@
 
 use std::path::Path;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text, text_input, tooltip};
+use iced::widget::{Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Fill};
-use lantern_engine::Rgb;
 
-use crate::dashboard::hinted;
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::side::{self, Field, From};
+use crate::widgets;
 use crate::{App, Message, length, library};
 
 /// A change made in the plan's panel.
@@ -171,17 +170,8 @@ impl App {
                 .color(p.on_surface_variant)
                 .width(NAMES)
         };
-        let heading = |words: &'static str| {
-            text(words)
-                .size(11.0)
-                .font(BOLD)
-                .color(p.on_surface_variant)
-        };
-        let rule = || {
-            container(Space::new().height(1))
-                .width(Fill)
-                .style(move |_| container::Style::default().background(p.outline_variant))
-        };
+        let heading = |words: &'static str| widgets::caption(p, words);
+        let rule = || widgets::rule(p);
         let input = |hint: &'static str, value: &str| {
             text_input(hint, value)
                 .size(META)
@@ -212,7 +202,7 @@ impl App {
             (_, Some(target)) => length::clock(target),
             (_, None) => String::new(),
         };
-        let template = button(switch(p, plan.template))
+        let template = button(widgets::switch(p, plan.template))
             .padding(0)
             .on_press(Message::PlanTemplate(!plan.template))
             .style(look::row(p, Tone::Plain));
@@ -345,61 +335,10 @@ impl App {
         let mut its_look = column![heading("ITS LOOK")].spacing(6);
         for field in Field::ALL {
             let here = matches!(side::origin(&plan, usual, None, field), From::Here);
-            let typed = match &self.look_typed {
-                Some((None, typing, typed)) if *typing == field => typed.clone(),
-                _ => field.of(&look),
-            };
-            let control: Element<'_, Message> = match field {
-                Field::Reference => {
-                    let shown = !look.no_reference;
-                    button(text(if shown { "Shown" } else { "Hidden" }).size(META))
-                        .padding([3, 9])
-                        .on_press(Message::LookEdit(
-                            field,
-                            if shown { "hidden" } else { "shown" }.to_string(),
-                        ))
-                        .style(look::pill(
-                            p,
-                            if shown { Tone::Selected } else { Tone::Plain },
-                        ))
-                        .into()
-                }
-                _ => {
-                    let typed = input("", &typed)
-                        .on_input(move |typed| Message::LookEdit(field, typed))
-                        .width(Fill);
-                    match field.colour(&look) {
-                        Some(Rgb([r, g, b])) => row![
-                            container(Space::new().width(14).height(14)).style(move |_| {
-                                container::Style {
-                                    background: Some(iced::Color::from_rgb8(r, g, b).into()),
-                                    border: iced::Border {
-                                        color: p.outline,
-                                        width: 1.0,
-                                        radius: 4.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                }
-                            }),
-                            typed
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .into(),
-                        None => typed.into(),
-                    }
-                }
-            };
+            let typed = self.look_shown(None, field, &look);
+            let control = side::look_control(p, field, &look, &typed);
             let from: Element<'_, Message> = if here {
-                hinted(
-                    p,
-                    button(text("set here ✕").size(11.0).font(BOLD).color(p.primary))
-                        .padding([2, 7])
-                        .on_press(Message::LookReset(field))
-                        .style(look::pill(p, Tone::Selected)),
-                    "Back to the look for all plans".to_string(),
-                    tooltip::Position::Left,
-                )
+                side::set_here(p, field, 11.0, "Back to the look for all plans")
             } else {
                 text("default")
                     .size(11.0)
@@ -481,48 +420,4 @@ fn line<'a>(
     control: Element<'a, Message>,
 ) -> iced::widget::Row<'a, Message> {
     row![name, control].spacing(10).align_y(Alignment::Center)
-}
-
-/// A switch, on or off.
-pub(crate) fn switch<'a>(p: crate::palette::Palette, on: bool) -> Element<'a, Message> {
-    let knob = container(Space::new().width(16).height(16)).style(move |_| container::Style {
-        background: Some(
-            if on {
-                p.on_primary
-            } else {
-                p.on_surface_variant
-            }
-            .into(),
-        ),
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..iced::Border::default()
-        },
-        ..container::Style::default()
-    });
-    container(knob)
-        .width(34)
-        .height(20)
-        .padding(2)
-        .align_x(if on {
-            iced::alignment::Horizontal::Right
-        } else {
-            iced::alignment::Horizontal::Left
-        })
-        .style(move |_| container::Style {
-            background: Some(
-                if on {
-                    p.primary
-                } else {
-                    p.surface_container_highest
-                }
-                .into(),
-            ),
-            border: iced::Border {
-                radius: 10.0.into(),
-                ..iced::Border::default()
-            },
-            ..container::Style::default()
-        })
-        .into()
 }
