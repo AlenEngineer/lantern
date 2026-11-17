@@ -31,8 +31,10 @@ use crate::{App, Clicked, Message, track};
 /// The id of the pane's rows, to scroll them.
 pub const ROWS: &str = "plan-rows";
 
-/// How far a section's steps sit in from its header.
-pub(crate) const INDENT: f32 = 12.0;
+/// How far a section's steps sit in from its header: room between the
+/// section's own line and its steps' for the line of a loop round some
+/// of them.
+pub(crate) const INDENT: f32 = 40.0;
 
 /// The field the plan's target time is typed in.
 pub(crate) const TARGET_BOX: &str = "plan-target";
@@ -366,6 +368,7 @@ impl App {
         let places = track::Places::default();
         let mut items: Vec<track::Item> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
+        let mut headings: Vec<(usize, iced::Color, Option<u32>)> = Vec::new();
         let mut cuts = 0u32;
         // While planning, the pane is a tree: the open plan, its sections
         // and their steps, and under them the other plans.
@@ -547,6 +550,7 @@ impl App {
                     id: step.id,
                     cut: folding.is_some().then_some(cuts),
                 });
+                headings.push((index, ink, folding.is_some().then_some(cuts)));
                 let dot = container(dot).center_x(RAIL).center_y(Length::Shrink);
                 let mut dot = mouse_area(dot).interaction(mouse::Interaction::Pointer);
                 // One that is over in a service is folded as a matter of
@@ -559,8 +563,21 @@ impl App {
                         crate::rail::RingOn::All(Some(id)),
                     )));
                 }
+                // Left of its dot, room for its own line where it comes
+                // again: a right click there opens how often it does.
+                let again: Element<'_, Message> = Space::new().width(lanes.curl).height(20).into();
+                let again: Element<'_, Message> =
+                    match self.can_edit() && step.flow.repeat != Repeat::Once {
+                        true => mouse_area(again)
+                            .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                                crate::rail::RingOn::Loop(Some(id)),
+                            )))
+                            .interaction(mouse::Interaction::Pointer)
+                            .into(),
+                        false => again,
+                    };
                 let arrow = row![
-                    Space::new().width(lanes.curl),
+                    again,
                     hinted(
                         p,
                         dot,
@@ -585,8 +602,9 @@ impl App {
                     && !hidden
                 {
                     put!(
-                        container(look::icon(Icon::Pause, 12.0, p.on_surface_variant))
-                            .padding(iced::Padding::default().left(inward + INDENT + 4.0)),
+                        container(look::icon(Icon::Pause, 12.0, p.on_surface_variant)).padding(
+                            iced::Padding::default().left(inward + lanes.curl + RAIL / 2.0 - 6.0)
+                        ),
                     );
                 }
                 // The one something held would be a part of is lit.
@@ -805,8 +823,38 @@ impl App {
                 color,
                 mark,
                 pulled,
+                group: section_of(plan, from),
             })
         };
+        // The sections' own lines: on to the next section's dot where
+        // the last step of one goes on by itself, and curling back where
+        // one comes again.
+        let sections: Vec<track::Section> = headings
+            .iter()
+            .map(|(at, color, cut)| {
+                let step = &plan.steps()[*at];
+                let end = plan.group_end(*at);
+                let goes = (*at + 1..end)
+                    .rev()
+                    .find(|at| !plan.steps()[*at].is_section())
+                    .is_some_and(|last| plan.goes_on(last));
+                track::Section {
+                    id: step.id,
+                    last: shown
+                        .iter()
+                        .rev()
+                        .find(|step| (*at + 1..end).contains(*step))
+                        .map(|last| id_at(*last)),
+                    next: headings
+                        .iter()
+                        .find(|(next, ..)| goes && *next == end)
+                        .map(|(next, ..)| id_at(*next)),
+                    again: repeat_words(step.flow.repeat).map(track::Mark::Words),
+                    color: *color,
+                    cut: *cut,
+                }
+            })
+            .collect();
         let mut loops: Vec<track::Beside> = Vec::new();
         let mut orders: Vec<track::Beside> = Vec::new();
         let mut looped: Vec<(usize, usize)> = Vec::new();
@@ -850,6 +898,7 @@ impl App {
         }
         let picture = track::Picture {
             items,
+            sections,
             loops,
             orders,
             curl_wide: lanes.curl,
@@ -1785,8 +1834,14 @@ impl App {
         let step = &steps[index];
         let goes = plan.goes_on(index);
         let before = steps[..index].iter().rposition(|step| !step.is_section());
-        let next = steps[index + 1..].iter().find(|step| !step.is_section());
-        let after = next.is_some();
+        let after = steps[index + 1..].iter().any(|step| !step.is_section());
+        // The step its line goes to: the next one in the same section.
+        // Past a heading it is the section's line that goes on.
+        let next = steps[index + 1..]
+            .iter()
+            .take_while(|step| !step.is_section() || step.is_loop())
+            .find(|step| !step.is_section());
+        let group = section_of(plan, index);
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
         let planned = p.primary;
@@ -1855,7 +1910,7 @@ impl App {
         };
         // The line from this dot to the next step's.
         let joining = matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= index && index < last);
-        let line = match (joined_below, place, played) {
+        let line = match (joined_below && next.is_some(), place, played) {
             _ if joining => Some(track::Line::Plain(planned)),
             // The step that is on fills its line as it plays, whether or
             // not it goes on by itself: what is still to come is the
@@ -1864,7 +1919,7 @@ impl App {
             (_, Place::Current, Some(done)) => Some(track::Line::Playing {
                 done: done.clamp(0.0, 1.0),
                 played: live,
-                ahead: match (rehearsed, joined_below) {
+                ahead: match (rehearsed, joined_below && next.is_some()) {
                     (Some(_), _) => Palette::tint(live, 0.35),
                     (None, true) => planned,
                     (None, false) => Palette::tint(p.on_surface_variant, 0.5),
@@ -1881,6 +1936,15 @@ impl App {
             dot: look,
             line,
             next: next.map(|next| next.id),
+            group,
+            // Its section is being worked on: it is on, pulled, or
+            // something in the section is selected.
+            awake: on
+                || would.is_some()
+                || self
+                    .selected
+                    .and_then(|id| plan.position(id))
+                    .is_some_and(|at| section_of(plan, at) == group),
             cut: None,
         };
         // What is here in the row is only room to press: the dot, the
@@ -2584,15 +2648,34 @@ fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)>
         .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))
 }
 
-/// The line that curls back beside the step at `index`, when it is in
-/// something that repeats: the nearest section or loop around it that
-/// does, or else the plan. Its first and last steps, and what it says of
+/// The line that curls back beside the step at `index`, when the
+/// nearest thing around it that repeats is a loop drawn round some
+/// steps, or else the plan. Its first and last steps, and what it says of
 /// itself: how often it comes. `None` for a step in nothing that
 /// repeats, and for the only step of something that does (its own mark
 /// says so).
+/// The section the step at `index` is in, or is: the nearest one with a
+/// heading of its own.
+fn section_of(plan: &Plan, index: usize) -> Option<StepId> {
+    let steps = plan.steps();
+    let named = |step: &Step| step.is_section() && !step.is_loop();
+    match steps.get(index) {
+        Some(step) if named(step) => Some(step.id),
+        _ => plan
+            .within(index)
+            .into_iter()
+            .rev()
+            .find(|id| plan.get(*id).is_some_and(named)),
+    }
+}
+
 fn loop_at(plan: &Plan, index: usize) -> Option<(usize, usize, Option<String>)> {
     let steps = plan.steps();
     let (group, start, end) = repeating(plan, index)?;
+    // A section that comes again says so on its own line, from its dot.
+    if group.is_some_and(|at| !steps[at].is_loop()) {
+        return None;
+    }
     let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
     // With something in it that repeats by itself, its own curl would be
     // drawn round that one's: it is left to its heading to say.
@@ -2852,15 +2935,15 @@ mod tests {
         plan.push("D", Action::Blank);
         // Nothing repeats: no curl.
         assert_eq!(loop_at(&plan, 1), None);
+        // A section that comes again says so on its own line: none
+        // beside its steps.
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
-        // From A to C, whichever of them is asked, saying how often.
         for index in 1..=3 {
-            assert_eq!(loop_at(&plan, index), Some((1, 3, Some("×2".to_string()))));
+            assert_eq!(loop_at(&plan, index), None);
         }
-        assert_eq!(loop_at(&plan, 5), None, "Sermon doesn't repeat");
-        // One step has nothing to curl round.
-        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever;
-        assert_eq!(loop_at(&plan, 5), None);
+        assert_eq!(section_of(&plan, 2), Some(music));
+        assert_eq!(section_of(&plan, 0), Some(music), "a section is its own");
+        assert_eq!(section_of(&plan, 5), Some(sermon));
         // The plan repeats: the steps in nothing nearer are its own.
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
