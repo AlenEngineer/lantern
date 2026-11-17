@@ -148,6 +148,16 @@ line fills as it plays), and a ring in that colour is next. Beside the steps of 
 section that repeats, a dotted line curls back from its last step to its
 first.
 
+In a service the row over the plan shows how long it has run, the time
+it is held against, how far it runs late (↑) or early (↓), and when it is
+now expected to end; its bar is grey where a section is over and the
+stage's colour where the service is. A section that is over folds to one
+grey line with a tick and how long it took. The section the service is in
+has the stage's colour, and one that repeats a number of times says which
+round it is on (`2 / 3`). A section still to come says when it is due,
+with a start time, and how long it has. **Up next** wears the rail's ring
+and counts down when the step on now goes on by itself.
+
 Over the plan, large, is how long it takes: sections count for their
 time, steps outside one for their length, and what repeats a number of
 times counts that often (a `+` after it means something repeats with no

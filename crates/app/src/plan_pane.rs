@@ -264,13 +264,23 @@ impl App {
         // While planning, the pane is a tree: the open plan, its sections
         // and their steps, and under them the other plans.
         let tree = self.mode == crate::mode::Mode::Plan;
+        let running = self.mode == crate::mode::Mode::Run;
         if tree {
             rows = rows.push(self.time_row(plan, timing));
-        } else if let Some(card) = self.repeat_card(plan) {
+        } else if running {
+            rows = rows.push(self.run_time_row(plan, timing));
+        }
+        if !tree && let Some(card) = self.repeat_card(plan) {
             // Away from Plan there is no side panel for it: the choices of
             // how often something comes sit over the plan.
             rows = rows.push(container(card).padding(8));
         }
+        // In a service with a start time, a section still to come says
+        // when it is due.
+        let due = plan.starts.filter(|_| running).map(|starts| {
+            let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
+            move |id| schedule.start_of(id).map(|after| starts.plus(after))
+        });
         let mut in_section = false;
         // Up to where rows are folded away with the section that holds
         // them, and whether that section is the one closing or opening
@@ -310,17 +320,25 @@ impl App {
                 if hidden && !selected {
                     continue;
                 }
-                let folded = self.folded.contains(&step.id);
+                let section = timing.sections.iter().find(|s| s.id == step.id);
+                // In a service, a section that is over folds away to its
+                // one line: what it was, and how long it took.
+                let over = running
+                    && section.is_some_and(|section| matches!(section.phase, Phase::Done { .. }));
+                let folded = over || self.folded.contains(&step.id);
                 if folded && index >= hidden_to {
                     hidden_to = plan.group_end(index);
                     hidden_by_moving = false;
                 }
-                let section = timing.sections.iter().find(|s| s.id == step.id);
                 // Its arrow folds its steps away, and opens them again.
                 let id = step.id;
                 // A quiet heading has no arrow; a folded one says so, and
                 // under the pointer or selected it can be folded.
-                let reach = folded || selected || self.hovered.is_some_and(|(over, _)| over == id);
+                // One that is over in a service is folded as a matter of
+                // course: its tick says so, with no arrow.
+                let reach = (folded && !over)
+                    || selected
+                    || self.hovered.is_some_and(|(pointed, _)| pointed == id);
                 let arrow = button(text(if folded { "▸" } else { "▾" }).size(META).color(
                     if reach {
                         p.on_surface_variant
@@ -349,7 +367,15 @@ impl App {
                 let heading = container(
                     row![
                         arrow,
-                        self.draggable(step.id, self.section_row(plan, step, section))
+                        self.draggable(
+                            step.id,
+                            self.section_row(
+                                plan,
+                                step,
+                                section,
+                                due.as_ref().and_then(|due| due(step.id))
+                            )
+                        )
                     ]
                     .align_y(Alignment::Center),
                 )
@@ -596,6 +622,7 @@ impl App {
         plan: &Plan,
         step: &Step,
         timing: Option<&SectionTiming>,
+        due: Option<TimeOfDay>,
     ) -> Element<'_, Message> {
         let p = self.palette;
         let id = step.id;
@@ -611,15 +638,45 @@ impl App {
         );
         let selected =
             self.selected == Some(id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
-        // The name is edited where it's read.
+        let running = self.mode == crate::mode::Mode::Run;
+        // Over, in a service: a tick, its name and how long it took, in
+        // the colour of what is past.
+        if let (true, Phase::Done { took }) = (running, &phase) {
+            return button(
+                row![
+                    look::icon(Icon::Check, 14.0, p.outline),
+                    container(
+                        single_line(step.label.clone())
+                            .size(BODY)
+                            .font(BOLD)
+                            .color(p.outline)
+                    )
+                    .width(Fill)
+                    .clip(true),
+                    text(took.map(length::clock).unwrap_or_default())
+                        .size(META)
+                        .color(p.outline),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([6, 8])
+            .on_press(Message::Click(Clicked::Step(id)))
+            .style(look::row(p, Tone::Plain))
+            .into();
+        }
+        // The name is edited where it's read. The section the service is
+        // in has the stage's colour.
         let editing_name = self.editing(id, Part::Name);
+        let on_now = running && matches!(phase, Phase::Running { .. });
         let title: Element<'_, Message> = if editing_name {
             self.name_field(step)
         } else {
             single_line(step.label.clone())
                 .size(BODY)
                 .font(BOLD)
-                .color(p.primary)
+                .color(if on_now { p.tertiary } else { p.primary })
                 .into()
         };
         // One line: its name, how full its time is as a bar, the same in
@@ -628,6 +685,15 @@ impl App {
         let part = |of: Duration, whole: Duration| of.as_secs_f32() / whole.as_secs_f32();
         let quiet = p.on_surface_variant;
         let (numbers, full, colour) = match (&phase, budget.filter(|budget| !budget.is_zero())) {
+            // In a service: when it is due, and how long it has.
+            (Phase::Coming { .. }, Some(budget)) if running => (
+                match due {
+                    Some(due) => format!("{due} · {}", length::clock(budget)),
+                    None => length::clock(budget),
+                },
+                None,
+                quiet,
+            ),
             (Phase::Coming { planned }, Some(budget)) => (
                 format!("{}/{}", minutes(*planned), minutes(budget)),
                 Some(part(*planned, budget)),
@@ -896,6 +962,104 @@ impl App {
         }
     }
 
+    /// The same row while the service runs: how long it has run, large;
+    /// the time it is held against; how far it runs late or early; when
+    /// it is now expected to end; and the bar, grey where a section is
+    /// over, the stage's colour where the service is.
+    fn run_time_row<'a>(&self, plan: &Plan, timing: &Timing) -> Element<'a, Message> {
+        let p = self.palette;
+        let now = SystemTime::now();
+        let since = |then: SystemTime| now.duration_since(then).unwrap_or_default();
+        let elapsed = self.engine.0.started().map(since).unwrap_or_default();
+        let left = timing
+            .end
+            .map(|end| end.duration_since(now).unwrap_or_default());
+        let scheduled =
+            lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step)).total;
+        let against = plan.target.unwrap_or(scheduled);
+        let mut top = row![
+            look::icon(Icon::Clock, 16.0, p.tertiary),
+            text(length::clock(elapsed))
+                .size(22)
+                .font(BOLD)
+                .color(p.on_surface),
+            container(
+                text(format!("◎ {}", length::clock(against)))
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.primary)
+            )
+            .padding([3, 8])
+            .style(look::chip(p, Tone::Plain)),
+            Space::new().width(Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if let Some(left) = left {
+            // Late or early: against the start time when there is one,
+            // else against the time the service has.
+            let late = match plan.starts {
+                Some(starts) => {
+                    lantern_engine::timing::behind(starts, scheduled, length::now_of_day(), left)
+                }
+                None => (elapsed + left).as_secs() as i64 - against.as_secs() as i64,
+            };
+            if late.abs() >= 30 {
+                let (sign, colour) = if late > 0 {
+                    ("↑", p.tertiary)
+                } else {
+                    ("↓", p.primary)
+                };
+                top = top.push(
+                    text(format!(
+                        "{sign} {}",
+                        length::clock(Duration::from_secs(late.unsigned_abs()))
+                    ))
+                    .size(META)
+                    .font(BOLD)
+                    .color(colour),
+                );
+            }
+            top = top.push(
+                text(format!(
+                    "→ {}",
+                    length::clock_of_day(length::now_of_day() + left)
+                ))
+                .size(META)
+                .color(p.on_surface_variant),
+            );
+        }
+        let parts = timing
+            .sections
+            .iter()
+            .filter(|section| plan.get(section.id).and_then(Step::depth) == Some(0))
+            .map(|section| {
+                let part = |of: Duration, whole: Duration| match whole.is_zero() {
+                    true => 1.0,
+                    false => of.as_secs_f32() / whole.as_secs_f32(),
+                };
+                let (length, full, colour) = match section.phase {
+                    Phase::Done { took } => {
+                        (section.budget.or(took).unwrap_or_default(), 1.0, p.outline)
+                    }
+                    Phase::Running { elapsed, expected } => {
+                        let whole = section.budget.unwrap_or(expected);
+                        (whole, part(elapsed, whole), p.tertiary)
+                    }
+                    Phase::Coming { planned } => {
+                        (section.budget.unwrap_or(planned), 0.0, p.primary)
+                    }
+                };
+                container(bar(p, full, colour, 0.0))
+                    .width(Length::FillPortion(length.as_secs().clamp(1, 60_000) as u16))
+                    .into()
+            });
+        column![top, row(parts).spacing(3)]
+            .spacing(8)
+            .padding(iced::Padding::default().left(8.0).right(8.0).bottom(8.0))
+            .into()
+    }
+
     /// How long the plan takes, large, over everything else in the
     /// pane: what is planned, the target to hold it against and how far
     /// off it is, when it starts and ends, and a bar with a part for each
@@ -1083,7 +1247,15 @@ impl App {
             let mut content = row![glyph(Icon::Repeat, repeats)]
                 .spacing(4)
                 .align_y(Alignment::Center);
-            if let Some(words) = repeat_words(flow.repeat) {
+            // In a service, a number of times says which one this is.
+            let words = match flow.repeat {
+                Repeat::Times(times) if self.mode == crate::mode::Mode::Run => {
+                    let round = self.engine.0.round_of(of).saturating_add(1).min(times);
+                    Some(format!("{round} / {times}"))
+                }
+                repeat => repeat_words(repeat),
+            };
+            if let Some(words) = words {
                 content = content.push(text(words).size(META).font(BOLD).color(p.primary));
             }
             buttons = buttons.push(small(

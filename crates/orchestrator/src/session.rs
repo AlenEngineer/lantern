@@ -283,6 +283,17 @@ impl Session {
         self.rounds.clear();
     }
 
+    /// When the first step was reached: when the service began.
+    pub fn started(&self) -> Option<SystemTime> {
+        self.entered.values().min().copied()
+    }
+
+    /// Which time round a repeating step or section is on, or the plan
+    /// (`None`): 0 the first time.
+    pub fn round_of(&self, of: Option<StepId>) -> u16 {
+        self.round(of)
+    }
+
     /// When a step was first reached in this session.
     pub fn entered(&self, id: StepId) -> Option<SystemTime> {
         self.entered.get(&id).copied()

@@ -322,6 +322,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   pointer, with its actions on a second line.
 - A dotted line curls back on the rail beside the steps of a section, or
   a plan, that repeats: from its last step, out and up, into its first.
+- The plan pane in a service. The row over the plan shows how long the
+  service has run, its target, how late or early it runs and when it is
+  now expected to end. A section that is over folds to one grey line with
+  how long it took; the one the service is in has the stage's colour and
+  says which round of a repeat it is on; one to come says when it is due.
+  **Up next** wears the rail's ring and a countdown.
 
 ### Fixed
 
