@@ -328,6 +328,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   how long it took; the one the service is in has the stage's colour and
   says which round of a repeat it is on; one to come says when it is due.
   **Up next** wears the rail's ring and a countdown.
+- A download under way is a ring that fills, at the end of its step's row
+  and in the Check lens, in place of "downloading 40%". The Check lens has
+  no headings: section times read `9/15` with a clock, sound is a
+  loudspeaker with its volume as a bar, and no projector is a struck
+  screen.
 
 ### Fixed
 

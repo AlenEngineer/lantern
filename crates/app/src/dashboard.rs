@@ -1565,6 +1565,17 @@ impl App {
     /// A YouTube video's download state while it's worth saying ("queued",
     /// "downloading 42%", why it failed), or `None`. Ready is how things
     /// should be, so it goes without saying.
+    /// How far a step's download has come, from 0 to 1, while it is
+    /// queued or under way: what its ring shows.
+    pub(crate) fn download_part(&self, resource: &Resource) -> Option<f32> {
+        let video = YoutubeVideo::of(resource)?;
+        match self.downloads.0.state(&video.id)? {
+            crate::youtube::Download::Queued => Some(0.0),
+            crate::youtube::Download::Running(percent) => Some(percent / 100.0),
+            _ => None,
+        }
+    }
+
     pub(crate) fn download_state(&self, resource: &Resource) -> Option<String> {
         let video = YoutubeVideo::of(resource)?;
         self.downloads

@@ -166,6 +166,19 @@ impl Field {
     }
 }
 
+/// A bar on a card: how full, over a track that shows on the card's
+/// ground.
+fn track<'a>(p: crate::palette::Palette, done: f32, colour: iced::Color) -> Element<'a, Message> {
+    let part = |portion: f32| (portion.clamp(0.0, 1.0) * 1000.0).round().max(1.0) as u16;
+    let piece = |colour: iced::Color, portion: f32| {
+        container(Space::new())
+            .height(3)
+            .width(Length::FillPortion(part(portion)))
+            .style(move |_| container::Style::default().background(colour))
+    };
+    row![piece(colour, done), piece(p.outline_variant, 1.0 - done)].into()
+}
+
 /// Where a value in the Look lens comes from.
 #[derive(Debug, PartialEq, Eq)]
 enum From {
@@ -290,10 +303,11 @@ impl App {
                     .width(Fill)
                     .padding([6, 0])
                     .on_press(Message::Lens(lens))
-                    .style(if on {
-                        look::pill(p, Tone::Solid)
-                    } else {
-                        look::pill(p, Tone::Plain)
+                    // The place in use is lit; the others are flat on the
+                    // switch's own ground.
+                    .style(move |theme, status| match on {
+                        true => look::pill(p, Tone::Solid)(theme, status),
+                        false => look::row(p, Tone::Plain)(theme, status),
                     }),
                 about.to_string(),
                 tooltip::Position::Bottom,
@@ -504,12 +518,6 @@ impl App {
 
     fn check_lens<'a>(&self, plan: &Plan) -> Element<'a, Message> {
         let p = self.palette;
-        let heading = |words: &'static str| {
-            text(words)
-                .size(META)
-                .font(BOLD)
-                .color(p.on_surface_variant)
-        };
         let card = |content: Element<'a, Message>| {
             container(content)
                 .width(Fill)
@@ -542,28 +550,38 @@ impl App {
                 Level::Problem => p.error,
                 Level::Waiting => p.tertiary,
             };
-            let label = plan
-                .get(issue.step)
-                .map_or_else(String::new, |step| step.label.clone());
-            body = body.push(
-                button(
-                    column![
-                        container(
-                            text(label)
-                                .size(BODY)
-                                .font(BOLD)
-                                .wrapping(text::Wrapping::None)
-                        )
-                        .width(Fill)
-                        .clip(true),
-                        text(issue.what).size(META).color(colour),
-                    ]
-                    .spacing(2),
-                )
+            let step = plan.get(issue.step);
+            let label = step.map_or_else(String::new, |step| step.label.clone());
+            // What is coming in has a ring for how far; what is wrong
+            // says what, under its name.
+            let coming = step.and_then(|step| match &step.action {
+                lantern_engine::Action::Show { resource } => self.download_part(resource),
+                _ => None,
+            });
+            let name = container(text(label).size(BODY).wrapping(text::Wrapping::None))
                 .width(Fill)
-                .padding([8, 10])
-                .on_press(Message::Select(issue.step))
-                .style(look::row(p, Tone::Selected)),
+                .clip(true);
+            let row: Element<'a, Message> = match coming {
+                Some(part) => row![
+                    look::ring(part, 18.0, colour),
+                    name,
+                    text(format!("{:.0}%", part * 100.0))
+                        .size(META)
+                        .color(colour),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .into(),
+                None => column![name, text(issue.what).size(META).color(colour)]
+                    .spacing(2)
+                    .into(),
+            };
+            body = body.push(
+                button(row)
+                    .width(Fill)
+                    .padding([8, 10])
+                    .on_press(Message::Select(issue.step))
+                    .style(look::row_filled(p, p.surface_container_highest)),
             );
         }
         // Each of the plan's own sections against its time.
@@ -582,7 +600,11 @@ impl App {
             };
             let (words, full, colour) = match section.budget {
                 Some(budget) if !budget.is_zero() => (
-                    format!("{} / {}", length::clock(planned), length::clock(budget)),
+                    format!(
+                        "{}/{}",
+                        (planned.as_secs() + 30) / 60,
+                        (budget.as_secs() + 30) / 60
+                    ),
                     planned.as_secs_f32() / budget.as_secs_f32(),
                     if planned > budget {
                         p.tertiary
@@ -595,6 +617,7 @@ impl App {
             times = times.push(
                 column![
                     row![
+                        look::icon(Icon::Clock, 15.0, colour),
                         container(
                             text(section.title.clone())
                                 .size(BODY)
@@ -606,53 +629,51 @@ impl App {
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
-                    crate::plan_pane::bar(p, full, colour, 0.0),
+                    track(p, full, colour),
                 ]
                 .spacing(5),
             );
         }
         if any {
-            body = body.push(heading("TIME")).push(card(times.into()));
+            body = body.push(card(times.into()));
         }
         // Where sound and the stage go, as they stood when this lens was
         // opened.
         let sound: Element<'a, Message> = match &self.sound_now {
-            Some(sound) => row![
-                look::icon(
-                    Icon::Music,
-                    16.0,
-                    if sound.muted { p.error } else { p.primary }
-                ),
-                container(
-                    text(if sound.output.is_empty() {
-                        "Sound".to_string()
-                    } else {
-                        sound.output.clone()
-                    })
-                    .size(BODY)
-                    .wrapping(text::Wrapping::None)
-                )
-                .width(Fill)
-                .clip(true),
-                text(if sound.muted {
-                    "muted".to_string()
-                } else {
-                    format!("{:.0}%", sound.volume * 100.0)
-                })
-                .size(META)
-                .color(if sound.muted || sound.volume < 0.01 {
-                    p.error
-                } else {
-                    p.on_surface_variant
-                }),
+            Some(sound) => {
+                let off = sound.muted || sound.volume < 0.01;
+                let colour = if off { p.error } else { p.primary };
+                row![
+                    look::icon(Icon::Sound, 16.0, colour),
+                    container(
+                        text(if sound.output.is_empty() {
+                            "Sound".to_string()
+                        } else {
+                            sound.output.clone()
+                        })
+                        .size(BODY)
+                        .wrapping(text::Wrapping::None)
+                    )
+                    .width(Fill)
+                    .clip(true),
+                    container(track(
+                        p,
+                        if sound.muted { 0.0 } else { sound.volume },
+                        colour
+                    ))
+                    .width(44),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
+            }
+            None => row![
+                look::icon(Icon::Sound, 16.0, p.on_surface_variant),
+                text("?").size(BODY).color(p.on_surface_variant)
             ]
             .spacing(8)
             .align_y(Alignment::Center)
             .into(),
-            None => text("Sound: can't tell here")
-                .size(META)
-                .color(p.on_surface_variant)
-                .into(),
         };
         let screen = match &self.place {
             Some(Place::Preferred(name) | Place::Remembered(name) | Place::Spare(name)) => {
@@ -660,11 +681,23 @@ impl App {
             }
             Some(Place::Nowhere) | None => ("No projector".to_string(), p.on_surface_variant),
         };
-        body = body.push(heading("SOUND AND SCREEN")).push(card(
+        body = body.push(card(
             column![
                 sound,
                 row![
-                    look::icon(Icon::Screen, 16.0, screen.1),
+                    look::icon(
+                        if self
+                            .place
+                            .as_ref()
+                            .is_some_and(|place| *place != Place::Nowhere)
+                        {
+                            Icon::Screen
+                        } else {
+                            Icon::ScreenOff
+                        },
+                        16.0,
+                        screen.1
+                    ),
                     text(screen.0).size(BODY).color(screen.1)
                 ]
                 .spacing(8)

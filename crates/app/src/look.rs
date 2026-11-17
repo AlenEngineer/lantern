@@ -491,6 +491,31 @@ pub fn curl<'a>(piece: Curl, color: Color) -> svg::Svg<'a> {
     }
 }
 
+/// A ring that fills as something comes in, such as a download: `done`
+/// from 0 to 1, in twentieths.
+pub fn ring<'a>(done: f32, size: f32, color: Color) -> svg::Svg<'a> {
+    static RINGS: std::sync::OnceLock<Vec<svg::Handle>> = std::sync::OnceLock::new();
+    const ROUND: f32 = 43.98;
+    let rings = RINGS.get_or_init(|| {
+        (0..=20)
+            .map(|step| {
+                let filled = ROUND * step as f32 / 20.0;
+                svg::Handle::from_memory(
+                    format!(
+                        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" fill="none" stroke="black" stroke-width="2.5"><circle cx="9" cy="9" r="7" opacity="0.3"/><circle cx="9" cy="9" r="7" stroke-dasharray="{filled:.2} {ROUND}" stroke-linecap="round" transform="rotate(-90 9 9)"/></svg>"#
+                    )
+                    .into_bytes(),
+                )
+            })
+            .collect()
+    });
+    let step = (done.clamp(0.0, 1.0) * 20.0).round() as usize;
+    svg(rings[step.min(20)].clone())
+        .width(size)
+        .height(size)
+        .style(move |_, _| svg::Style { color: Some(color) })
+}
+
 /// The icons the dashboard uses, from Material Design Icons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -525,6 +550,8 @@ pub enum Icon {
     Stop,
     /// A screen struck through: not on the projector.
     ScreenOff,
+    /// A loudspeaker.
+    Sound,
 }
 
 impl Icon {
@@ -579,6 +606,9 @@ impl Icon {
             Icon::Stop => mdi!("M18,18H6V6H18V18Z"),
             Icon::ScreenOff => mdi!(
                 "M1,4.27L2.28,3L20,20.72L18.73,22L15.73,19H13V21H16V23H8V21H11V19H3A2,2 0 0,1 1,17V5C1,4.82 1.03,4.64 1.07,4.47L1,4.27M3,6.27V17H13.73L3,6.27M21,17C21,17.24 20.96,17.47 20.88,17.68L19,15.8V5H8.2L6.2,3H21A2,2 0 0,1 23,5V17Z"
+            ),
+            Icon::Sound => mdi!(
+                "M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z"
             ),
             Icon::Plus => mdi!("M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"),
             Icon::Tune => mdi!(
