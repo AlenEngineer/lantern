@@ -952,14 +952,14 @@ impl App {
                     track::Mark::Crossed,
                     true,
                 )),
-                Some(Would::Not { first, last }) if pull.side == Side::Right => drawn_orders
+                Some(Would::Not { first, last, .. }) if pull.side == Side::Right => drawn_orders
                     .extend(span(
                         &would(first, last, lanes.orders),
                         p.error,
                         track::Mark::Nothing,
                         true,
                     )),
-                Some(Would::Not { first, last }) => drawn_loops.extend(span(
+                Some(Would::Not { first, last, .. }) => drawn_loops.extend(span(
                     &would(first, last, lanes.loops),
                     p.error,
                     track::Mark::Nothing,
