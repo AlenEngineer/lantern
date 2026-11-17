@@ -121,7 +121,7 @@ click lets them size themselves again. The widths are kept.
 
 There is one screen, the same before and during the service. The plan is
 edited where it is: the selected step's row carries small buttons to rename
-it, move it and remove it (and to go on by itself), F2 turns its name into
+it, move it and remove it, F2 turns its name into
 a field, and a click on its length, or a section's time, turns that into
 one; Enter or Esc is done. Ctrl+Enter adds the result you're looking at right
 after it, where the pink line shows while you search.
@@ -135,11 +135,16 @@ changes.
 Results show a thumbnail: a picture, a PDF's or a deck's first page or a
 video's still
 (YouTube too). A passage has a book instead, and its result says how it
-starts. A plan step is one line: its mark (● on stage, ○ next, else its
-number), its name, and at its end the one thing worth saying of it: what's
-wrong with it, how far the stage is into it, what kind it is, or how long
-it takes (↦ after it means it goes on by itself). Selecting it opens a
-second line with what can be done to it.
+starts. A plan step is one line: its dot on the rail, its name, and at its
+end the one thing worth saying of it: what's wrong with it, how far the
+stage is into it, what kind it is, or how long it takes. Selecting it opens
+a second line with what can be done to it.
+
+The rail down the left of the steps shows how the plan moves. A filled dot
+with a line on to the next step goes on by itself; a hollow dot waits for
+you. Click under a dot to join it to the next step or part them. In a
+service, grey is past, the stage's colour is on the projector now (its
+line fills as it plays), and a ring in that colour is next.
 
 Ctrl+K opens the search, and while it's open typing goes to its box, so
 every shortcut is a key that doesn't type. Esc empties the box, and closes
@@ -252,7 +257,7 @@ The plan moves when you move it: PgDn (or a clicker) goes to the next
 slide, then the next step. Sections are headings; their times only report.
 A video starts playing as it goes on stage, and Ctrl+Space pauses it.
 
-A step can go on by itself: select it and turn on **Go on when done**. A
+A step can go on by itself: click under its dot on the rail to join it to the next. A
 video then moves the plan when it ends; an image, PDF, passage or black
 screen after its length (shared among its pages or slides), and its row
 counts down. Sections, live slots and notes always wait for you.
