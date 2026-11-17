@@ -420,6 +420,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Each level of the plan has its own line. A section's runs down from
+  its dot: on to the next section's dot where it hands over by itself,
+  and curling back from the level of its last step where it comes again.
+  Its steps sit further in, with the line of a loop round some of them
+  between the two.
+- What is drawn for a section's steps (their joins, their loops, their
+  drawn order) steps back until the section is worked on: the pointer is
+  on its steps, one of them is selected or on, or a dot is pulled there.
 - The line down the plan's steps is one drawing over the whole list,
   made from where the rows really are: a line is as long as the way
   between its two dots, what has played is that share of it, and what a

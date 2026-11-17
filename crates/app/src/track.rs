@@ -228,6 +228,10 @@ pub struct Stop {
     /// The step the line goes to: `None` for the last of the plan, whose
     /// line ends under it.
     pub next: Option<StepId>,
+    /// The section it is in, and whether that one is being worked on:
+    /// what is drawn for the steps of one that is not steps back.
+    pub group: Option<StepId>,
+    pub awake: bool,
     /// The cut it is under, while its section closes or opens.
     pub cut: Option<u32>,
 }
@@ -266,12 +270,33 @@ pub struct Beside {
     pub mark: Mark,
     /// One a pull would make: it is not drawn in, it is there.
     pub pulled: bool,
+    /// The section its steps are in.
+    pub group: Option<StepId>,
+}
+
+/// A section's own line, down from its dot: on to the next section's
+/// dot where it hands over by itself, and curling back from the level of
+/// its last step where it comes again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Section {
+    pub id: StepId,
+    /// The last of its steps in sight.
+    pub last: Option<StepId>,
+    /// The section it hands over to, where it does and that one is next
+    /// down the same line.
+    pub next: Option<StepId>,
+    /// What its loop says of itself, where it comes again.
+    pub again: Option<Mark>,
+    pub color: Color,
+    pub cut: Option<u32>,
 }
 
 /// Everything the canvas draws.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Picture {
     pub items: Vec<Item>,
+    /// The sections' own lines.
+    pub sections: Vec<Section>,
     /// What comes again: dashed, curling back to its first step.
     pub loops: Vec<Beside>,
     /// What comes in a drawn order: a line that wanders.
@@ -298,7 +323,7 @@ const ROOM: f32 = 2.0;
 /// Where a loop's line runs down in its room, its dashes' length, about
 /// how far from one to the next, how wide its bend to a dot is, and how
 /// much of a line a mark takes, above and below its middle.
-const CURL_X: f32 = 14.0;
+const CURL_X: f32 = 20.0;
 const DASH: f32 = 2.5;
 const DASH_STEP: f32 = 5.0;
 const BEND: f32 = 4.0;
@@ -311,6 +336,10 @@ const WAVE_OUT: f32 = 3.5;
 const DRAW: f32 = 0.26;
 const OPEN: f32 = 0.3;
 const CATCH_UP: f32 = 0.12;
+/// How strong what is drawn for a section's steps is while the section
+/// is not being worked on, and how long it takes to come forward.
+const BACK: f32 = 0.38;
+const FORWARD: f32 = 0.16;
 
 /// Something that is drawn in when it first appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -318,6 +347,7 @@ enum Thing {
     Line(StepId),
     Loop(StepId, StepId),
     Order(StepId, StepId),
+    Again(StepId),
 }
 
 /// What is under way.
@@ -336,6 +366,11 @@ struct Moves {
     drawn: HashMap<Thing, f32>,
     /// The dot under the pointer.
     over: Option<StepId>,
+    /// The section whose steps the pointer is on: `Some(None)` on steps
+    /// in no section.
+    among: Option<Option<StepId>>,
+    /// How far forward each section's steps have come.
+    forward: HashMap<Option<StepId>, f32>,
 }
 
 impl Moves {
@@ -418,8 +453,47 @@ impl Moves {
         for beside in &picture.orders {
             draw(Thing::Order(beside.first, beside.last), beside.pulled);
         }
+        for section in &picture.sections {
+            if section.again.is_some() && section.last.is_some() {
+                draw(Thing::Again(section.id), false);
+            }
+        }
         self.drawn = drawn;
+        // The steps of a section that is worked on come forward: one of
+        // them is on, selected or pulled, or the pointer is on them.
+        let mut forward = HashMap::new();
+        for item in &picture.items {
+            let Item::Stop(stop) = item else {
+                continue;
+            };
+            let wanted = stop.awake || self.among == Some(stop.group);
+            let entry = forward.entry(stop.group).or_insert((false, 0.0));
+            entry.0 |= wanted;
+        }
+        for (group, (wanted, far)) in &mut forward {
+            let target = if *wanted { 1.0 } else { 0.0 };
+            let from = match self.forward.get(group) {
+                Some(far) if !fresh => *far,
+                _ => target,
+            };
+            let step = passed / FORWARD;
+            *far = match target > from {
+                true => (from + step).min(target),
+                false => (from - step).max(target),
+            };
+            moving |= *far != target;
+        }
+        self.forward = forward
+            .into_iter()
+            .map(|(group, (_, far))| (group, far))
+            .collect();
         moving
+    }
+
+    /// How strong what is drawn for the steps of `group` is.
+    fn strength(&self, group: Option<StepId>) -> f32 {
+        let far = self.forward.get(&group).copied().unwrap_or(1.0);
+        BACK + (1.0 - BACK) * ease(far)
     }
 
     fn drawn(&self, thing: Thing) -> f32 {
@@ -440,6 +514,7 @@ type Shown = (
     Option<(StepId, f32)>,
     Vec<(Thing, f32)>,
     Option<StepId>,
+    HashMap<Option<StepId>, f32>,
 );
 
 #[derive(Default)]
@@ -487,8 +562,24 @@ impl<Message> canvas::Program<Message> for Over {
                             Item::Section { .. } => None,
                         })
                     });
-                (over != state.moves.over).then(|| {
+                // The section whose steps it is among: level with one of
+                // their rows.
+                let among = cursor
+                    .position()
+                    .filter(|_| cursor.is_over(bounds))
+                    .and_then(|at| {
+                        let places = self.places.borrow();
+                        self.picture.items.iter().find_map(|item| match item {
+                            Item::Stop(stop) => places
+                                .get(&Key::Row(stop.id))
+                                .filter(|row| (row.y..row.y + row.height).contains(&at.y))
+                                .map(|_| stop.group),
+                            Item::Section { .. } => None,
+                        })
+                    });
+                (over != state.moves.over || among != state.moves.among).then(|| {
                     state.moves.over = over;
+                    state.moves.among = among;
                     canvas::Action::request_redraw()
                 })
             }
@@ -520,6 +611,7 @@ impl<Message> canvas::Program<Message> for Over {
             moves.ring,
             drawn,
             moves.over,
+            moves.forward.clone(),
         );
         vec![state.kept.draw(shown, renderer, bounds.size(), |frame| {
             // Where each is, from the canvas's own corner.
@@ -626,7 +718,11 @@ fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Ve
             runs.push((Point::new(x, from), Point::new(x, to)));
         }
     };
-    for later in &picture.items[n + 1..] {
+    let later = match stop.next {
+        Some(_) => &picture.items[n + 1..],
+        None => &[][..],
+    };
+    for later in later {
         match later {
             Item::Section { id, cut } => {
                 let Some(section) = at(Key::Section(*id)) else {
@@ -705,7 +801,10 @@ fn paint(
         // As much of it as is drawn so far.
         let shown = whole * moves.drawn(Thing::Line(stop.id));
         let (played, ink, ahead) = match line {
-            Line::Plain(color) => (0.0, color, color),
+            Line::Plain(color) => {
+                let color = faded(color, moves.strength(stop.group));
+                (0.0, color, color)
+            }
             Line::Playing {
                 done,
                 played,
@@ -729,29 +828,86 @@ fn paint(
             before += length;
         }
     }
+    // The sections' own lines.
+    for section in &picture.sections {
+        let Some(dot) = at(Key::Section(section.id)) else {
+            continue;
+        };
+        let x = dot.center_x();
+        let top = dot.y + dot.height + ROOM;
+        let foot = limit(section.cut);
+        let end = section
+            .last
+            .and_then(|last| at(Key::Dot(last)))
+            .map(|last| last.center_y());
+        // On to the next section's dot, where it hands over.
+        let next = section
+            .next
+            .and_then(|next| at(Key::Section(next)))
+            .filter(|next| (next.center_x() - x).abs() < 0.5)
+            .map(|next| next.y - ROOM);
+        let again = section.again.as_ref().and(end);
+        let down = match (next, again) {
+            (Some(next), _) => Some(next),
+            (None, Some(end)) => Some(end),
+            (None, None) => None,
+        };
+        if let Some(down) = down.map(|down| down.min(foot))
+            && down > top
+        {
+            part(
+                frame,
+                &(Point::new(x, top), Point::new(x, down)),
+                0.0,
+                down - top,
+                section.color,
+                false,
+            );
+        }
+        // Where it comes again: back from the level of its last step.
+        if let (Some(mark), Some(end)) = (&section.again, end)
+            && end < foot
+            && picture.curl_wide > 0.0
+        {
+            frame.fill(&Path::circle(Point::new(x, end), 3.0), section.color);
+            turn(
+                frame,
+                section.color,
+                moves.drawn(Thing::Again(section.id)),
+                &Turn {
+                    x: x - CURL_X,
+                    top: dot.center_y(),
+                    bottom: end,
+                    from: end - BEND,
+                    to: dot.center_y() + BEND,
+                    out_from: x - 4.5,
+                    tip: x - dot.width / 2.0 - 2.5,
+                    starts: true,
+                    ends: true,
+                },
+                mark,
+            );
+        }
+    }
     // The lines beside them.
     let pulling = picture.loops.iter().any(|beside| beside.pulled);
     for beside in &picture.loops {
         let far = moves.drawn(Thing::Loop(beside.first, beside.last));
         // What is there steps back while another is pulled over it.
-        let color = match pulling && !beside.pulled {
-            true => Color {
-                a: beside.color.a * 0.35,
-                ..beside.color
-            },
-            false => beside.color,
+        let color = match (beside.pulled, pulling) {
+            (true, _) => beside.color,
+            (false, true) => faded(beside.color, 0.35),
+            (false, false) => faded(beside.color, moves.strength(beside.group)),
         };
         curl(frame, picture, beside, color, far, at);
     }
     let pulling = picture.orders.iter().any(|beside| beside.pulled);
     for beside in &picture.orders {
         let far = moves.drawn(Thing::Order(beside.first, beside.last));
-        let color = match pulling && !beside.pulled {
-            true => Color {
-                a: beside.color.a * 0.35,
-                ..beside.color
-            },
-            false => beside.color,
+        let color = match (beside.pulled, pulling) {
+            (true, _) => beside.color,
+            (false, true) => faded(beside.color, 0.35),
+            (false, false) => faded(beside.color, moves.strength(beside.group)),
         };
         wander(frame, picture, beside, color, far, at);
     }
@@ -814,7 +970,10 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
         );
     };
     match stop.dot {
-        Dot::Solid(color) => frame.fill(&Path::circle(middle, DOT), color),
+        Dot::Solid(color) => frame.fill(
+            &Path::circle(middle, DOT),
+            faded(color, moves.strength(stop.group)),
+        ),
         Dot::Hollow(color) => frame.stroke(
             &Path::circle(middle, DOT - 1.0),
             Stroke::default().with_width(2.0).with_color(color),
@@ -845,6 +1004,14 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
             );
             frame.fill(&Path::circle(middle, DOT), color);
         }
+    }
+}
+
+/// `color`, `strength` as strong.
+fn faded(color: Color, strength: f32) -> Color {
+    Color {
+        a: color.a * strength,
+        ..color
     }
 }
 
@@ -901,34 +1068,78 @@ fn curl(
     else {
         return;
     };
-    let stroke = Stroke {
-        line_cap: canvas::LineCap::Round,
-        line_join: canvas::LineJoin::Round,
-        ..Stroke::default().with_color(color).with_width(1.5)
-    };
     // Down the room the rows keep for it: the one furthest out, where
     // they are not all as far in.
     let x = first_row.x.min(last_row.x) + CURL_X.min(picture.curl_wide / 2.0);
     let (top, bottom) = (first.center_y(), last.center_y());
     // Where it turns, or runs on out of sight where its own end is
     // folded away.
-    let (from, to) = (
-        match beside.ends {
-            true => bottom - BEND,
-            false => last_row.y + last_row.height,
+    turn(
+        frame,
+        color,
+        far,
+        &Turn {
+            x,
+            top,
+            bottom,
+            from: match beside.ends {
+                true => bottom - BEND,
+                false => last_row.y + last_row.height,
+            },
+            to: match beside.starts {
+                true => top + BEND,
+                false => first_row.y,
+            },
+            out_from: last.center_x() - DOT - RING - 1.0,
+            tip: first.center_x() - DOT - RING - 2.0,
+            starts: beside.starts,
+            ends: beside.ends,
         },
-        match beside.starts {
-            true => top + BEND,
-            false => first_row.y,
-        },
+        &beside.mark,
     );
-    let out = (last.center_x() - DOT - RING - 1.0 - (x + BEND + 1.0)).max(0.0);
-    let into = (first.center_x() - DOT - RING - 6.0 - (x + BEND + 1.0)).max(0.0);
+}
+
+/// Where a line that curls back runs.
+struct Turn {
+    /// Where it runs up.
+    x: f32,
+    /// The level of what it comes back to, and of what it leaves.
+    top: f32,
+    bottom: f32,
+    /// Where its run up starts and ends.
+    from: f32,
+    to: f32,
+    /// Where it leaves from, and where its arrow's head points to.
+    out_from: f32,
+    tip: f32,
+    /// Whether it really starts and ends there, with its bends.
+    starts: bool,
+    ends: bool,
+}
+
+/// The line `turn` describes, `far` of it drawn from where it leaves,
+/// with `mark` in a gap at the middle of its run up.
+fn turn(frame: &mut Frame, color: Color, far: f32, turn: &Turn, mark: &Mark) {
+    let Turn {
+        x,
+        top,
+        bottom,
+        from,
+        to,
+        ..
+    } = *turn;
+    let stroke = Stroke {
+        line_cap: canvas::LineCap::Round,
+        line_join: canvas::LineJoin::Round,
+        ..Stroke::default().with_color(color).with_width(1.5)
+    };
+    let out = (turn.out_from - (x + BEND + 1.0)).max(0.0);
+    let into = (turn.tip - 4.0 - (x + BEND + 1.0)).max(0.0);
     let up = (from - to).max(0.0);
     let whole = out + up + into;
     let mut left = whole * far;
     // Out from the last step's dot.
-    if beside.ends {
+    if turn.ends {
         dashes(
             frame,
             stroke,
@@ -948,7 +1159,7 @@ fn curl(
         left -= out;
     }
     // Up, round what it says of itself at its middle.
-    let words = match &beside.mark {
+    let words = match mark {
         Mark::Words(words) if up > MARK_ROOM * 3.0 => Some(words),
         _ => None,
     };
@@ -982,7 +1193,7 @@ fn curl(
     }
     left -= up;
     // In to the first step's dot, with the arrow's head.
-    if beside.starts && left > 0.0 {
+    if turn.starts && left > 0.0 {
         frame.stroke(
             &Path::new(|path| {
                 path.move_to(Point::new(x, top + BEND));
@@ -1121,6 +1332,8 @@ mod tests {
             dot: Dot::Solid(Color::WHITE),
             line,
             next: next.map(id),
+            group: None,
+            awake: true,
             cut: None,
         })
     }
