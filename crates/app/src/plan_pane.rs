@@ -12,8 +12,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Flow, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming, Step,
-    StepId, TimeOfDay, Timing,
+    Action, Basis, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming,
+    Step, StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, unit};
@@ -378,7 +378,9 @@ impl App {
         // whole plan moves, where the plan can change.
         let can = self.can_edit();
         let some = |of: &dyn Fn(lantern_engine::Flow) -> bool| {
-            of(plan.flow) || plan.steps().iter().any(|step| of(step.flow))
+            of(plan.flow)
+                || plan.steps().iter().any(|step| of(step.flow))
+                || plan.spans().iter().any(|span| of(span.flow))
         };
         let lanes = Lanes {
             // While planning both are always there: a pull can draw
@@ -481,12 +483,7 @@ impl App {
             {
                 put!(proposed);
             }
-            // A loop round some steps has no row of its own: it is the
-            // curl beside them, and they stay in line with their section.
-            if step.is_loop() {
-                continue;
-            }
-            let inward = INDENT * f32::from(plan.shown_level(index));
+            let inward = INDENT * f32::from(plan.level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
                 // The section that was closing or opening ends here.
@@ -566,16 +563,15 @@ impl App {
                 // Left of its dot, room for its own line where it comes
                 // again: a right click there opens how often it does.
                 let again: Element<'_, Message> = Space::new().width(lanes.curl).height(20).into();
-                let again: Element<'_, Message> =
-                    match self.can_edit() && step.flow.repeat != Repeat::Once {
-                        true => mouse_area(again)
-                            .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                                crate::rail::RingOn::Loop(Some(id)),
-                            )))
-                            .interaction(mouse::Interaction::Pointer)
-                            .into(),
-                        false => again,
-                    };
+                let again: Element<'_, Message> = match self.can_edit() && comes_again(plan, id) {
+                    true => mouse_area(again)
+                        .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                            crate::rail::RingOn::Loop(FlowOf::Step(id)),
+                        )))
+                        .interaction(mouse::Interaction::Pointer)
+                        .into(),
+                    false => again,
+                };
                 let arrow = row![
                     again,
                     hinted(
@@ -849,7 +845,8 @@ impl App {
                         .iter()
                         .find(|(next, ..)| goes && *next == end)
                         .map(|(next, ..)| id_at(*next)),
-                    again: repeat_words(step.flow.repeat).map(track::Mark::Words),
+                    again: repeat_words(plan.flow_of(step.id).unwrap_or_default().repeat)
+                        .map(track::Mark::Words),
                     color: *color,
                     cut: *cut,
                 }
@@ -1152,7 +1149,8 @@ impl App {
             line = line.push(text(numbers).size(META).color(colour));
         }
         let goes = step.advance == Some(true);
-        line = line.push(self.flow_marks(Some(id), goes, step.flow));
+        let flow = plan.flow_of(id).unwrap_or_default();
+        line = line.push(self.flow_marks(Some(id), goes, flow));
         // Under the pointer, a heading can be taken out like a step.
         if self.pointed(id) {
             line = line.push(self.pointed_actions(id));
@@ -1455,7 +1453,7 @@ impl App {
             .iter()
             .filter(|section| {
                 plan.get(section.id)
-                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+                    .is_some_and(|step| step.depth() == Some(0))
             })
             .map(|section| {
                 let part = |of: Duration, whole: Duration| match whole.is_zero() {
@@ -1596,7 +1594,7 @@ impl App {
             .iter()
             .filter(|section| {
                 plan.get(section.id)
-                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+                    .is_some_and(|step| step.depth() == Some(0))
             })
             .map(|section| {
                 let planned = match section.phase {
@@ -1763,7 +1761,7 @@ impl App {
                     "It comes once. Click to make it come again"
                 },
                 Message::SetRepeat(
-                    of,
+                    of.into(),
                     if repeats {
                         Repeat::Once
                     } else {
@@ -1781,7 +1779,7 @@ impl App {
                 } else {
                     "Its steps come in the plan's order. Click to shuffle them"
                 },
-                Message::SetShuffle(of, !flow.shuffle),
+                Message::SetShuffle(of.into(), !flow.shuffle),
             ));
         }
         // Rehearse it in the preview; while it is, the way to stop.
@@ -1839,7 +1837,7 @@ impl App {
         // Past a heading it is the section's line that goes on.
         let next = steps[index + 1..]
             .iter()
-            .take_while(|step| !step.is_section() || step.is_loop())
+            .take_while(|step| !step.is_section())
             .find(|step| !step.is_section());
         let group = section_of(plan, index);
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
@@ -2081,11 +2079,9 @@ impl App {
         let pulling = would.is_some();
         let curl: Element<'a, Message> = Space::new().width(lanes.curl).height(Fill).into();
         let curl: Element<'a, Message> = match repeating(plan, index) {
-            Some((group, ..)) if rings && !pulling && loop_at(plan, index).is_some() => {
+            Some((of, ..)) if rings && !pulling && loop_at(plan, index).is_some() => {
                 mouse_area(curl)
-                    .on_right_press(ring(crate::rail::RingOn::Loop(
-                        group.map(|at| steps[at].id),
-                    )))
+                    .on_right_press(ring(crate::rail::RingOn::Loop(of)))
                     .interaction(mouse::Interaction::Pointer)
                     .into()
             }
@@ -2096,11 +2092,9 @@ impl App {
         let drawn: Element<'a, Message> = Space::new().width(lanes.drawn).height(Fill).into();
         let drawn: Element<'a, Message> = match order_at(plan, index).filter(|_| rings && !pulling)
         {
-            Some((group, ..)) => mouse_area(drawn)
+            Some((of, ..)) => mouse_area(drawn)
                 .interaction(mouse::Interaction::Pointer)
-                .on_right_press(ring(crate::rail::RingOn::Shuffle(
-                    group.map(|at| steps[at].id),
-                )))
+                .on_right_press(ring(crate::rail::RingOn::Shuffle(of)))
                 .into(),
             None => drawn,
         };
@@ -2130,7 +2124,6 @@ impl App {
             .within(index)
             .into_iter()
             .filter_map(|id| plan.get(id))
-            .filter(|step| !step.is_loop())
             .collect();
         if sections.is_empty() || !self.can_edit() {
             return Space::new().width(inward).height(Fill).into();
@@ -2138,10 +2131,10 @@ impl App {
         let wide = inward / sections.len() as f32;
         row(sections.into_iter().map(|section| {
             let part = Space::new().width(wide).height(Fill);
-            match section.flow.repeat != Repeat::Once {
+            match comes_again(plan, section.id) {
                 true => mouse_area(part)
                     .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                        crate::rail::RingOn::Loop(Some(section.id)),
+                        crate::rail::RingOn::Loop(FlowOf::Step(section.id)),
                     )))
                     .interaction(mouse::Interaction::Pointer)
                     .into(),
@@ -2666,88 +2659,81 @@ fn ago(elapsed: Duration) -> String {
 }
 
 /// A dragged step lands indented inside a section; a section never does.
-/// What repeats round the step at `index`: the nearest section or loop
-/// that does (where it is in the plan), or else the plan (`None`), with
-/// where what it holds starts and ends.
-fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
+/// Whether the section `id`, or the step by itself, comes again.
+fn comes_again(plan: &Plan, id: StepId) -> bool {
+    plan.flow_of(id)
+        .is_some_and(|flow| flow.repeat != Repeat::Once)
+}
+
+/// The spans the step at `index` is in, innermost first, and then the
+/// plan: each with how it moves and its first and last steps.
+fn around(plan: &Plan, index: usize) -> impl Iterator<Item = (FlowOf, Flow, usize, usize)> + '_ {
     let steps = plan.steps();
-    plan.within(index)
-        .into_iter()
-        .rev()
-        .filter_map(|id| plan.position(id))
-        .find(|at| steps[*at].flow.repeat != Repeat::Once)
-        .map(|at| (Some(at), at + 1, plan.group_end(at)))
-        .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))
+    let step = |at: &usize| !steps[*at].is_section();
+    let all = (0..steps.len())
+        .find(step)
+        .zip((0..steps.len()).rfind(step))
+        .map(|(first, last)| (FlowOf::Plan, plan.flow, first, last));
+    let spans = plan.spans_at(index).into_iter().rev().filter_map(|id| {
+        let (first, last) = plan.span_range(id)?;
+        Some((FlowOf::Span(id), plan.span(id)?.flow, first, last))
+    });
+    spans.chain(all)
+}
+
+/// What repeats round the step at `index`: the nearest span that does,
+/// or else the plan, with its first and last steps.
+fn repeating(plan: &Plan, index: usize) -> Option<(FlowOf, usize, usize)> {
+    around(plan, index)
+        .find(|(_, flow, ..)| flow.repeat != Repeat::Once)
+        .map(|(of, _, first, last)| (of, first, last))
+}
+
+/// The section the step at `index` is in, or is.
+fn section_of(plan: &Plan, index: usize) -> Option<StepId> {
+    match plan.steps().get(index) {
+        Some(step) if step.is_section() => Some(step.id),
+        _ => plan.within(index).pop(),
+    }
 }
 
 /// The line that curls back beside the step at `index`, when the
-/// nearest thing around it that repeats is a loop drawn round some
-/// steps, or else the plan. Its first and last steps, and what it says of
-/// itself: how often it comes. `None` for a step in nothing that
+/// nearest thing around it that repeats is a loop drawn from one step
+/// to another, or else the plan. Its first and last steps, and what it
+/// says of itself: how often it comes. `None` for a step in nothing that
 /// repeats, and for the only step of something that does (its own mark
 /// says so).
-/// The section the step at `index` is in, or is: the nearest one with a
-/// heading of its own.
-fn section_of(plan: &Plan, index: usize) -> Option<StepId> {
-    let steps = plan.steps();
-    let named = |step: &Step| step.is_section() && !step.is_loop();
-    match steps.get(index) {
-        Some(step) if named(step) => Some(step.id),
-        _ => plan
-            .within(index)
-            .into_iter()
-            .rev()
-            .find(|id| plan.get(*id).is_some_and(named)),
-    }
-}
-
 fn loop_at(plan: &Plan, index: usize) -> Option<(usize, usize, Option<String>)> {
     let steps = plan.steps();
-    let (group, start, end) = repeating(plan, index)?;
+    let (of, first, last) = repeating(plan, index)?;
     // A section that comes again says so on its own line, from its dot.
-    if group.is_some_and(|at| !steps[at].is_loop()) {
-        return None;
-    }
-    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
-    // With something in it that repeats by itself, its own curl would be
-    // drawn round that one's: it is left to its heading to say.
-    if inside
-        .iter()
-        .any(|at| repeating(plan, *at).map(|(inner, ..)| inner) != Some(group))
+    if let FlowOf::Span(id) = of
+        && matches!(plan.span(id)?.over, lantern_engine::Over::Section(_))
     {
         return None;
     }
-    let (first, last) = (*inside.first()?, *inside.last()?);
+    // With something in it that repeats by itself, its own curl would be
+    // drawn round that one's: it is left to say nothing.
+    if (first..=last)
+        .filter(|at| !steps[*at].is_section())
+        .any(|at| repeating(plan, at).map(|(inner, ..)| inner) != Some(of))
+    {
+        return None;
+    }
     if first == last {
         return None;
     }
-    let flow = group.map_or(plan.flow, |at| steps[at].flow);
-    Some((first, last, repeat_words(flow.repeat)))
-}
-
-/// What draws an order round the step at `index`: the nearest section or
-/// group that does (where it is in the plan), or else the plan (`None`),
-/// with where what it holds starts and ends.
-fn shuffling(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
-    let steps = plan.steps();
-    plan.within(index)
-        .into_iter()
-        .rev()
-        .filter_map(|id| plan.position(id))
-        .find(|at| steps[*at].flow.shuffle)
-        .map(|at| (Some(at), at + 1, plan.group_end(at)))
-        .or(plan.flow.shuffle.then_some((None, 0, steps.len())))
+    Some((first, last, repeat_words(plan.flow_of(of)?.repeat)))
 }
 
 /// The line of the drawn order the step at `index` is in: what draws
-/// the order, and its first and last steps. `None` for a step in no
-/// drawn order.
-fn order_at(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
-    let steps = plan.steps();
-    let (group, start, end) = shuffling(plan, index)?;
-    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
-    let (first, last) = (*inside.first()?, *inside.last()?);
-    (first != last).then_some((group, first, last))
+/// the order (the nearest span that does, or else the plan), and its
+/// first and last steps. `None` for a step in no drawn order.
+fn order_at(plan: &Plan, index: usize) -> Option<(FlowOf, usize, usize)> {
+    around(plan, index)
+        .find(|(_, flow, ..)| flow.shuffle)
+        .map(|(of, _, first, last)| (of, first, last))
+        .filter(|(_, first, last)| first != last)
 }
 
 /// How often something comes, in a few characters; `None` for once.
@@ -2969,7 +2955,7 @@ mod tests {
         assert_eq!(loop_at(&plan, 1), None);
         // A section that comes again says so on its own line: none
         // beside its steps.
-        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        plan.loop_section(music).unwrap();
         for index in 1..=3 {
             assert_eq!(loop_at(&plan, index), None);
         }
@@ -2977,8 +2963,7 @@ mod tests {
         assert_eq!(section_of(&plan, 0), Some(music), "a section is its own");
         assert_eq!(section_of(&plan, 5), Some(sermon));
         // The plan repeats: the steps in nothing nearer are its own.
-        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
-        plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
+        plan.unloop(music);
         plan.flow.repeat = Repeat::Forever;
         assert_eq!(loop_at(&plan, 1), Some((1, 5, Some("∞".to_string()))));
         assert_eq!(loop_at(&plan, 5), Some((1, 5, Some("∞".to_string()))));
@@ -2987,9 +2972,13 @@ mod tests {
         plan.flow.repeat = Repeat::Once;
         let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
         plan.loop_over(a, b).unwrap();
-        // Music, the loop, A, B, C.
-        assert_eq!(loop_at(&plan, 2), Some((2, 3, Some("×2".to_string()))));
-        assert_eq!(loop_at(&plan, 3), Some((2, 3, Some("×2".to_string()))));
-        assert_eq!(loop_at(&plan, 4), None, "C is out of it");
+        // Music, A, B, C: the loop is no row.
+        assert_eq!(loop_at(&plan, 1), Some((1, 2, Some("×2".to_string()))));
+        assert_eq!(loop_at(&plan, 2), Some((1, 2, Some("×2".to_string()))));
+        assert_eq!(loop_at(&plan, 3), None, "C is out of it");
+        // One across a heading is drawn from its first step to its last.
+        let (c, d) = (plan.steps()[3].id, plan.steps()[5].id);
+        plan.loop_over(c, d).unwrap();
+        assert_eq!(loop_at(&plan, 5), Some((3, 5, Some("×2".to_string()))));
     }
 }

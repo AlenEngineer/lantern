@@ -517,16 +517,17 @@ impl Script {
                 let action = lantern_engine::Action::Section {
                     budget: *budget,
                     depth: 0,
-                    through: None,
                 };
                 engine.add(None, title.clone(), action);
             }
             Command::Loop(from, to, until) => {
                 let looped = engine.edit_plan(|plan| {
                     let (a, b) = (plan.steps().get(*from)?.id, plan.steps().get(*to)?.id);
-                    let looped = plan.loop_over(a, b)?;
-                    if let (Some(time), Some(step)) = (until, plan.get_mut(looped)) {
-                        step.flow.repeat = lantern_engine::Repeat::Until(*time);
+                    let looped = plan.loop_over(a, b).ok()?;
+                    if let Some(time) = until {
+                        let mut flow = plan.flow_of(looped)?;
+                        flow.repeat = lantern_engine::Repeat::Until(*time);
+                        plan.set_flow(looped, flow).ok()?;
                     }
                     Some(looped)
                 });

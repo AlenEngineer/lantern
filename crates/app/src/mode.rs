@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use iced::widget::{Space, button, column, container, row, scrollable, text, tooltip};
 use iced::{Alignment, Element, Fill, Task};
-use lantern_engine::{Plan, StepId};
+use lantern_engine::{FlowOf, Plan, StepId};
 
 use crate::keys::{self, Op};
 use crate::look::{self, BODY, BOLD, Icon, MEDIUM, META, PILL, Tone};
@@ -88,12 +88,12 @@ fn does(message: &Message) -> Does {
         M::Remove(id)
         | M::Rename(id, _)
         | M::SetAdvance(id, _)
-        | M::SetRepeat(Some(id), _)
-        | M::SetShuffle(Some(id), _)
+        | M::SetRepeat(FlowOf::Step(id), _)
+        | M::SetShuffle(FlowOf::Step(id), _)
         | M::Rail(
-            crate::rail::Act::Unloop(Some(id))
-            | crate::rail::Act::Unshuffle(Some(id))
-            | crate::rail::Act::Ends(Some(id), _),
+            crate::rail::Act::Unloop(FlowOf::Step(id))
+            | crate::rail::Act::Unshuffle(FlowOf::Step(id))
+            | crate::rail::Act::Ends(FlowOf::Step(id), _),
         )
         | M::StepSound(id, _)
         | M::KeepCopy(id)
@@ -111,9 +111,9 @@ fn does(message: &Message) -> Does {
         | M::PlanTarget(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
         | M::Rail(
-            crate::rail::Act::Unloop(None)
-            | crate::rail::Act::Unshuffle(None)
-            | crate::rail::Act::Ends(None, _),
+            crate::rail::Act::Unloop(FlowOf::Plan | FlowOf::Span(_))
+            | crate::rail::Act::Unshuffle(FlowOf::Plan | FlowOf::Span(_))
+            | crate::rail::Act::Ends(FlowOf::Plan | FlowOf::Span(_), _),
         )
         | M::PlanPanel(
             crate::plan_panel::PlanEdit::Target(_)
@@ -126,8 +126,8 @@ fn does(message: &Message) -> Does {
         | M::LookEdit(..)
         | M::LookReset(_)
         | M::EditTarget
-        | M::SetRepeat(None, _)
-        | M::SetShuffle(None, _) => Does::EditsPlan,
+        | M::SetRepeat(FlowOf::Plan | FlowOf::Span(_), _)
+        | M::SetShuffle(FlowOf::Plan | FlowOf::Span(_), _) => Does::EditsPlan,
         M::RenamePlan(_)
         | M::PlanTemplate(_)
         | M::DuplicatePlan

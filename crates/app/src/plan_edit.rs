@@ -44,7 +44,6 @@ impl NewStep {
                 Action::Section {
                     budget: None,
                     depth: 0,
-                    through: None,
                 },
             ),
             NewStep::LiveSlot => (
@@ -253,7 +252,7 @@ impl App {
                 },
                 "Comes again, or once. Right click its dot for how often".into(),
                 Message::SetRepeat(
-                    Some(id),
+                    lantern_engine::FlowOf::Step(id),
                     if step.flow.repeat == lantern_engine::Repeat::Once {
                         lantern_engine::Repeat::Times(2)
                     } else {

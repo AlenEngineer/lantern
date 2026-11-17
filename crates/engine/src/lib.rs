@@ -29,8 +29,8 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, DEEPEST, Ending, Flow, LogEntry, Plan, PlanError, Repeat, Session, Step, StepId,
-    StepSound,
+    Action, DEEPEST, Ending, Flow, FlowOf, LogEntry, Over, Plan, PlanError, Repeat, Session, Span,
+    SpanError, SpanId, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -178,10 +178,23 @@ impl Engine {
         lock(&self.session).started()
     }
 
-    /// Which time round a repeating step or section is on, or the plan
-    /// (`None`): 0 the first time.
-    pub fn round_of(&self, of: Option<StepId>) -> u16 {
+    /// Which time round a repeating step, span or plan is on: 0 the
+    /// first time. A section's heading says it for the span attached to
+    /// the section.
+    pub fn round_of(&self, of: impl Into<FlowOf>) -> u16 {
         lock(&self.session).round_of(of)
+    }
+
+    /// What going on from the step that is on goes back round: the step
+    /// itself, a span or the plan. `None` when it goes forward.
+    pub fn follows_back(&self) -> Option<FlowOf> {
+        lock(&self.session).follows_back()
+    }
+
+    /// Which time round `of` is on, from 0, and of how many: `None` for
+    /// one with no number to it.
+    pub fn rounds(&self, of: impl Into<FlowOf>) -> (u16, Option<u16>) {
+        lock(&self.session).rounds(of)
     }
 
     /// Whether what is on should be cut off now: it is in something

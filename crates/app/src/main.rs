@@ -348,10 +348,11 @@ enum Message {
     TargetDone,
     /// Whether the plan's steps go on by themselves unless one says.
     PlanAdvance(bool),
-    /// How many times a step or section comes, or the plan (`None`).
-    SetRepeat(Option<StepId>, lantern_engine::Repeat),
-    /// Whether a section's steps, or the plan's, come in a drawn order.
-    SetShuffle(Option<StepId>, bool),
+    /// How many times a step, a section, a span or the plan comes.
+    SetRepeat(lantern_engine::FlowOf, lantern_engine::Repeat),
+    /// Whether a section's steps, a span's or the plan's come in a drawn
+    /// order.
+    SetShuffle(lantern_engine::FlowOf, bool),
     /// The time of day a repeat ends at, as typed in the ring that is
     /// open: it holds as soon as it reads as one.
     RepeatUntil(String),
@@ -1463,39 +1464,24 @@ impl App {
             }
             Message::Rail(rail::Act::Ends(of, ending)) => {
                 self.remember(None);
-                self.engine.0.edit_plan(|plan| match of {
-                    Some(id) => {
-                        if let Some(step) = plan.get_mut(id) {
-                            step.flow.ends = ending;
-                        }
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(mut flow) = plan.flow_of(of) {
+                        flow.ends = ending;
+                        plan.set_flow(of, flow).ok();
                     }
-                    None => plan.flow.ends = ending,
                 });
             }
             Message::Rail(rail::Act::Unloop(of)) => {
                 self.ring = None;
                 self.repeat_until.clear();
                 self.remember(None);
-                self.engine.0.edit_plan(|plan| match of {
-                    Some(id) => {
-                        plan.unloop(id);
-                    }
-                    None => {
-                        plan.flow.repeat = lantern_engine::Repeat::Once;
-                        plan.flow.ends = lantern_engine::Ending::default();
-                    }
-                });
+                self.engine.0.edit_plan(|plan| plan.unloop(of));
                 return self.preload();
             }
             Message::Rail(rail::Act::Unshuffle(of)) => {
                 self.ring = None;
                 self.remember(None);
-                self.engine.0.edit_plan(|plan| match of {
-                    Some(id) => {
-                        plan.unshuffle(id);
-                    }
-                    None => plan.flow.shuffle = false,
-                });
+                self.engine.0.edit_plan(|plan| plan.unshuffle(of));
                 return self.preload();
             }
             Message::Rail(rail::Act::Over(step)) => {
@@ -1521,7 +1507,7 @@ impl App {
                             let (a, b) = (plan.steps()[last].id, plan.steps()[first].id);
                             plan.loop_over(a, b)
                         });
-                        if looped.is_some() {
+                        if looped.is_ok() {
                             self.motion.changed(pull.from);
                         }
                         return self.preload();
@@ -1543,17 +1529,19 @@ impl App {
                     }
                     (true, Some(rail::Would::Shuffle { first, last }), _) => {
                         self.remember(None);
-                        self.engine.0.edit_plan(|plan| {
+                        let drawn = self.engine.0.edit_plan(|plan| {
                             let (a, b) = (plan.steps()[first].id, plan.steps()[last].id);
                             plan.shuffle_over(a, b)
                         });
-                        self.motion.changed(pull.from);
+                        if drawn.is_ok() {
+                            self.motion.changed(pull.from);
+                        }
                         return self.preload();
                     }
                     (true, Some(rail::Would::Not { .. }), _) => {
                         self.motion.refuse(match pull.side {
                             rail::Side::Left | rail::Side::Along => {
-                                "a loop stays inside one section"
+                                "a loop takes two steps or more, and can't cut another in two"
                             }
                             rail::Side::Right => {
                                 "a drawn order takes three steps or more, in one section"
@@ -2221,25 +2209,24 @@ impl App {
             }
             Message::SetRepeat(of, repeat) => {
                 self.remember(None);
-                self.engine.0.edit_plan(|plan| match of {
-                    Some(id) => {
-                        if let Some(step) = plan.get_mut(id) {
-                            step.flow.repeat = repeat;
-                        }
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(mut flow) = plan.flow_of(of) {
+                        flow.repeat = repeat;
+                        plan.set_flow(of, flow).ok();
                     }
-                    None => plan.flow.repeat = repeat,
                 });
             }
             Message::SetShuffle(of, on) => {
                 self.remember(None);
-                self.engine.0.edit_plan(|plan| match of {
-                    Some(id) => {
-                        if let Some(step) = plan.get_mut(id) {
-                            step.flow.shuffle = on;
-                        }
-                    }
-                    None => plan.flow.shuffle = on,
+                let drawn = self.engine.0.edit_plan(|plan| {
+                    let mut flow = plan.flow_of(of).unwrap_or_default();
+                    flow.shuffle = on;
+                    plan.set_flow(of, flow)
                 });
+                if drawn.is_err() {
+                    self.motion
+                        .refuse("a drawn order takes three steps or more, in one section");
+                }
             }
             Message::RepeatUntil(typed) => {
                 self.repeat_until = typed
@@ -2249,7 +2236,7 @@ impl App {
                     .collect();
                 // Whose it is: what the open ring is about.
                 let of = match self.ring.map(|ring| ring.on) {
-                    Some(rail::RingOn::Dot(id)) => Some(Some(id)),
+                    Some(rail::RingOn::Dot(id)) => Some(lantern_engine::FlowOf::Step(id)),
                     Some(rail::RingOn::Loop(of)) => Some(of),
                     _ => None,
                 };
@@ -2721,10 +2708,6 @@ impl App {
                         .enumerate()
                         .filter(|(index, step)| {
                             let hidden = *index < hidden_to;
-                            // A loop has no row to stop on.
-                            if step.is_loop() {
-                                return false;
-                            }
                             if step.is_section() {
                                 if !hidden && self.folded.contains(&step.id) {
                                     hidden_to = plan.group_end(*index);

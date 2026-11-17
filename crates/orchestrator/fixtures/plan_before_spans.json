@@ -1,0 +1,184 @@
+{
+  "title": "Sabbath",
+  "steps": [
+    {
+      "id": 0,
+      "label": "Welcome",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:Welcome",
+          "title": "Welcome",
+          "kind": "image",
+          "location": {
+            "url": "Welcome"
+          }
+        }
+      },
+      "flow": {
+        "repeat": {
+          "times": 2
+        }
+      }
+    },
+    {
+      "id": 1,
+      "label": "Music",
+      "action": {
+        "type": "section",
+        "budget": 900
+      },
+      "flow": {
+        "repeat": {
+          "times": 3
+        }
+      }
+    },
+    {
+      "id": 11,
+      "label": "",
+      "action": {
+        "type": "section",
+        "depth": 1,
+        "through": 5
+      },
+      "flow": {
+        "repeat": {
+          "until": "10:30"
+        },
+        "ends": "sharp"
+      }
+    },
+    {
+      "id": 2,
+      "label": "A",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:A",
+          "title": "A",
+          "kind": "image",
+          "location": {
+            "url": "A"
+          }
+        }
+      }
+    },
+    {
+      "id": 10,
+      "label": "",
+      "action": {
+        "type": "section",
+        "depth": 2,
+        "through": 5
+      },
+      "flow": {
+        "shuffle": true
+      }
+    },
+    {
+      "id": 3,
+      "label": "B",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:B",
+          "title": "B",
+          "kind": "image",
+          "location": {
+            "url": "B"
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "label": "C",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:C",
+          "title": "C",
+          "kind": "image",
+          "location": {
+            "url": "C"
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "label": "D",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:D",
+          "title": "D",
+          "kind": "image",
+          "location": {
+            "url": "D"
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "label": "E",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:E",
+          "title": "E",
+          "kind": "image",
+          "location": {
+            "url": "E"
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "label": "Sermon",
+      "action": {
+        "type": "section"
+      },
+      "flow": {
+        "shuffle": true
+      }
+    },
+    {
+      "id": 8,
+      "label": "F",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:F",
+          "title": "F",
+          "kind": "image",
+          "location": {
+            "url": "F"
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "label": "G",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "test:G",
+          "title": "G",
+          "kind": "image",
+          "location": {
+            "url": "G"
+          }
+        }
+      }
+    }
+  ],
+  "next_id": 12,
+  "flow": {
+    "repeat": "forever"
+  }
+}
