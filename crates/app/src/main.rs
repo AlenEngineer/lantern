@@ -1009,6 +1009,7 @@ impl App {
                     true => self.motion.lands_open(drag.home),
                     false => self.motion.lands_at(drag.landing),
                 }
+                self.motion.picked_up();
             }
             (Some(drag), _) if drag.moving => self.motion.lands_at(drag.landing),
             (_, Some(held)) if held.moving => {
@@ -1016,6 +1017,25 @@ impl App {
                 self.motion.lands_at(landing);
             }
             _ => self.motion.nothing_held(),
+        }
+        // The gap is as far in as what is held would land, and the
+        // section it would be a part of lights up.
+        let plan = self.engine.0.plan();
+        let lands = match (&self.drag, &self.carried) {
+            (Some(drag), _) if drag.moving => {
+                drag.landing.map(|at| (drag.rest(&plan), at, drag.level))
+            }
+            (_, Some(held)) if held.moving => self.carry_landing(&plan).map(|at| {
+                let rest: Vec<_> = plan.steps().iter().collect();
+                let level = drag::level_at(&rest, at);
+                (rest, at, level)
+            }),
+            _ => None,
+        };
+        if let Some((rest, at, level)) = lands {
+            self.motion.gap_is_in(plan_pane::INDENT * f32::from(level));
+            self.motion
+                .hosted_by(drag::host(&rest, at, level).map(|(start, _)| rest[start].id));
         }
         if self.mode == mode::Mode::Plan {
             self.plans.relist();
@@ -1425,15 +1445,17 @@ impl App {
                     drag.landing
                         .is_none_or(|at| reached.is_none_or(|reached| at > reached))
                 });
-                // Let go where it was picked up, nothing moved.
+                // Let go where it was picked up, nothing moved: unless a
+                // section went in or out a level there.
                 let dropped = dropped
                     .and_then(|d| d.landing.map(|at| (d, at)))
-                    .filter(|(drag, at)| *at != drag.home);
+                    .filter(|(drag, at)| *at != drag.home || drag.nests());
                 if let Some((drag, at)) = dropped {
                     self.remember(None);
-                    self.engine
-                        .0
-                        .edit_plan(|plan| plan.move_steps(&drag.carried, at));
+                    self.engine.0.edit_plan(|plan| match drag.is_section() {
+                        true => plan.move_group(&drag.carried, at, drag.level),
+                        false => plan.move_steps(&drag.carried, at),
+                    });
                     if let Some(first) = drag.carried.first() {
                         self.motion.changed(*first);
                     }
@@ -3399,6 +3421,8 @@ impl App {
         {
             drag.landing = Some(landing);
         }
+        // Sideways, a section goes in or out a level.
+        drag.aim_level(&plan);
     }
 
     /// Lines up something from the plan's standby shelf: it's looked at in

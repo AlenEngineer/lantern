@@ -206,7 +206,7 @@ on a result or step only lines it up; a double click shows it at once.
 | F2 | rename the selected step, in its row |
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
-| Alt+→ ← | put the selected section inside the one before it, or move it out a level (three levels deep) |
+| Alt+→ ← | put the selected section inside the one before it, or move it out a level (three levels deep); dragging a section left or right does the same |
 | Ctrl+Z | take back the last edit of the plan (a removed step comes back) |
 | Ctrl+Shift+Z | do again what Ctrl+Z took back, until the plan is edited anew |
 | Ctrl+S, Ctrl+O | save the plan, list your plans (Esc goes back) |
@@ -262,7 +262,12 @@ line; what can be done to it comes up at its end while the pointer is on
 it. A section can
 sit inside another, three levels deep (Alt+→ and Alt+←, or the arrows on
 its row): it then folds, moves and counts its time with the one that
-holds it. A step shows
+holds it. Dragging does it too: up and down say where a section goes,
+left and right how far in. The gap moves in and out with the pointer, the
+marks under it show the levels it could take there with the one it has
+filled, and the section it would be a part of lights up with a line down
+its side. A step has no such choice: it is in whatever section it is
+dropped under, and that one lights up. A step shows
 what is inside it: the videos, sounds and pictures on a deck's slides, by
 slide, and the sound that plays with the step.
 

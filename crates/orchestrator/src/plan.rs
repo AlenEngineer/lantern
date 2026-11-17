@@ -558,6 +558,38 @@ impl Plan {
     /// Moves the steps `ids`, in their plan order, to `index` in the plan
     /// without them (clamped to the end). Returns whether any exist.
     pub fn move_steps(&mut self, ids: &[StepId], index: usize) -> bool {
+        let moved = self.place(ids, index);
+        self.settle();
+        moved
+    }
+
+    /// Moves the section `ids` begins with, and all it holds, to `index`
+    /// in the plan without them, with the section at `depth`: the
+    /// sections it holds go in or out as far as it does. Then every
+    /// section is kept where it can be, as after any move. Returns
+    /// whether any of `ids` exist.
+    pub fn move_group(&mut self, ids: &[StepId], index: usize, depth: u8) -> bool {
+        let own = ids
+            .first()
+            .and_then(|id| self.get(*id))
+            .and_then(Step::depth);
+        if let Some(own) = own {
+            for step in self.steps.iter_mut().filter(|step| ids.contains(&step.id)) {
+                if let Action::Section { depth: at, .. } = &mut step.action {
+                    // In by as much as the first goes in, or out.
+                    *at = (i16::from(*at) + i16::from(depth) - i16::from(own))
+                        .clamp(0, i16::from(DEEPEST)) as u8;
+                }
+            }
+        }
+        let moved = self.place(ids, index);
+        self.settle();
+        moved
+    }
+
+    /// Puts `ids`, in their plan order, at `index` in the plan without
+    /// them. Sections are left at whatever depth they have.
+    fn place(&mut self, ids: &[StepId], index: usize) -> bool {
         let (moving, mut rest): (Vec<Step>, Vec<Step>) = std::mem::take(&mut self.steps)
             .into_iter()
             .partition(|step| ids.contains(&step.id));
@@ -565,7 +597,6 @@ impl Plan {
         let at = index.min(rest.len());
         rest.splice(at..at, moving);
         self.steps = rest;
-        self.settle();
         moved
     }
 
@@ -834,6 +865,36 @@ mod tests {
         assert_eq!(plan.within(5), [music, reading]);
         assert_eq!(plan.within(1), [music]);
         assert!(plan.within(0).is_empty());
+    }
+
+    #[test]
+    fn a_section_moves_with_its_level_and_what_it_holds() {
+        let mut plan = Plan::new("Sabbath");
+        let singing = plan.section("Singing", None);
+        let special = plan.section("Special", None);
+        let duet = plan.section("Duet", None);
+        plan.nest(duet, true);
+        let school = plan.section("School", None);
+        let depths =
+            |plan: &Plan| -> Vec<u8> { plan.steps().iter().filter_map(Step::depth).collect() };
+        assert_eq!(depths(&plan), [0, 0, 1, 0]);
+        // Special, with Duet in it, stays where it is and goes into
+        // Singing: Duet goes in as far.
+        let carried = plan.carried(special);
+        assert_eq!(carried, [special, duet]);
+        assert!(plan.move_group(&carried, 1, 1));
+        assert_eq!(depths(&plan), [0, 1, 2, 0]);
+        assert_eq!(
+            plan.within(plan.position(duet).unwrap()),
+            [singing, special]
+        );
+        // To the end, out at the plan's own level again.
+        assert!(plan.move_group(&carried, 2, 0));
+        assert_eq!(depths(&plan), [0, 0, 0, 1]);
+        assert_eq!(plan.position(school), Some(1));
+        // Nothing goes further in than there is a section to hold it.
+        assert!(plan.move_group(&carried, 0, 2));
+        assert_eq!(depths(&plan), [0, 1, 0, 0], "first is the plan's own");
     }
 
     #[test]

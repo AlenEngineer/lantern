@@ -17,7 +17,7 @@ use lantern_engine::{
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
-use crate::drag::{Drag, Half};
+use crate::drag::Half;
 use crate::keys::{self, Op};
 use crate::length;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
@@ -31,7 +31,7 @@ use crate::{App, Clicked, Message};
 pub const ROWS: &str = "plan-rows";
 
 /// How far a section's steps sit in from its header.
-const INDENT: f32 = 12.0;
+pub(crate) const INDENT: f32 = 12.0;
 
 /// The field the plan's target time is typed in.
 pub(crate) const TARGET_BOX: &str = "plan-target";
@@ -274,21 +274,58 @@ impl App {
         // The gap it just left closes at the same pace, so the rows in
         // between slide over instead of jumping.
         let closing = self.motion.closing_gap();
-        let closing_gap = |left: f32| Space::new().height(GAP_TALL * left);
-        let gap = |indent: f32| {
-            let gap = container(drop_gap(
+        // The plan without what is carried: where it lands is counted
+        // in this.
+        let rest_steps: Vec<&Step> = plan
+            .steps()
+            .iter()
+            .filter(|step| !carried.contains(&step.id))
+            .collect();
+        // How far in it would land: a section where the pointer has taken
+        // it, a step under whatever it lands in.
+        let gap_level = match (moving, landing) {
+            (Some(drag), _) => drag.level,
+            (None, Some(at)) => crate::drag::level_at(&rest_steps, at),
+            (None, None) => 0,
+        };
+        // The gap is that far in, sliding there when the level changes.
+        let gap_in = self
+            .motion
+            .gap_indent()
+            .unwrap_or(INDENT * f32::from(gap_level));
+        // A section says which levels it could take there, and which it
+        // has: one mark a level under its gap.
+        let ruler = moving
+            .filter(|drag| drag.is_section())
+            .map(|drag| (drag.level, drag.levels));
+        let gap_tall = GAP_TALL + ruler.map_or(0.0, |_| RULER_TALL);
+        let closing_gap = move |left: f32| Space::new().height(gap_tall * left);
+        let gap = || {
+            let mut slot = column![drop_gap(
                 p,
                 moving
                     .map(|d| d.label(plan))
                     .or_else(|| held.map(|held| held.file.title.clone()))
                     .unwrap_or_default(),
-            ))
-            .padding(iced::Padding::default().left(indent));
+            )]
+            .spacing(4);
+            if let Some((at, (least, most))) = ruler {
+                slot = slot.push(level_ruler(p, at, least, most));
+            }
+            let gap = container(slot).padding(iced::Padding::default().left(gap_in));
             match opening {
-                Some(open) => gap.max_height(GAP_TALL * open).clip(true),
+                Some(open) => gap.max_height(gap_tall * open).clip(true),
                 None => gap,
             }
         };
+        // The section it would be a part of: lit, with a line down the
+        // side of all it holds, the gap too.
+        let host = landing.and_then(|at| crate::drag::host(&rest_steps, at, gap_level));
+        let host_id = host.map(|(start, _)| rest_steps[start].id);
+        let host_lit = self.motion.host_lit();
+        let host_in = host.map_or(0.0, |(start, _)| {
+            INDENT * f32::from(rest_steps[start].depth().unwrap_or(0))
+        });
         // The pink line is there only while a search has a result for
         // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
@@ -323,7 +360,17 @@ impl App {
         let fill_indent = fill_of.map_or(0.0, |at| {
             INDENT * f32::from(plan.level(at) + 1) + look::CURL_WIDE
         });
-        let mut in_section = false;
+        // The rows of the section something would land in are kept apart
+        // while they are gathered, to have one line down their side.
+        let mut hosting: Option<iced::widget::Column<'_, Message>> = None;
+        macro_rules! put {
+            ($row:expr $(,)?) => {
+                match hosting.take() {
+                    Some(held) => hosting = Some(held.push($row)),
+                    None => rows = rows.push($row),
+                }
+            };
+        }
         // Up to where rows are folded away with the section that holds
         // them, and whether that section is the one closing or opening
         // now: then they are still drawn, under the cut.
@@ -341,10 +388,19 @@ impl App {
                 continue;
             }
             if landing == Some(rest) {
-                rows = rows.push(gap(gap_indent(moving, in_section)));
+                put!(gap());
             }
             if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
-                rows = rows.push(closing_gap(left));
+                put!(closing_gap(left));
+            }
+            // What the section it would be a part of holds ends here.
+            if host.is_some_and(|(_, end)| end == rest)
+                && let Some(held) = hosting.take()
+            {
+                rows = rows.push(hosted(p, held, host_in, host_lit));
+            }
+            if host.is_some_and(|(start, _)| start == rest) {
+                hosting = Some(column![].spacing(2));
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
@@ -353,7 +409,7 @@ impl App {
             if fill_at == Some(index)
                 && let Some(proposed) = self.fill_rows(fill_indent)
             {
-                rows = rows.push(proposed);
+                put!(proposed);
             }
             let inward = INDENT * f32::from(plan.level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
@@ -362,9 +418,8 @@ impl App {
                 if index >= folding_to
                     && let Some(steps) = folding.take()
                 {
-                    rows = rows.push(cut(steps));
+                    put!(cut(steps));
                 }
-                in_section = true;
                 // Folded away with the section it is in.
                 if hidden && !selected {
                     continue;
@@ -408,25 +463,40 @@ impl App {
                     && folding.is_none()
                     && !hidden
                 {
-                    rows = rows.push(
+                    put!(
                         container(look::icon(Icon::Pause, 12.0, p.on_surface_variant))
                             .padding(iced::Padding::default().left(inward + INDENT + 4.0)),
                     );
                 }
+                // The one something held would be a part of is lit.
+                let lit = host_id == Some(step.id);
                 let heading = container(
-                    row![
-                        arrow,
-                        self.draggable(
-                            step.id,
-                            self.section_row(
-                                plan,
-                                step,
-                                section,
-                                due.as_ref().and_then(|due| due(step.id))
+                    container(
+                        row![
+                            arrow,
+                            self.draggable(
+                                step.id,
+                                self.section_row(
+                                    plan,
+                                    step,
+                                    section,
+                                    due.as_ref().and_then(|due| due(step.id))
+                                )
                             )
-                        )
-                    ]
-                    .align_y(Alignment::Center),
+                        ]
+                        .align_y(Alignment::Center),
+                    )
+                    .style(move |_| match lit {
+                        true => container::Style {
+                            background: Some(Palette::tint(p.primary, 0.12 * host_lit).into()),
+                            border: iced::Border {
+                                radius: 10.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        },
+                        false => container::Style::default(),
+                    }),
                 )
                 .padding(iced::Padding::default().left(inward));
                 // A section inside the one that is closing or opening
@@ -435,10 +505,10 @@ impl App {
                     Some((steps, so_far, open)) => {
                         folding = Some((steps.push(heading), so_far + ROW_TALL, open));
                     }
-                    None => rows = rows.push(heading),
+                    None => put!(heading),
                 }
                 if selected && adds {
-                    rows = rows.push(insertion_mark(p, inward + INDENT));
+                    put!(insertion_mark(p, inward + INDENT));
                 }
                 if folding.is_none()
                     && let Some(open) = self.motion.open(step.id)
@@ -496,28 +566,32 @@ impl App {
             let stays = Some(step.id) == current || selected;
             match folding.take() {
                 Some((steps, so_far, open)) if stays => {
-                    rows = rows.push(cut((steps, so_far, open))).push(row);
+                    put!(cut((steps, so_far, open)));
+                    put!(row);
                     folding = Some((column![].spacing(2), 0.0, open));
                 }
                 Some((steps, so_far, open)) => {
                     folding = Some((steps.push(row), so_far + tall, open));
                 }
-                None => rows = rows.push(row),
+                None => put!(row),
             }
         }
         if let Some(steps) = folding.take() {
-            rows = rows.push(cut(steps));
+            put!(cut(steps));
         }
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
         {
-            rows = rows.push(proposed);
+            put!(proposed);
         }
         if landing == Some(rest) {
-            rows = rows.push(gap(gap_indent(moving, in_section)));
+            put!(gap());
         }
         if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
-            rows = rows.push(closing_gap(left));
+            put!(closing_gap(left));
+        }
+        if let Some(held) = hosting.take() {
+            rows = rows.push(hosted(p, held, host_in, host_lit));
         }
         if adds
             && self.selected.is_none()
@@ -2331,9 +2405,69 @@ pub(crate) fn repeat_words(repeat: Repeat) -> Option<String> {
     }
 }
 
-fn gap_indent(moving: Option<&Drag>, in_section: bool) -> f32 {
-    let step = moving.is_some_and(|drag| drag.carried.len() == 1 && !drag.is_section());
-    if step && in_section { INDENT } else { 0.0 }
+/// How tall the marks under a section's gap are, with their space.
+const RULER_TALL: f32 = 14.0;
+
+/// The levels a carried section could take where it would land, a mark
+/// each: the one it has is filled, the others it could have are rings,
+/// and one out of reach there is a speck.
+fn level_ruler<'a>(p: Palette, at: u8, least: u8, most: u8) -> Element<'a, Message> {
+    let mark = |level: u8| -> Element<'a, Message> {
+        let (size, fill, edge) = match level {
+            level if level == at => (10.0, Some(p.primary), None),
+            level if (least..=most).contains(&level) => (10.0, None, Some(p.on_surface_variant)),
+            _ => (4.0, Some(p.outline_variant), None),
+        };
+        container(
+            container(Space::new().width(size).height(size)).style(move |_| container::Style {
+                background: fill.map(Into::into),
+                border: iced::Border {
+                    color: edge.unwrap_or(iced::Color::TRANSPARENT),
+                    width: if edge.is_some() { 2.0 } else { 0.0 },
+                    radius: (size / 2.0).into(),
+                },
+                ..container::Style::default()
+            }),
+        )
+        .center_x(10)
+        .center_y(10)
+        .into()
+    };
+    let levels = f32::from(lantern_engine::DEEPEST) + 1.0;
+    // A thin line runs behind them, from the first to the last.
+    let line = container(
+        container(Space::new().width(Fill).height(2))
+            .style(move |_| container::Style::default().background(p.outline_variant)),
+    )
+    .width(levels * 10.0 + (levels - 1.0) * 6.0)
+    .center_y(10)
+    .padding([0, 5]);
+    let marks = row((0..=lantern_engine::DEEPEST).map(mark)).spacing(6);
+    container(stack![line, marks])
+        .padding(iced::Padding::default().left(8.0))
+        .into()
+}
+
+/// The rows of the section something held would be a part of, with a
+/// line down their side, `indent` in, `lit` of the way to lit.
+fn hosted<'a>(
+    p: Palette,
+    rows: iced::widget::Column<'a, Message>,
+    indent: f32,
+    lit: f32,
+) -> Element<'a, Message> {
+    let line = container(
+        container(Space::new().width(3).height(Fill)).style(move |_| container::Style {
+            background: Some(p.primary.scale_alpha(lit).into()),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        }),
+    )
+    .padding(iced::Padding::default().left(indent));
+    stack![rows, line].into()
 }
 
 /// Where a drag would land: a highlighted slot naming what it carries.
