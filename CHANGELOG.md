@@ -359,6 +359,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - What autofill proposes looks proposed: its rows and their dots have a
   dashed outline, and over them a bar shows what the section holds, what
   would be added (hatched) and the room left of its time.
+- The dashboard's short motions run on iced's own animations. They look
+  and time the same as before.
 
 ### Fixed
 
