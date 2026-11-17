@@ -1764,8 +1764,7 @@ impl App {
                 (joined_above || would_above).then_some(match place {
                     _ if would_above => planned,
                     Place::Done | Place::Current => past,
-                    Place::Next => faint,
-                    Place::Later => planned,
+                    Place::Next | Place::Later => planned,
                 }),
                 // The one that is up has a ring round its dot, which
                 // takes its room from the line above: the dot stays
@@ -1871,7 +1870,9 @@ impl App {
                 .into()
             }
             (false, ..) => Space::new().height(Fill).into(),
-            (true, Place::Current, None) => line(Some(faint), Fill).into(),
+            // On, with nothing playing yet: the line as planned. The
+            // stage's colour on it always means that much has played.
+            (true, Place::Current, None) => line(Some(planned), Fill).into(),
             (true, Place::Done, _) => line(Some(past), Fill).into(),
             (true, ..) => line(Some(planned), Fill).into(),
         };
