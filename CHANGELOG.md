@@ -420,6 +420,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A video whose pixels are not square (the hymn videos are) played with
+  the sound breaking up on a busy machine: every picture was worked over
+  again to square them, which cost more than decoding it. It is stretched
+  as it is drawn instead; a hymn takes a third of the processor it did.
 - A pull from a step's dot says which line it draws by the way it goes,
   and can change as it goes: to the left a loop, to the right a drawn
   order, straight up a loop and straight down a join. The right side of

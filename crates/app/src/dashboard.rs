@@ -1546,12 +1546,9 @@ impl App {
         });
         framed_with(
             stack![
-                iced_video_player::VideoPlayer::new(player)
-                    .width(Fill)
-                    .height(Fill)
-                    .content_fit(iced::ContentFit::Contain)
-                    .on_end_of_stream(Message::Ended(scene))
-                    .on_error(move |err| Message::Broke(scene, err.message().to_string())),
+                stage::picture(player, Message::Ended(scene), move |why| {
+                    Message::Broke(scene, why)
+                }),
                 container(mark)
                     .align_left(Fill)
                     .align_bottom(Fill)
