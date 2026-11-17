@@ -351,7 +351,25 @@ impl App {
     /// A step's media length, once the stage has loaded it.
     pub(crate) fn loaded_length(&self, step: &Step) -> Option<Duration> {
         match &step.action {
-            Action::Show { resource } => self.media.length(&resource.id),
+            // What the stage has loaded says first; before that, what
+            // the file was measured at.
+            Action::Show { resource } => self
+                .media
+                .length(&resource.id)
+                .or_else(|| self.file_length(resource)),
+            _ => None,
+        }
+    }
+
+    /// How long a video or sound file plays, measured once and kept.
+    /// `None` for anything else, and for a file not measured yet (it is
+    /// then asked for).
+    pub(crate) fn file_length(&self, resource: &Resource) -> Option<Duration> {
+        if !stage::has_sound(resource) {
+            return None;
+        }
+        match stage::needs(resource) {
+            Ok(stage::Needs::File(path)) => self.lengths.of(&path),
             _ => None,
         }
     }
