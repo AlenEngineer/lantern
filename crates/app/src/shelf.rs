@@ -14,8 +14,8 @@ use iced::widget::{
 use iced::{Alignment, Element, Fill, Task};
 use lantern_engine::{Location, Query, Resource};
 
-use crate::dashboard::{scrolling, single_line};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
+use crate::widgets::{scrolling, single_line};
 use crate::{App, Clicked, Message};
 
 /// The most rows the tree draws at once. A folder of six hundred hymns

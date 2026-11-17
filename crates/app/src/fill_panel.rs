@@ -13,9 +13,9 @@ use iced::widget::{Space, button, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Fill, Length};
 use lantern_engine::{Action, Kind, Resource, ResourceId, StepId};
 
-use crate::dashboard::hinted;
 use crate::fill::{Chosen, Fit, Order, Thing, Wish};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
+use crate::widgets::{self, Filled, hinted};
 use crate::{App, Message, drawn, length};
 
 /// The kinds of file a fill can take, in the order their switches are.
@@ -346,23 +346,11 @@ impl App {
             },
             ..container::Style::default()
         };
-        let ink = |on: bool| if on { p.on_primary } else { p.on_surface };
+        let ink = |on: bool| widgets::place_ink(p, on);
         // One place of a switch.
         let place =
             |content: Element<'static, Message>, on: bool, about: &str, message: Message| {
-                hinted(
-                    p,
-                    button(container(content).center_x(Fill))
-                        .width(Fill)
-                        .padding([5, 0])
-                        .on_press(message)
-                        .style(move |theme, status| match on {
-                            true => look::pill(p, Tone::Solid)(theme, status),
-                            false => look::row(p, Tone::Plain)(theme, status),
-                        }),
-                    about.to_string(),
-                    tooltip::Position::Bottom,
-                )
+                widgets::place(p, content, on, 5, about, message)
             };
         let word = |label: &'static str, on: bool| -> Element<'static, Message> {
             text(label).size(BODY).font(BOLD).color(ink(on)).into()
@@ -444,9 +432,7 @@ impl App {
             ),
         ]
         .spacing(8);
-        let switch = |places: Vec<Element<'static, Message>>| {
-            container(row(places).spacing(2)).padding(3).style(ground)
-        };
+        let switch = |places: Vec<Element<'static, Message>>| widgets::places(p, places, 14.0);
         let kinds = switch(vec![
             place(
                 glyph(Icon::Video, fill.kinds[0]),
@@ -644,37 +630,35 @@ impl App {
             .max(planned + fill.chosen.total)
             .as_secs_f32()
             .max(1.0);
-        let part = |of: Duration| (of.as_secs_f32() / whole * 1000.0).round() as u16;
-        let (there, proposed) = (part(planned), part(fill.chosen.total));
-        let solid = |portion: u16, colour: iced::Color| {
-            container(Space::new())
-                .width(Length::FillPortion(portion.max(1)))
-                .height(Fill)
-                .style(move |_| container::Style::default().background(colour))
-        };
-        let mut parts = row![].height(8);
-        if there > 0 {
-            parts = parts.push(solid(there, p.primary));
-        }
-        if proposed > 0 {
-            parts = parts.push(
-                drawn::hatched(
-                    iced::Color {
-                        a: 0.75,
-                        ..p.primary
-                    },
-                    iced::Color {
-                        a: 0.4,
-                        ..p.primary
-                    },
-                )
-                .width(Length::FillPortion(proposed))
-                .height(Fill),
-            );
-        }
-        if there + proposed < 1000 {
-            parts = parts.push(solid(1000 - there - proposed, p.surface_container_highest));
-        }
+        let share = |of: Duration| of.as_secs_f32() / whole;
+        let (there, proposed) = (share(planned), share(fill.chosen.total));
+        // Only the parts there are: a part of nothing would still be a
+        // sliver.
+        let parts = widgets::bar(
+            [
+                (there, Filled::Solid(p.primary)),
+                (
+                    proposed,
+                    Filled::Hatched(
+                        iced::Color {
+                            a: 0.75,
+                            ..p.primary
+                        },
+                        iced::Color {
+                            a: 0.4,
+                            ..p.primary
+                        },
+                    ),
+                ),
+                (
+                    1.0 - there - proposed,
+                    Filled::Solid(p.surface_container_highest),
+                ),
+            ]
+            .into_iter()
+            .filter(|(share, _)| *share >= 0.0005),
+            8.0,
+        );
         let mut rows = column![parts, sums].spacing(6);
         for pick in &fill.picks {
             let kept = fill.kept.contains(&pick.id);

@@ -379,6 +379,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the levels it could take, and the section it would be a part of lights
   up with a line down its side. A step's gap is as far in as where it
   lands. The card under the pointer rises as it is picked up.
+- Inside: the dashboard's small parts (pills, chips, the switch, the
+  switch with several places, the line, the swatch, the bar) are made once,
+  in one place, and the look's fields are one set shown by the Look lens
+  and the plan's panel alike. Nothing looks different, but for the plan
+  panel's look fields, which are now the same size as the Look lens's.
 
 ### Fixed
 

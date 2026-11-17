@@ -16,7 +16,7 @@ use lantern_engine::{
     StepId, TimeOfDay, Timing,
 };
 
-use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
+use crate::dashboard::{NAME_BOX, level_tone, op, unit};
 use crate::drag::Half;
 use crate::keys::{self, Op};
 use crate::length;
@@ -25,6 +25,7 @@ use crate::palette::Palette;
 use crate::plan_edit::{NewStep, Part, goes_on_when, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
+use crate::widgets::{self, Filled, hinted, pill, scrolling, single_line, wide};
 use crate::{App, Clicked, Message};
 
 /// The id of the pane's rows, to scroll them.
@@ -224,7 +225,7 @@ impl App {
             );
         }
         if self.plans.is_dirty(plan) {
-            header = header.push(crate::dashboard::hinted(
+            header = header.push(hinted(
                 p,
                 pill(p, "Save", Tone::Selected, PILL_SMALL, Some(op(Op::Save))),
                 keys::with_key("Save the plan", Op::Save),
@@ -903,7 +904,7 @@ impl App {
             // With them, while planning: fill it from the library.
             let mut second = row![].align_y(Alignment::Center);
             if self.mode == crate::mode::Mode::Plan {
-                second = second.push(crate::dashboard::hinted(
+                second = second.push(hinted(
                     p,
                     button(look::icon(Icon::Fill, 14.0, p.primary))
                         .padding([3, 6])
@@ -1087,7 +1088,7 @@ impl App {
             );
         }
         let line = match coming {
-            Some(part) => line.push(crate::dashboard::hinted(
+            Some(part) => line.push(hinted(
                 p,
                 look::ring(part, 16.0, p.tertiary),
                 format!("Downloading: {:.0}%", part * 100.0),
@@ -1283,7 +1284,7 @@ impl App {
                 .width(64)
                 .style(look::input(p))
                 .into(),
-            None => crate::dashboard::hinted(
+            None => hinted(
                 p,
                 button(
                     text(match against {
@@ -1387,7 +1388,7 @@ impl App {
             )
         };
         let small = |content: Element<'a, Message>, on: bool, about: &str, message: Message| {
-            crate::dashboard::hinted(
+            hinted(
                 p,
                 button(content)
                     .padding([3, 6])
@@ -1451,7 +1452,7 @@ impl App {
         // Rehearse it in the preview; while it is, the way to stop.
         let rehearsing = self.rehearsal.as_ref().is_some_and(|r| r.of == of);
         if self.mode == crate::mode::Mode::Plan {
-            buttons = buttons.push(crate::dashboard::hinted(
+            buttons = buttons.push(hinted(
                 p,
                 button(look::icon(
                     if rehearsing { Icon::Stop } else { Icon::Play },
@@ -1525,7 +1526,7 @@ impl App {
         let set = |repeat| Message::SetRepeat(of, repeat);
         let place =
             |content: Element<'a, Message>, on: bool, about: &str, message: Option<Message>| {
-                crate::dashboard::hinted(
+                hinted(
                     p,
                     button(container(content).center_x(Fill))
                         .width(Fill)
@@ -2018,7 +2019,7 @@ impl App {
             .filter(|e| !is_template(e) && Some(e.path.as_path()) != self.plans.file())
             .collect();
         list = list.push(heading("Your plans"));
-        list = list.push(crate::dashboard::hinted(
+        list = list.push(hinted(
             p,
             list_action(p, "+", "New plan".to_string(), op(Op::New)),
             keys::with_key("Start an empty plan", Op::New),
@@ -2185,20 +2186,13 @@ pub(crate) fn bar<'a>(
     color: iced::Color,
     indent: f32,
 ) -> Element<'a, Message> {
-    let done = done.clamp(0.0, 1.0);
-    let part = |portion: f32| (portion * 1000.0).round().max(1.0) as u16;
-    let fill =
-        |color: iced::Color| move |_: &iced::Theme| container::Style::default().background(color);
-    let filled = container(Space::new())
-        .height(3)
-        .width(Length::FillPortion(part(done)));
-    let rest = container(Space::new())
-        .height(3)
-        .width(Length::FillPortion(part(1.0 - done)));
-    container(row![
-        filled.style(fill(color)),
-        rest.style(fill(p.surface_container_highest)),
-    ])
+    container(widgets::bar(
+        [
+            (done, Filled::Solid(color)),
+            (1.0 - done, Filled::Solid(p.surface_container_highest)),
+        ],
+        3.0,
+    ))
     .padding(iced::Padding::default().left(indent))
     .into()
 }

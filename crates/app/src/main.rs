@@ -47,6 +47,7 @@ mod stage;
 mod thumbs;
 mod usage;
 mod watch;
+mod widgets;
 mod youtube;
 
 use std::collections::HashMap;
