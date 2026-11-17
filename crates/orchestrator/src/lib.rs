@@ -19,5 +19,5 @@ mod plan;
 mod session;
 pub mod timing;
 
-pub use plan::{Action, DEEPEST, Flow, Plan, PlanError, Repeat, Step, StepId, StepSound};
+pub use plan::{Action, DEEPEST, Ending, Flow, Plan, PlanError, Repeat, Step, StepId, StepSound};
 pub use session::{LogEntry, Session};

@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{Action, Flow, Plan, Repeat, Step, StepId};
+use crate::{Action, Ending, Flow, Plan, Repeat, Step, StepId};
 
 /// Something that was put on stage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -162,7 +162,10 @@ impl Session {
             let flow = self.flow_of(group);
             let order = self.order(group, self.round(group));
             let place = order.iter().position(|&index| index == at);
-            if place.is_none_or(|place| place + 1 < order.len()) {
+            // Its time has come and it doesn't finish the round: it is
+            // over where it is.
+            let cut = self.past_its_time(flow, Ending::Step);
+            if !cut && place.is_none_or(|place| place + 1 < order.len()) {
                 // Not over. Shuffled, its order says what follows.
                 if flow.shuffle
                     && let Some(place) = place
@@ -248,6 +251,35 @@ impl Session {
             }
         }
         order
+    }
+
+    /// Whether `flow` comes again until a time of day that has come,
+    /// and ends no later than `ending` says: with the step that is on
+    /// ([`Ending::Step`], or sooner), or there and then.
+    fn past_its_time(&self, flow: Flow, ending: Ending) -> bool {
+        let ends = !matches!(
+            (flow.ends, ending),
+            (Ending::Round, _) | (Ending::Step, Ending::Sharp)
+        );
+        match flow.repeat {
+            Repeat::Until(time) if ends => self.now.is_some_and(|now| now >= time.since_midnight()),
+            _ => false,
+        }
+    }
+
+    /// Whether what is on should be cut off now: it, or something it is
+    /// in, comes again until a time of day, ends there and then, and the
+    /// time has come. [`next`](Self::next) then leaves it.
+    pub fn cut_now(&self) -> bool {
+        let Some(at) = self.current_index() else {
+            return false;
+        };
+        let own = self.plan.steps()[at].flow;
+        let groups = self.plan.within(at).into_iter().map(Some).chain([None]);
+        self.past_its_time(own, Ending::Sharp)
+            || groups
+                .into_iter()
+                .any(|group| self.past_its_time(self.flow_of(group), Ending::Sharp))
     }
 
     /// Whether something that has come `done` times more than once comes
@@ -551,6 +583,48 @@ mod tests {
     }
 
     #[test]
+    fn until_a_time_ends_with_the_round_with_the_step_or_there_and_then() {
+        use crate::timing::TimeOfDay;
+        let at = |text: &str| TimeOfDay::parse(text).unwrap().since_midnight();
+        let until = |ends: Ending| {
+            let (mut session, music, _) = two_sections();
+            session.edit(|plan| {
+                let flow = &mut plan.get_mut(music).unwrap().flow;
+                flow.repeat = Repeat::Until(TimeOfDay::parse("10:30").unwrap());
+                flow.ends = ends;
+            });
+            session.tell_time(at("10:00"));
+            session
+        };
+        // Before the time, each goes round again.
+        for ends in [Ending::Round, Ending::Step, Ending::Sharp] {
+            let mut session = until(ends);
+            assert_eq!(walk(&mut session, 3), "A B A", "{ends:?}");
+            assert!(!session.cut_now());
+        }
+        // The time comes while A is on. The round is finished: B, then on.
+        let mut session = until(Ending::Round);
+        walk(&mut session, 1);
+        session.tell_time(at("10:31"));
+        assert!(!session.cut_now());
+        assert_eq!(walk(&mut session, 2), "B C");
+        // With the step: A is let end, and B is left out.
+        let mut session = until(Ending::Step);
+        walk(&mut session, 1);
+        session.tell_time(at("10:31"));
+        assert!(!session.cut_now(), "A is not cut off");
+        assert_eq!(walk(&mut session, 1), "C");
+        // There and then: A is to be cut, and going on leaves Music.
+        let mut session = until(Ending::Sharp);
+        walk(&mut session, 1);
+        assert!(!session.cut_now());
+        session.tell_time(at("10:30"));
+        assert!(session.cut_now());
+        assert_eq!(walk(&mut session, 1), "C");
+        assert!(!session.cut_now(), "out of it, nothing more to cut");
+    }
+
+    #[test]
     fn a_step_that_repeats_comes_again_before_its_section_does() {
         let (mut session, music, _) = two_sections();
         session.edit(|plan| {
@@ -600,6 +674,7 @@ mod tests {
         plan.get_mut(music).unwrap().flow = Flow {
             repeat: Repeat::Times(2),
             shuffle: true,
+            ..Flow::default()
         };
         let mut session = Session::new(plan);
         let mut rounds = Vec::new();

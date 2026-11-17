@@ -140,7 +140,6 @@ impl App {
                     },
                     measuring: 0,
                 });
-                self.repeat_panel = None;
             }
             FillEdit::Close => {
                 self.filling = None;

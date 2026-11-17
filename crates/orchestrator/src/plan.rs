@@ -95,9 +95,31 @@ pub enum Repeat {
     Times(u16),
     /// Until the operator goes somewhere else.
     Forever,
-    /// Again while it is before this time of day; what is on when the
-    /// time comes is finished first.
+    /// Again while it is before this time of day. How it ends when the
+    /// time comes is [`Flow::ends`].
     Until(crate::timing::TimeOfDay),
+}
+
+/// How something that comes again until a time of day ends when that
+/// time comes.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ending {
+    /// Once round is finished first: it ends at the time or after it,
+    /// with nothing cut short.
+    #[default]
+    Round,
+    /// The step that is on is finished, and the rest of the round is
+    /// left out.
+    Step,
+    /// There and then: what is on is cut off.
+    Sharp,
+}
+
+impl Ending {
+    fn is_round(&self) -> bool {
+        *self == Ending::Round
+    }
 }
 
 /// How a step, a section or the plan moves: how often it comes, and for
@@ -113,6 +135,9 @@ pub struct Flow {
     /// Its steps come in an order drawn afresh each time round.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub shuffle: bool,
+    /// How it ends, coming again until a time of day.
+    #[serde(skip_serializing_if = "Ending::is_round")]
+    pub ends: Ending,
 }
 
 impl Repeat {
@@ -697,7 +722,7 @@ impl Plan {
                 advance: None,
                 flow: Flow {
                     repeat: Repeat::Times(2),
-                    shuffle: false,
+                    ..Flow::default()
                 },
                 sound: None,
                 look: None,

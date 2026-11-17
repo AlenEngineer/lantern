@@ -147,6 +147,8 @@ impl From<TimeOfDay> for String {
 pub struct Schedule {
     /// Each section's marker and how long after the start it begins.
     pub sections: Vec<(StepId, Duration)>,
+    /// Each step and how long after the start it first comes.
+    pub steps: Vec<(StepId, Duration)>,
     /// From the start to the end. What repeats a number of times counts
     /// that many times.
     pub total: Duration,
@@ -164,6 +166,126 @@ impl Schedule {
             .find(|(section, _)| *section == id)
             .map(|(_, after)| *after)
     }
+
+    /// How long after the start `id` first comes: a section, or a step.
+    pub fn first_at(&self, id: StepId) -> Option<Duration> {
+        self.start_of(id).or_else(|| {
+            self.steps
+                .iter()
+                .find(|(step, _)| *step == id)
+                .map(|(_, after)| *after)
+        })
+    }
+}
+
+/// How something that comes again until a time of day comes out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Lands {
+    /// How long once round takes.
+    pub round: Duration,
+    /// When and how it ends. `None` in a plan with no start time, which
+    /// can't say when it begins, and for something that takes no time.
+    pub ends: Option<Ends>,
+}
+
+/// When and how something that comes again until a time of day ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ends {
+    /// How many times round it goes, the last one counted though it may
+    /// not be finished.
+    pub rounds: u32,
+    /// The time of day it ends, to the minute below.
+    pub at: TimeOfDay,
+    /// How long after the time asked for that is.
+    pub over: Duration,
+    /// The step that is cut off, and how far into it, when it ends
+    /// there and then with a step on.
+    pub cut: Option<(StepId, Duration)>,
+}
+
+/// How `of` (a step, a section or loop, or the plan as `None`) comes out
+/// if it comes again until `time` and ends as `ending` says. `loaded` is
+/// a step's media length, once loaded. `None` if `of` isn't in the plan.
+///
+/// It goes round again while it is before the time. Then it finishes
+/// the round ([`Ending::Round`]), or the step that is on
+/// ([`Ending::Step`]), or stops there ([`Ending::Sharp`]). When it
+/// begins is taken from the plan's start time and what comes before it,
+/// each thing once round where it has no number of times. Its steps are
+/// taken in the plan's order, each once.
+pub fn lands(
+    plan: &Plan,
+    of: Option<StepId>,
+    time: TimeOfDay,
+    ending: crate::Ending,
+    loaded: &dyn Fn(&Step) -> Option<Duration>,
+) -> Option<Lands> {
+    use crate::Ending;
+    // Once round: the thing by itself, coming once. With it, where each
+    // of its steps starts in a round.
+    let once = |mut part: Plan| {
+        part.flow.repeat = crate::Repeat::Once;
+        let schedule = schedule(&part, loaded);
+        (schedule.total, schedule.steps)
+    };
+    let (after, round, steps) = match of {
+        None => {
+            let (round, steps) = once(plan.clone());
+            (Duration::ZERO, round, steps)
+        }
+        Some(id) => {
+            let step = plan.get(id)?;
+            let (round, steps) = match plan.part(id) {
+                Some(part) => once(part),
+                None => (
+                    estimate(step, loaded(step)).length,
+                    vec![(id, Duration::ZERO)],
+                ),
+            };
+            (schedule(plan, loaded).first_at(id)?, round, steps)
+        }
+    };
+    let ends = plan.starts.filter(|_| !round.is_zero()).map(|starts| {
+        let begins = starts.since_midnight() + after;
+        let until = time.since_midnight();
+        // What is left of the time when it begins: none, when the time
+        // has come already.
+        let left = until.saturating_sub(begins);
+        let whole = (left.as_secs_f64() / round.as_secs_f64()).floor() as u32;
+        let into = left.saturating_sub(round * whole);
+        let lands = |rounds: u32, took: Duration, cut| Ends {
+            rounds: rounds.max(1),
+            at: starts.plus(after + took),
+            over: (begins + took).saturating_sub(until),
+            cut,
+        };
+        // Ending right on the time, nothing is on to finish or cut. It
+        // comes once at the least: begun after the time, it is the
+        // first round that is on.
+        if into.is_zero() && whole > 0 {
+            return lands(whole, round * whole, None);
+        }
+        // The step that is on when the time comes, and when it ends.
+        let on = steps
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, (_, start))| *start <= into)
+            .map(|(at, (id, start))| {
+                let end = steps.get(at + 1).map_or(round, |(_, next)| *next);
+                (*id, *start, end)
+            });
+        match (ending, on) {
+            (Ending::Sharp, Some((id, start, _))) => lands(
+                whole + 1,
+                round * whole + into,
+                (left > Duration::ZERO).then_some((id, into - start)),
+            ),
+            (Ending::Step, Some((_, _, end))) => lands(whole + 1, round * whole + end, None),
+            _ => lands(whole + 1, round * (whole + 1), None),
+        }
+    });
+    Some(Lands { round, ends })
 }
 
 /// The schedule of `plan`. `loaded` is a step's media length, once loaded.
@@ -178,6 +300,7 @@ pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Sche
             total += takes;
             at = next;
         } else {
+            schedule.steps.push((steps[at].id, total));
             total += step_takes(&steps[at], loaded, &mut schedule);
             at += 1;
         }
@@ -219,6 +342,7 @@ fn group(
             planned += takes;
             inside = next;
         } else {
+            schedule.steps.push((steps[inside].id, start + planned));
             planned += step_takes(&steps[inside], loaded, schedule);
             inside += 1;
         }
@@ -712,6 +836,95 @@ mod tests {
         assert_eq!(planned(music), 3 * MIN);
         assert_eq!(planned(praise), 2 * MIN);
         assert_eq!(planned(reading), MIN);
+    }
+
+    #[test]
+    fn until_a_time_says_how_many_rounds_and_how_far_past_it_ends() {
+        use crate::Ending;
+        let mut plan = Plan::new("Sabbath");
+        let welcome = plan.show(video("Welcome", Some(240)));
+        let music = plan.section("Music", None);
+        let a = plan.show(video("A", Some(180)));
+        let b = plan.show(video("B", Some(120)));
+        let at = |text: &str| TimeOfDay::parse(text).unwrap();
+        let ends = |plan: &Plan, of, time: &str, ending| {
+            lands(plan, of, at(time), ending, &|_| None).unwrap().ends
+        };
+        let came = |rounds, time: &str, over, cut| {
+            Some(Ends {
+                rounds,
+                at: at(time),
+                over,
+                cut,
+            })
+        };
+        // With no start time: only how long once round takes.
+        let got = lands(&plan, Some(music), at("10:30"), Ending::Round, &|_| None).unwrap();
+        assert_eq!((got.round, got.ends), (5 * MIN, None));
+        // Starting 10:00, Music begins 10:04 and takes 5 min a round: A
+        // from :04, B from :07. 10:30 comes a minute into the sixth A.
+        plan.starts = Some(at("10:00"));
+        // The round is finished: 10:34.
+        assert_eq!(
+            ends(&plan, Some(music), "10:30", Ending::Round),
+            came(6, "10:34", 4 * MIN, None)
+        );
+        // The step is finished: A ends 10:32, and B is left out.
+        assert_eq!(
+            ends(&plan, Some(music), "10:30", Ending::Step),
+            came(6, "10:32", 2 * MIN, None)
+        );
+        // There and then: A is cut a minute in.
+        assert_eq!(
+            ends(&plan, Some(music), "10:30", Ending::Sharp),
+            came(6, "10:30", Duration::ZERO, Some((a, MIN)))
+        );
+        // Into B: its end is the round's.
+        assert_eq!(
+            ends(&plan, Some(music), "10:33", Ending::Step),
+            came(6, "10:34", MIN, None)
+        );
+        assert_eq!(
+            ends(&plan, Some(music), "10:33", Ending::Sharp),
+            came(6, "10:33", Duration::ZERO, Some((b, MIN)))
+        );
+        // Ending right on the time is not gone round again, however it ends.
+        for ending in [Ending::Round, Ending::Step, Ending::Sharp] {
+            assert_eq!(
+                ends(&plan, Some(music), "10:29", ending),
+                came(5, "10:29", Duration::ZERO, None),
+                "{ending:?}"
+            );
+        }
+        // A time already past when it begins: once round, or its first
+        // step, or nothing of it.
+        assert_eq!(
+            ends(&plan, Some(music), "10:02", Ending::Round),
+            came(1, "10:09", 7 * MIN, None)
+        );
+        assert_eq!(
+            ends(&plan, Some(music), "10:02", Ending::Step),
+            came(1, "10:07", 5 * MIN, None)
+        );
+        assert_eq!(
+            ends(&plan, Some(music), "10:02", Ending::Sharp),
+            came(1, "10:04", 2 * MIN, None)
+        );
+        // A step by itself: A begins 10:04, three minutes a time.
+        assert_eq!(
+            ends(&plan, Some(a), "10:12", Ending::Round),
+            came(3, "10:13", MIN, None)
+        );
+        // The plan: nine minutes round, from 10:00.
+        assert_eq!(
+            ends(&plan, None, "10:20", Ending::Round),
+            came(3, "10:27", 7 * MIN, None)
+        );
+        // What is before it counts where it sits.
+        assert_eq!(
+            schedule(&plan, &|_| None).first_at(welcome),
+            Some(Duration::ZERO)
+        );
     }
 
     #[test]
