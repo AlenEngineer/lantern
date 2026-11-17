@@ -130,6 +130,9 @@ pub enum Command {
     Length(usize, String),
     /// `go-on N`: turn on "Go on when done" for plan entry N.
     GoOn(usize),
+    /// `loop N M` or `loop N M until 10:30`: draw a loop round plan
+    /// entries N to M, to come twice or until the time of day.
+    Loop(usize, usize, Option<lantern_engine::TimeOfDay>),
     /// `plan-look COLOUR`: open the settings on the plan's look (the
     /// header's swatch), give it its own and type COLOUR as its
     /// background. `press ctrl+s` saves it.
@@ -302,6 +305,22 @@ impl Command {
                 Ok(n) if n > 0 => Command::GoOn(n - 1),
                 _ => return Err(format!("go-on needs a number from 1, got {rest:?}")),
             },
+            "loop" => {
+                let usage = || format!("loop needs N M, or N M until 10:30, got {rest:?}");
+                let words: Vec<&str> = rest.split_whitespace().collect();
+                let entry = |word: &str| word.parse::<usize>().ok().filter(|n| *n > 0);
+                let until = match words[..] {
+                    [_, _] => None,
+                    [_, _, "until", time] => {
+                        Some(lantern_engine::TimeOfDay::parse(time).ok_or_else(usage)?)
+                    }
+                    _ => return Err(usage()),
+                };
+                match (entry(words[0]), entry(words[1])) {
+                    (Some(from), Some(to)) => Command::Loop(from - 1, to - 1, until),
+                    _ => return Err(usage()),
+                }
+            }
             "plan-look" if !rest.is_empty() => Command::PlanLook(rest.to_string()),
             "plan-look" => return Err("plan-look needs a colour".into()),
             "click" => match rest.parse::<usize>() {
@@ -353,6 +372,8 @@ impl Command {
                 | Command::Press(_)
                 | Command::Open(_)
                 | Command::Rename(_)
+                | Command::Mode(_)
+                | Command::Loop(..)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
@@ -499,6 +520,23 @@ impl Script {
                     through: None,
                 };
                 engine.add(None, title.clone(), action);
+            }
+            Command::Loop(from, to, until) => {
+                let looped = engine.edit_plan(|plan| {
+                    let (a, b) = (plan.steps().get(*from)?.id, plan.steps().get(*to)?.id);
+                    let looped = plan.loop_over(a, b)?;
+                    if let (Some(time), Some(step)) = (until, plan.get_mut(looped)) {
+                        step.flow.repeat = lantern_engine::Repeat::Until(*time);
+                    }
+                    Some(looped)
+                });
+                if looped.is_none() {
+                    log(format!(
+                        "script: no loop from entry {} to {}",
+                        from + 1,
+                        to + 1
+                    ));
+                }
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
             Command::Play => log(format!("script: play -> {}", engine.play())),

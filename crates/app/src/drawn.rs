@@ -6,6 +6,40 @@ use iced::widget::canvas::{self, Frame, Geometry, LineDash, Path, Stroke};
 use iced::widget::{canvas as draw, stack};
 use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Theme, mouse};
 
+/// A drawing kept from one frame to the next: it is made again only
+/// when what it shows (`K`) or its size changes. While a video plays the
+/// window is drawn many times a second, and each of these would be
+/// worked out afresh every time.
+struct Kept<K> {
+    cache: canvas::Cache,
+    of: std::cell::Cell<Option<K>>,
+}
+
+impl<K> Default for Kept<K> {
+    fn default() -> Self {
+        Kept {
+            cache: canvas::Cache::new(),
+            of: std::cell::Cell::new(None),
+        }
+    }
+}
+
+impl<K: Copy + PartialEq> Kept<K> {
+    fn draw(
+        &self,
+        of: K,
+        renderer: &Renderer,
+        size: Size,
+        draw: impl FnOnce(&mut Frame),
+    ) -> Geometry {
+        if self.of.get() != Some(of) {
+            self.cache.clear();
+            self.of.set(Some(of));
+        }
+        self.cache.draw(renderer, size, draw)
+    }
+}
+
 /// The dashes of an outline, and of a dot: how long each is, and the
 /// space between.
 const DASH: [f32; 2] = [3.0, 3.0];
@@ -20,38 +54,43 @@ struct Outline {
 }
 
 impl<Message> canvas::Program<Message> for Outline {
-    type State = ();
+    type State = Kept<(Color, f32, f32, [f32; 2])>;
 
     fn draw(
         &self,
-        (): &(),
+        kept: &Self::State,
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        // Inside the edge by half its width, so none of it is cut off.
-        let half = self.width / 2.0;
-        let size = Size::new(
-            (bounds.width - self.width).max(0.0),
-            (bounds.height - self.width).max(0.0),
-        );
-        let radius = self.radius.min(size.width / 2.0).min(size.height / 2.0);
-        let path = Path::rounded_rectangle(Point::new(half, half), size, radius.into());
-        frame.stroke(
-            &path,
-            Stroke {
-                line_dash: LineDash {
-                    segments: &self.dash,
-                    offset: 0,
-                },
-                ..Stroke::default()
-                    .with_color(self.color)
-                    .with_width(self.width)
+        vec![kept.draw(
+            (self.color, self.width, self.radius, self.dash),
+            renderer,
+            bounds.size(),
+            |frame| {
+                // Inside the edge by half its width, so none of it is cut off.
+                let half = self.width / 2.0;
+                let size = Size::new(
+                    (bounds.width - self.width).max(0.0),
+                    (bounds.height - self.width).max(0.0),
+                );
+                let radius = self.radius.min(size.width / 2.0).min(size.height / 2.0);
+                let path = Path::rounded_rectangle(Point::new(half, half), size, radius.into());
+                frame.stroke(
+                    &path,
+                    Stroke {
+                        line_dash: LineDash {
+                            segments: &self.dash,
+                            offset: 0,
+                        },
+                        ..Stroke::default()
+                            .with_color(self.color)
+                            .with_width(self.width)
+                    },
+                );
             },
-        );
-        vec![frame.into_geometry()]
+        )]
     }
 }
 
@@ -107,79 +146,87 @@ const CURL_STEP: f32 = 5.0;
 const CURL_BEND: f32 = 4.0;
 
 impl<Message> canvas::Program<Message> for CurlPiece {
-    type State = ();
+    type State = Kept<(crate::look::Curl, Color, f32)>;
 
     fn draw(
         &self,
-        (): &(),
+        kept: &Self::State,
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
         use crate::look::Curl;
-        let mut frame = Frame::new(renderer, bounds.size());
-        let stroke = Stroke {
-            line_cap: canvas::LineCap::Round,
-            line_join: canvas::LineJoin::Round,
-            ..Stroke::default().with_color(self.color).with_width(1.5)
-        };
-        // Dashes down from `from` to `to`, as many as fit, each in the
-        // middle of its share: half a gap at either end.
-        let mut down = |from: f32, to: f32| {
-            let tall = to - from;
-            if tall < CURL_DASH {
-                return;
-            }
-            let count = (tall / CURL_STEP).round().max(1.0);
-            let share = tall / count;
-            for n in 0..count as usize {
-                let top = from + share * n as f32 + (share - CURL_DASH) / 2.0;
-                frame.stroke(
-                    &Path::line(Point::new(CURL_X, top), Point::new(CURL_X, top + CURL_DASH)),
-                    stroke,
-                );
-            }
-        };
-        let (tall, wide, dot) = (bounds.height, bounds.width, self.dot);
-        // The bend between the line and the dot's level, one stroke.
-        let bend = |down: bool| {
-            let sign = if down { 1.0 } else { -1.0 };
-            Path::new(|path| {
-                path.move_to(Point::new(CURL_X, dot + sign * CURL_BEND));
-                path.quadratic_curve_to(
-                    Point::new(CURL_X, dot),
-                    Point::new(CURL_X + CURL_BEND, dot),
-                );
-            })
-        };
-        match self.piece {
-            Curl::Past => down(0.0, tall),
-            // In to the dot, with the arrow's head, from the line below.
-            Curl::Into => {
-                down(dot + CURL_BEND, tall);
-                frame.stroke(&bend(true), stroke);
-                let head = Path::new(|path| {
-                    path.move_to(Point::new(wide - 4.5, dot - 3.0));
-                    path.line_to(Point::new(wide - 1.0, dot));
-                    path.line_to(Point::new(wide - 4.5, dot + 3.0));
-                });
-                frame.stroke(&head, stroke);
-            }
-            // Down the line and out to the dot.
-            Curl::Out => {
-                down(0.0, dot - CURL_BEND);
-                frame.stroke(&bend(false), stroke);
-                frame.stroke(
-                    &Path::line(
-                        Point::new(CURL_X + CURL_BEND + 2.0, dot),
-                        Point::new(wide - 0.5, dot),
-                    ),
-                    stroke,
-                );
-            }
-        }
-        vec![frame.into_geometry()]
+        vec![kept.draw(
+            (self.piece, self.color, self.dot),
+            renderer,
+            bounds.size(),
+            |frame| {
+                let stroke = Stroke {
+                    line_cap: canvas::LineCap::Round,
+                    line_join: canvas::LineJoin::Round,
+                    ..Stroke::default().with_color(self.color).with_width(1.5)
+                };
+                // Dashes down from `from` to `to`, as many as fit, each in the
+                // middle of its share: half a gap at either end.
+                let mut down = |from: f32, to: f32| {
+                    let tall = to - from;
+                    if tall < CURL_DASH {
+                        return;
+                    }
+                    let count = (tall / CURL_STEP).round().max(1.0);
+                    let share = tall / count;
+                    for n in 0..count as usize {
+                        let top = from + share * n as f32 + (share - CURL_DASH) / 2.0;
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(CURL_X, top),
+                                Point::new(CURL_X, top + CURL_DASH),
+                            ),
+                            stroke,
+                        );
+                    }
+                };
+                let (tall, wide, dot) = (bounds.height, bounds.width, self.dot);
+                // The bend between the line and the dot's level, one stroke.
+                let bend = |down: bool| {
+                    let sign = if down { 1.0 } else { -1.0 };
+                    Path::new(|path| {
+                        path.move_to(Point::new(CURL_X, dot + sign * CURL_BEND));
+                        path.quadratic_curve_to(
+                            Point::new(CURL_X, dot),
+                            Point::new(CURL_X + CURL_BEND, dot),
+                        );
+                    })
+                };
+                match self.piece {
+                    Curl::Past => down(0.0, tall),
+                    // In to the dot, with the arrow's head, from the line below.
+                    Curl::Into => {
+                        down(dot + CURL_BEND, tall);
+                        frame.stroke(&bend(true), stroke);
+                        let head = Path::new(|path| {
+                            path.move_to(Point::new(wide - 4.5, dot - 3.0));
+                            path.line_to(Point::new(wide - 1.0, dot));
+                            path.line_to(Point::new(wide - 4.5, dot + 3.0));
+                        });
+                        frame.stroke(&head, stroke);
+                    }
+                    // Down the line and out to the dot.
+                    Curl::Out => {
+                        down(0.0, dot - CURL_BEND);
+                        frame.stroke(&bend(false), stroke);
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(CURL_X + CURL_BEND + 2.0, dot),
+                                Point::new(wide - 0.5, dot),
+                            ),
+                            stroke,
+                        );
+                    }
+                }
+            },
+        )]
     }
 }
 
@@ -205,36 +252,38 @@ struct Hatch {
 const STRIPE: f32 = 4.0;
 
 impl<Message> canvas::Program<Message> for Hatch {
-    type State = ();
+    type State = Kept<(Color, Color)>;
 
     fn draw(
         &self,
-        (): &(),
+        kept: &Self::State,
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::ORIGIN, bounds.size(), self.dark);
-        // Each stripe leans half a right angle, so along the bar one
-        // light and one dark take this much.
-        let step = STRIPE * 2.0 * std::f32::consts::SQRT_2;
-        let tall = bounds.height;
-        let mut x = -tall - step;
-        while x < bounds.width + step {
-            // Past both edges, so its square ends are out of sight.
-            let line = Path::line(
-                Point::new(x - STRIPE, tall + STRIPE),
-                Point::new(x + tall + STRIPE, -STRIPE),
-            );
-            frame.stroke(
-                &line,
-                Stroke::default().with_color(self.light).with_width(STRIPE),
-            );
-            x += step;
-        }
-        vec![frame.into_geometry()]
+        vec![
+            kept.draw((self.light, self.dark), renderer, bounds.size(), |frame| {
+                frame.fill_rectangle(Point::ORIGIN, bounds.size(), self.dark);
+                // Each stripe leans half a right angle, so along the bar one
+                // light and one dark take this much.
+                let step = STRIPE * 2.0 * std::f32::consts::SQRT_2;
+                let tall = bounds.height;
+                let mut x = -tall - step;
+                while x < bounds.width + step {
+                    // Past both edges, so its square ends are out of sight.
+                    let line = Path::line(
+                        Point::new(x - STRIPE, tall + STRIPE),
+                        Point::new(x + tall + STRIPE, -STRIPE),
+                    );
+                    frame.stroke(
+                        &line,
+                        Stroke::default().with_color(self.light).with_width(STRIPE),
+                    );
+                    x += step;
+                }
+            }),
+        ]
     }
 }
 

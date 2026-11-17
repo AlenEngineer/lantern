@@ -91,7 +91,7 @@ fn guess_for(resource: &Resource) -> Duration {
 
 /// A time of day to the minute, such as the 10:30 a service starts at.
 /// Saved as it reads: `"10:30"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 #[serde(try_from = "String", into = "String")]
 pub struct TimeOfDay(u16);
 

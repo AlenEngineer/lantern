@@ -60,8 +60,6 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
         return row;
     }
     mouse_area(row)
-        .on_enter(Message::Rail(crate::rail::Act::Track(true)))
-        .on_exit(Message::Rail(crate::rail::Act::Track(false)))
         .on_right_press(Message::Rail(crate::rail::Act::Ring(
             crate::rail::RingOn::Loop(None),
         )))
@@ -1167,18 +1165,7 @@ impl App {
             .padding([10, 10])
             .on_press(Message::Click(Clicked::Step(step.id)))
             .style(look::row_filled(p, fill));
-        // The bar lies in the row's bottom padding, so a step going on
-        // stage doesn't make its row taller and move the ones under it.
-        match progress {
-            Some((_, done)) => stack![
-                row,
-                container(bar(p, done, p.tertiary, 24.0))
-                    .align_bottom(Fill)
-                    .padding(iced::Padding::default().left(10.0).right(10.0).bottom(3.0)),
-            ]
-            .into(),
-            None => row.into(),
-        }
+        row.into()
     }
 
     /// The same row while the service runs: how long it has run, large;
@@ -1592,15 +1579,26 @@ impl App {
         };
         let faint = Palette::tint(live, 0.35);
         // How far the stage is into this step, when it is the one up.
-        let played = match (place, &step.action, &self.stage.program) {
-            (Place::Current, Action::Show { resource }, Some(scene))
-                if scene.resource.id == resource.id =>
-            {
+        let on_stage = |step: &Step| match (&step.action, &self.stage.program) {
+            (Action::Show { resource }, Some(scene)) if scene.resource.id == resource.id => {
                 Some(progress(&scene.media, &scene.resource).map_or(0.0, |(_, done)| done))
             }
             _ => None,
+        };
+        let played = match place {
+            Place::Current => on_stage(step),
+            _ => None,
         }
         .or(rehearsed);
+        // The line from the step that is on to the next one's dot fills
+        // as it plays: the first half of it is under its own dot, the
+        // second over this one's, when this is the step after it.
+        let current = self.engine.0.current_step().map(|step| step.id);
+        let filling_above = before
+            .map(|before| &steps[before])
+            .filter(|before| Some(before.id) == current && rehearsed.is_none())
+            .and_then(on_stage)
+            .map(|done| ((done - 0.5) * 2.0).clamp(0.0, 1.0));
         let line = |colour: Option<iced::Color>, height: Length| {
             container(Space::new().width(RAIL_LINE).height(height)).style(move |_| {
                 container::Style {
@@ -1616,20 +1614,34 @@ impl App {
             .is_some_and(|would| {
                 matches!(would, crate::rail::Would::Join { first, last } if first < index && index <= last)
             });
-        let above = line(
-            (joined_above || would_above).then_some(match place {
-                _ if would_above => planned,
-                Place::Done | Place::Current => past,
-                Place::Next => faint,
-                Place::Later => planned,
-            }),
-            // The one that is up has a ring round its dot, which takes
-            // its room from the line above: the dot stays where it was.
-            Length::Fixed(match place {
-                Place::Current => RAIL_TOP - RAIL_RING,
-                _ => RAIL_TOP,
-            }),
-        );
+        let above: Element<'a, Message> = match filling_above {
+            // Under way from the step before: filled as far as it has
+            // come, in the stage's colour.
+            Some(done) if !would_above => column![
+                line(Some(p.tertiary), Length::Fixed(RAIL_TOP * done)),
+                line(
+                    Some(Palette::tint(p.tertiary, 0.35)),
+                    Length::Fixed(RAIL_TOP * (1.0 - done))
+                ),
+            ]
+            .into(),
+            _ => line(
+                (joined_above || would_above).then_some(match place {
+                    _ if would_above => planned,
+                    Place::Done | Place::Current => past,
+                    Place::Next => faint,
+                    Place::Later => planned,
+                }),
+                // The one that is up has a ring round its dot, which
+                // takes its room from the line above: the dot stays
+                // where it was.
+                Length::Fixed(match place {
+                    Place::Current => RAIL_TOP - RAIL_RING,
+                    _ => RAIL_TOP,
+                }),
+            )
+            .into(),
+        };
         let filled = |colour: iced::Color, ring: Option<f32>| {
             container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |theme| {
                 container::Style {
@@ -1682,7 +1694,9 @@ impl App {
                 live,
                 self.motion.ring().filter(|_| played.is_some()),
             ))
-            .padding(RAIL_RING - 1.5)
+            // The ring is drawn inside this room, so the dot's middle is
+            // where every other dot's is.
+            .padding(RAIL_RING)
             .style(move |_| container::Style {
                 border: iced::Border {
                     color: Palette::tint(live, 0.5),
@@ -1699,8 +1713,15 @@ impl App {
         let joining = |from: usize, to: usize| matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= from && to <= last);
         let below: Element<'a, Message> = match (joined_below, place, played) {
             _ if joining(index, index + 1) => line(Some(planned), Fill).into(),
-            (false, ..) => Space::new().height(Fill).into(),
-            (true, Place::Current, Some(done)) => {
+            // The step that is on fills the line under its dot as it
+            // plays, whether or not it goes on by itself.
+            (_, Place::Current, Some(done)) => {
+                // Its half of the line to the next dot; all of the line
+                // when no step comes after it.
+                let done = match after {
+                    true => (done * 2.0).min(1.0),
+                    false => done,
+                };
                 let done = (done.clamp(0.0, 1.0) * 100.0).round() as u16;
                 column![
                     line(Some(live), Length::FillPortion(done.max(1))),
@@ -1708,6 +1729,7 @@ impl App {
                 ]
                 .into()
             }
+            (false, ..) => Space::new().height(Fill).into(),
             (true, Place::Current, None) => line(Some(faint), Fill).into(),
             (true, Place::Done, _) => line(Some(past), Fill).into(),
             (true, ..) => line(Some(planned), Fill).into(),
