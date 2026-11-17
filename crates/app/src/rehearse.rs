@@ -40,6 +40,8 @@ pub struct Rehearsal {
     pub speed: u32,
     /// How long the steps before this one took, on its clock.
     took: Duration,
+    /// The steps it has been through and left.
+    seen: Vec<StepId>,
 }
 
 impl Rehearsal {
@@ -63,6 +65,21 @@ impl Rehearsal {
 
     pub fn current(&self) -> Option<&Step> {
         self.session.current()
+    }
+
+    /// Whether the rehearsal has been through `step` and left it.
+    pub fn seen(&self, step: StepId) -> bool {
+        self.seen.contains(&step) && self.current().is_none_or(|current| current.id != step)
+    }
+
+    /// Where it is among the steps of what is rehearsed, counting from
+    /// one, and how many there are: "2 / 3".
+    pub fn place(&self) -> Option<(usize, usize)> {
+        let steps = self.session.plan().steps();
+        let at = self.session.current_index()?;
+        let before = steps[..at].iter().filter(|step| !step.is_section()).count();
+        let all = steps.iter().filter(|step| !step.is_section()).count();
+        Some((before + 1, all))
     }
 
     /// Whether the current step goes on by itself.
@@ -107,6 +124,7 @@ impl App {
             since: Some(Instant::now()),
             speed: SPEEDS[0],
             took: Duration::ZERO,
+            seen: Vec::new(),
         });
         self.update(Message::Select(first))
     }
@@ -117,6 +135,11 @@ impl App {
             return Task::none();
         };
         rehearsal.took += rehearsal.up();
+        if let Some(left) = rehearsal.current().map(|step| step.id)
+            && !rehearsal.seen.contains(&left)
+        {
+            rehearsal.seen.push(left);
+        }
         rehearsal.session.tell_time(length::now_of_day());
         match rehearsal.session.next().map(|step| step.id) {
             Some(next) => {
