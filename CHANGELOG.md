@@ -361,6 +361,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   would be added (hatched) and the room left of its time.
 - The dashboard's short motions run on iced's own animations. They look
   and time the same as before.
+- A plan's own settings are in the plan: click its name and a panel opens
+  beside it with its name, start, target, template, its media, its look
+  (each value default or set here), a copy, export and delete. They are no
+  longer a part of Settings, which keeps what holds for this computer and
+  for every plan. A plan's look can set its picture too, as a step's or a
+  section's can.
 
 ### Fixed
 

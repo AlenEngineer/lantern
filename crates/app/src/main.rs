@@ -33,6 +33,7 @@ mod paths;
 mod phone;
 mod plan_edit;
 mod plan_pane;
+mod plan_panel;
 mod plans;
 mod ready;
 mod rehearse;
@@ -325,6 +326,8 @@ enum Message {
     RehearseTick,
     /// A change to the fill of a section from the library.
     Fill(fill_panel::FillEdit),
+    /// A change in the open plan's own panel.
+    PlanPanel(plan_panel::PlanEdit),
     /// What the side panel shows.
     Lens(side::Lens),
     /// A value of the selected thing's look, as typed.
@@ -614,6 +617,10 @@ struct App {
     pub(crate) rehearsed: Option<(Option<StepId>, Duration)>,
     /// The fill of a section under way.
     pub(crate) filling: Option<fill_panel::Filling>,
+    /// The open plan's own settings are on show, in the side panel's place.
+    pub(crate) plan_panel: bool,
+    /// What is typed there and isn't in the plan yet.
+    pub(crate) plan_typed: Option<(plan_panel::Typing, String)>,
     pub(crate) lens: side::Lens,
     /// A look value as typed so far: whose, which, and the text.
     pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
@@ -799,6 +806,8 @@ impl App {
             rehearsal: None,
             rehearsed: None,
             filling: None,
+            plan_panel: false,
+            plan_typed: None,
             lens: side::Lens::default(),
             look_typed: None,
             sound_now: None,
@@ -1228,11 +1237,10 @@ impl App {
                         Some(step) => self.update(Message::SetAdvance(step.id, true)),
                         None => Task::none(),
                     },
-                    Ui::PlanLook(colour) => Task::batch([
-                        self.update(Message::PlanSettings),
-                        self.update(Message::Settings(settings::Edit::OwnLook)),
-                        self.update(Message::Settings(settings::Edit::Background(colour))),
-                    ]),
+                    Ui::PlanLook(colour) => {
+                        self.selected = None;
+                        self.update(Message::LookEdit(side::Field::Background, colour))
+                    }
                     Ui::Step(n) => match self.engine.0.plan().steps().get(n) {
                         Some(step) => self.update(Message::Click(Clicked::Step(step.id))),
                         None => {
@@ -1505,14 +1513,7 @@ impl App {
                 if let settings::Edit::Output(Some(output)) = &edit {
                     move_stage(output);
                 }
-                // A folder row just added is the one to type in.
-                let added = matches!(edit, settings::Edit::AddPlanFolder);
                 let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
-                if added
-                    && let Some(field) = self.settings.as_ref().and_then(|d| d.last_plan_folder())
-                {
-                    return operation::focus(field.id());
-                }
                 // A key waiting to be pressed takes the next key press.
                 keys::record(
                     self.settings
@@ -1757,14 +1758,7 @@ impl App {
                 })
             }
             Message::PlanSettings => {
-                self.starts_typed = None;
-                let mut draft = self
-                    .settings
-                    .take()
-                    .unwrap_or_else(|| self.settings_draft());
-                draft.edit(settings::Edit::Category(settings::Category::Plan));
-                self.settings = Some(draft);
-                return operation::snap_to(settings::SCROLL, scrollable::RelativeOffset::START);
+                return self.plan_edit(plan_panel::PlanEdit::Toggle);
             }
             Message::RenamePlan(name) => {
                 self.engine.0.edit_plan(|plan| plan.title = name);
@@ -2017,6 +2011,7 @@ impl App {
             Message::RehearseSpeed => self.rehearse_speed(),
             Message::RehearseTick => return self.rehearse_tick(),
             Message::Fill(edit) => self.fill_edit(edit),
+            Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;
                 self.look_typed = None;
@@ -2840,9 +2835,7 @@ impl App {
 
     /// The settings as saved, with the open plan's look too.
     fn settings_draft(&self) -> settings::Draft {
-        let plan = self.engine.0.plan();
         let mut draft = settings::Draft::of(&self.config, self.home.as_deref())
-            .with_plan(&plan)
             .with_outputs(outputs::list())
             .with_fonts(fit::families());
         draft.mark_saved();
@@ -2856,16 +2849,11 @@ impl App {
         let path = self.config_status.path().to_path_buf();
         let home = self.home.as_deref();
         let dir = path.parent().unwrap_or(std::path::Path::new("."));
-        // Both looks must read before anything is written.
-        let plan_folders = draft.plan_folders();
-        let plan_bibles = draft.plan_bibles();
-        let saved = draft.plan_look(dir, home).and_then(|plan_look| {
-            draft
-                .config(dir, home)
-                .and_then(|config| config.save(&path, home).map(|()| (config, plan_look)))
-        });
+        let saved = draft
+            .config(dir, home)
+            .and_then(|config| config.save(&path, home).map(|()| config));
         match saved {
-            Ok((config, plan_look)) => {
+            Ok(config) => {
                 // Saved all the same: a folder may be on a stick that's out.
                 let missing = draft.missing_folders(dir, home);
                 draft.notice = Some(Ok(match missing.as_slice() {
@@ -2879,33 +2867,6 @@ impl App {
                 draft.mark_saved();
                 // A look just saved is meant to be seen.
                 self.look_held = false;
-                // The plan's own look goes into the plan, saved with it when
-                // it has a file (an untitled plan shows Save instead).
-                if let Some(look) = plan_look
-                    && self.engine.0.plan().look != look
-                {
-                    self.engine.0.edit_plan(|plan| plan.look = look);
-                    if self.plans.has_file() {
-                        self.plans.save(&self.engine.0);
-                    }
-                }
-                // So do its own folders and its Bibles.
-                if let Some(folders) = plan_folders
-                    && self.engine.0.plan().folders != folders
-                {
-                    self.engine.0.edit_plan(|plan| plan.folders = folders);
-                    if self.plans.has_file() {
-                        self.plans.save(&self.engine.0);
-                    }
-                }
-                if let Some(bibles) = plan_bibles
-                    && self.engine.0.plan().bibles != bibles
-                {
-                    self.engine.0.edit_plan(|plan| plan.bibles = bibles);
-                    if self.plans.has_file() {
-                        self.plans.save(&self.engine.0);
-                    }
-                }
                 log(format!("settings: saved {}", path.display()));
                 // Read fine when the draft became this config.
                 let _ = keys::configure(&config.keys);

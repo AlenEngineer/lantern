@@ -9,13 +9,12 @@ use std::path::{Path, PathBuf};
 use iced::widget::{Space, button, column, row, text, text_input};
 use iced::{Alignment, Element, Fill};
 
-use lantern_engine::{Look, Plan, Rgb, fold};
+use lantern_engine::{Look, Rgb, fold};
 
 use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
 use crate::dashboard::{chip, hinted, pill, scrolling, wide};
 use crate::fit;
 use crate::keys::{self, Keymap, Op};
-use crate::library;
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
 use crate::outputs::Output;
 use crate::palette::Palette;
@@ -66,10 +65,6 @@ pub struct Draft {
     outputs: Result<Vec<Output>, String>,
     /// The look for all plans.
     stage: Stage,
-    /// The open plan's look, when the settings were opened with a plan.
-    plan: Option<PlanLook>,
-    /// Which look the stage fields edit.
-    pub scope: Scope,
     /// The part of the settings on show.
     pub category: Category,
     /// The action of `keys::ACTIONS` waiting for its new key to be pressed.
@@ -93,8 +88,6 @@ pub struct Draft {
 /// A part of the settings: one shows at a time, picked from the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
-    /// The open plan: its name, template, copy, delete, and its own look.
-    Plan,
     /// The look for all plans.
     Stage,
     Output,
@@ -110,7 +103,6 @@ pub enum Category {
 impl Category {
     fn name(self) -> &'static str {
         match self {
-            Category::Plan => "This plan",
             Category::Stage => "Stage",
             Category::Output => "Output",
             Category::Library => "Library",
@@ -119,26 +111,6 @@ impl Category {
             Category::Phone => "Phone",
         }
     }
-}
-
-/// Which look the stage section edits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// The look every plan uses unless it has its own.
-    AllPlans,
-    /// The open plan's own look.
-    ThisPlan,
-}
-
-/// The open plan's look: its title, and its own look if it has one.
-#[derive(Debug, Clone, PartialEq)]
-struct PlanLook {
-    title: String,
-    own: Option<Stage>,
-    /// The folders only this plan uses, as typed.
-    folders: Vec<String>,
-    /// The Bibles it searches, by name; empty for all of them.
-    bibles: Vec<String>,
 }
 
 /// The stage's look, as typed.
@@ -212,7 +184,6 @@ impl Stage {
 pub enum Field {
     Folder(usize),
     /// A folder of the open plan's own.
-    PlanFolder(usize),
     Bible(usize),
     Colors,
     StageImage,
@@ -223,7 +194,7 @@ impl Field {
     /// What a path field takes; `None` for the font.
     fn want(self) -> Option<Want> {
         Some(match self {
-            Field::Folder(_) | Field::PlanFolder(_) => Want::Folders,
+            Field::Folder(_) => Want::Folders,
             Field::Bible(_) => Want::Files(&["json", "tsv"]),
             Field::Colors => Want::Files(&["json"]),
             Field::StageImage => Want::Files(&["png", "jpg", "jpeg", "webp"]),
@@ -235,7 +206,6 @@ impl Field {
     pub fn id(self) -> String {
         match self {
             Field::Folder(i) => format!("settings-folder-{i}"),
-            Field::PlanFolder(i) => format!("settings-plan-folder-{i}"),
             Field::Bible(i) => format!("settings-bible-{i}"),
             Field::Colors => "settings-colors".into(),
             Field::StageImage => "settings-stage-image".into(),
@@ -287,12 +257,6 @@ pub enum Edit {
     Stream(bool),
     /// Turn the phone remote on or off.
     Remote(bool),
-    /// The path of the open plan's own folder N, a new one, or one less.
-    PlanFolderPath(usize, String),
-    AddPlanFolder,
-    RemovePlanFolder(usize),
-    /// The open plan searches the Bible of this name, or stops.
-    PlanBible(String),
     /// The key of action N of `keys::ACTIONS`.
     Key(usize, String),
     /// Shows a part of the settings.
@@ -307,10 +271,6 @@ pub enum Edit {
     StageImage(String),
     /// Put the stage on this screen (`None`: wherever the compositor puts it).
     Output(Option<String>),
-    /// Give the open plan its own look, starting from the look for all.
-    OwnLook,
-    /// The open plan goes back to the look for all plans.
-    SharedLook,
     TextColor(String),
     Font(String),
     MaxSize(String),
@@ -364,8 +324,6 @@ impl Draft {
             output: config.stage_output.clone(),
             outputs: Err(String::new()),
             stage: Stage::of(&config.stage, &shown),
-            plan: None,
-            scope: Scope::AllPlans,
             category: Category::Stage,
             recording: None,
             fonts: Vec::new(),
@@ -414,7 +372,6 @@ impl Draft {
                 ),
                 &self.output,
                 &self.stage,
-                &self.plan,
                 &self.keys
             )
         )
@@ -443,7 +400,6 @@ impl Draft {
         self.leaving = false;
         let typed = match &edit {
             Edit::FolderPath(i, _) => Some(Field::Folder(*i)),
-            Edit::PlanFolderPath(i, _) => Some(Field::PlanFolder(*i)),
             Edit::BiblePath(i, _) => Some(Field::Bible(*i)),
             Edit::Colors(_) => Some(Field::Colors),
             Edit::StageImage(_) => Some(Field::StageImage),
@@ -503,7 +459,6 @@ impl Draft {
     fn path(&self, field: Field) -> &str {
         match field {
             Field::Folder(i) => self.folders.get(i).map_or("", |f| f.path.as_str()),
-            Field::PlanFolder(i) => self.plan_folder_rows().get(i).map_or("", String::as_str),
             Field::Bible(i) => self.bibles.get(i).map_or("", |b| b.path.as_str()),
             Field::Colors => &self.colors,
             Field::StageImage => &self.stage().image,
@@ -514,17 +469,10 @@ impl Draft {
     fn set_path(&mut self, field: Field, path: String) {
         match field {
             Field::Folder(i) => self.folder(i, |f| f.path = path),
-            Field::PlanFolder(i) => self.plan_folder(i, path),
             Field::Bible(i) => self.bible(i, |b| b.path = path),
             Field::Colors => self.colors = path,
             Field::StageImage => self.stage_mut().image = path,
             Field::Font => self.stage_mut().font = path,
-        }
-    }
-
-    fn plan_folder(&mut self, i: usize, path: String) {
-        if let Some(folder) = self.plan.as_mut().and_then(|plan| plan.folders.get_mut(i)) {
-            *folder = path;
         }
     }
 
@@ -543,33 +491,6 @@ impl Draft {
             Edit::FolderNames(i, text) => self.folder(i, |f| f.names = text),
             Edit::FolderPath(i, text) => self.folder(i, |f| f.path = text),
             Edit::AddFolder => self.folders.push(Folder::default()),
-            Edit::PlanFolderPath(i, text) => self.plan_folder(i, text),
-            Edit::AddPlanFolder => {
-                if let Some(plan) = &mut self.plan {
-                    plan.folders.push(String::new());
-                }
-            }
-            Edit::RemovePlanFolder(i) => {
-                if let Some(plan) = &mut self.plan
-                    && i < plan.folders.len()
-                {
-                    plan.folders.remove(i);
-                }
-            }
-            Edit::PlanBible(name) => {
-                if let Some(plan) = &mut self.plan {
-                    match plan
-                        .bibles
-                        .iter()
-                        .position(|b| b.eq_ignore_ascii_case(&name))
-                    {
-                        Some(at) => {
-                            plan.bibles.remove(at);
-                        }
-                        None => plan.bibles.push(name),
-                    }
-                }
-            }
             Edit::RemoveFolder(i) => {
                 if i < self.folders.len() {
                     self.folders.remove(i);
@@ -596,15 +517,9 @@ impl Draft {
                 }
                 self.recording = None;
             }
-            // The plan's part edits the plan's own look; the rest, the
-            // look for all plans.
             Edit::Category(category) => {
                 self.category = category;
                 self.recording = None;
-                self.scope = match category {
-                    Category::Plan => Scope::ThisPlan,
-                    _ => Scope::AllPlans,
-                };
             }
             Edit::Record(at) => {
                 self.recording = (self.recording != Some(at)).then_some(at);
@@ -619,17 +534,6 @@ impl Draft {
             Edit::Output(output) => {
                 self.category = Category::Output;
                 self.output = output;
-            }
-            Edit::OwnLook => {
-                let all = self.stage.clone();
-                if let Some(plan) = &mut self.plan {
-                    plan.own.get_or_insert(all);
-                }
-            }
-            Edit::SharedLook => {
-                if let Some(plan) = &mut self.plan {
-                    plan.own = None;
-                }
             }
             Edit::Background(text) => self.stage_mut().background = text,
             Edit::StageImage(text) => self.stage_mut().image = text,
@@ -724,39 +628,6 @@ impl Draft {
         })
     }
 
-    /// Also edits `title`'s look: `look` is its own, `None` when it uses
-    /// the look for all plans.
-    pub fn with_plan(mut self, plan: &Plan) -> Draft {
-        let (title, look, folders) = (&plan.title, plan.look.as_ref(), &plan.folders);
-        let home = self.home.clone();
-        let shown = |path: &Path| match &home {
-            Some(home) => config::tilde(path, home).display().to_string(),
-            None => path.display().to_string(),
-        };
-        self.plan = Some(PlanLook {
-            title: title.to_string(),
-            own: look.map(|look| Stage::of(look, &shown)),
-            folders: folders.iter().map(|f| f.display().to_string()).collect(),
-            bibles: plan.bibles.clone(),
-        });
-        self
-    }
-
-    /// The open plan's own folders as typed, without the empty rows;
-    /// `None` when no plan is being edited. Kept as typed (`~/…`), so the
-    /// plan reads the same on another machine.
-    pub fn plan_folders(&self) -> Option<Vec<PathBuf>> {
-        let plan = self.plan.as_ref()?;
-        Some(
-            plan.folders
-                .iter()
-                .map(|folder| folder.trim())
-                .filter(|folder| !folder.is_empty())
-                .map(PathBuf::from)
-                .collect(),
-        )
-    }
-
     /// Whether the folder typed in `field` isn't on this computer: not
     /// while it's still being typed and has somewhere to go, and not for
     /// an empty row.
@@ -775,53 +646,16 @@ impl Draft {
         !typed.is_empty() && !going && !config::resolve(Path::new(typed), dir, home).is_dir()
     }
 
-    /// The folders of the draft that aren't on this computer, as typed:
-    /// the app's and the open plan's.
+    /// The folders of the draft that aren't on this computer, as typed.
     pub fn missing_folders(&self, dir: &Path, home: Option<&Path>) -> Vec<String> {
-        let app = self.folders.iter().map(|folder| folder.path.as_str());
-        let plan = self.plan_folder_rows().iter().map(String::as_str);
-        app.chain(plan)
+        self.folders
+            .iter()
+            .map(|folder| folder.path.as_str())
             .map(str::trim)
             .filter(|typed| !typed.is_empty())
             .filter(|typed| !config::resolve(Path::new(typed), dir, home).is_dir())
             .map(str::to_string)
             .collect()
-    }
-
-    /// The Bibles the open plan searches, by name; empty for all of them.
-    /// `None` when no plan is being edited. A name that's no longer one
-    /// of the Bibles here is kept: the plan may go back to where it is.
-    pub fn plan_bibles(&self) -> Option<Vec<String>> {
-        self.plan.as_ref().map(|plan| plan.bibles.clone())
-    }
-
-    /// The Bibles there are to pick from, by name, and whether the open
-    /// plan picked each.
-    fn bible_choices(&self) -> Vec<(String, bool)> {
-        let picked = self.plan.as_ref().map_or(&[][..], |p| p.bibles.as_slice());
-        self.bibles
-            .iter()
-            .filter(|bible| !bible.path.trim().is_empty())
-            .map(|bible| {
-                let name = library::name_of_bible(Some(&bible.name), Path::new(bible.path.trim()));
-                let on = picked.iter().any(|b| b.eq_ignore_ascii_case(&name));
-                (name, on)
-            })
-            .collect()
-    }
-
-    /// The field of the plan's last folder row, to type in once it's added.
-    pub fn last_plan_folder(&self) -> Option<Field> {
-        self.plan_folder_rows()
-            .len()
-            .checked_sub(1)
-            .map(Field::PlanFolder)
-    }
-
-    fn plan_folder_rows(&self) -> &[String] {
-        self.plan
-            .as_ref()
-            .map_or(&[], |plan| plan.folders.as_slice())
     }
 
     /// Lists the connected screens, for the output row.
@@ -830,56 +664,13 @@ impl Draft {
         self
     }
 
-    /// The open plan's title, when the settings edit its look too.
-    pub fn plan_title(&self) -> Option<&str> {
-        self.plan.as_ref().map(|plan| plan.title.as_str())
-    }
-
-    /// Whether the open plan has a look of its own.
-    pub fn plan_has_own(&self) -> bool {
-        self.plan.as_ref().is_some_and(|plan| plan.own.is_some())
-    }
-
-    /// The look fields being edited: the plan's own in its scope, else the
-    /// look for all plans.
+    /// The look for all plans, as typed.
     fn stage(&self) -> &Stage {
-        match (self.scope, &self.plan) {
-            (Scope::ThisPlan, Some(PlanLook { own: Some(own), .. })) => own,
-            _ => &self.stage,
-        }
+        &self.stage
     }
 
     fn stage_mut(&mut self) -> &mut Stage {
-        match (self.scope, &mut self.plan) {
-            (Scope::ThisPlan, Some(PlanLook { own: Some(own), .. })) => own,
-            _ => &mut self.stage,
-        }
-    }
-
-    /// Whether the fields shown edit a look: not in a plan's scope while
-    /// it uses the look for all plans.
-    pub fn editing_a_look(&self) -> bool {
-        self.scope == Scope::AllPlans || self.plan_has_own()
-    }
-
-    /// The open plan's look as the fields say: `Some(None)` for the look for
-    /// all plans; `None` when no plan is being edited.
-    pub fn plan_look(
-        &self,
-        dir: &Path,
-        home: Option<&Path>,
-    ) -> Result<Option<Option<Look>>, String> {
-        let Some(plan) = &self.plan else {
-            return Ok(None);
-        };
-        let path = |text: &str| config::resolve(Path::new(text.trim()), dir, home);
-        match &plan.own {
-            None => Ok(Some(None)),
-            Some(own) => own
-                .look(&path)
-                .map(|look| Some(Some(look)))
-                .map_err(|err| format!("This plan's look: {err}")),
-        }
+        &mut self.stage
     }
 }
 
@@ -1182,39 +973,11 @@ impl App {
             |items: iced::widget::Row<'a, Message>| items.spacing(8).align_y(Alignment::Center);
         let mut stage = column![section(
             p,
-            if draft.scope == Scope::ThisPlan { "Its look" } else { "Stage" },
+            "Default look",
             "What's behind the content, and how text is set: as large as fits between the two sizes."
         )]
         .spacing(6);
-        // The plan's part: the look for all plans, or one of its own.
         {
-            if draft.scope == Scope::ThisPlan {
-                let (about, action, tone, edit) = if draft.plan_has_own() {
-                    (
-                        "This plan has its own look, saved with it.",
-                        "Use the look for all plans",
-                        Tone::Plain,
-                        Edit::SharedLook,
-                    )
-                } else {
-                    (
-                        "This plan uses the look for all plans.",
-                        "Give it its own look",
-                        Tone::Selected,
-                        Edit::OwnLook,
-                    )
-                };
-                stage = stage.push(row![
-                    Space::new().width(LABEL_FIELD),
-                    column![
-                        note(about),
-                        pill(p, action, tone, look::PILL_SMALL, Some(settings(edit))),
-                    ]
-                    .spacing(6),
-                ]);
-            }
-        }
-        if draft.editing_a_look() {
             stage = stage.extend([
                 line(row![
                     label("Background"),
@@ -1370,104 +1133,8 @@ impl App {
             output_row(p, draft),
         ]
         .spacing(6);
-        // Media only this plan needs: indexed while it's open.
-        let mut plan_folders = column![section(
-            p,
-            "Its folders",
-            "Media only this plan needs. Searched while the plan is open, and not after."
-        )]
-        .spacing(6);
-        for (i, folder) in draft.plan_folder_rows().iter().enumerate() {
-            plan_folders = plan_folders.push(
-                row![
-                    field(p, "e.g. ~/Church/Campaña", folder, move |t| {
-                        Edit::PlanFolderPath(i, t)
-                    })
-                    .id(Field::PlanFolder(i).id())
-                    .width(Fill),
-                    remove(p, Edit::RemovePlanFolder(i)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            );
-            plan_folders = plan_folders.push(suggestions(p, draft, Field::PlanFolder(i)));
-            plan_folders = plan_folders.push(not_there(draft, Field::PlanFolder(i), folder));
-        }
-        plan_folders = plan_folders.push(add(p, "Add folder", Edit::AddPlanFolder));
-
-        // Which Bibles it searches: all of them until one is picked.
-        let choices = draft.bible_choices();
-        let all = !choices.iter().any(|(_, on)| *on);
-        let mut plan_bibles = column![section(
-            p,
-            "Its Bibles",
-            "The Bibles this plan searches. All of them, until you pick."
-        )]
-        .spacing(6);
-        // What the plan asks for by name, whether or not it's here.
-        let picked = draft.plan_bibles().unwrap_or_default();
-        let here: Vec<&String> = choices.iter().map(|(name, _)| name).collect();
-        let elsewhere: Vec<&String> = picked
-            .iter()
-            .filter(|name| !here.iter().any(|h| h.eq_ignore_ascii_case(name)))
-            .collect();
-        let says = |words: String| text(words).size(META).color(p.on_surface_variant);
-        if choices.is_empty() {
-            plan_bibles = plan_bibles.push(says("No Bibles yet: add one under Library.".into()));
-        } else if choices.len() == 1 && picked.is_empty() {
-            // One Bible is no choice: a toggle here would change nothing.
-            plan_bibles = plan_bibles.push(says(format!(
-                "{} is the only Bible here, so this plan searches it. \
-                 With another added under Library, you can pick.",
-                choices[0].0
-            )));
-        } else {
-            let ticked: Vec<String> = choices
-                .iter()
-                .filter(|(_, on)| *on)
-                .map(|(name, _)| name.clone())
-                .collect();
-            let pills = choices.into_iter().map(|(name, on)| {
-                let label = if on {
-                    format!("✓ {name}")
-                } else {
-                    name.clone()
-                };
-                let tone = if on { Tone::Selected } else { Tone::Plain };
-                let edit = settings(Edit::PlanBible(name));
-                pill(p, &label, tone, look::PILL_SMALL, Some(edit)).into()
-            });
-            // In words too: a tick alone doesn't say whether the rest
-            // are still searched.
-            let state = if all {
-                "Searching all of them.".to_string()
-            } else {
-                format!("Searching only {}.", ticked.join(" and "))
-            };
-            plan_bibles = plan_bibles.push(
-                row(pills)
-                    .push(says(state))
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .wrap(),
-            );
-        }
-        if !elsewhere.is_empty() {
-            let names: Vec<&str> = elsewhere.iter().map(|name| name.as_str()).collect();
-            plan_bibles = plan_bibles.push(says(format!(
-                "This plan also asks for {}, which isn't on this computer{}.",
-                names.join(" and "),
-                if all {
-                    ": until it is, it searches them all"
-                } else {
-                    ""
-                }
-            )));
-        }
-
         // One part at a time, picked from the list beside it.
         let part = match draft.category {
-            Category::Plan => column![self.plan_section(), plan_folders, plan_bibles, stage],
             Category::Stage => column![stage],
             Category::Output => column![output],
             Category::Library => column![folders, bibles, youtube, images],
@@ -1475,7 +1142,7 @@ impl App {
             Category::Keys => column![keys],
             Category::Phone => column![self.phone_section(draft.remote)],
         };
-        let mut parts = vec![
+        let parts = vec![
             Category::Stage,
             Category::Output,
             Category::Library,
@@ -1483,9 +1150,6 @@ impl App {
             Category::Keys,
             Category::Phone,
         ];
-        if draft.plan_title().is_some() {
-            parts.insert(0, Category::Plan);
-        }
         let list = column(parts.into_iter().map(|category| {
             let on = draft.category == category;
             button(
@@ -1656,116 +1320,6 @@ impl App {
         section.into()
     }
 
-    fn plan_section<'a>(&self) -> Element<'a, Message> {
-        let p = self.palette;
-        let plan = self.engine.0.plan();
-        let label = |name| text(name).size(BODY).font(MEDIUM).width(LABEL_FIELD);
-        let note = |words: &'static str| text(words).size(META).color(p.on_surface_variant);
-        let name = text_input("Plan name", &plan.title)
-            .on_input(Message::RenamePlan)
-            .size(BODY)
-            .font(MEDIUM)
-            .padding([8, 10])
-            .style(look::input(p));
-        let template = pill(
-            p,
-            if plan.template {
-                "✓ A template"
-            } else {
-                "Make it a template"
-            },
-            if plan.template {
-                Tone::Selected
-            } else {
-                Tone::Plain
-            },
-            look::PILL_SMALL,
-            Some(Message::PlanTemplate(!plan.template)),
-        );
-        let delete = pill(
-            p,
-            if self.deleting_plan {
-                "Delete it for good?"
-            } else {
-                "Delete"
-            },
-            Tone::Danger,
-            look::PILL_SMALL,
-            Some(Message::DeletePlan),
-        );
-        // As typed while it doesn't read as a time yet.
-        let starts = match (&self.starts_typed, plan.starts) {
-            (Some(typed), _) => typed.clone(),
-            (None, Some(starts)) => starts.to_string(),
-            (None, None) => String::new(),
-        };
-        let starts = text_input("e.g. 10:30", &starts)
-            .on_input(Message::PlanStarts)
-            .size(BODY)
-            .padding([8, 10])
-            .width(SMALL_FIELD)
-            .style(look::input(p));
-        column![
-            section(p, "This plan", "Its name, and what can be done with it."),
-            row![label("Name"), name]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            row![
-                label("Starts at"),
-                starts,
-                note("When the service begins: sections say when they're due.")
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                label("Template"),
-                template,
-                note("A template starts new plans with its order of service.")
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                label("Copy"),
-                pill(
-                    p,
-                    "Duplicate",
-                    Tone::Plain,
-                    look::PILL_SMALL,
-                    Some(Message::DuplicatePlan)
-                ),
-                note("Saves this plan, then opens a copy of it.")
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                label("Take along"),
-                pill(
-                    p,
-                    if self.copying {
-                        "Exporting…"
-                    } else {
-                        "Export"
-                    },
-                    Tone::Plain,
-                    look::PILL_SMALL,
-                    (!self.copying).then_some(Message::ExportPlan)
-                ),
-                note("One file in Documents: the plan and its media.")
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                label("Delete"),
-                delete,
-                note("Removes the plan and its file.")
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(6)
-        .into()
-    }
-
     /// A small stage with the look as typed, showing a verse, so changes
     /// show before they're saved. Fields that don't read yet keep the
     /// saved look's value.
@@ -1903,7 +1457,7 @@ fn suggestions<'a>(p: Palette, draft: &Draft, field: Field) -> Element<'a, Messa
     // Under its field: a folder's or Bible's path starts at the edge, the
     // stage's image and font after their label.
     let indent = match field {
-        Field::Folder(_) | Field::PlanFolder(_) | Field::Bible(_) => 0.0,
+        Field::Folder(_) | Field::Bible(_) => 0.0,
         _ => LABEL_FIELD + 6.0,
     };
     iced::widget::container(list)
@@ -2008,61 +1562,6 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_gets_its_own_look_without_touching_the_one_for_all() {
-        let dir = Path::new("/home/ana/.config/lantern");
-        let mut draft = Draft::of(&sample(), home()).with_plan(&Plan::new("Santa Cena"));
-        assert_eq!(
-            draft.plan_look(dir, home()).unwrap(),
-            Some(None),
-            "uses the shared look"
-        );
-        draft.edit(Edit::Category(Category::Plan));
-        assert!(
-            !draft.editing_a_look(),
-            "nothing to edit until it has its own"
-        );
-
-        draft.edit(Edit::OwnLook);
-        draft.edit(Edit::Background("#301010".into()));
-        let own = draft.plan_look(dir, home()).unwrap().unwrap().unwrap();
-        assert_eq!(own.background, Rgb([0x30, 0x10, 0x10]));
-        assert_eq!(
-            draft.config(dir, home()).unwrap().stage,
-            sample().stage,
-            "all plans unchanged"
-        );
-
-        draft.edit(Edit::Category(Category::Stage));
-        draft.edit(Edit::Background("#000080".into()));
-        assert_eq!(
-            draft
-                .plan_look(dir, home())
-                .unwrap()
-                .unwrap()
-                .unwrap()
-                .background,
-            Rgb([0x30, 0x10, 0x10]),
-            "the plan keeps its own"
-        );
-
-        draft.edit(Edit::Category(Category::Plan));
-        draft.edit(Edit::Background("not a colour".into()));
-        assert!(
-            draft
-                .plan_look(dir, home())
-                .unwrap_err()
-                .starts_with("This plan's look:")
-        );
-        draft.edit(Edit::SharedLook);
-        assert_eq!(draft.plan_look(dir, home()).unwrap(), Some(None));
-        assert_eq!(
-            Draft::of(&sample(), home()).plan_look(dir, home()).unwrap(),
-            None,
-            "no plan"
-        );
-    }
-
-    #[test]
     fn two_actions_on_one_key_clash_at_once() {
         let mut draft = Draft::of(&sample(), home());
         let at = |name: &str| keys::ACTIONS.iter().position(|a| a.name == name).unwrap();
@@ -2077,7 +1576,7 @@ mod tests {
 
     #[test]
     fn a_draft_knows_when_closing_would_lose_a_change() {
-        let mut draft = Draft::of(&sample(), home()).with_plan(&Plan::new("Santa Cena"));
+        let mut draft = Draft::of(&sample(), home());
         draft.mark_saved();
         assert!(!draft.is_dirty());
         // Looking around changes nothing.
@@ -2088,7 +1587,7 @@ mod tests {
         draft.edit(Edit::Background("#102030".into()));
         assert!(draft.is_dirty());
         draft.leaving = true;
-        draft.edit(Edit::AddPlanFolder);
+        draft.edit(Edit::AddFolder);
         assert!(!draft.leaving, "an edit takes the question back");
         draft.mark_saved();
         assert!(!draft.is_dirty());
@@ -2098,40 +1597,18 @@ mod tests {
     fn a_folder_that_isnt_there_is_named() {
         let here = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(here.path().join("Media")).unwrap();
-        let mut plan = Plan::new("Campaña");
-        plan.folders = vec!["Media".into(), "nowhere".into()];
-        let mut draft = Draft::of(&Config::default(), None).with_plan(&plan);
+        let mut draft = Draft::of(&Config::default(), None);
         draft.edit(Edit::AddFolder);
         draft.edit(Edit::FolderPath(0, "gone".into()));
         draft.edit(Edit::AddFolder);
+        draft.edit(Edit::FolderPath(1, "Media".into()));
+        draft.edit(Edit::AddFolder);
         // Relative to the config's folder; an empty row isn't missing.
-        assert_eq!(
-            draft.missing_folders(here.path(), None),
-            ["gone", "nowhere"]
-        );
-        let field = Field::PlanFolder(1);
+        assert_eq!(draft.missing_folders(here.path(), None), ["gone"]);
+        let field = Field::Folder(0);
         assert!(draft.missing_folder(field, "nowhere", here.path(), None));
-        assert!(!draft.missing_folder(Field::PlanFolder(0), "Media", here.path(), None));
+        assert!(!draft.missing_folder(Field::Folder(1), "Media", here.path(), None));
         assert!(!draft.missing_folder(field, "  ", here.path(), None));
-    }
-
-    #[test]
-    fn a_plan_picks_its_bibles_by_name() {
-        let mut plan = Plan::new("Bilingual");
-        plan.bibles = vec!["NVI".into()];
-        let mut draft = Draft::of(&sample(), home()).with_plan(&plan);
-        let names: Vec<String> = draft.bible_choices().into_iter().map(|(n, _)| n).collect();
-        assert!(!names.is_empty(), "the sample has a Bible");
-        assert!(draft.bible_choices().iter().all(|(_, on)| !on));
-        draft.edit(Edit::PlanBible(names[0].clone()));
-        assert!(draft.bible_choices()[0].1);
-        // One the computer doesn't have stays in the plan.
-        assert_eq!(
-            draft.plan_bibles(),
-            Some(vec!["NVI".to_string(), names[0].clone()])
-        );
-        draft.edit(Edit::PlanBible(names[0].to_lowercase()));
-        assert_eq!(draft.plan_bibles(), Some(vec!["NVI".to_string()]));
     }
 
     #[test]
