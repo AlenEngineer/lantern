@@ -377,11 +377,14 @@ struct Moves {
 
 /// How far the step that is playing has come, if one is.
 fn playing(picture: &Picture) -> Option<(StepId, f32)> {
-    picture.stops.iter().find_map(|stop| match (stop.back, stop.line) {
-        (Some((_, done, _)), _) => Some((stop.id, done)),
-        (None, Some(Line::Playing { done, .. })) => Some((stop.id, done)),
-        _ => None,
-    })
+    picture
+        .stops
+        .iter()
+        .find_map(|stop| match (stop.back, stop.line) {
+            (Some((_, done, _)), _) => Some((stop.id, done)),
+            (None, Some(Line::Playing { done, .. })) => Some((stop.id, done)),
+            _ => None,
+        })
 }
 
 impl Moves {
@@ -985,11 +988,12 @@ fn curl(
     let whole = out + up + into;
     let mut left = whole * far;
     // How much of it has played, from where it leaves.
-    let mut filled = played.map(|(done, color)| (whole * done.clamp(0.0, 1.0), color));
-    let mut take = |length: f32| {
-        let now = filled;
-        if let Some((far, _)) = &mut filled {
-            *far = (*far - length).max(0.0);
+    let filled =
+        std::cell::Cell::new(played.map(|(done, color)| (whole * done.clamp(0.0, 1.0), color)));
+    let take = |length: f32| {
+        let now = filled.get();
+        if let Some((far, color)) = now {
+            filled.set(Some(((far - length).max(0.0), color)));
         }
         now.filter(|(far, _)| *far > 0.0)
     };
@@ -1018,7 +1022,7 @@ fn curl(
                 path.move_to(Point::new(x + BEND, bottom));
                 path.quadratic_curve_to(Point::new(x, bottom), Point::new(x, bottom - BEND));
             });
-            bend(frame, &turn, filled.filter(|(far, _)| *far > 0.0));
+            bend(frame, &turn, filled.get().filter(|(far, _)| *far > 0.0));
         }
         left -= out;
     }
@@ -1063,7 +1067,7 @@ fn curl(
             path.move_to(Point::new(x, top + BEND));
             path.quadratic_curve_to(Point::new(x, top), Point::new(x + BEND, top));
         });
-        bend(frame, &turn, filled.filter(|(far, _)| *far > 0.0));
+        bend(frame, &turn, filled.get().filter(|(far, _)| *far > 0.0));
         dashes(
             frame,
             stroke,

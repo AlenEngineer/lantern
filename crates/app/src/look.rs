@@ -414,12 +414,6 @@ pub fn icon<'a>(icon: Icon, size: f32, color: Color) -> svg::Svg<'a> {
         .style(move |_, _| svg::Style { color: Some(color) })
 }
 
-/// How wide the room for a loop's line is: for the line and, on it,
-/// what it says of itself. It is drawn by [`crate::track`].
-pub const CURL_WIDE: f32 = 30.0;
-/// How wide the line of a drawn order is, on the other side of the dots.
-pub const DRAWN_WIDE: f32 = 14.0;
-
 /// A ring that fills as something comes in, such as a download: `done`
 /// from 0 to 1, in twentieths.
 pub fn ring<'a>(done: f32, size: f32, color: Color) -> svg::Svg<'a> {
@@ -490,6 +484,10 @@ pub enum Icon {
     Command,
     /// Half light, half dark: how the dashboard looks.
     Contrast,
+    /// An arrow's head pointing down: what it is beside is open.
+    Open,
+    /// One pointing right: it is folded away.
+    Folded,
 }
 
 impl Icon {
@@ -528,6 +526,8 @@ impl Icon {
             Icon::Command => mdi!(
                 "M13,19V16H21V19H13M8.5,13L2.47,7H6.71L11.67,11.95C12.25,12.54 12.25,13.5 11.67,14.07L6.74,19H2.5L8.5,13Z"
             ),
+            Icon::Open => mdi!("M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"),
+            Icon::Folded => mdi!("M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"),
             Icon::Contrast => mdi!(
                 "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20V4Z"
             ),
