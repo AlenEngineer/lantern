@@ -408,6 +408,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Under an open ring, what is written and drawn goes dim and every
+  ground stays as it was, so the ring is what is read. It laid a dark
+  sheet over the whole window.
 - A service with a video playing does less work: the curl and the other
   drawings are kept from frame to frame instead of worked out for each,
   and a pointer moving over the plan no longer draws the whole dashboard

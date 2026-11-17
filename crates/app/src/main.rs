@@ -492,7 +492,11 @@ struct App {
     home: Option<PathBuf>,
     downloads: Shared<Downloads>,
     plans: Plans,
+    /// The colours things are drawn in: `bright`, or dimmed while a ring
+    /// is open over them.
     palette: Palette,
+    /// The colours as the colours file or the app's own has them.
+    pub(crate) bright: Palette,
     /// How slide text is split to fit the stage.
     slides: fit::Splitter,
     /// The stage's look now: the open plan's own, or else the default.
@@ -751,6 +755,7 @@ impl App {
             library,
             config_status,
             palette: Palette::default(),
+            bright: Palette::default(),
             colors: config.colors.clone().map(palette::Source::new),
             slides: fit::Splitter::new(&config.stage),
             look: config.stage.clone(),
@@ -855,6 +860,7 @@ impl App {
         };
         app.motion.still = app.config.no_motion;
         app.check_palette();
+        app.palette = app.bright;
         app.find_running();
         // The plan reopened at start may bring folders of its own.
         app.sync_library();
@@ -985,6 +991,12 @@ impl App {
         // A repeat that ends at a time of day needs the time, whatever
         // moves the plan on.
         self.engine.0.tell_time(length::now_of_day());
+        // Under an open ring, what is written and drawn goes dim, as the
+        // ring opens: the grounds stay, so the ring is what is read.
+        self.palette = match self.ring {
+            Some(_) => self.bright.dimmed(self.motion.lift()),
+            None => self.bright,
+        };
         // A frame changes nothing: the view is drawn again, further along.
         if matches!(message, Message::Frame) {
             return Task::none();
@@ -3016,7 +3028,7 @@ impl App {
                 if colors_changed {
                     self.colors = config.colors.clone().map(palette::Source::new);
                     if self.colors.is_none() {
-                        self.palette = Palette::default();
+                        self.bright = Palette::default();
                         self.palette_error = None;
                     }
                     self.check_palette();
@@ -3037,7 +3049,7 @@ impl App {
         };
         match changed {
             Ok(palette) => {
-                self.palette = palette;
+                self.bright = palette;
                 self.palette_error = None;
             }
             Err(err) => {
