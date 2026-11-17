@@ -341,6 +341,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   to the side, and kept (`lengths` in the data folder). A step shows its
   real length before the stage has loaded it, and the plan's times add
   up sooner.
+- The choosing behind autofill (no panel yet): from a list of lengths it
+  picks what comes to a time, a number of things, or both, within a
+  margin that may run under, over, either way or not at all; in the
+  order held, drawn at random, or with what is used most likeliest.
 
 ### Fixed
 
