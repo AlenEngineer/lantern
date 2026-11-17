@@ -488,6 +488,8 @@ pub enum Icon {
     Open,
     /// One pointing right: it is folded away.
     Folded,
+    /// A triangle with a mark in it: this can't be.
+    Warning,
 }
 
 impl Icon {
@@ -528,6 +530,7 @@ impl Icon {
             ),
             Icon::Open => mdi!("M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"),
             Icon::Folded => mdi!("M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"),
+            Icon::Warning => mdi!("M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16"),
             Icon::Contrast => mdi!(
                 "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20V4Z"
             ),

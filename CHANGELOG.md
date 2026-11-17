@@ -420,6 +420,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A pull that can't be says why beside the pointer, with a warning mark:
+  too few steps, a drawn order across a heading, or a span that would cut
+  another in two. Letting go says the same.
 - A plan is one flow: one line runs through every step, straight past
   the headings, and a section is only a name for a part of it, with its
   time and an arrow that folds it. A loop or a drawn order is a span laid

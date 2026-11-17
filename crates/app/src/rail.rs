@@ -667,8 +667,25 @@ pub enum Would {
     Join { first: usize, last: usize },
     /// They come in a drawn order.
     Shuffle { first: usize, last: usize },
-    /// Nothing: no loop can be drawn there.
-    Not { first: usize, last: usize },
+    /// Nothing: no loop or drawn order can be there, and why not.
+    Not {
+        first: usize,
+        last: usize,
+        why: lantern_engine::SpanError,
+    },
+}
+
+/// Why a pull to `side` is refused, in a few words.
+pub fn why_not(why: lantern_engine::SpanError, side: Side) -> &'static str {
+    use lantern_engine::SpanError;
+    match (why, side) {
+        (SpanError::TooFew, Side::Right) => "A drawn order takes three steps or more",
+        (SpanError::TooFew, _) => "A loop takes two steps or more",
+        (SpanError::AcrossHeading, _) => "A drawn order can't cross a heading",
+        (SpanError::HalfOver(_), Side::Right) => "It would cut another drawn order or loop in two",
+        (SpanError::HalfOver(_), _) => "It would cut another loop or drawn order in two",
+        (SpanError::Missing, _) => "That is no longer in the plan",
+    }
 }
 
 impl Would {
@@ -678,7 +695,7 @@ impl Would {
             Would::Loop { first, last }
             | Would::Join { first, last }
             | Would::Shuffle { first, last }
-            | Would::Not { first, last } => (first, last),
+            | Would::Not { first, last, .. } => (first, last),
         }
     }
 }
@@ -750,18 +767,18 @@ impl Pull {
                     return None;
                 }
                 let (first, last) = (from.min(to), from.max(to));
-                let or_not = |can: bool, would: Would| match can {
-                    true => would,
-                    false => Would::Not { first, last },
+                let or_not = |can: Result<_, lantern_engine::SpanError>, would: Would| match can {
+                    Ok(_) => would,
+                    Err(why) => Would::Not { first, last, why },
                 };
                 Some(match self.side {
                     Side::Right => or_not(
-                        plan.clone().shuffle_over(self.from, over).is_ok(),
+                        plan.would_shuffle_over(self.from, over),
                         Would::Shuffle { first, last },
                     ),
                     Side::Along if to > from => Would::Join { first, last },
                     Side::Left | Side::Along => or_not(
-                        plan.clone().loop_over(self.from, over).is_ok(),
+                        plan.would_loop_over(self.from, over),
                         Would::Loop { first, last },
                     ),
                 })
@@ -818,7 +835,11 @@ mod tests {
         );
         assert_eq!(
             pull(a, (x + 20.0, 130.0), Some(b)).would,
-            Some(Would::Not { first: 1, last: 2 })
+            Some(Would::Not {
+                first: 1,
+                last: 2,
+                why: lantern_engine::SpanError::TooFew
+            })
         );
         // It changes as it goes: back to the middle, down is a join again.
         let mut wandering = pull(a, (x + 20.0, 160.0), Some(c));
@@ -846,7 +867,11 @@ mod tests {
         };
         assert_eq!(
             pull(d, (x + 20.0, 60.0), Some(a)).would,
-            Some(Would::Not { first: 1, last: 5 })
+            Some(Would::Not {
+                first: 1,
+                last: 5,
+                why: lantern_engine::SpanError::AcrossHeading
+            })
         );
     }
 }

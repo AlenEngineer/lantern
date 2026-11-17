@@ -354,9 +354,19 @@ impl App {
                 Would::Shuffle { .. } => {
                     (p.primary, look::icon(Icon::Shuffle, 14.0, p.primary).into())
                 }
-                Would::Not { .. } => (
+                // What can't be says why, beside the pointer.
+                Would::Not { why, .. } => (
                     p.error,
-                    text("⊘").size(BODY).font(BOLD).color(p.error).into(),
+                    row![
+                        look::icon(Icon::Warning, 14.0, p.error),
+                        text(crate::rail::why_not(why, pull.side))
+                            .size(META)
+                            .font(BOLD)
+                            .color(p.error)
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
                 ),
             };
             let ground = crate::motion::blend(p.surface_container_highest, ink, 0.2);

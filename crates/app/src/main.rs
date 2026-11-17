@@ -1538,15 +1538,8 @@ impl App {
                         }
                         return self.preload();
                     }
-                    (true, Some(rail::Would::Not { .. }), _) => {
-                        self.motion.refuse(match pull.side {
-                            rail::Side::Left | rail::Side::Along => {
-                                "a loop takes two steps or more, and can't cut another in two"
-                            }
-                            rail::Side::Right => {
-                                "a drawn order takes three steps or more, in one section"
-                            }
-                        });
+                    (true, Some(rail::Would::Not { why, .. }), _) => {
+                        self.motion.refuse(rail::why_not(why, pull.side));
                     }
                     _ => {}
                 }
