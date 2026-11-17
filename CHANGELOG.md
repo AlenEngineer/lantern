@@ -423,6 +423,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   and no longer pushes the plan down and back. The mode switch keeps the
   mode it is going to in sight while its light slides there. A row no
   longer grows under the pointer and nudges the rows below it.
+- The mode switch shows Run and Live again while planning: the fix above
+  had cut it down to the lit pill.
 
 ## [0.7.0] - 2026-11-13
 

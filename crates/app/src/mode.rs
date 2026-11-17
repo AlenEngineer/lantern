@@ -431,6 +431,8 @@ impl App {
                 ..container::Style::default()
             }),
         ]
+        // The first layer gives the stack its size: as wide as every pill.
+        .width(shown.len() as f32 * (WIDE + GAP) - GAP)
         .height(TALL);
         let lit = row![
             Space::new().width(aside),
