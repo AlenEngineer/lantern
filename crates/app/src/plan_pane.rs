@@ -67,10 +67,9 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
 }
 
 /// The room either side of the dots, the same down the whole plan so
-/// the dots stay in one line: on the left for a loop's line, where
-/// anything comes again or a dot is being pulled; on the right for a
-/// drawn order's line, where there is one, and while planning, when it
-/// is also where a pull starts one.
+/// the dots stay in one line: on the left for a loop's line, on the
+/// right for a drawn order's. While planning both are there, since a
+/// pull can draw either; otherwise only where the plan has such a line.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Lanes {
     curl: f32,
@@ -373,7 +372,9 @@ impl App {
             of(plan.flow) || plan.steps().iter().any(|step| of(step.flow))
         };
         let lanes = Lanes {
-            curl: match self.pull.is_some() || some(&|flow| flow.repeat != Repeat::Once) {
+            // While planning both are always there: a pull can draw
+            // either line, and the rows must not shift as it begins.
+            curl: match (tree && can) || some(&|flow| flow.repeat != Repeat::Once) {
                 true => look::CURL_WIDE,
                 false => 0.0,
             },
@@ -501,17 +502,17 @@ impl App {
                     true => p.outline,
                     false => p.primary,
                 };
-                let dot = container(container(Space::new().width(5).height(5)).style(move |_| {
+                let dot = container(container(Space::new().width(4).height(4)).style(move |_| {
                     container::Style {
                         background: Some(ink.into()),
                         border: iced::Border {
-                            radius: 2.5.into(),
+                            radius: 2.0.into(),
                             ..iced::Border::default()
                         },
                         ..container::Style::default()
                     }
                 }))
-                .padding(2)
+                .padding(3)
                 .style(move |_| container::Style {
                     background: Some(
                         match folded {
@@ -522,7 +523,7 @@ impl App {
                     ),
                     border: iced::Border {
                         color: ink,
-                        width: 2.0,
+                        width: 1.5,
                         radius: 6.5.into(),
                     },
                     ..container::Style::default()
@@ -1741,13 +1742,20 @@ impl App {
             .is_some_and(|would| {
                 matches!(would, crate::rail::Would::Join { first, last } if first < index && index <= last)
             });
+        // What of the playing step's line is still to come: the line as
+        // it would be, where the step goes on into the next; a quiet one
+        // where it waits. Either way it is there to be filled, not a gap.
+        let track = |joined: bool| match joined {
+            true => planned,
+            false => Palette::tint(p.on_surface_variant, 0.5),
+        };
         let above: Element<'a, Message> = match filling_above {
             // Under way from the step before: filled as far as it has
             // come, in the stage's colour.
             Some(done) if !would_above => column![
                 line(Some(p.tertiary), Length::Fixed(RAIL_TOP * done)),
                 line(
-                    Some(Palette::tint(p.tertiary, 0.35)),
+                    Some(track(joined_above)),
                     Length::Fixed(RAIL_TOP * (1.0 - done))
                 ),
             ]
@@ -1852,7 +1860,13 @@ impl App {
                 let done = (done.clamp(0.0, 1.0) * 100.0).round() as u16;
                 column![
                     line(Some(live), Length::FillPortion(done.max(1))),
-                    line(Some(faint), Length::FillPortion((100 - done).max(1))),
+                    line(
+                        Some(match rehearsed {
+                            Some(_) => faint,
+                            None => track(joined_below),
+                        }),
+                        Length::FillPortion((100 - done).max(1))
+                    ),
                 ]
                 .into()
             }
@@ -1925,7 +1939,6 @@ impl App {
         let press = Message::Rail(crate::rail::Act::Press {
             step: step.id,
             toggle,
-            side: crate::rail::Side::Dot,
         });
         // It says what a click does only while nothing is held or open.
         let quiet = self.pull.is_some() || self.ring.is_some();
@@ -1990,7 +2003,7 @@ impl App {
         let pulled = match would {
             Some(crate::rail::Would::Loop { first, last }) => Some((piece_of(first, last), None)),
             Some(crate::rail::Would::Not { first, last })
-                if side == Some(crate::rail::Side::Dot) =>
+                if side != Some(crate::rail::Side::Right) =>
             {
                 Some((piece_of(first, last), None))
             }
@@ -2025,12 +2038,19 @@ impl App {
         // wanders, with its mark in a gap at its middle.
         let pulled = match would {
             Some(crate::rail::Would::Shuffle { first, last }) => {
-                Some((piece_of(first, last), index == (first + last) / 2))
+                let rows: Vec<usize> = (first..=last)
+                    .filter(|at| !steps[*at].is_section())
+                    .collect();
+                let mark = rows
+                    .iter()
+                    .position(|at| *at == index)
+                    .and_then(|row| crate::drawn::MarkAt::of(rows.len(), row));
+                Some((piece_of(first, last), mark))
             }
             Some(crate::rail::Would::Not { first, last })
                 if side == Some(crate::rail::Side::Right) =>
             {
-                Some((piece_of(first, last), false))
+                Some((piece_of(first, last), None))
             }
             _ => None,
         };
@@ -2046,26 +2066,15 @@ impl App {
                 }
                 _ => Space::new().width(lanes.drawn).height(Fill).into(),
             };
-        // Pressed and pulled along, it draws an order round the steps it
-        // passes; a right click on a line that is there opens its ring.
-        let drawn: Element<'a, Message> = match (pulls, there.filter(|_| rings)) {
-            (false, None) => drawn,
-            (pulls, there) => {
-                let mut area = mouse_area(drawn).interaction(mouse::Interaction::Pointer);
-                if pulls {
-                    area = area.on_press(Message::Rail(crate::rail::Act::Press {
-                        step: step.id,
-                        toggle: None,
-                        side: crate::rail::Side::Right,
-                    }));
-                }
-                if let Some((group, ..)) = there {
-                    area = area.on_right_press(ring(crate::rail::RingOn::Shuffle(
-                        group.map(|at| steps[at].id),
-                    )));
-                }
-                area.into()
-            }
+        // A right click on a line that is there opens its ring.
+        let drawn: Element<'a, Message> = match there.filter(|_| rings && pulled.is_none()) {
+            Some((group, ..)) => mouse_area(drawn)
+                .interaction(mouse::Interaction::Pointer)
+                .on_right_press(ring(crate::rail::RingOn::Shuffle(
+                    group.map(|at| steps[at].id),
+                )))
+                .into(),
+            None => drawn,
         };
         // The rail says when the pointer is on it, for a dot pulled here
         // and for a ring opened here. A width of its own: laid out after
@@ -2612,9 +2621,12 @@ fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)>
 /// something that repeats: the nearest section or loop around it that
 /// does, or else the plan. `None` for a step in nothing that repeats,
 /// and for the only step of something that does (its own mark says so).
-/// With it, on the row at the line's middle, what the line says of
-/// itself: how often it comes.
-fn curl_at(plan: &Plan, index: usize) -> Option<(look::Curl, Option<String>)> {
+/// With it, where the line's middle is in this row, what the line says
+/// of itself: how often it comes.
+fn curl_at(
+    plan: &Plan,
+    index: usize,
+) -> Option<(look::Curl, Option<(String, crate::drawn::MarkAt)>)> {
     let steps = plan.steps();
     let (group, start, end) = repeating(plan, index)?;
     let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
@@ -2636,9 +2648,13 @@ fn curl_at(plan: &Plan, index: usize) -> Option<(look::Curl, Option<String>)> {
         _ => look::Curl::Past,
     };
     let flow = group.map_or(plan.flow, |at| steps[at].flow);
-    let mark = (index == inside[(inside.len() - 1) / 2])
-        .then(|| repeat_words(flow.repeat))
-        .flatten();
+    // At the line's middle: on the step there, or between the two
+    // either side of it.
+    let mark = inside
+        .iter()
+        .position(|at| *at == index)
+        .and_then(|row| crate::drawn::MarkAt::of(inside.len(), row))
+        .and_then(|at| Some((repeat_words(flow.repeat)?, at)));
     Some((piece, mark))
 }
 
@@ -2658,9 +2674,11 @@ fn shuffling(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)>
 
 /// The piece of a drawn order's line beside the step at `index`: what
 /// draws the order, whether the step is the first of them, one between
-/// or the last, and whether its row is the one at the line's middle,
-/// which carries the mark. `None` for a step in no drawn order.
-fn drawn_at(plan: &Plan, index: usize) -> Option<(Option<usize>, look::Curl, bool)> {
+/// or the last, and where the line's mark is in its row, if it is. `None` for a step in no drawn order.
+fn drawn_at(
+    plan: &Plan,
+    index: usize,
+) -> Option<(Option<usize>, look::Curl, Option<crate::drawn::MarkAt>)> {
     let steps = plan.steps();
     let (group, start, end) = shuffling(plan, index)?;
     let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
@@ -2673,7 +2691,11 @@ fn drawn_at(plan: &Plan, index: usize) -> Option<(Option<usize>, look::Curl, boo
         at if at == last => look::Curl::Out,
         _ => look::Curl::Past,
     };
-    Some((group, piece, index == inside[(inside.len() - 1) / 2]))
+    let mark = inside
+        .iter()
+        .position(|at| *at == index)
+        .and_then(|row| crate::drawn::MarkAt::of(inside.len(), row));
+    Some((group, piece, mark))
 }
 
 /// How often something comes, in a few characters; `None` for once.
@@ -2898,7 +2920,10 @@ mod tests {
         assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
         assert_eq!(
             curl_at(&plan, 2),
-            Some((Curl::Past, Some("×2".to_string()))),
+            Some((
+                Curl::Past,
+                Some(("×2".to_string(), crate::drawn::MarkAt::Dot))
+            )),
             "the middle row says how often"
         );
         assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
@@ -2920,9 +2945,19 @@ mod tests {
         // Music, the loop, A, B, C.
         assert_eq!(
             curl_at(&plan, 2),
-            Some((Curl::Into, Some("×2".to_string())))
+            Some((
+                Curl::Into,
+                Some(("×2".to_string(), crate::drawn::MarkAt::Below))
+            )),
+            "between the two: each row has its half"
         );
-        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
+        assert_eq!(
+            curl_at(&plan, 3),
+            Some((
+                Curl::Out,
+                Some(("×2".to_string(), crate::drawn::MarkAt::Above))
+            ))
+        );
         assert_eq!(curl_at(&plan, 4), None, "C is out of it");
     }
 }

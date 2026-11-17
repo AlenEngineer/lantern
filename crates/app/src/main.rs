@@ -1443,9 +1443,9 @@ impl App {
                     return self.preload();
                 }
             }
-            Message::Rail(rail::Act::Press { step, toggle, side }) => {
+            Message::Rail(rail::Act::Press { step, toggle }) => {
                 self.drag = None;
-                self.pull = Some(rail::Pull::new(step, toggle, side));
+                self.pull = Some(rail::Pull::new(step, toggle));
             }
             Message::Rail(rail::Act::Ring(on)) => {
                 self.pull = None;
@@ -1552,7 +1552,9 @@ impl App {
                     }
                     (true, Some(rail::Would::Not { .. }), _) => {
                         self.motion.refuse(match pull.side {
-                            rail::Side::Dot => "a loop stays inside one section",
+                            rail::Side::Left | rail::Side::Along => {
+                                "a loop stays inside one section"
+                            }
                             rail::Side::Right => {
                                 "a drawn order takes three steps or more, in one section"
                             }

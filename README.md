@@ -152,15 +152,22 @@ first.
 While planning, the rail is worked by hand, and every line on it says
 what it is set to, in a gap at its middle.
 
-- **Pull a dot up** to the dot of a step above it and a loop is drawn from
-  the one back to the other, on the left of the dots: those steps come
-  twice, until you say otherwise. Its line says how often (`×2`, `∞`,
+Press a step's dot and pull to another step. Which line is drawn follows
+the way the pull goes, and changes with it as it goes:
+
+- **To the left** of the dots: a loop round the steps from the one to the
+  other, whichever way the pull runs. Those steps come twice, until you
+  say otherwise. Its line is on the left and says how often (`×2`, `∞`,
   `10:30`).
-- **Pull a dot down** to a step below and every step between goes on by
-  itself into the next: the line down the dots.
-- **Pull down the right side** of the dots, over three steps or more, and
-  they come in an order drawn afresh each time: a line that wanders, on
-  the right of the dots, with the crossed arrows at its middle.
+- **To the right**: over three steps or more, they come in an order drawn
+  afresh each time. Its line wanders, on the right of the dots, with the
+  crossed arrows at its middle.
+- **Straight along the dots**: up, a loop; down, every step between goes
+  on by itself into the next, the line down the dots.
+
+What letting go would do shows as it is pulled, with a mark beside the
+pointer. A line's mark sits at the middle of the whole line: on the step
+there, or between the two either side of it.
 
 A loop or a drawn order round some steps has no name and no heading; it is
 its line. Round all a section holds, it is the section that is set. One
