@@ -12,8 +12,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Media, Pace, Phase, Plan, Query, Resource, SectionTiming, Step, StepId,
-    TimeOfDay, Timing,
+    Action, Basis, Flow, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming, Step,
+    StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, pill, scrolling, single_line, unit, wide};
@@ -278,6 +278,7 @@ impl App {
                     )
                     .width(Fill)
                     .clip(true),
+                    self.flow_buttons(None, plan.advance, plan.flow, true),
                     text(if self.plans.is_dirty(plan) {
                         "unsaved"
                     } else {
@@ -290,6 +291,10 @@ impl App {
                 .padding([4, 8])
                 .align_y(Alignment::Center),
             );
+            if self.repeat_panel == Some(None) {
+                rows = rows
+                    .push(container(self.repeat_choices(None, plan.flow.repeat)).padding([0, 8]));
+            }
         }
         let mut in_section = false;
         // Up to where rows are folded away with the section that holds
@@ -682,6 +687,12 @@ impl App {
         }]
         .spacing(8)
         .align_y(Alignment::Center);
+        // How it moves, beside its name: what is on. Selected, its
+        // second line has every choice.
+        let goes = step.advance == Some(true);
+        if !selected {
+            line = line.push(self.flow_buttons(Some(id), goes, step.flow, false));
+        }
         let color = match time.pace {
             Some(pace) if pace != Pace::OnTrack => pace_tone(pace).text(p),
             _ => p.on_surface_variant,
@@ -734,7 +745,18 @@ impl App {
             content = content.push(bar(p, share, fill, 0.0));
         }
         if selected {
-            content = content.push(row![Space::new().width(Fill), self.step_actions(step)]);
+            content = content.push(
+                row![
+                    self.flow_buttons(Some(id), goes, step.flow, true),
+                    Space::new().width(Fill),
+                    self.step_actions(step)
+                ]
+                .align_y(Alignment::Center),
+            );
+        }
+        // The choices of how often it comes open under everything else.
+        if self.repeat_panel == Some(Some(id)) {
+            content = content.push(self.repeat_choices(Some(id), step.flow.repeat));
         }
         let tone = if self.selected == Some(id) {
             Tone::Selected
@@ -876,6 +898,9 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
+        if self.repeat_panel == Some(Some(step.id)) {
+            label = label.push(self.repeat_choices(Some(step.id), step.flow.repeat));
+        }
         // Its dot is on the rail beside it. One the phone put on the
         // projector says so here.
         let ring = self.motion.ring().filter(|_| shown);
@@ -891,6 +916,17 @@ impl App {
         if place == Place::Current && shown && self.motion.by_phone() && self.motion.rung_by_phone()
         {
             line = line.push(look::icon(Icon::Phone, 13.0, label_color));
+        }
+        // A step that comes again says so, and how often.
+        if let Some(words) = repeat_words(step.flow.repeat) {
+            line = line.push(
+                row![
+                    look::icon(Icon::Repeat, 13.0, p.primary),
+                    text(words).size(META).font(BOLD).color(p.primary)
+                ]
+                .spacing(3)
+                .align_y(Alignment::Center),
+            );
         }
         let line = line.push(end);
         // Its row is lit a shade more as it goes up, and settles.
@@ -925,6 +961,157 @@ impl App {
             .into(),
             None => row.into(),
         }
+    }
+
+    /// How a section or the plan (`None`) moves, as its buttons: its
+    /// steps go on by themselves or wait, it comes again, its steps come
+    /// in a drawn order. What is on is always in sight; with `all`, what
+    /// is off is too, to be turned on.
+    pub(crate) fn flow_buttons<'a>(
+        &self,
+        of: Option<StepId>,
+        goes: bool,
+        flow: Flow,
+        all: bool,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let can = self.can_edit();
+        let glyph = |icon: Icon, on: bool| {
+            look::icon(
+                icon,
+                14.0,
+                if on { p.primary } else { p.on_surface_variant },
+            )
+        };
+        let small = |content: Element<'a, Message>, on: bool, about: &str, message: Message| {
+            crate::dashboard::hinted(
+                p,
+                button(content)
+                    .padding([3, 6])
+                    .on_press_maybe(can.then_some(message))
+                    .style(look::row(p, if on { Tone::Selected } else { Tone::Plain })),
+                about.to_string(),
+                tooltip::Position::Top,
+            )
+        };
+        let mut buttons = row![].spacing(2).align_y(Alignment::Center);
+        if goes || all {
+            buttons = buttons.push(small(
+                glyph(if goes { Icon::Joined } else { Icon::Pause }, goes).into(),
+                goes,
+                if goes {
+                    "Its steps go straight on. Click to make them wait"
+                } else {
+                    "Its steps wait for you. Click to make them go straight on"
+                },
+                match of {
+                    Some(id) => Message::SetAdvance(id, !goes),
+                    None => Message::PlanAdvance(!goes),
+                },
+            ));
+        }
+        let repeats = flow.repeat != Repeat::Once;
+        if repeats || all {
+            let mut content = row![glyph(Icon::Repeat, repeats)]
+                .spacing(4)
+                .align_y(Alignment::Center);
+            if let Some(words) = repeat_words(flow.repeat) {
+                content = content.push(text(words).size(META).font(BOLD).color(p.primary));
+            }
+            buttons = buttons.push(small(
+                content.into(),
+                repeats,
+                "How many times it comes",
+                Message::RepeatPanel(of),
+            ));
+        }
+        if flow.shuffle || all {
+            buttons = buttons.push(small(
+                glyph(Icon::Shuffle, flow.shuffle).into(),
+                flow.shuffle,
+                if flow.shuffle {
+                    "Its steps come in a drawn order. Click for the plan's order"
+                } else {
+                    "Its steps come in the plan's order. Click to shuffle them"
+                },
+                Message::SetShuffle(of, !flow.shuffle),
+            ));
+        }
+        buttons.into()
+    }
+
+    /// The choices of how often a step, a section or the plan comes:
+    /// once, a number of times, until you go elsewhere, until a time.
+    pub(crate) fn repeat_choices<'a>(
+        &self,
+        of: Option<StepId>,
+        repeat: Repeat,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let choice = |label: String, on: bool, about: &str, message: Message| {
+            crate::dashboard::hinted(
+                p,
+                button(text(label).size(META).font(BOLD))
+                    .padding([4, 10])
+                    .on_press(message)
+                    .style(look::pill(p, if on { Tone::Solid } else { Tone::Plain })),
+                about.to_string(),
+                tooltip::Position::Bottom,
+            )
+        };
+        let times = match repeat {
+            Repeat::Times(times) => times,
+            _ => 1,
+        };
+        let set = |repeat| Message::SetRepeat(of, repeat);
+        let fewer = match times {
+            0..=2 => Repeat::Once,
+            times => Repeat::Times(times - 1),
+        };
+        let until = match repeat {
+            Repeat::Until(time) => time.to_string(),
+            _ => String::new(),
+        };
+        row![
+            choice(
+                "1".into(),
+                repeat == Repeat::Once,
+                "Once",
+                set(Repeat::Once)
+            ),
+            choice("−".into(), false, "One time fewer", set(fewer)),
+            choice(
+                format!("×{}", times.max(2)),
+                matches!(repeat, Repeat::Times(_)),
+                "This many times",
+                set(Repeat::Times(times.max(2))),
+            ),
+            choice(
+                "+".into(),
+                false,
+                "One time more",
+                set(Repeat::Times(times.max(1).saturating_add(1))),
+            ),
+            choice(
+                "∞".into(),
+                repeat == Repeat::Forever,
+                "Until you go somewhere else",
+                set(Repeat::Forever),
+            ),
+            text_input(
+                if until.is_empty() { "10:30" } else { &until },
+                &self.repeat_until
+            )
+            .on_input(Message::RepeatUntil)
+            .on_submit(Message::RepeatUntilSet)
+            .size(META)
+            .padding([4, 8])
+            .width(58)
+            .style(look::input(p)),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center)
+        .into()
     }
 
     /// The rail beside the step at `index`: its dot, the line down to
@@ -1670,6 +1857,16 @@ fn ago(elapsed: Duration) -> String {
 }
 
 /// A dragged step lands indented inside a section; a section never does.
+/// How often something comes, in a few characters; `None` for once.
+pub(crate) fn repeat_words(repeat: Repeat) -> Option<String> {
+    match repeat {
+        Repeat::Once => None,
+        Repeat::Times(times) => Some(format!("×{times}")),
+        Repeat::Forever => Some("∞".into()),
+        Repeat::Until(time) => Some(time.to_string()),
+    }
+}
+
 fn gap_indent(moving: Option<&Drag>, in_section: bool) -> f32 {
     let step = moving.is_some_and(|drag| drag.carried.len() == 1 && !drag.is_section());
     if step && in_section { INDENT } else { 0.0 }

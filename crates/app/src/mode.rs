@@ -88,6 +88,8 @@ fn does(message: &Message) -> Does {
         M::Remove(id)
         | M::Rename(id, _)
         | M::SetAdvance(id, _)
+        | M::SetRepeat(Some(id), _)
+        | M::SetShuffle(Some(id), _)
         | M::StepSound(id, _)
         | M::KeepCopy(id)
         | M::SoundFrom(id, _)
@@ -96,7 +98,13 @@ fn does(message: &Message) -> Does {
         | M::Move(id, _)
         | M::ReplaceStep(id)
         | M::EditStep(Some((id, _))) => Does::EditsStep(*id),
-        M::AddStep(_) | M::ToggleAdd | M::Unstandby(_) | M::PlanStarts(_) => Does::EditsPlan,
+        M::AddStep(_)
+        | M::ToggleAdd
+        | M::Unstandby(_)
+        | M::PlanStarts(_)
+        | M::PlanAdvance(_)
+        | M::SetRepeat(None, _)
+        | M::SetShuffle(None, _) => Does::EditsPlan,
         M::RenamePlan(_)
         | M::PlanTemplate(_)
         | M::DuplicatePlan

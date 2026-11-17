@@ -146,6 +146,13 @@ you. Click under a dot to join it to the next step or part them. In a
 service, grey is past, the stage's colour is on the projector now (its
 line fills as it plays), and a ring in that colour is next.
 
+A section, and the plan itself on its row at the top, has three small
+buttons for how it moves: its steps go straight on or wait, it comes again
+(once, a number of times, until you go elsewhere, or until a time of day),
+and its steps come in a drawn order. What is on shows beside the name; a
+selected section shows all three. A step has the repeat button among its
+actions. Space follows a repeat, innermost first.
+
 Ctrl+K opens the search, and while it's open typing goes to its box, so
 every shortcut is a key that doesn't type. Esc empties the box, and closes
 the search once it's empty. Find files and Bible verses, type a reference like

@@ -241,6 +241,19 @@ impl App {
                 Message::KeepCopy(id),
             ));
         }
+        // A step comes once, or again: a section has that on its row.
+        if !step.is_section() {
+            actions = actions.push(small(
+                look::icon(Icon::Repeat, 13.0, p.primary).into(),
+                if step.flow.repeat == lantern_engine::Repeat::Once {
+                    Tone::Plain
+                } else {
+                    Tone::Selected
+                },
+                "How many times it comes".into(),
+                Message::RepeatPanel(Some(id)),
+            ));
+        }
         // A section goes into the one before it, and out again.
         if step.is_section() {
             actions = actions

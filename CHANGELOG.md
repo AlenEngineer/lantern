@@ -288,6 +288,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   In a service the rail is grey where it has been, the stage's colour
   where it is (the line fills as the step plays), and ringed at what is
   next. Step numbers and the ↦ mark are gone.
+- Flow has its buttons. A section, and the plan on its row at the top,
+  shows three: its steps go straight on or wait, it repeats (once, ×N, ∞ or
+  until a time), its steps are shuffled. A step has repeat among its
+  actions and wears a mark when it comes again.
 
 ### Fixed
 
