@@ -324,7 +324,7 @@ impl App {
                     what: issue.what,
                 })
                 .collect();
-            let last = self.last_sound.get();
+            let last = self.last_sound.of(&self.setup);
             let worries = crate::before::worries(&issues, sound.as_ref(), last.as_deref());
             if !worries.is_empty() {
                 log(format!("mode: before the service starts: {worries:?}"));
@@ -333,7 +333,7 @@ impl App {
             }
         }
         if let Some(sound) = sound.filter(|sound| !sound.output.is_empty())
-            && let Err(error) = self.last_sound.keep(&sound.output)
+            && let Err(error) = self.last_sound.keep(&self.setup, &sound.output)
         {
             log(format!("mode: the sound output was not kept: {error}"));
         }

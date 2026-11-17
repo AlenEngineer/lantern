@@ -263,6 +263,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   sound is muted or at 0, or sound goes to a different output than last
   service, **Start the service** says so first, with **Start anyway** and
   **Not yet**. With nothing to say, the service starts as before.
+- The look round remembers where sound went for each set of connected
+  screens. Rehearsing at home on the speakers no longer makes it warn at
+  church, where the projector is plugged in, or the other way round.
 
 ### Fixed
 
