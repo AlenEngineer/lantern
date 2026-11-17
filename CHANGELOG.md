@@ -420,6 +420,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A pull from a step's dot says which line it draws by the way it goes,
+  and can change as it goes: to the left a loop, to the right a drawn
+  order, straight up a loop and straight down a join. The right side of
+  the dots is no longer a place of its own to press.
+- A line's mark is at the middle of the whole line, between two steps
+  where that is its middle. It sat in the middle of one row, off centre
+  and cutting a short line in two.
+- In a service, what is still to come of the playing step's line is a
+  line to be filled, not a gap: it was drawn so faint that the fill
+  looked broken.
+- While planning, the room either side of the dots is always there, so
+  rows don't shift as a pull begins.
 - What you usually use is taken from what you picked yourself: looked
   up and shown, or put in the plan from a search or the library. A step
   that autofill put in the plan no longer counts when it is shown, so

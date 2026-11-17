@@ -127,6 +127,50 @@ pub fn dashed_dot<'a, Message: 'a>(size: f32, color: Color) -> Element<'a, Messa
     .into()
 }
 
+/// Where on a piece of a line its mark sits, so that it is at the middle
+/// of the whole line: level with this step's dot, when the line has a
+/// step at its middle; or half way to the next step's dot or the one
+/// before's, when its middle is between two. Then both pieces draw it,
+/// each the part that is in its own row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkAt {
+    Dot,
+    Below,
+    Above,
+}
+
+impl MarkAt {
+    /// Which row of `rows` (the line's steps, top to bottom) carries the
+    /// mark, as the row at `row` sees it.
+    pub fn of(rows: usize, row: usize) -> Option<MarkAt> {
+        match rows % 2 {
+            1 if row == rows / 2 => Some(MarkAt::Dot),
+            0 if row + 1 == rows / 2 => Some(MarkAt::Below),
+            0 if row == rows / 2 => Some(MarkAt::Above),
+            _ => None,
+        }
+    }
+
+    /// How far down a piece `tall` high, whose dot is `dot` down, the
+    /// mark's middle is.
+    fn middle(self, dot: f32, tall: f32) -> f32 {
+        match self {
+            MarkAt::Dot => dot,
+            MarkAt::Below => dot + tall / 2.0,
+            MarkAt::Above => dot - tall / 2.0,
+        }
+    }
+}
+
+/// The parts of the run from `from` to `to` that a mark with its middle
+/// at `middle` leaves: above it and below it.
+fn round_mark(from: f32, to: f32, middle: f32) -> [(f32, f32); 2] {
+    [
+        (from, to.min(middle - MARK_ROOM)),
+        (from.max(middle + MARK_ROOM), to),
+    ]
+}
+
 /// The line that curls back beside the steps of something that comes
 /// again, the piece of it beside one step: drawn the whole height of the
 /// step's row, in dashes spaced to fit that height exactly, so that one
@@ -136,9 +180,9 @@ struct CurlPiece {
     color: Color,
     /// How far down the row the step's dot is.
     dot: f32,
-    /// What the line says of itself, in a gap at the middle of this
-    /// piece: how often it comes.
-    mark: Option<String>,
+    /// What the line says of itself, in a gap at its middle, when this
+    /// piece has the middle or half of it: how often it comes.
+    mark: Option<(String, MarkAt)>,
 }
 
 /// Where the line runs down in its column, the dashes' length, about
@@ -172,7 +216,7 @@ fn dashes(frame: &mut Frame, stroke: Stroke<'_>, from: Point, to: Point) {
 }
 
 impl<Message> canvas::Program<Message> for CurlPiece {
-    type State = Kept<(crate::look::Curl, Color, f32, Option<String>)>;
+    type State = Kept<(crate::look::Curl, Color, f32, Option<(String, MarkAt)>)>;
 
     fn draw(
         &self,
@@ -207,11 +251,12 @@ impl<Message> canvas::Program<Message> for CurlPiece {
                 );
             };
             match &self.mark {
-                // What it says sits in a gap at the middle of the run.
-                Some(words) => {
-                    let middle = (from + to) / 2.0;
-                    down(frame, from, middle - MARK_ROOM);
-                    down(frame, middle + MARK_ROOM, to);
+                // What it says sits in a gap at the line's middle.
+                Some((words, at)) => {
+                    let middle = at.middle(dot, tall);
+                    for (from, to) in round_mark(from, to, middle) {
+                        down(frame, from, to);
+                    }
                     frame.fill_text(canvas::Text {
                         content: words.clone(),
                         position: Point::new(CURL_X, middle),
@@ -276,7 +321,7 @@ pub fn curl<'a, Message: 'a>(
     piece: crate::look::Curl,
     color: Color,
     dot: f32,
-    mark: Option<String>,
+    mark: Option<(String, MarkAt)>,
 ) -> iced::widget::Canvas<impl canvas::Program<Message> + 'a, Message> {
     draw(CurlPiece {
         piece,
@@ -296,9 +341,9 @@ struct WavePiece {
     piece: crate::look::Curl,
     color: Color,
     dot: f32,
-    /// This is the piece that carries the mark of a drawn order, in a
-    /// gap at its middle.
-    mark: bool,
+    /// The mark of a drawn order, in a gap at the line's middle, when
+    /// this piece has the middle or half of it.
+    mark: Option<MarkAt>,
 }
 
 /// About how tall each swing of the line is, and how far it swings.
@@ -306,7 +351,7 @@ const WAVE_TALL: f32 = 8.0;
 const WAVE_OUT: f32 = 3.5;
 
 impl<Message> canvas::Program<Message> for WavePiece {
-    type State = Kept<(crate::look::Curl, Color, f32, bool)>;
+    type State = Kept<(crate::look::Curl, Color, f32, Option<MarkAt>)>;
 
     fn draw(
         &self,
@@ -352,15 +397,16 @@ impl<Message> canvas::Program<Message> for WavePiece {
                 });
                 frame.stroke(&line, stroke);
             };
-            if !self.mark {
+            let Some(mark) = self.mark else {
                 wander(frame, from, to);
                 return;
-            }
+            };
             // The mark of a drawn order: two lines that cross, each
             // with an arrow's head, small.
-            let middle = (from + to) / 2.0;
-            wander(frame, from, middle - MARK_ROOM);
-            wander(frame, middle + MARK_ROOM, to);
+            let middle = mark.middle(self.dot, tall);
+            for (from, to) in round_mark(from, to, middle) {
+                wander(frame, from, to);
+            }
             let at = |dx: f32, dy: f32| Point::new(x + dx * 0.72, middle + dy * 0.72);
             let lines: [&[(f32, f32)]; 5] = [
                 &[(-7.0, -4.0), (-4.5, -4.0), (2.5, 4.0), (6.0, 4.0)],
@@ -389,7 +435,7 @@ pub fn wave<'a, Message: 'a>(
     piece: crate::look::Curl,
     color: Color,
     dot: f32,
-    mark: bool,
+    mark: Option<MarkAt>,
 ) -> iced::widget::Canvas<impl canvas::Program<Message> + 'a, Message> {
     draw(WavePiece {
         piece,

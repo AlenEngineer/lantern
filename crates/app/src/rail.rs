@@ -20,13 +20,11 @@ use crate::{App, Message};
 /// What is done on the rail.
 #[derive(Debug, Clone)]
 pub enum Act {
-    /// A dot was pressed, or the right side beside it. `toggle` is what
-    /// a click there would make of whether the step goes on by itself,
-    /// where a click may.
+    /// A dot was pressed. `toggle` is what a click there would make of
+    /// whether the step goes on by itself, where a click may.
     Press {
         step: StepId,
         toggle: Option<bool>,
-        side: Side,
     },
     /// The pointer came onto a step's rail, or left it.
     Over(StepId),
@@ -44,14 +42,21 @@ pub enum Act {
     Ends(Option<StepId>, lantern_engine::Ending),
 }
 
-/// Where on the rail a press began.
+/// Which way a pull has gone from the dot it began on, sideways: it
+/// says which line is being drawn, as the pull goes, and can change as
+/// it goes on. The lines are on the sides they are pulled to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// On a step's dot: pulled up it draws a loop, pulled down it joins.
-    Dot,
-    /// To the right of the dots: pulled along, it draws an order.
+    /// To the left of the dots: a loop, whichever way it runs.
+    Left,
+    /// Straight along the dots: up it draws a loop, down it joins.
+    Along,
+    /// To the right of the dots: a drawn order.
     Right,
 }
+
+/// How far to a side the pointer goes before the pull is to that side.
+const ASIDE: f32 = 12.0;
 
 /// What a ring is about. Each holds only what is that thing's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -687,8 +692,11 @@ impl Would {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pull {
     pub from: StepId,
-    /// Where the press began: on the dot, or to its right.
+    /// Which way it has gone, sideways, from where it began.
     pub side: Side,
+    /// The step it was last over: it stays the one, past the rail's
+    /// edge where there is no row under the pointer.
+    over: Option<StepId>,
     /// What a click would do: see [`Act::Press`].
     pub toggle: Option<bool>,
     origin: Option<Point>,
@@ -704,10 +712,11 @@ pub struct Pull {
 const SLOP: f32 = 5.0;
 
 impl Pull {
-    pub fn new(from: StepId, toggle: Option<bool>, side: Side) -> Pull {
+    pub fn new(from: StepId, toggle: Option<bool>) -> Pull {
         Pull {
             from,
-            side,
+            side: Side::Along,
+            over: None,
             toggle,
             origin: None,
             at: Point::ORIGIN,
@@ -723,13 +732,21 @@ impl Pull {
         if origin.distance(at) > SLOP {
             self.moving = true;
         }
+        self.side = match at.x - origin.x {
+            aside if aside < -ASIDE => Side::Left,
+            aside if aside > ASIDE => Side::Right,
+            _ => Side::Along,
+        };
     }
 
-    /// Works out what letting go over `over` would do.
+    /// Works out what letting go over `over` would do. To the left a
+    /// loop, to the right a drawn order, whichever way it runs; straight
+    /// along the dots, a loop back up or a join on down.
     pub fn aim(&mut self, plan: &Plan, over: Option<StepId>) {
+        self.over = over.or(self.over);
         self.would = self
             .moving
-            .then_some(over)
+            .then_some(self.over)
             .flatten()
             .filter(|over| *over != self.from)
             .and_then(|over| {
@@ -738,28 +755,20 @@ impl Pull {
                     return None;
                 }
                 let (first, last) = (from.min(to), from.max(to));
-                // From the right side, either way: a drawn order.
-                if self.side == Side::Right {
-                    return Some(match plan.clone().shuffle_over(self.from, over).is_some() {
-                        true => Would::Shuffle { first, last },
-                        false => Would::Not { first, last },
-                    });
-                }
-                Some(if to > from {
-                    Would::Join {
-                        first: from,
-                        last: to,
-                    }
-                } else if plan.clone().loop_over(self.from, over).is_some() {
-                    Would::Loop {
-                        first: to,
-                        last: from,
-                    }
-                } else {
-                    Would::Not {
-                        first: to,
-                        last: from,
-                    }
+                let or_not = |can: bool, would: Would| match can {
+                    true => would,
+                    false => Would::Not { first, last },
+                };
+                Some(match self.side {
+                    Side::Right => or_not(
+                        plan.clone().shuffle_over(self.from, over).is_some(),
+                        Would::Shuffle { first, last },
+                    ),
+                    Side::Along if to > from => Would::Join { first, last },
+                    Side::Left | Side::Along => or_not(
+                        plan.clone().loop_over(self.from, over).is_some(),
+                        Would::Loop { first, last },
+                    ),
                 })
             });
     }
@@ -772,43 +781,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn up_is_a_loop_down_is_a_join_and_across_a_heading_is_neither() {
+    fn the_way_a_pull_goes_says_which_line_it_draws() {
         let mut plan = Plan::new("Sabbath");
         plan.section("Music", None);
         let [a, b, c] = ["A", "B", "C"].map(|name| plan.push(name, Action::Blank));
         plan.section("Sermon", None);
         let d = plan.push("D", Action::Blank);
-        let mut pull = Pull::new(c, Some(true), Side::Dot);
-        pull.to(Point::new(10.0, 100.0));
-        pull.aim(&plan, Some(a));
-        assert_eq!(pull.would, None, "not moved yet: a click");
-        pull.to(Point::new(10.0, 40.0));
-        pull.aim(&plan, Some(a));
-        assert_eq!(pull.would, Some(Would::Loop { first: 1, last: 3 }));
-        pull.aim(&plan, Some(c));
-        assert_eq!(pull.would, None, "back on itself");
-        pull.aim(&plan, None);
-        assert_eq!(pull.would, None);
-        // From A down to C: A and B go on.
-        let mut pull = Pull::new(a, None, Side::Dot);
-        pull.to(Point::new(10.0, 40.0));
-        pull.to(Point::new(10.0, 100.0));
-        pull.aim(&plan, Some(c));
-        assert_eq!(pull.would, Some(Would::Join { first: 1, last: 3 }));
-        // Down the right side from A to C: the three in a drawn order.
-        let mut pull = Pull::new(a, None, Side::Right);
-        pull.to(Point::new(30.0, 40.0));
-        pull.to(Point::new(30.0, 100.0));
-        pull.aim(&plan, Some(c));
-        assert_eq!(pull.would, Some(Would::Shuffle { first: 1, last: 3 }));
-        // Over two only there is no order to draw.
-        pull.aim(&plan, Some(b));
-        assert_eq!(pull.would, Some(Would::Not { first: 1, last: 2 }));
+        let x = 100.0;
+        let pull = |from, to: (f32, f32), over| {
+            let mut pull = Pull::new(from, Some(true));
+            pull.to(Point::new(x, 100.0));
+            pull.aim(&plan, over);
+            assert_eq!(pull.would, None, "not moved yet: a click");
+            pull.to(Point::new(to.0, to.1));
+            pull.aim(&plan, over);
+            pull
+        };
+        // Straight up from C to A: a loop. Back on itself, nothing.
+        let mut up = pull(c, (x, 40.0), Some(a));
+        assert_eq!(up.would, Some(Would::Loop { first: 1, last: 3 }));
+        up.aim(&plan, Some(c));
+        assert_eq!(up.would, None);
+        // Straight down from A to C: A and B go on.
+        assert_eq!(
+            pull(a, (x, 160.0), Some(c)).would,
+            Some(Would::Join { first: 1, last: 3 })
+        );
+        // Down and to the left: a loop all the same.
+        assert_eq!(
+            pull(a, (x - 20.0, 160.0), Some(c)).would,
+            Some(Would::Loop { first: 1, last: 3 })
+        );
+        // To the right, up or down: a drawn order; over two, none.
+        assert_eq!(
+            pull(a, (x + 20.0, 160.0), Some(c)).would,
+            Some(Would::Shuffle { first: 1, last: 3 })
+        );
+        assert_eq!(
+            pull(c, (x + 20.0, 40.0), Some(a)).would,
+            Some(Would::Shuffle { first: 1, last: 3 })
+        );
+        assert_eq!(
+            pull(a, (x + 20.0, 130.0), Some(b)).would,
+            Some(Would::Not { first: 1, last: 2 })
+        );
+        // It changes as it goes: back to the middle, down is a join again.
+        let mut wandering = pull(a, (x + 20.0, 160.0), Some(c));
+        wandering.to(Point::new(x + 2.0, 160.0));
+        wandering.aim(&plan, Some(c));
+        assert_eq!(wandering.would, Some(Would::Join { first: 1, last: 3 }));
+        // Past the rail's edge, with no row under the pointer, it is
+        // still over the last one it was.
+        wandering.to(Point::new(x - 40.0, 160.0));
+        wandering.aim(&plan, None);
+        assert_eq!(wandering.would, Some(Would::Loop { first: 1, last: 3 }));
         // From D up to B: across Sermon's heading.
-        let mut pull = Pull::new(d, None, Side::Dot);
-        pull.to(Point::new(10.0, 140.0));
-        pull.to(Point::new(10.0, 60.0));
-        pull.aim(&plan, Some(b));
-        assert_eq!(pull.would, Some(Would::Not { first: 2, last: 5 }));
+        assert_eq!(
+            pull(d, (x, 60.0), Some(b)).would,
+            Some(Would::Not { first: 2, last: 5 })
+        );
     }
 }
