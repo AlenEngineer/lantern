@@ -306,6 +306,18 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// Whether the plan's steps go on by themselves unless one says.
+    PlanAdvance(bool),
+    /// How many times a step or section comes, or the plan (`None`).
+    SetRepeat(Option<StepId>, lantern_engine::Repeat),
+    /// Whether a section's steps, or the plan's, come in a drawn order.
+    SetShuffle(Option<StepId>, bool),
+    /// Opens the choices of how often it comes, or closes them.
+    RepeatPanel(Option<StepId>),
+    /// The time of day a repeat ends at, as typed.
+    RepeatUntil(String),
+    /// The typed time is the one: the repeat ends then.
+    RepeatUntilSet,
     /// Gives a step a sound to play with it, or takes it away.
     StepSound(StepId, Option<Arc<lantern_engine::Resource>>),
     /// Copies what a step shows, a file outside the media folders, to
@@ -577,6 +589,11 @@ struct App {
     shown_since: Option<(Option<SceneId>, usize, Instant)>,
     /// Lengths being typed that don't read as one yet ("4:"), by step.
     drafts: HashMap<StepId, String>,
+    /// Whose choices of how often it comes are open: a step or section,
+    /// or the plan (`Some(None)`).
+    pub(crate) repeat_panel: Option<Option<StepId>>,
+    /// The time a repeat ends at, as typed so far.
+    pub(crate) repeat_until: String,
     /// The slide a step's sound starts at, as it is being typed: it may
     /// be empty for a moment, on the way from one number to another.
     pub(crate) from_typed: Option<(StepId, String)>,
@@ -732,6 +749,8 @@ impl App {
             arrived_at: None,
             shown_since: None,
             drafts: HashMap::new(),
+            repeat_panel: None,
+            repeat_until: String::new(),
             from_typed: None,
             mode: mode::Mode::Plan,
             unlocked: None,
@@ -1929,6 +1948,53 @@ impl App {
                     }
                 });
                 self.from_typed = Some((id, typed));
+            }
+            Message::PlanAdvance(on) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| plan.advance = on);
+            }
+            Message::SetRepeat(of, repeat) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| match of {
+                    Some(id) => {
+                        if let Some(step) = plan.get_mut(id) {
+                            step.flow.repeat = repeat;
+                        }
+                    }
+                    None => plan.flow.repeat = repeat,
+                });
+            }
+            Message::SetShuffle(of, on) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| match of {
+                    Some(id) => {
+                        if let Some(step) = plan.get_mut(id) {
+                            step.flow.shuffle = on;
+                        }
+                    }
+                    None => plan.flow.shuffle = on,
+                });
+            }
+            Message::RepeatPanel(of) => {
+                self.repeat_panel = (self.repeat_panel != Some(of)).then_some(of);
+                self.repeat_until.clear();
+            }
+            Message::RepeatUntil(typed) => {
+                self.repeat_until = typed
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == ':')
+                    .take(5)
+                    .collect();
+            }
+            Message::RepeatUntilSet => {
+                if let (Some(of), Some(time)) = (
+                    self.repeat_panel,
+                    lantern_engine::TimeOfDay::parse(&self.repeat_until),
+                ) {
+                    self.repeat_until.clear();
+                    return self
+                        .update(Message::SetRepeat(of, lantern_engine::Repeat::Until(time)));
+                }
             }
             Message::SetAdvance(id, on) => {
                 self.remember(None);
