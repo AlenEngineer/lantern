@@ -26,7 +26,7 @@ use crate::plan_edit::{NewStep, Part, goes_on_when, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::widgets::{self, Filled, hinted, pill, scrolling, single_line, wide};
-use crate::{App, Clicked, Message};
+use crate::{App, Clicked, Message, track};
 
 /// The id of the pane's rows, to scroll them.
 pub const ROWS: &str = "plan-rows";
@@ -42,17 +42,7 @@ pub(crate) const TARGET_BOX: &str = "plan-target";
 const RAIL: f32 = 20.0;
 const RAIL_DOT: f32 = 10.0;
 const RAIL_LINE: f32 = 2.0;
-/// How thick each side is of the line that has not played yet.
-const RAIL_SIDE: f32 = 0.5;
 const RAIL_TOP: f32 = 15.0;
-/// How tall the line under the playing step's dot was when last laid out:
-/// the step after it fills its own part of the same line from where this
-/// one ends.
-static BELOW_TALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-fn below_tall() -> f32 {
-    f32::from_bits(BELOW_TALL.load(std::sync::atomic::Ordering::Relaxed))
-}
 /// How far the ring round the dot of the step that is up stands off it.
 const RAIL_RING: f32 = 4.0;
 
@@ -371,6 +361,12 @@ impl App {
         // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
         let mut rows = column![].spacing(2);
+        // Where the dots are, said by the rows as they are laid out, and
+        // what one drawing over the list makes of them.
+        let places = track::Places::default();
+        let mut items: Vec<track::Item> = Vec::new();
+        let mut shown: Vec<usize> = Vec::new();
+        let mut cuts = 0u32;
         // While planning, the pane is a tree: the open plan, its sections
         // and their steps, and under them the other plans.
         let tree = self.mode == crate::mode::Mode::Plan;
@@ -434,6 +430,14 @@ impl App {
                 put_whole!(apart($row))
             };
         }
+        // Rows cut to a height say where the cut is: what is drawn for
+        // them stops there.
+        macro_rules! put_cut {
+            ($steps:expr $(,)?) => {{
+                put_whole!(track::seen(track::Key::Cut(cuts), &places, cut($steps)));
+                cuts += 1;
+            }};
+        }
         // Up to where rows are folded away with the section that holds
         // them, and whether that section is the one closing or opening
         // now: then they are still drawn, under the cut.
@@ -486,7 +490,7 @@ impl App {
                 if index >= folding_to
                     && let Some(steps) = folding.take()
                 {
-                    put_whole!(cut(steps));
+                    put_cut!(steps);
                 }
                 // Folded away with the section it is in.
                 if hidden && !selected {
@@ -537,6 +541,11 @@ impl App {
                         radius: 6.5.into(),
                     },
                     ..container::Style::default()
+                });
+                let dot = track::seen(track::Key::Section(step.id), &places, dot);
+                items.push(track::Item::Section {
+                    id: step.id,
+                    cut: folding.is_some().then_some(cuts),
                 });
                 let dot = container(dot).center_x(RAIL).center_y(Length::Shrink);
                 let mut dot = mouse_area(dot).interaction(mouse::Interaction::Pointer);
@@ -682,17 +691,21 @@ impl App {
             // The rail runs down beside the step and what is inside it.
             // The rail is as tall as the row and the room under it, so
             // its line meets the next row's.
-            let row = container(
-                row![self.rail(plan, index, place, lanes), apart(row)].height(Length::Shrink),
-            )
-            .padding(iced::Padding::default().left(inward));
+            let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
+            let row = container(row![rail, apart(row)].height(Length::Shrink))
+                .padding(iced::Padding::default().left(inward));
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
             let stays = Some(step.id) == current || selected;
+            if folding.is_some() && !stays {
+                stop.cut = Some(cuts);
+            }
+            // Its own cut, if any, is closed before it: after that.
+            let item = stop;
             match folding.take() {
                 Some((steps, so_far, open)) if stays => {
-                    put_whole!(cut((steps, so_far, open)));
+                    put_cut!((steps, so_far, open));
                     put_whole!(row);
                     folding = Some((column![], 0.0, open));
                 }
@@ -701,9 +714,11 @@ impl App {
                 }
                 None => put_whole!(row),
             }
+            items.push(track::Item::Stop(item));
+            shown.push(index);
         }
         if let Some(steps) = folding.take() {
-            put_whole!(cut(steps));
+            put_whole!(track::seen(track::Key::Cut(cuts), &places, cut(steps)));
         }
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
@@ -772,8 +787,78 @@ impl App {
                 rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
             }
         }
+        // The lines beside the steps: of what comes again and of a drawn
+        // order, each from the first to the last of its steps in sight.
+        let id_at = |at: usize| plan.steps()[at].id;
+        let beside = |first: usize, last: usize, color, mark, pulled| {
+            let mut inside = shown
+                .iter()
+                .copied()
+                .filter(|at| (first..=last).contains(at));
+            let from = inside.next()?;
+            let to = inside.next_back()?;
+            Some(track::Beside {
+                first: id_at(from),
+                last: id_at(to),
+                starts: from == first,
+                ends: to == last,
+                color,
+                mark,
+                pulled,
+            })
+        };
+        let mut loops: Vec<track::Beside> = Vec::new();
+        let mut orders: Vec<track::Beside> = Vec::new();
+        let mut looped: Vec<(usize, usize)> = Vec::new();
+        let mut ordered: Vec<(usize, usize)> = Vec::new();
+        for index in shown.iter().copied() {
+            if lanes.curl > 0.0
+                && let Some((first, last, words)) = loop_at(plan, index)
+                && !looped.contains(&(first, last))
+            {
+                looped.push((first, last));
+                let mark = words.map_or(track::Mark::Nothing, track::Mark::Words);
+                loops.extend(beside(first, last, p.primary, mark, false));
+            }
+            if lanes.drawn > 0.0
+                && let Some((_, first, last)) = order_at(plan, index)
+                && !ordered.contains(&(first, last))
+            {
+                ordered.push((first, last));
+                orders.extend(beside(first, last, p.primary, track::Mark::Crossed, false));
+            }
+        }
+        // A line being pulled is drawn already; one that can't be, in
+        // the colour of what is wrong.
+        if let Some(pull) = &self.pull {
+            use crate::rail::{Side, Would};
+            match pull.would {
+                Some(Would::Loop { first, last }) => {
+                    loops.extend(beside(first, last, p.primary, track::Mark::Nothing, true));
+                }
+                Some(Would::Shuffle { first, last }) => {
+                    orders.extend(beside(first, last, p.primary, track::Mark::Crossed, true));
+                }
+                Some(Would::Not { first, last }) if pull.side == Side::Right => {
+                    orders.extend(beside(first, last, p.error, track::Mark::Nothing, true));
+                }
+                Some(Would::Not { first, last }) => {
+                    loops.extend(beside(first, last, p.error, track::Mark::Nothing, true));
+                }
+                Some(Would::Join { .. }) | None => {}
+            }
+        }
+        let picture = track::Picture {
+            items,
+            loops,
+            orders,
+            curl_wide: lanes.curl,
+            order_wide: lanes.drawn,
+            still: self.motion.still,
+            hot: can,
+        };
         // Leaving the list means letting go would move nothing.
-        mouse_area(scrolling(rows).id(ROWS))
+        mouse_area(scrolling(stack![rows, track::over(picture, &places)].width(Fill)).id(ROWS))
             .on_exit(Message::LeftPlan)
             .into()
     }
@@ -1693,13 +1778,15 @@ impl App {
         index: usize,
         place: Place,
         lanes: Lanes,
-    ) -> Element<'a, Message> {
+        places: &track::Places,
+    ) -> (Element<'a, Message>, track::Stop) {
         let p = self.palette;
         let steps = plan.steps();
         let step = &steps[index];
         let goes = plan.goes_on(index);
         let before = steps[..index].iter().rposition(|step| !step.is_section());
-        let after = steps[index + 1..].iter().any(|step| !step.is_section());
+        let next = steps[index + 1..].iter().find(|step| !step.is_section());
+        let after = next.is_some();
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
         let planned = p.primary;
@@ -1715,7 +1802,6 @@ impl App {
             Some(_) => (Place::Current, planned),
             None => (place, p.tertiary),
         };
-        let faint = Palette::tint(live, 0.35);
         // How far the stage is into this step, when it is the one up.
         let on_stage = |step: &Step| match (&step.action, &self.stage.program) {
             (Action::Show { resource }, Some(scene)) if scene.resource.id == resource.id => {
@@ -1728,108 +1814,9 @@ impl App {
             _ => None,
         }
         .or(rehearsed);
-        // The line from the step that is on to the next one's dot fills
-        // as it plays, evenly along its whole length: first what of it
-        // is under its own dot, then what is over this one's, when this
-        // is the step after it.
-        let current = self.engine.0.current_step().map(|step| step.id);
-        let filling_above = before
-            .map(|before| &steps[before])
-            .filter(|before| Some(before.id) == current && rehearsed.is_none())
-            .and_then(on_stage)
-            .map(|done| {
-                let under = below_tall();
-                ((done * (under + RAIL_TOP) - under) / RAIL_TOP).clamp(0.0, 1.0)
-            });
-        let line = |colour: Option<iced::Color>, height: Length| {
-            container(Space::new().width(RAIL_LINE).height(height)).style(move |_| {
-                container::Style {
-                    background: colour.map(Into::into),
-                    ..container::Style::default()
-                }
-            })
-        };
-        // The line of the step that is playing is as wide as any other:
-        // solid in the stage's colour as far as it has played, and only
-        // its two sides from there on, so how far it has come is plain.
-        let solid = |colour: iced::Color, height: Length| {
-            container(Space::new().width(RAIL_LINE).height(height))
-                .style(move |_| container::Style::default().background(colour))
-        };
-        let tube = |colour: iced::Color, height: Length| {
-            let side = move || {
-                container(Space::new().width(RAIL_SIDE).height(Fill))
-                    .style(move |_| container::Style::default().background(colour))
-            };
-            container(row![
-                side(),
-                Space::new().width(RAIL_LINE - 2.0 * RAIL_SIDE),
-                side()
-            ])
-            .height(height)
-        };
-        let would_above = self
-            .pull
-            .as_ref()
-            .and_then(|pull| pull.would)
-            .is_some_and(|would| {
-                matches!(would, crate::rail::Would::Join { first, last } if first < index && index <= last)
-            });
-        // What of the playing step's line is still to come: the line as
-        // it would be, where the step goes on into the next; a quiet one
-        // where it waits. Either way it is there to be filled, not a gap.
-        let track = |joined: bool| match joined {
-            true => planned,
-            false => Palette::tint(p.on_surface_variant, 0.5),
-        };
-        let above: Element<'a, Message> = match filling_above {
-            // Under way from the step before: filled as far as it has
-            // come, in the stage's colour.
-            Some(done) if !would_above => column![
-                solid(p.tertiary, Length::Fixed(RAIL_TOP * done)),
-                tube(track(joined_above), Length::Fixed(RAIL_TOP * (1.0 - done))),
-            ]
-            .align_x(iced::Center)
-            .into(),
-            _ => line(
-                (joined_above || would_above).then_some(match place {
-                    _ if would_above => planned,
-                    Place::Done | Place::Current => past,
-                    Place::Next | Place::Later => planned,
-                }),
-                // The one that is up has a ring round its dot, which
-                // takes its room from the line above: the dot stays
-                // where it was.
-                Length::Fixed(match place {
-                    Place::Current => RAIL_TOP - RAIL_RING,
-                    _ => RAIL_TOP,
-                }),
-            )
-            .into(),
-        };
-        let filled = |colour: iced::Color, ring: Option<f32>| {
-            container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |theme| {
-                container::Style {
-                    border: iced::Border {
-                        radius: (RAIL_DOT / 2.0).into(),
-                        ..iced::Border::default()
-                    },
-                    ..look::dot(colour, ring)(theme)
-                }
-            })
-        };
-        let hollow = |colour: iced::Color| {
-            container(Space::new().width(RAIL_DOT).height(RAIL_DOT)).style(move |_| {
-                container::Style {
-                    border: iced::Border {
-                        color: colour,
-                        width: 2.0,
-                        radius: (RAIL_DOT / 2.0).into(),
-                    },
-                    ..container::Style::default()
-                }
-            })
-        };
+        // The one that is up has a ring round its dot, which takes its
+        // room from the line above: the dot stays where it was.
+        let on = place == Place::Current;
         // "Next" is the service's word: while planning, a step is only
         // one that goes on or one that waits.
         let place = match place {
@@ -1852,66 +1839,66 @@ impl App {
             Some(crate::rail::Would::Not { .. }) => p.error,
             _ => planned,
         };
-        let dot = match place {
-            _ if would.is_some() => filled(would_ink, Some(0.3)),
+        // How the dot looks: drawn by the one drawing over the list.
+        let look = match place {
+            _ if would.is_some() => track::Dot::Would(would_ink),
             // Up now: its dot, in a ring that is always there.
-            Place::Current => container(filled(
-                live,
-                self.motion.ring().filter(|_| played.is_some()),
-            ))
-            // The ring is drawn inside this room, so the dot's middle is
-            // where every other dot's is.
-            .padding(RAIL_RING)
-            .style(move |_| container::Style {
-                border: iced::Border {
-                    color: Palette::tint(live, 0.5),
-                    width: 1.5,
-                    radius: (RAIL_DOT / 2.0 + RAIL_RING).into(),
-                },
-                ..container::Style::default()
-            }),
-            Place::Next => hollow(live),
-            Place::Done => filled(past, None),
-            Place::Later if goes => filled(planned, None),
-            Place::Later => hollow(p.on_surface_variant),
+            Place::Current => track::Dot::On {
+                color: live,
+                ring: Palette::tint(live, 0.5),
+                glow: self.motion.ring().filter(|_| played.is_some()),
+            },
+            Place::Next => track::Dot::Hollow(live),
+            Place::Done => track::Dot::Solid(past),
+            Place::Later if goes => track::Dot::Solid(planned),
+            Place::Later => track::Dot::Hollow(p.on_surface_variant),
         };
-        let joining = |from: usize, to: usize| matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= from && to <= last);
-        let below: Element<'a, Message> = match (joined_below, place, played) {
-            _ if joining(index, index + 1) => line(Some(planned), Fill).into(),
-            // The step that is on fills the line under its dot as it
-            // plays, whether or not it goes on by itself.
-            (_, Place::Current, Some(done)) => {
-                let ahead = match rehearsed {
-                    Some(_) => faint,
-                    None => track(joined_below),
-                };
-                // The line goes on over the next step's dot, where one
-                // comes after: this is its part of that length.
-                let beyond = match after {
-                    true => RAIL_TOP,
-                    false => 0.0,
-                };
-                let done = done.clamp(0.0, 1.0);
-                iced::widget::responsive(move |room| {
-                    let tall = room.height;
-                    BELOW_TALL.store(tall.to_bits(), std::sync::atomic::Ordering::Relaxed);
-                    let filled = (done * (tall + beyond)).min(tall);
-                    container(column![
-                        solid(live, Length::Fixed(filled)),
-                        tube(ahead, Length::Fixed(tall - filled)),
-                    ])
-                    .center_x(Fill)
-                    .into()
-                })
-                .into()
-            }
-            (false, ..) => Space::new().height(Fill).into(),
+        // The line from this dot to the next step's.
+        let joining = matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= index && index < last);
+        let line = match (joined_below, place, played) {
+            _ if joining => Some(track::Line::Plain(planned)),
+            // The step that is on fills its line as it plays, whether or
+            // not it goes on by itself: what is still to come is the
+            // line as it would be, where it goes on into the next; a
+            // quiet one where it waits.
+            (_, Place::Current, Some(done)) => Some(track::Line::Playing {
+                done: done.clamp(0.0, 1.0),
+                played: live,
+                ahead: match (rehearsed, joined_below) {
+                    (Some(_), _) => Palette::tint(live, 0.35),
+                    (None, true) => planned,
+                    (None, false) => Palette::tint(p.on_surface_variant, 0.5),
+                },
+            }),
+            (false, ..) => None,
+            (true, Place::Done, _) => Some(track::Line::Plain(past)),
             // On, with nothing playing yet: the line as planned. The
             // stage's colour on it always means that much has played.
-            (true, Place::Current, None) => line(Some(planned), Fill).into(),
-            (true, Place::Done, _) => line(Some(past), Fill).into(),
-            (true, ..) => line(Some(planned), Fill).into(),
+            (true, ..) => Some(track::Line::Plain(planned)),
         };
+        let stop = track::Stop {
+            id: step.id,
+            dot: look,
+            line,
+            next: next.map(|next| next.id),
+            cut: None,
+        };
+        // What is here in the row is only room to press: the dot, the
+        // line over it and the line under it.
+        let above = Space::new().width(RAIL_LINE).height(match on {
+            true => RAIL_TOP - RAIL_RING,
+            false => RAIL_TOP,
+        });
+        let size = match on {
+            true => RAIL_DOT + 2.0 * RAIL_RING,
+            false => RAIL_DOT,
+        };
+        let dot = track::seen(
+            track::Key::Dot(step.id),
+            places,
+            Space::new().width(size).height(size),
+        );
+        let below = Space::new().width(RAIL_LINE).height(Fill);
         // The dot and the line under it are one thing to press: what is
         // still ahead can be joined to the next step or parted from it,
         // where the plan can change. The line over the dot is the join
@@ -1950,7 +1937,7 @@ impl App {
             true => mouse_area(dot)
                 .on_right_press(ring(crate::rail::RingOn::Dot(step.id)))
                 .into(),
-            false => dot.into(),
+            false => dot,
         };
         let below: Element<'a, Message> = container(below)
             .width(RAIL)
@@ -2021,90 +2008,30 @@ impl App {
                 .into(),
             _ => upper,
         };
-        // The rail says when the pointer is on it, for a dot pulled here.
         let id = step.id;
         let rail = column![upper, lower].width(RAIL).height(Fill);
-        // Beside it, the line that curls back from the last step of
-        // something that repeats to its first. Every row keeps its room,
-        // so the dots stay in one line down the plan.
-        // From which side the pull that is under way began.
-        let side = self.pull.as_ref().map(|pull| pull.side);
-        let piece_of = |first: usize, last: usize| match index {
-            at if at == first => look::Curl::Into,
-            at if at == last => look::Curl::Out,
-            _ => look::Curl::Past,
-        };
-        let dot_at = RAIL_TOP + RAIL_DOT / 2.0;
-        // A loop being pulled draws its line already; one that can't be,
-        // in the colour of what is wrong.
-        let pulled = match would {
-            Some(crate::rail::Would::Loop { first, last }) => Some((piece_of(first, last), None)),
-            Some(crate::rail::Would::Not { first, last })
-                if side != Some(crate::rail::Side::Right) =>
-            {
-                Some((piece_of(first, last), None))
-            }
-            _ => None,
-        };
-        let being_pulled = pulled.is_some();
-        let curl_ink = match being_pulled {
-            true => would_ink,
-            false => planned,
-        };
-        let curl: Element<'a, Message> = match pulled.or_else(|| curl_at(plan, index)) {
-            // One drawing the whole height of the row, so it meets the
-            // pieces above and below it, with what it says of itself in
-            // a gap at its middle.
-            Some((piece, mark)) if lanes.curl > 0.0 => {
-                crate::drawn::curl(piece, curl_ink, dot_at, mark).into()
-            }
-            _ => Space::new().width(lanes.curl).into(),
-        };
-        // A right click on the line opens what is the loop's own: how
-        // often it comes.
+        // Beside it, room for the line that curls back from the last
+        // step of something that repeats to its first. Every row keeps
+        // it, so the dots stay in one line down the plan. A right click
+        // there opens what is the loop's own: how often it comes.
+        let pulling = would.is_some();
+        let curl: Element<'a, Message> = Space::new().width(lanes.curl).height(Fill).into();
         let curl: Element<'a, Message> = match repeating(plan, index) {
-            Some((group, ..)) if rings && !being_pulled => mouse_area(curl)
-                .on_right_press(ring(crate::rail::RingOn::Loop(
-                    group.map(|at| steps[at].id),
-                )))
-                .interaction(mouse::Interaction::Pointer)
-                .into(),
+            Some((group, ..)) if rings && !pulling && loop_at(plan, index).is_some() => {
+                mouse_area(curl)
+                    .on_right_press(ring(crate::rail::RingOn::Loop(
+                        group.map(|at| steps[at].id),
+                    )))
+                    .interaction(mouse::Interaction::Pointer)
+                    .into()
+            }
             _ => curl,
         };
-        // On the other side of the dots, the line of a drawn order: it
-        // wanders, with its mark in a gap at its middle.
-        let pulled = match would {
-            Some(crate::rail::Would::Shuffle { first, last }) => {
-                let rows: Vec<usize> = (first..=last)
-                    .filter(|at| !steps[*at].is_section())
-                    .collect();
-                let mark = rows
-                    .iter()
-                    .position(|at| *at == index)
-                    .and_then(|row| crate::drawn::MarkAt::of(rows.len(), row));
-                Some((piece_of(first, last), mark))
-            }
-            Some(crate::rail::Would::Not { first, last })
-                if side == Some(crate::rail::Side::Right) =>
-            {
-                Some((piece_of(first, last), None))
-            }
-            _ => None,
-        };
-        let there = drawn_at(plan, index);
-        let drawn: Element<'a, Message> =
-            match pulled.or(there.map(|(_, piece, mark)| (piece, mark))) {
-                Some((piece, mark)) if lanes.drawn > 0.0 => {
-                    let ink = match pulled {
-                        Some(_) => would_ink,
-                        None => planned,
-                    };
-                    crate::drawn::wave(piece, ink, dot_at, mark).into()
-                }
-                _ => Space::new().width(lanes.drawn).height(Fill).into(),
-            };
-        // A right click on a line that is there opens its ring.
-        let drawn: Element<'a, Message> = match there.filter(|_| rings && pulled.is_none()) {
+        // On the other side of the dots, room for the line of a drawn
+        // order. A right click on a line that is there opens its ring.
+        let drawn: Element<'a, Message> = Space::new().width(lanes.drawn).height(Fill).into();
+        let drawn: Element<'a, Message> = match order_at(plan, index).filter(|_| rings && !pulling)
+        {
             Some((group, ..)) => mouse_area(drawn)
                 .interaction(mouse::Interaction::Pointer)
                 .on_right_press(ring(crate::rail::RingOn::Shuffle(
@@ -2114,17 +2041,20 @@ impl App {
             None => drawn,
         };
         // The rail says when the pointer is on it, for a dot pulled here
-        // and for a ring opened here. A width of its own: laid out after
-        // the step beside it, a row that takes what it needs would be
-        // left none.
-        mouse_area(
+        // and for a ring opened here, and where it is, for what is drawn
+        // over it. A width of its own: laid out after the step beside
+        // it, a row that takes what it needs would be left none.
+        let rail = mouse_area(track::seen(
+            track::Key::Row(id),
+            places,
             row![curl, rail, drawn]
                 .width(lanes.curl + RAIL + lanes.drawn)
                 .height(Fill),
-        )
+        ))
         .on_enter(Message::Rail(crate::rail::Act::Over(id)))
         .on_exit(Message::Rail(crate::rail::Act::Left(id)))
-        .into()
+        .into();
+        (rail, stop)
     }
 
     /// Whether the pointer is on the row of `id` and the row can change:
@@ -2654,21 +2584,18 @@ fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)>
         .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))
 }
 
-/// The piece of the curl beside the step at `index`, when it is in
+/// The line that curls back beside the step at `index`, when it is in
 /// something that repeats: the nearest section or loop around it that
-/// does, or else the plan. `None` for a step in nothing that repeats,
-/// and for the only step of something that does (its own mark says so).
-/// With it, where the line's middle is in this row, what the line says
-/// of itself: how often it comes.
-fn curl_at(
-    plan: &Plan,
-    index: usize,
-) -> Option<(look::Curl, Option<(String, crate::drawn::MarkAt)>)> {
+/// does, or else the plan. Its first and last steps, and what it says of
+/// itself: how often it comes. `None` for a step in nothing that
+/// repeats, and for the only step of something that does (its own mark
+/// says so).
+fn loop_at(plan: &Plan, index: usize) -> Option<(usize, usize, Option<String>)> {
     let steps = plan.steps();
     let (group, start, end) = repeating(plan, index)?;
     let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
     // With something in it that repeats by itself, its own curl would be
-    // drawn in pieces round that one's: it is left to its heading to say.
+    // drawn round that one's: it is left to its heading to say.
     if inside
         .iter()
         .any(|at| repeating(plan, *at).map(|(inner, ..)| inner) != Some(group))
@@ -2679,20 +2606,8 @@ fn curl_at(
     if first == last {
         return None;
     }
-    let piece = match index {
-        at if at == first => look::Curl::Into,
-        at if at == last => look::Curl::Out,
-        _ => look::Curl::Past,
-    };
     let flow = group.map_or(plan.flow, |at| steps[at].flow);
-    // At the line's middle: on the step there, or between the two
-    // either side of it.
-    let mark = inside
-        .iter()
-        .position(|at| *at == index)
-        .and_then(|row| crate::drawn::MarkAt::of(inside.len(), row))
-        .and_then(|at| Some((repeat_words(flow.repeat)?, at)));
-    Some((piece, mark))
+    Some((first, last, repeat_words(flow.repeat)))
 }
 
 /// What draws an order round the step at `index`: the nearest section or
@@ -2709,30 +2624,15 @@ fn shuffling(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)>
         .or(plan.flow.shuffle.then_some((None, 0, steps.len())))
 }
 
-/// The piece of a drawn order's line beside the step at `index`: what
-/// draws the order, whether the step is the first of them, one between
-/// or the last, and where the line's mark is in its row, if it is. `None` for a step in no drawn order.
-fn drawn_at(
-    plan: &Plan,
-    index: usize,
-) -> Option<(Option<usize>, look::Curl, Option<crate::drawn::MarkAt>)> {
+/// The line of the drawn order the step at `index` is in: what draws
+/// the order, and its first and last steps. `None` for a step in no
+/// drawn order.
+fn order_at(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
     let steps = plan.steps();
     let (group, start, end) = shuffling(plan, index)?;
     let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
     let (first, last) = (*inside.first()?, *inside.last()?);
-    if first == last {
-        return None;
-    }
-    let piece = match index {
-        at if at == first => look::Curl::Into,
-        at if at == last => look::Curl::Out,
-        _ => look::Curl::Past,
-    };
-    let mark = inside
-        .iter()
-        .position(|at| *at == index)
-        .and_then(|row| crate::drawn::MarkAt::of(inside.len(), row));
-    Some((group, piece, mark))
+    (first != last).then_some((group, first, last))
 }
 
 /// How often something comes, in a few characters; `None` for once.
@@ -2943,7 +2843,6 @@ mod tests {
 
     #[test]
     fn the_curl_runs_from_the_last_step_of_what_repeats_to_its_first() {
-        use look::Curl;
         let mut plan = Plan::new("Sabbath");
         let music = plan.section("Music", None);
         for label in ["A", "B", "C"] {
@@ -2952,49 +2851,30 @@ mod tests {
         let sermon = plan.section("Sermon", None);
         plan.push("D", Action::Blank);
         // Nothing repeats: no curl.
-        assert_eq!(curl_at(&plan, 1), None);
+        assert_eq!(loop_at(&plan, 1), None);
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
-        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
-        assert_eq!(
-            curl_at(&plan, 2),
-            Some((
-                Curl::Past,
-                Some(("×2".to_string(), crate::drawn::MarkAt::Dot))
-            )),
-            "the middle row says how often"
-        );
-        assert_eq!(curl_at(&plan, 3), Some((Curl::Out, None)));
-        assert_eq!(curl_at(&plan, 5), None, "Sermon doesn't repeat");
+        // From A to C, whichever of them is asked, saying how often.
+        for index in 1..=3 {
+            assert_eq!(loop_at(&plan, index), Some((1, 3, Some("×2".to_string()))));
+        }
+        assert_eq!(loop_at(&plan, 5), None, "Sermon doesn't repeat");
         // One step has nothing to curl round.
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever;
-        assert_eq!(curl_at(&plan, 5), None);
+        assert_eq!(loop_at(&plan, 5), None);
         // The plan repeats: the steps in nothing nearer are its own.
         plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
         plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
         plan.flow.repeat = Repeat::Forever;
-        assert_eq!(curl_at(&plan, 1), Some((Curl::Into, None)));
-        assert_eq!(curl_at(&plan, 5), Some((Curl::Out, None)));
-        // A loop drawn round two steps has no heading: its line says how
-        // often, between the two.
+        assert_eq!(loop_at(&plan, 1), Some((1, 5, Some("∞".to_string()))));
+        assert_eq!(loop_at(&plan, 5), Some((1, 5, Some("∞".to_string()))));
+        // A loop drawn round two steps has no heading: its line runs
+        // from one to the other.
         plan.flow.repeat = Repeat::Once;
         let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
         plan.loop_over(a, b).unwrap();
         // Music, the loop, A, B, C.
-        assert_eq!(
-            curl_at(&plan, 2),
-            Some((
-                Curl::Into,
-                Some(("×2".to_string(), crate::drawn::MarkAt::Below))
-            )),
-            "between the two: each row has its half"
-        );
-        assert_eq!(
-            curl_at(&plan, 3),
-            Some((
-                Curl::Out,
-                Some(("×2".to_string(), crate::drawn::MarkAt::Above))
-            ))
-        );
-        assert_eq!(curl_at(&plan, 4), None, "C is out of it");
+        assert_eq!(loop_at(&plan, 2), Some((2, 3, Some("×2".to_string()))));
+        assert_eq!(loop_at(&plan, 3), Some((2, 3, Some("×2".to_string()))));
+        assert_eq!(loop_at(&plan, 4), None, "C is out of it");
     }
 }

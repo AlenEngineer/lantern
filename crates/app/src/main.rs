@@ -46,6 +46,7 @@ mod shelf;
 mod side;
 mod stage;
 mod thumbs;
+mod track;
 mod usage;
 mod watch;
 mod widgets;

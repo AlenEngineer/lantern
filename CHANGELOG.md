@@ -420,6 +420,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The line down the plan's steps is one drawing over the whole list,
+  made from where the rows really are: a line is as long as the way
+  between its two dots, what has played is that share of it, and what a
+  loop says of itself is at the middle of its line. Before, each row drew
+  its own pieces and they were made to meet.
+- It moves: what has played catches up after a jump, the ring of the step
+  that goes on opens out of its dot, a line that is joined, a loop or a
+  drawn order is drawn in from its start, and the dot under the pointer
+  shows it. With motion off, none of it moves.
 - The line of the step that is playing is hollow where it has not played
   yet and solid where it has: how far it has come is plain.
 
