@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{Action, Ending, Flow, Plan, Repeat, Step, StepId};
+use crate::{Action, Ending, Flow, FlowOf, Plan, Repeat, SpanId, Step, StepId};
 
 /// Something that was put on stage.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,22 +32,27 @@ pub struct Session {
     /// When each step was first reached, for timing sections.
     entered: HashMap<StepId, SystemTime>,
     /// How many times round each repeating thing has gone already: a
-    /// step or a section by its id, the plan as `None`.
-    rounds: HashMap<Option<StepId>, u16>,
+    /// step by itself, a span, or the plan.
+    rounds: HashMap<FlowOf, u16>,
     /// What shuffled orders are drawn from, so the same round of the
-    /// same section reads the same each time it is asked.
+    /// same span reads the same each time it is asked.
     seed: u64,
     /// The time of day, as time since midnight, for a repeat that ends
     /// at one. Unknown, such a repeat goes on.
     now: Option<Duration>,
 }
 
-/// A section by its id, or the plan.
-type Group = Option<StepId>;
+/// What the steps go round in: a span by its id, or the plan.
+type Group = Option<SpanId>;
 
 /// What going on does to the rounds counted: a new count for something
 /// that comes again, `None` for something that is over.
-type Rounds = Vec<(Group, Option<u16>)>;
+type Rounds = Vec<(FlowOf, Option<u16>)>;
+
+/// A span, or the plan, as what its rounds are counted for.
+fn counted(group: Group) -> FlowOf {
+    group.map_or(FlowOf::Plan, FlowOf::Span)
+}
 
 impl Session {
     /// A session that hasn't started yet.
@@ -109,8 +114,8 @@ impl Session {
     }
 
     /// Moves to the next step (or the first, if not started), following
-    /// the plan's flow: a step, a section or the plan that repeats comes
-    /// again, innermost first, and a shuffled section gives its steps in
+    /// the plan's flow: a step, a span or the plan that repeats comes
+    /// again, innermost first, and a shuffled span gives its steps in
     /// its drawn order. At the end, stays on the last step and returns
     /// `None`.
     #[allow(clippy::should_implement_trait)] // a cursor, not an iterator: it moves both ways
@@ -140,32 +145,39 @@ impl Session {
             return Some((self.entering(self.forward(0)?, None), rounds));
         };
         // The step itself comes again.
-        let own = Some(steps[at].id);
+        let own = FlowOf::Step(steps[at].id);
         if self.again(steps[at].flow, self.round(own)) {
             rounds.push((own, Some(self.round(own) + 1)));
             return Some((at, rounds));
         }
         rounds.push((own, None));
-        // Then the sections it is in, innermost first, and the plan.
+        // Then the spans it is in, innermost first, and the plan.
         let groups = self
             .plan
-            .within(at)
+            .spans_at(at)
             .into_iter()
             .rev()
             .map(Some)
             .chain([None]);
-        // What follows in the plan's own order, inside a section that
+        // What follows in the plan's own order, inside a span that
         // isn't over; and where the plan goes on after one that is.
         let mut inside = None;
         let mut after = at + 1;
         for group in groups {
             let flow = self.flow_of(group);
-            let order = self.order(group, self.round(group));
+            let of = counted(group);
+            let order = self.order(group, self.round(of));
             let place = order.iter().position(|&index| index == at);
             // Its time has come and it doesn't finish the round: it is
             // over where it is.
             let cut = self.past_its_time(flow, Ending::Step);
-            if !cut && place.is_none_or(|place| place + 1 < order.len()) {
+            // More of it is to come: in a drawn order, after this step's
+            // place in it; in the plan's, after what is over already.
+            let more = match flow.shuffle {
+                true => place.is_none_or(|place| place + 1 < order.len()),
+                false => order.iter().any(|&index| index >= after),
+            };
+            if !cut && more {
                 // Not over. Shuffled, its order says what follows.
                 if flow.shuffle
                     && let Some(place) = place
@@ -176,29 +188,29 @@ impl Session {
                 continue;
             }
             // Over: once more round, or out of it.
-            if self.again(flow, self.round(group)) {
-                let round = self.round(group) + 1;
-                rounds.push((group, Some(round)));
+            if self.again(flow, self.round(of)) {
+                let round = self.round(of) + 1;
+                rounds.push((of, Some(round)));
                 return self
                     .order(group, round)
                     .first()
                     .map(|&first| (first, rounds));
             }
-            rounds.push((group, None));
+            rounds.push((of, None));
             inside = None;
-            after = self.span(group).1;
+            after = self.reach(group).1;
         }
         let index = self.forward(inside.unwrap_or(after))?;
         Some((self.entering(index, Some(at)), rounds))
     }
 
     /// Going to `index` from `from` in the plan's order: into a shuffled
-    /// section that `from` wasn't in, its first step is the one drawn
-    /// first. The outermost such section says.
+    /// span that `from` wasn't in, its first step is the one drawn
+    /// first. The outermost such span says.
     fn entering(&self, index: usize, from: Option<usize>) -> usize {
-        let was_in: Vec<StepId> = from.map_or_else(Vec::new, |from| self.plan.within(from));
+        let was_in: Vec<SpanId> = from.map_or_else(Vec::new, |from| self.plan.spans_at(from));
         let mut groups = vec![None];
-        groups.extend(self.plan.within(index).into_iter().map(Some));
+        groups.extend(self.plan.spans_at(index).into_iter().map(Some));
         groups
             .into_iter()
             .filter(|group| self.flow_of(*group).shuffle)
@@ -206,34 +218,47 @@ impl Session {
                 Some(id) => !was_in.contains(id),
                 None => from.is_none(),
             })
-            .and_then(|group| self.order(group, self.round(group)).first().copied())
+            .and_then(|group| {
+                self.order(group, self.round(counted(group)))
+                    .first()
+                    .copied()
+            })
             .unwrap_or(index)
     }
 
-    fn round(&self, of: Group) -> u16 {
+    /// How many times round `of` has gone already. A section's heading
+    /// counts as the span attached to the section.
+    fn round(&self, of: FlowOf) -> u16 {
+        let of = match of {
+            FlowOf::Step(id) => self
+                .plan
+                .section_span(id)
+                .map_or(of, |span| FlowOf::Span(span.id)),
+            _ => of,
+        };
         self.rounds.get(&of).copied().unwrap_or(0)
     }
 
     fn flow_of(&self, group: Group) -> Flow {
-        match group {
-            Some(id) => self.plan.get(id).map(|step| step.flow).unwrap_or_default(),
-            None => self.plan.flow,
-        }
+        self.plan.flow_of(counted(group)).unwrap_or_default()
     }
 
-    /// Where a section's steps start and end in the plan; all of it for
-    /// the plan.
-    fn span(&self, group: Group) -> (usize, usize) {
-        match group.and_then(|id| self.plan.position(id)) {
-            Some(at) => (at + 1, self.plan.group_end(at)),
+    /// Where a span's rows start and end in the plan; all of it for the
+    /// plan.
+    fn reach(&self, group: Group) -> (usize, usize) {
+        match group {
+            Some(id) => self
+                .plan
+                .span_range(id)
+                .map_or((0, 0), |(first, last)| (first, last + 1)),
             None => (0, self.plan.len()),
         }
     }
 
-    /// The steps of a section, or the plan, in the order they come this
+    /// The steps of a span, or the plan, in the order they come this
     /// `round`: the plan's, or a drawn one when it is shuffled.
     fn order(&self, group: Group, round: u16) -> Vec<usize> {
-        let (start, end) = self.span(group);
+        let (start, end) = self.reach(group);
         let steps = self.plan.steps();
         let mut order: Vec<usize> = (start..end).filter(|&i| !steps[i].is_section()).collect();
         if self.flow_of(group).shuffle {
@@ -275,7 +300,7 @@ impl Session {
             return false;
         };
         let own = self.plan.steps()[at].flow;
-        let groups = self.plan.within(at).into_iter().map(Some).chain([None]);
+        let groups = self.plan.spans_at(at).into_iter().map(Some).chain([None]);
         self.past_its_time(own, Ending::Sharp)
             || groups
                 .into_iter()
@@ -320,10 +345,37 @@ impl Session {
         self.entered.values().min().copied()
     }
 
-    /// Which time round a repeating step or section is on, or the plan
-    /// (`None`): 0 the first time.
-    pub fn round_of(&self, of: Option<StepId>) -> u16 {
-        self.round(of)
+    /// Which time round a repeating step, span or plan is on: 0 the
+    /// first time. A section's heading says it for the span attached to
+    /// the section.
+    pub fn round_of(&self, of: impl Into<FlowOf>) -> u16 {
+        self.round(of.into())
+    }
+
+    /// What going on from the step that is on goes back round: the step
+    /// itself coming again, the span whose round it ends, or the plan.
+    /// `None` when going on goes forward, or before the start. It is what
+    /// [`next`](Self::next) would do now, so it changes as the time of
+    /// day or the plan does.
+    pub fn follows_back(&self) -> Option<FlowOf> {
+        self.current_index()?;
+        let (_, rounds) = self.following()?;
+        rounds.into_iter().find_map(|(of, round)| round.map(|_| of))
+    }
+
+    /// Which time round `of` is on, counted from 0, and of how many in
+    /// all: `None` for a repeat with no number to it (until moved on, or
+    /// until a time). A section's heading says it for the span attached
+    /// to the section.
+    pub fn rounds(&self, of: impl Into<FlowOf>) -> (u16, Option<u16>) {
+        let of = of.into();
+        let repeat = self.plan.flow_of(of).unwrap_or_default().repeat;
+        let of_all = match repeat {
+            Repeat::Once => Some(1),
+            Repeat::Times(times) => Some(times.max(1)),
+            Repeat::Forever | Repeat::Until(_) => None,
+        };
+        (self.round(of), of_all)
     }
 
     /// When a step was first reached in this session.
@@ -551,22 +603,23 @@ mod tests {
     #[test]
     fn a_section_that_repeats_comes_again_then_the_plan_goes_on() {
         let (mut session, music, _) = two_sections();
-        session.edit(|plan| plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2));
-        assert_eq!(walk(&mut session, 6), "A B A B C -");
+        session.edit(|plan| plan.loop_section(music).unwrap());
+        assert_eq!(walk(&mut session, 3), "A B A");
+        assert_eq!(session.round_of(music), 1, "the second time round");
+        assert_eq!(walk(&mut session, 3), "B C -");
     }
 
     #[test]
     fn a_loop_round_some_steps_comes_again_and_what_follows_is_out_of_it() {
         // Music: A B D, Sermon: C. A loop round A and B, twice.
-        let (mut session, music, _) = two_sections();
+        let (mut session, ..) = two_sections();
         session.edit(|plan| {
             let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
             let d = plan.insert(3, "D", Action::Blank);
             let looped = plan.loop_over(b, a).expect("a loop round A and B");
-            assert!(plan.get(looped).unwrap().is_loop());
-            assert_eq!(
-                plan.within(plan.position(d).unwrap()),
-                [music],
+            assert_eq!(plan.spans_at(plan.position(a).unwrap()), [looped]);
+            assert!(
+                plan.spans_at(plan.position(d).unwrap()).is_empty(),
                 "D is out of it"
             );
         });
@@ -576,8 +629,8 @@ mod tests {
         session.edit(|plan| {
             let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
             plan.insert(3, "D", Action::Blank);
-            plan.loop_over(a, b);
-            plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+            plan.loop_over(a, b).unwrap();
+            plan.loop_section(music).unwrap();
         });
         assert_eq!(walk(&mut session, 12), "A B A B D A B A B D C -");
     }
@@ -589,9 +642,12 @@ mod tests {
         let until = |ends: Ending| {
             let (mut session, music, _) = two_sections();
             session.edit(|plan| {
-                let flow = &mut plan.get_mut(music).unwrap().flow;
-                flow.repeat = Repeat::Until(TimeOfDay::parse("10:30").unwrap());
-                flow.ends = ends;
+                let flow = Flow {
+                    repeat: Repeat::Until(TimeOfDay::parse("10:30").unwrap()),
+                    ends,
+                    ..Flow::default()
+                };
+                plan.set_flow(music, flow).unwrap();
             });
             session.tell_time(at("10:00"));
             session
@@ -630,7 +686,7 @@ mod tests {
         session.edit(|plan| {
             let b = plan.steps()[2].id;
             plan.get_mut(b).unwrap().flow.repeat = Repeat::Times(2);
-            plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+            plan.loop_section(music).unwrap();
         });
         // B twice each time round, and Music twice round.
         assert_eq!(walk(&mut session, 7), "A B B A B B C");
@@ -642,7 +698,11 @@ mod tests {
         session.edit(|plan| plan.flow.repeat = Repeat::Times(2));
         assert_eq!(walk(&mut session, 7), "A B C A B C -");
         let (mut session, ..) = two_sections();
-        session.edit(|plan| plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Forever);
+        let forever = Flow {
+            repeat: Repeat::Forever,
+            ..Flow::default()
+        };
+        session.edit(|plan| plan.set_flow(sermon, forever).unwrap());
         assert_eq!(walk(&mut session, 6), "A B C C C C");
         // Going somewhere else is the way out.
         let first = session.plan().steps()[1].id;
@@ -654,7 +714,11 @@ mod tests {
         use crate::timing::TimeOfDay;
         let (mut session, music, _) = two_sections();
         let at = |text: &str| TimeOfDay::parse(text).unwrap();
-        session.edit(|plan| plan.get_mut(music).unwrap().flow.repeat = Repeat::Until(at("10:30")));
+        let until = Flow {
+            repeat: Repeat::Until(at("10:30")),
+            ..Flow::default()
+        };
+        session.edit(|plan| plan.set_flow(music, until).unwrap());
         session.tell_time(at("10:00").since_midnight());
         assert_eq!(walk(&mut session, 4), "A B A B");
         // What is on is finished, then the plan goes on.
@@ -671,11 +735,12 @@ mod tests {
         }
         plan.section("Sermon", None);
         plan.show(resource("Z"));
-        plan.get_mut(music).unwrap().flow = Flow {
+        let twice_drawn = Flow {
             repeat: Repeat::Times(2),
             shuffle: true,
             ..Flow::default()
         };
+        plan.set_flow(music, twice_drawn).unwrap();
         let mut session = Session::new(plan);
         let mut rounds = Vec::new();
         for _ in 0..2 {
@@ -693,6 +758,131 @@ mod tests {
         }
         // Out of the section when its rounds are over.
         assert_eq!(label(session.next()), Some("Z"));
+    }
+
+    /// Music { A, B }, Sermon { C, D }, Close { E }.
+    fn three_sections() -> (Session, [StepId; 5]) {
+        let mut plan = Plan::new("Sabbath");
+        plan.section("Music", None);
+        let a = plan.show(resource("A"));
+        let b = plan.show(resource("B"));
+        plan.section("Sermon", None);
+        let c = plan.show(resource("C"));
+        let d = plan.show(resource("D"));
+        plan.section("Close", None);
+        let e = plan.show(resource("E"));
+        (Session::new(plan), [a, b, c, d, e])
+    }
+
+    #[test]
+    fn a_loop_across_a_heading_goes_round_from_one_section_into_the_next() {
+        // From B in Music to C in Sermon, twice.
+        let (mut session, [_, b, c, ..]) = three_sections();
+        let looped = session.edit(|plan| plan.loop_over(b, c).unwrap());
+        assert_eq!(walk(&mut session, 2), "A B");
+        assert_eq!(session.follows_back(), None, "B goes on to C");
+        assert_eq!(walk(&mut session, 1), "C");
+        assert_eq!(
+            label(session.peek_next()),
+            Some("B"),
+            "back over the heading"
+        );
+        assert_eq!(session.follows_back(), Some(FlowOf::Span(looped)));
+        assert_eq!(session.rounds(looped), (0, Some(2)));
+        assert_eq!(walk(&mut session, 2), "B C");
+        assert_eq!(session.round_of(looped), 1);
+        assert_eq!(session.rounds(looped), (1, Some(2)));
+        assert_eq!(session.follows_back(), None, "the last time round");
+        assert_eq!(walk(&mut session, 3), "D E -");
+        // Round whole sections too: from A to D, with Sermon's heading
+        // among them, three times.
+        let (mut session, [a, _, _, d, _]) = three_sections();
+        session.edit(|plan| {
+            let looped = plan.loop_over(a, d).unwrap();
+            let thrice = Flow {
+                repeat: Repeat::Times(3),
+                ..Flow::default()
+            };
+            plan.set_flow(looped, thrice).unwrap();
+        });
+        assert_eq!(walk(&mut session, 14), "A B C D A B C D A B C D E -");
+    }
+
+    #[test]
+    fn a_span_in_a_span_goes_round_each_time_the_outer_one_does() {
+        // B and C twice, inside A to D twice, the inner one across the
+        // heading; then Sermon's own span round C and D is refused, for
+        // it would cut the inner one in two.
+        let (mut session, [a, b, c, d, _]) = three_sections();
+        session.edit(|plan| {
+            let inner = plan.loop_over(b, c).unwrap();
+            plan.loop_over(a, d).unwrap();
+            let sermon = plan.steps()[3].id;
+            assert_eq!(
+                plan.loop_section(sermon),
+                Err(crate::SpanError::HalfOver(inner))
+            );
+        });
+        assert_eq!(
+            walk(&mut session, 14),
+            "A B C B C D A B C B C D E -",
+            "the inner loop starts over with each outer round"
+        );
+        // A drawn order in a loop: each round of the loop gives each of
+        // its steps once, wherever in the plan the last one drawn sits.
+        let mut plan = Plan::new("Before");
+        let ids = ["A", "B", "C", "D", "E"].map(|name| plan.show(resource(name)));
+        plan.shuffle_over(ids[1], ids[3]).unwrap();
+        plan.loop_over(ids[0], ids[3]).unwrap();
+        let mut session = Session::new(plan);
+        for round in 0..2 {
+            assert_eq!(label(session.next()), Some("A"), "round {round}");
+            let mut drawn: Vec<String> = (0..3)
+                .map(|_| {
+                    let coming = label(session.peek_next()).map(str::to_string);
+                    let came = label(session.next()).map(str::to_string);
+                    assert_eq!(coming, came, "up next is what comes");
+                    came.unwrap()
+                })
+                .collect();
+            drawn.sort();
+            assert_eq!(drawn, ["B", "C", "D"], "round {round}");
+        }
+        assert_eq!(walk(&mut session, 2), "E -");
+    }
+
+    #[test]
+    fn a_step_put_into_a_looped_section_comes_round_with_it() {
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| {
+            plan.loop_section(music).unwrap();
+            plan.insert(3, "New", Action::Blank);
+        });
+        assert_eq!(walk(&mut session, 8), "A B New A B New C -");
+    }
+
+    #[test]
+    fn a_span_until_a_time_across_a_heading_is_cut_there_and_then() {
+        use crate::timing::TimeOfDay;
+        let (mut session, [_, b, c, ..]) = three_sections();
+        let at = |text: &str| TimeOfDay::parse(text).unwrap();
+        session.edit(|plan| {
+            let looped = plan.loop_over(b, c).unwrap();
+            let sharp = Flow {
+                repeat: Repeat::Until(at("10:30")),
+                ends: Ending::Sharp,
+                ..Flow::default()
+            };
+            plan.set_flow(looped, sharp).unwrap();
+        });
+        session.tell_time(at("10:00").since_midnight());
+        assert_eq!(walk(&mut session, 4), "A B C B");
+        assert!(!session.cut_now());
+        session.tell_time(at("10:30").since_midnight());
+        assert!(session.cut_now());
+        // Going on leaves the span: D is after its last step.
+        assert_eq!(walk(&mut session, 1), "D");
+        assert!(!session.cut_now());
     }
 
     #[test]

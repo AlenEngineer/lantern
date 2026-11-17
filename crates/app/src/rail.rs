@@ -11,7 +11,7 @@
 
 use iced::widget::{Space, button, container, mouse_area, pin, text, tooltip};
 use iced::{Element, Fill, Point};
-use lantern_engine::{Plan, Repeat, StepId};
+use lantern_engine::{FlowOf, Plan, Repeat, StepId};
 
 use crate::look::{self, BOLD, Icon, META};
 use crate::widgets::hinted;
@@ -33,13 +33,13 @@ pub enum Act {
     Ring(RingOn),
     RingClose,
     /// Takes a loop away: one drawn round some steps, or how often a
-    /// section or the plan (`None`) comes.
-    Unloop(Option<StepId>),
-    /// Takes a drawn order away: of a group drawn round some steps, of a
-    /// section, or of the plan (`None`).
-    Unshuffle(Option<StepId>),
+    /// step, a section or the plan comes.
+    Unloop(FlowOf),
+    /// Takes a drawn order away: of a span drawn round some steps, of a
+    /// section, or of the plan.
+    Unshuffle(FlowOf),
     /// How something that comes again until a time ends when it comes.
-    Ends(Option<StepId>, lantern_engine::Ending),
+    Ends(FlowOf, lantern_engine::Ending),
 }
 
 /// Which way a pull has gone from the dot it began on, sideways: it
@@ -66,10 +66,10 @@ pub enum RingOn {
     /// The line from a step to the next: goes on, or waits.
     Line(StepId),
     /// A loop's line: how often it comes. Of a loop drawn round some
-    /// steps, of a section, or of the plan (`None`).
-    Loop(Option<StepId>),
-    /// A drawn order's line: of a group, a section, or the plan.
-    Shuffle(Option<StepId>),
+    /// steps, of a section, or of the plan.
+    Loop(FlowOf),
+    /// A drawn order's line: of a span, a section, or the plan.
+    Shuffle(FlowOf),
     /// A section, by its dot, or the plan by its own row (`None`): what
     /// holds for all of it.
     All(Option<StepId>),
@@ -97,7 +97,7 @@ impl App {
     fn how_often<'a>(
         &self,
         plan: &Plan,
-        of: Option<StepId>,
+        of: FlowOf,
         flow: lantern_engine::Flow,
     ) -> Element<'a, Message> {
         use lantern_engine::Ending;
@@ -378,7 +378,7 @@ impl App {
         };
         // What comes again, and where its button is: how often is set
         // beside it.
-        let mut again_at: Option<(Option<StepId>, lantern_engine::Flow, Point)> = None;
+        let mut again_at: Option<(FlowOf, lantern_engine::Flow, Point)> = None;
         match ring.on {
             RingOn::Dot(id) => {
                 let Some(at) = plan.position(id) else {
@@ -414,7 +414,7 @@ impl App {
                         "Come again"
                     },
                     Some(Message::SetRepeat(
-                        Some(id),
+                        FlowOf::Step(id),
                         if again {
                             Repeat::Once
                         } else {
@@ -423,7 +423,7 @@ impl App {
                     )),
                 ));
                 if again {
-                    again_at = Some((Some(id), step.flow, place(30.0, 46.0)));
+                    again_at = Some((FlowOf::Step(id), step.flow, place(30.0, 46.0)));
                 }
             }
             RingOn::Line(id) => {
@@ -453,12 +453,8 @@ impl App {
             // A loop's line holds only how often it comes: there, by the
             // pointer, with no button of the ring to hang from.
             RingOn::Loop(of) => {
-                let flow = match of {
-                    Some(id) => match plan.get(id) {
-                        Some(step) => step.flow,
-                        None => return Vec::new(),
-                    },
-                    None => plan.flow,
+                let Some(flow) = plan.flow_of(of) else {
+                    return Vec::new();
                 };
                 if flow.repeat == Repeat::Once {
                     return Vec::new();
@@ -472,11 +468,7 @@ impl App {
             }
             // A drawn order's line holds one thing: that it is there.
             RingOn::Shuffle(of) => {
-                let drawn = match of {
-                    Some(id) => plan.get(id).is_some_and(|step| step.flow.shuffle),
-                    None => plan.flow.shuffle,
-                };
-                if !drawn {
+                if !plan.flow_of(of).is_some_and(|flow| flow.shuffle) {
                     return Vec::new();
                 }
                 petals.push(petal(
@@ -492,13 +484,16 @@ impl App {
             // A section's dot, or the plan's own row: what holds for all
             // of it. How often it comes again is its loop's line's.
             RingOn::All(of) => {
-                let (flow, all_go) = match of {
+                let all_go = match of {
                     Some(id) => match plan.get(id) {
-                        Some(step) => (step.flow, step.advance == Some(true)),
+                        Some(step) => step.advance == Some(true),
                         None => return Vec::new(),
                     },
-                    None => (plan.flow, plan.advance),
+                    None => plan.advance,
                 };
+                // A section's is the span attached to it.
+                let flow = plan.flow_of(of).unwrap_or_default();
+                let of_flow = FlowOf::from(of);
                 let again = flow.repeat != Repeat::Once;
                 petals.push(petal(
                     -48.0,
@@ -528,8 +523,8 @@ impl App {
                         "All of it comes again"
                     },
                     Some(match again {
-                        true => Message::Rail(Act::Unloop(of)),
-                        false => Message::SetRepeat(of, Repeat::Times(2)),
+                        true => Message::Rail(Act::Unloop(of_flow)),
+                        false => Message::SetRepeat(of_flow, Repeat::Times(2)),
                     }),
                 ));
                 petals.push(petal(
@@ -544,8 +539,8 @@ impl App {
                         "All of it in an order drawn afresh each time"
                     },
                     Some(match flow.shuffle {
-                        true => Message::Rail(Act::Unshuffle(of)),
-                        false => Message::SetShuffle(of, true),
+                        true => Message::Rail(Act::Unshuffle(of_flow)),
+                        false => Message::SetShuffle(of_flow, true),
                     }),
                 ));
             }
@@ -761,12 +756,12 @@ impl Pull {
                 };
                 Some(match self.side {
                     Side::Right => or_not(
-                        plan.clone().shuffle_over(self.from, over).is_some(),
+                        plan.clone().shuffle_over(self.from, over).is_ok(),
                         Would::Shuffle { first, last },
                     ),
                     Side::Along if to > from => Would::Join { first, last },
                     Side::Left | Side::Along => or_not(
-                        plan.clone().loop_over(self.from, over).is_some(),
+                        plan.clone().loop_over(self.from, over).is_ok(),
                         Would::Loop { first, last },
                     ),
                 })
@@ -835,10 +830,23 @@ mod tests {
         wandering.to(Point::new(x - 40.0, 160.0));
         wandering.aim(&plan, None);
         assert_eq!(wandering.would, Some(Would::Loop { first: 1, last: 3 }));
-        // From D up to B: across Sermon's heading.
+        // From D up to B, across Sermon's heading: a loop goes there, a
+        // drawn order does not.
         assert_eq!(
             pull(d, (x, 60.0), Some(b)).would,
-            Some(Would::Not { first: 2, last: 5 })
+            Some(Would::Loop { first: 2, last: 5 })
+        );
+        plan.push("E", Action::Blank);
+        let pull = |from, to: (f32, f32), over| {
+            let mut pull = Pull::new(from, Some(true));
+            pull.to(Point::new(x, 100.0));
+            pull.to(Point::new(to.0, to.1));
+            pull.aim(&plan, over);
+            pull
+        };
+        assert_eq!(
+            pull(d, (x + 20.0, 60.0), Some(a)).would,
+            Some(Would::Not { first: 1, last: 5 })
         );
     }
 }

@@ -52,11 +52,9 @@ pub struct Drag {
     pub levels: (u8, u8),
 }
 
-/// How far in a heading sits. A loop drawn round some steps is not one:
-/// it has no row, and what is carried lands among its steps or beside
-/// them by where it is put.
+/// How far in a heading sits.
 fn heading(step: &Step) -> Option<u8> {
-    step.depth().filter(|_| !step.is_loop())
+    step.depth()
 }
 
 /// How far the pointer goes sideways for one level in or out.

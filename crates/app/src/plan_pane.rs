@@ -12,8 +12,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, mouse};
 use lantern_engine::{
-    Action, Basis, Flow, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming, Step,
-    StepId, TimeOfDay, Timing,
+    Action, Basis, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming,
+    Step, StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, unit};
@@ -34,7 +34,7 @@ pub const ROWS: &str = "plan-rows";
 /// How far a section's steps sit in from its header: room between the
 /// section's own line and its steps' for the line of a loop round some
 /// of them.
-pub(crate) const INDENT: f32 = 40.0;
+pub(crate) const INDENT: f32 = 12.0;
 
 /// The field the plan's target time is typed in.
 pub(crate) const TARGET_BOX: &str = "plan-target";
@@ -68,14 +68,82 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
         .into()
 }
 
+/// A span as the rail shows it: what it is, the steps it runs from and
+/// to, how far out from the dots it is drawn (the more of its kind it
+/// holds, the further), and the section it is attached to, if it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Laid {
+    of: FlowOf,
+    first: usize,
+    last: usize,
+    lane: u8,
+    section: Option<StepId>,
+}
+
+/// The spans of one kind (`wanted` says which: those that come again,
+/// or those in a drawn order), and the plan where it is of that kind,
+/// each in its lane.
+fn laid(plan: &Plan, wanted: impl Fn(Flow) -> bool) -> Vec<Laid> {
+    let steps = plan.steps();
+    let step = |at: &usize| !steps[*at].is_section();
+    let all = (0..steps.len())
+        .find(step)
+        .zip((0..steps.len()).rfind(step))
+        .filter(|_| wanted(plan.flow))
+        .map(|(first, last)| Laid {
+            of: FlowOf::Plan,
+            first,
+            last,
+            lane: 0,
+            section: None,
+        });
+    // Outermost first: the plan, then the spans as the plan gives them.
+    let mut found: Vec<Laid> = all
+        .into_iter()
+        .chain(
+            plan.laid_spans()
+                .into_iter()
+                .filter(|(span, ..)| wanted(span.flow))
+                .map(|(span, first, last)| Laid {
+                    of: FlowOf::Span(span.id),
+                    first,
+                    last,
+                    lane: 0,
+                    section: match span.over {
+                        lantern_engine::Over::Section(id) => Some(id),
+                        lantern_engine::Over::Steps { .. } => None,
+                    },
+                }),
+        )
+        .collect();
+    // From the innermost out: each one lane further than what it holds.
+    for at in (0..found.len()).rev() {
+        let (outer, inner) = found.split_at_mut(at + 1);
+        let this = &mut outer[at];
+        this.lane = inner
+            .iter()
+            .filter(|held| this.first <= held.first && held.last <= this.last)
+            .map(|held| held.lane + 1)
+            .max()
+            .unwrap_or(0);
+    }
+    found
+}
+
 /// The room either side of the dots, the same down the whole plan so
-/// the dots stay in one line: on the left for a loop's line, on the
-/// right for a drawn order's. While planning both are there, since a
-/// pull can draw either; otherwise only where the plan has such a line.
+/// the dots stay in one line: on the left for the lines of what comes
+/// again, on the right for those of a drawn order, a lane for each one
+/// that holds another. While planning there is always one of each,
+/// since a pull can draw either.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Lanes {
+pub(crate) struct Lanes<'a> {
     curl: f32,
     drawn: f32,
+    loops: &'a [Laid],
+    orders: &'a [Laid],
+    /// How many lanes each side has room for.
+    loop_lanes: u8,
+    order_lanes: u8,
 }
 
 /// `row` with the room there is between two rows of the plan under it.
@@ -366,9 +434,9 @@ impl App {
         // Where the dots are, said by the rows as they are laid out, and
         // what one drawing over the list makes of them.
         let places = track::Places::default();
-        let mut items: Vec<track::Item> = Vec::new();
+        let mut stops: Vec<track::Stop> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
-        let mut headings: Vec<(usize, iced::Color, Option<u32>)> = Vec::new();
+        let mut headings: Vec<usize> = Vec::new();
         let mut cuts = 0u32;
         // While planning, the pane is a tree: the open plan, its sections
         // and their steps, and under them the other plans.
@@ -377,20 +445,20 @@ impl App {
         // A right click on the plan's own row opens the ring of how the
         // whole plan moves, where the plan can change.
         let can = self.can_edit();
-        let some = |of: &dyn Fn(lantern_engine::Flow) -> bool| {
-            of(plan.flow) || plan.steps().iter().any(|step| of(step.flow))
-        };
+        let loops = laid(plan, |flow| flow.repeat != Repeat::Once);
+        let orders = laid(plan, |flow| flow.shuffle);
+        // While planning one of each is always there: a pull can draw
+        // either line, and the rows must not shift as it begins.
+        let least = u8::from(tree && can);
+        let deepest = |of: &[Laid]| of.iter().map(|laid| laid.lane + 1).max().unwrap_or(0);
+        let (loop_lanes, order_lanes) = (deepest(&loops).max(least), deepest(&orders).max(least));
         let lanes = Lanes {
-            // While planning both are always there: a pull can draw
-            // either line, and the rows must not shift as it begins.
-            curl: match (tree && can) || some(&|flow| flow.repeat != Repeat::Once) {
-                true => look::CURL_WIDE,
-                false => 0.0,
-            },
-            drawn: match (tree && can) || some(&|flow| flow.shuffle) {
-                true => look::DRAWN_WIDE,
-                false => 0.0,
-            },
+            curl: track::loop_room(loop_lanes) - RAIL / 2.0,
+            drawn: track::order_room(order_lanes) - RAIL / 2.0,
+            loops: &loops,
+            orders: &orders,
+            loop_lanes,
+            order_lanes,
         };
         if tree {
             rows = rows.push(plans_own(self.time_row(plan, timing), can));
@@ -411,7 +479,7 @@ impl App {
             .and_then(|fill| plan.position(fill.section));
         let fill_at = fill_of.map(|at| plan.group_end(at));
         let fill_indent = fill_of.map_or(0.0, |at| {
-            INDENT * f32::from(plan.level(at) + 1) + look::CURL_WIDE
+            INDENT * f32::from(plan.level(at) + 1) + lanes.curl
         });
         // The rows of the section something would land in are kept apart
         // while they are gathered, to have one line down their side.
@@ -481,12 +549,7 @@ impl App {
             {
                 put!(proposed);
             }
-            // A loop round some steps has no row of its own: it is the
-            // curl beside them, and they stay in line with their section.
-            if step.is_loop() {
-                continue;
-            }
-            let inward = INDENT * f32::from(plan.shown_level(index));
+            let inward = INDENT * f32::from(plan.level(index));
             let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
             if step.is_section() {
                 // The section that was closing or opening ends here.
@@ -511,76 +574,59 @@ impl App {
                 }
                 // Its arrow folds its steps away, and opens them again.
                 let id = step.id;
-                // The section's dot, on the rail with its steps' dots: a
-                // ring with a middle while it is open, one filled disc
-                // when it is folded. A click folds it or opens it; a
-                // right click opens the ring of what holds for all of it.
+                // A heading is a label: it has no dot. Its place on the
+                // rail is kept, for a loop over all the section holds to
+                // come in to, and the line of the steps runs past it.
                 let ink = match over {
                     true => p.outline,
-                    false => p.primary,
+                    false => p.on_surface_variant,
                 };
-                let dot = container(container(Space::new().width(4).height(4)).style(move |_| {
-                    container::Style {
-                        background: Some(ink.into()),
-                        border: iced::Border {
-                            radius: 2.0.into(),
-                            ..iced::Border::default()
-                        },
-                        ..container::Style::default()
-                    }
-                }))
-                .padding(3)
-                .style(move |_| container::Style {
-                    background: Some(
-                        match folded {
-                            true => ink,
-                            false => iced::Color::TRANSPARENT,
-                        }
-                        .into(),
-                    ),
-                    border: iced::Border {
-                        color: ink,
-                        width: 1.5,
-                        radius: 6.5.into(),
+                headings.push(index);
+                let mark = container(track::seen(
+                    track::Key::Heading(id),
+                    &places,
+                    Space::new().width(6).height(6),
+                ))
+                .center_x(RAIL)
+                .center_y(Length::Shrink);
+                // Its arrow folds its steps away, and opens them again;
+                // a right click on it opens the ring of what holds for
+                // all of it.
+                let fold = container(look::icon(
+                    match folded {
+                        true => Icon::Folded,
+                        false => Icon::Open,
                     },
-                    ..container::Style::default()
-                });
-                let dot = track::seen(track::Key::Section(step.id), &places, dot);
-                items.push(track::Item::Section {
-                    id: step.id,
-                    cut: folding.is_some().then_some(cuts),
-                });
-                headings.push((index, ink, folding.is_some().then_some(cuts)));
-                let dot = container(dot).center_x(RAIL).center_y(Length::Shrink);
-                let mut dot = mouse_area(dot).interaction(mouse::Interaction::Pointer);
+                    14.0,
+                    ink,
+                ))
+                .center_x(INDENT)
+                .center_y(Length::Shrink);
+                let mut fold = mouse_area(fold).interaction(mouse::Interaction::Pointer);
                 // One that is over in a service is folded as a matter of
                 // course: there is nothing to open.
                 if !over {
-                    dot = dot.on_press(Message::Fold(id));
+                    fold = fold.on_press(Message::Fold(id));
                 }
                 if self.can_edit() {
-                    dot = dot.on_right_press(Message::Rail(crate::rail::Act::Ring(
+                    fold = fold.on_right_press(Message::Rail(crate::rail::Act::Ring(
                         crate::rail::RingOn::All(Some(id)),
                     )));
                 }
-                // Left of its dot, room for its own line where it comes
-                // again: a right click there opens how often it does.
-                let again: Element<'_, Message> = Space::new().width(lanes.curl).height(20).into();
-                let again: Element<'_, Message> =
-                    match self.can_edit() && step.flow.repeat != Repeat::Once {
-                        true => mouse_area(again)
-                            .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                                crate::rail::RingOn::Loop(Some(id)),
-                            )))
-                            .interaction(mouse::Interaction::Pointer)
-                            .into(),
-                        false => again,
-                    };
+                // Left and right of its place on the rail, the same lanes
+                // as beside a step: the lines of the spans it is in, and
+                // of one over the section itself, run past it there.
+                let covers = |laid: &Laid| {
+                    laid.section == Some(id) || (laid.first <= index && index < laid.last)
+                };
                 let arrow = row![
-                    again,
+                    self.loop_lanes(lanes, &covers, false),
+                    mark,
+                    self.order_lanes(lanes, &covers, false),
+                    Space::new().width(inward),
                     hinted(
                         p,
-                        dot,
+                        fold,
                         if folded {
                             "Open it. Right click: what holds for all of it".to_string()
                         } else {
@@ -588,9 +634,9 @@ impl App {
                         },
                         tooltip::Position::Right,
                     ),
-                    Space::new().width(lanes.drawn),
                 ]
-                .align_y(Alignment::Center);
+                .align_y(Alignment::Center)
+                .height(20);
                 // Between two sections: whether the one before hands
                 // over by itself or waits.
                 let before = plan.steps()[..index]
@@ -602,9 +648,8 @@ impl App {
                     && !hidden
                 {
                     put!(
-                        container(look::icon(Icon::Pause, 12.0, p.on_surface_variant)).padding(
-                            iced::Padding::default().left(inward + lanes.curl + RAIL / 2.0 - 6.0)
-                        ),
+                        container(look::icon(Icon::Pause, 12.0, p.on_surface_variant))
+                            .padding(iced::Padding::default().left(lanes.curl + RAIL / 2.0 - 6.0)),
                     );
                 }
                 // The one something held would be a part of is lit.
@@ -636,8 +681,7 @@ impl App {
                         },
                         false => container::Style::default(),
                     }),
-                )
-                .padding(iced::Padding::default().left(inward));
+                );
                 // A right click anywhere on it opens the same ring as its
                 // dot: what holds for all of it.
                 let heading: Element<'_, Message> = match self.can_edit() {
@@ -710,8 +754,9 @@ impl App {
             // The rail is as tall as the row and the room under it, so
             // its line meets the next row's.
             let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
-            let row =
-                row![self.indent(plan, index, inward), rail, apart(row)].height(Length::Shrink);
+            // Every dot is on the one line; what is in a section sits a
+            // little further in, as its heading's name does.
+            let row = row![rail, Space::new().width(inward), apart(row)].height(Length::Shrink);
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -732,7 +777,7 @@ impl App {
                 }
                 None => put_whole!(row),
             }
-            items.push(track::Item::Stop(item));
+            stops.push(item);
             shown.push(index);
         }
         if let Some(steps) = folding.take() {
@@ -805,104 +850,128 @@ impl App {
                 rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
             }
         }
-        // The lines beside the steps: of what comes again and of a drawn
-        // order, each from the first to the last of its steps in sight.
+        // The spans beside the line: each from the first to the last of
+        // its steps in sight, or from its section's heading.
         let id_at = |at: usize| plan.steps()[at].id;
-        let beside = |first: usize, last: usize, color, mark, pulled| {
+        let span = |laid: &Laid, color, mark, pulled| {
             let mut inside = shown
                 .iter()
                 .copied()
-                .filter(|at| (first..=last).contains(at));
+                .filter(|at| (laid.first..=laid.last).contains(at));
             let from = inside.next()?;
-            let to = inside.next_back()?;
-            Some(track::Beside {
-                first: id_at(from),
+            let to = inside.next_back().unwrap_or(from);
+            // One over a section comes in at its heading, where that is
+            // in sight.
+            let heading = laid
+                .section
+                .filter(|id| headings.iter().any(|at| id_at(*at) == *id));
+            if heading.is_none() && from == to {
+                return None;
+            }
+            Some(track::Span {
+                first: match heading {
+                    Some(id) => track::From::Heading(id),
+                    None => track::From::Step(id_at(from)),
+                },
                 last: id_at(to),
-                starts: from == first,
-                ends: to == last,
+                starts: heading.is_some() || from == laid.first,
+                ends: to == laid.last,
+                lane: laid.lane,
                 color,
                 mark,
                 pulled,
-                group: section_of(plan, from),
             })
         };
-        // The sections' own lines: on to the next section's dot where
-        // the last step of one goes on by itself, and curling back where
-        // one comes again.
-        let sections: Vec<track::Section> = headings
-            .iter()
-            .map(|(at, color, cut)| {
-                let step = &plan.steps()[*at];
-                let end = plan.group_end(*at);
-                let goes = (*at + 1..end)
-                    .rev()
-                    .find(|at| !plan.steps()[*at].is_section())
-                    .is_some_and(|last| plan.goes_on(last));
-                track::Section {
-                    id: step.id,
-                    last: shown
-                        .iter()
-                        .rev()
-                        .find(|step| (*at + 1..end).contains(*step))
-                        .map(|last| id_at(*last)),
-                    next: headings
-                        .iter()
-                        .find(|(next, ..)| goes && *next == end)
-                        .map(|(next, ..)| id_at(*next)),
-                    again: repeat_words(step.flow.repeat).map(track::Mark::Words),
-                    color: *color,
-                    cut: *cut,
+        // In a service, the span the flow goes back round when the step
+        // that is on ends is the stage's colour, and one the service is
+        // in says which time round it is.
+        let at_now = at.filter(|_| running);
+        let back = at_now.and_then(|_| self.engine.0.follows_back());
+        let mut drawn_loops: Vec<track::Span> = Vec::new();
+        let mut goes_back: Option<usize> = None;
+        for laid in lanes.loops {
+            let within = at_now.is_some_and(|at| (laid.first..=laid.last).contains(&at));
+            let round = within
+                .then(|| self.engine.0.rounds(laid.of))
+                .and_then(|(now, of)| Some(format!("{}/{}", now + 1, of?)));
+            let words = round.or_else(|| repeat_words(plan.flow_of(laid.of)?.repeat));
+            let color = match back == Some(laid.of) {
+                true => p.tertiary,
+                false => p.primary,
+            };
+            let mark = words.map_or(track::Mark::Nothing, track::Mark::Words);
+            if let Some(span) = span(laid, color, mark, false) {
+                if back == Some(laid.of) {
+                    goes_back = Some(drawn_loops.len());
                 }
-            })
-            .collect();
-        let mut loops: Vec<track::Beside> = Vec::new();
-        let mut orders: Vec<track::Beside> = Vec::new();
-        let mut looped: Vec<(usize, usize)> = Vec::new();
-        let mut ordered: Vec<(usize, usize)> = Vec::new();
-        for index in shown.iter().copied() {
-            if lanes.curl > 0.0
-                && let Some((first, last, words)) = loop_at(plan, index)
-                && !looped.contains(&(first, last))
-            {
-                looped.push((first, last));
-                let mark = words.map_or(track::Mark::Nothing, track::Mark::Words);
-                loops.extend(beside(first, last, p.primary, mark, false));
-            }
-            if lanes.drawn > 0.0
-                && let Some((_, first, last)) = order_at(plan, index)
-                && !ordered.contains(&(first, last))
-            {
-                ordered.push((first, last));
-                orders.extend(beside(first, last, p.primary, track::Mark::Crossed, false));
+                drawn_loops.push(span);
             }
         }
-        // A line being pulled is drawn already; one that can't be, in
-        // the colour of what is wrong.
+        let mut drawn_orders: Vec<track::Span> = lanes
+            .orders
+            .iter()
+            .filter_map(|laid| span(laid, p.primary, track::Mark::Crossed, false))
+            .collect();
+        // What has played of the step that is on is shown along the line
+        // it goes back by.
+        if let Some(back) = goes_back
+            && let Some(stop) = stops
+                .iter_mut()
+                .find(|stop| matches!(stop.dot, track::Dot::On { .. }))
+            && let Some(track::Line::Playing { done, played, .. }) = stop.line
+        {
+            stop.back = Some((back, done, played));
+        }
+        // A line being pulled is drawn already, one lane out from what
+        // it would hold; one that can't be, in the colour of what is
+        // wrong.
         if let Some(pull) = &self.pull {
             use crate::rail::{Side, Would};
+            let would = |first: usize, last: usize, among: &[Laid]| Laid {
+                of: FlowOf::Plan,
+                first,
+                last,
+                lane: among
+                    .iter()
+                    .filter(|held| first <= held.first && held.last <= last)
+                    .map(|held| held.lane + 1)
+                    .max()
+                    .unwrap_or(0),
+                section: None,
+            };
             match pull.would {
-                Some(Would::Loop { first, last }) => {
-                    loops.extend(beside(first, last, p.primary, track::Mark::Nothing, true));
-                }
-                Some(Would::Shuffle { first, last }) => {
-                    orders.extend(beside(first, last, p.primary, track::Mark::Crossed, true));
-                }
-                Some(Would::Not { first, last }) if pull.side == Side::Right => {
-                    orders.extend(beside(first, last, p.error, track::Mark::Nothing, true));
-                }
-                Some(Would::Not { first, last }) => {
-                    loops.extend(beside(first, last, p.error, track::Mark::Nothing, true));
-                }
+                Some(Would::Loop { first, last }) => drawn_loops.extend(span(
+                    &would(first, last, lanes.loops),
+                    p.primary,
+                    track::Mark::Nothing,
+                    true,
+                )),
+                Some(Would::Shuffle { first, last }) => drawn_orders.extend(span(
+                    &would(first, last, lanes.orders),
+                    p.primary,
+                    track::Mark::Crossed,
+                    true,
+                )),
+                Some(Would::Not { first, last }) if pull.side == Side::Right => drawn_orders
+                    .extend(span(
+                        &would(first, last, lanes.orders),
+                        p.error,
+                        track::Mark::Nothing,
+                        true,
+                    )),
+                Some(Would::Not { first, last }) => drawn_loops.extend(span(
+                    &would(first, last, lanes.loops),
+                    p.error,
+                    track::Mark::Nothing,
+                    true,
+                )),
                 Some(Would::Join { .. }) | None => {}
             }
         }
         let picture = track::Picture {
-            items,
-            sections,
-            loops,
-            orders,
-            curl_wide: lanes.curl,
-            order_wide: lanes.drawn,
+            stops,
+            loops: drawn_loops,
+            orders: drawn_orders,
             still: self.motion.still,
             hot: can,
         };
@@ -1152,7 +1221,8 @@ impl App {
             line = line.push(text(numbers).size(META).color(colour));
         }
         let goes = step.advance == Some(true);
-        line = line.push(self.flow_marks(Some(id), goes, step.flow));
+        let flow = plan.flow_of(id).unwrap_or_default();
+        line = line.push(self.flow_marks(Some(id), goes, flow));
         // Under the pointer, a heading can be taken out like a step.
         if self.pointed(id) {
             line = line.push(self.pointed_actions(id));
@@ -1455,7 +1525,7 @@ impl App {
             .iter()
             .filter(|section| {
                 plan.get(section.id)
-                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+                    .is_some_and(|step| step.depth() == Some(0))
             })
             .map(|section| {
                 let part = |of: Duration, whole: Duration| match whole.is_zero() {
@@ -1596,7 +1666,7 @@ impl App {
             .iter()
             .filter(|section| {
                 plan.get(section.id)
-                    .is_some_and(|step| step.depth() == Some(0) && !step.is_loop())
+                    .is_some_and(|step| step.depth() == Some(0))
             })
             .map(|section| {
                 let planned = match section.phase {
@@ -1763,7 +1833,7 @@ impl App {
                     "It comes once. Click to make it come again"
                 },
                 Message::SetRepeat(
-                    of,
+                    of.into(),
                     if repeats {
                         Repeat::Once
                     } else {
@@ -1781,7 +1851,7 @@ impl App {
                 } else {
                     "Its steps come in the plan's order. Click to shuffle them"
                 },
-                Message::SetShuffle(of, !flow.shuffle),
+                Message::SetShuffle(of.into(), !flow.shuffle),
             ));
         }
         // Rehearse it in the preview; while it is, the way to stop.
@@ -1826,7 +1896,7 @@ impl App {
         plan: &Plan,
         index: usize,
         place: Place,
-        lanes: Lanes,
+        lanes: Lanes<'_>,
         places: &track::Places,
     ) -> (Element<'a, Message>, track::Stop) {
         let p = self.palette;
@@ -1835,13 +1905,9 @@ impl App {
         let goes = plan.goes_on(index);
         let before = steps[..index].iter().rposition(|step| !step.is_section());
         let after = steps[index + 1..].iter().any(|step| !step.is_section());
-        // The step its line goes to: the next one in the same section.
-        // Past a heading it is the section's line that goes on.
-        let next = steps[index + 1..]
-            .iter()
-            .take_while(|step| !step.is_section() || step.is_loop())
-            .find(|step| !step.is_section());
-        let group = section_of(plan, index);
+        // The step its line goes to: the next one, whatever section
+        // that is in.
+        let next = plan.next_step(index).map(|next| &steps[next]);
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
         let planned = p.primary;
@@ -1910,7 +1976,7 @@ impl App {
         };
         // The line from this dot to the next step's.
         let joining = matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= index && index < last);
-        let line = match (joined_below && next.is_some(), place, played) {
+        let line = match (joined_below, place, played) {
             _ if joining => Some(track::Line::Plain(planned)),
             // The step that is on fills its line as it plays, whether or
             // not it goes on by itself: what is still to come is the
@@ -1919,7 +1985,7 @@ impl App {
             (_, Place::Current, Some(done)) => Some(track::Line::Playing {
                 done: done.clamp(0.0, 1.0),
                 played: live,
-                ahead: match (rehearsed, joined_below && next.is_some()) {
+                ahead: match (rehearsed, joined_below) {
                     (Some(_), _) => Palette::tint(live, 0.35),
                     (None, true) => planned,
                     (None, false) => Palette::tint(p.on_surface_variant, 0.5),
@@ -1936,15 +2002,7 @@ impl App {
             dot: look,
             line,
             next: next.map(|next| next.id),
-            group,
-            // Its section is being worked on: it is on, pulled, or
-            // something in the section is selected.
-            awake: on
-                || would.is_some()
-                || self
-                    .selected
-                    .and_then(|id| plan.position(id))
-                    .is_some_and(|at| section_of(plan, at) == group),
+            back: None,
             cut: None,
         };
         // What is here in the row is only room to press: the dot, the
@@ -2074,36 +2132,14 @@ impl App {
         };
         let id = step.id;
         let rail = column![upper, lower].width(RAIL).height(Fill);
-        // Beside it, room for the line that curls back from the last
-        // step of something that repeats to its first. Every row keeps
+        // Beside it, room for the lines of the spans it is in: what comes
+        // again to the left, a drawn order to the right. Every row keeps
         // it, so the dots stay in one line down the plan. A right click
-        // there opens what is the loop's own: how often it comes.
+        // on a line there opens what is that span's own.
         let pulling = would.is_some();
-        let curl: Element<'a, Message> = Space::new().width(lanes.curl).height(Fill).into();
-        let curl: Element<'a, Message> = match repeating(plan, index) {
-            Some((group, ..)) if rings && !pulling && loop_at(plan, index).is_some() => {
-                mouse_area(curl)
-                    .on_right_press(ring(crate::rail::RingOn::Loop(
-                        group.map(|at| steps[at].id),
-                    )))
-                    .interaction(mouse::Interaction::Pointer)
-                    .into()
-            }
-            _ => curl,
-        };
-        // On the other side of the dots, room for the line of a drawn
-        // order. A right click on a line that is there opens its ring.
-        let drawn: Element<'a, Message> = Space::new().width(lanes.drawn).height(Fill).into();
-        let drawn: Element<'a, Message> = match order_at(plan, index).filter(|_| rings && !pulling)
-        {
-            Some((group, ..)) => mouse_area(drawn)
-                .interaction(mouse::Interaction::Pointer)
-                .on_right_press(ring(crate::rail::RingOn::Shuffle(
-                    group.map(|at| steps[at].id),
-                )))
-                .into(),
-            None => drawn,
-        };
+        let covers = |laid: &Laid| (laid.first..=laid.last).contains(&index);
+        let curl = self.loop_lanes(lanes, &covers, pulling);
+        let drawn = self.order_lanes(lanes, &covers, pulling);
         // The rail says when the pointer is on it, for a dot pulled here
         // and for a ring opened here, and where it is, for what is drawn
         // over it. A width of its own: laid out after the step beside
@@ -2121,36 +2157,78 @@ impl App {
         (rail, stop)
     }
 
-    /// The room left of the step at `index`, `inward` wide: a part for
-    /// each section it is in, outermost first. Down each part runs that
-    /// section's own line where it comes again, and a right click there
-    /// opens how often it does: the same as on any loop's line.
-    fn indent<'a>(&self, plan: &Plan, index: usize, inward: f32) -> Element<'a, Message> {
-        let sections: Vec<&Step> = plan
-            .within(index)
-            .into_iter()
-            .filter_map(|id| plan.get(id))
-            .filter(|step| !step.is_loop())
-            .collect();
-        if sections.is_empty() || !self.can_edit() {
-            return Space::new().width(inward).height(Fill).into();
-        }
-        let wide = inward / sections.len() as f32;
-        row(sections.into_iter().map(|section| {
+    /// The room left of the dots in one row, a part for each lane, the
+    /// outermost first: where a span that comes again and `covers` this
+    /// row runs down a lane, a right click there opens how often it
+    /// comes. Not while a dot is pulled (`quiet`).
+    fn loop_lanes<'a>(
+        &self,
+        lanes: Lanes<'_>,
+        covers: &dyn Fn(&Laid) -> bool,
+        quiet: bool,
+    ) -> Element<'a, Message> {
+        let rings = self.can_edit() && !quiet;
+        let parts = (0..lanes.loop_lanes).rev().map(|lane| {
+            // Each lane is as wide as from one line to the next, about
+            // its own line; the outermost takes what room is left over.
+            let wide = match lane + 1 == lanes.loop_lanes {
+                true => lanes.curl - track::LOOP_STEP * f32::from(lanes.loop_lanes - 1),
+                false => track::LOOP_STEP,
+            };
             let part = Space::new().width(wide).height(Fill);
-            match section.flow.repeat != Repeat::Once {
-                true => mouse_area(part)
+            match lanes
+                .loops
+                .iter()
+                .find(|laid| laid.lane == lane && covers(laid))
+            {
+                Some(laid) if rings => mouse_area(part)
                     .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                        crate::rail::RingOn::Loop(Some(section.id)),
+                        crate::rail::RingOn::Loop(laid.of),
                     )))
                     .interaction(mouse::Interaction::Pointer)
                     .into(),
-                false => part.into(),
+                _ => part.into(),
             }
-        }))
-        .width(inward)
-        .height(Fill)
-        .into()
+        });
+        match lanes.loop_lanes {
+            0 => Space::new().width(lanes.curl).height(Fill).into(),
+            _ => row(parts).width(lanes.curl).height(Fill).into(),
+        }
+    }
+
+    /// The same to the right of the dots, the innermost lane first, for
+    /// the lines of a drawn order.
+    fn order_lanes<'a>(
+        &self,
+        lanes: Lanes<'_>,
+        covers: &dyn Fn(&Laid) -> bool,
+        quiet: bool,
+    ) -> Element<'a, Message> {
+        let rings = self.can_edit() && !quiet;
+        let parts = (0..lanes.order_lanes).map(|lane| {
+            let wide = match lane + 1 == lanes.order_lanes {
+                true => lanes.drawn - track::ORDER_STEP * f32::from(lanes.order_lanes - 1),
+                false => track::ORDER_STEP,
+            };
+            let part = Space::new().width(wide).height(Fill);
+            match lanes
+                .orders
+                .iter()
+                .find(|laid| laid.lane == lane && covers(laid))
+            {
+                Some(laid) if rings => mouse_area(part)
+                    .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                        crate::rail::RingOn::Shuffle(laid.of),
+                    )))
+                    .interaction(mouse::Interaction::Pointer)
+                    .into(),
+                _ => part.into(),
+            }
+        });
+        match lanes.order_lanes {
+            0 => Space::new().width(lanes.drawn).height(Fill).into(),
+            _ => row(parts).width(lanes.drawn).height(Fill).into(),
+        }
     }
 
     /// Whether the pointer is on the row of `id` and the row can change:
@@ -2665,91 +2743,6 @@ fn ago(elapsed: Duration) -> String {
     }
 }
 
-/// A dragged step lands indented inside a section; a section never does.
-/// What repeats round the step at `index`: the nearest section or loop
-/// that does (where it is in the plan), or else the plan (`None`), with
-/// where what it holds starts and ends.
-fn repeating(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
-    let steps = plan.steps();
-    plan.within(index)
-        .into_iter()
-        .rev()
-        .filter_map(|id| plan.position(id))
-        .find(|at| steps[*at].flow.repeat != Repeat::Once)
-        .map(|at| (Some(at), at + 1, plan.group_end(at)))
-        .or((plan.flow.repeat != Repeat::Once).then_some((None, 0, steps.len())))
-}
-
-/// The line that curls back beside the step at `index`, when the
-/// nearest thing around it that repeats is a loop drawn round some
-/// steps, or else the plan. Its first and last steps, and what it says of
-/// itself: how often it comes. `None` for a step in nothing that
-/// repeats, and for the only step of something that does (its own mark
-/// says so).
-/// The section the step at `index` is in, or is: the nearest one with a
-/// heading of its own.
-fn section_of(plan: &Plan, index: usize) -> Option<StepId> {
-    let steps = plan.steps();
-    let named = |step: &Step| step.is_section() && !step.is_loop();
-    match steps.get(index) {
-        Some(step) if named(step) => Some(step.id),
-        _ => plan
-            .within(index)
-            .into_iter()
-            .rev()
-            .find(|id| plan.get(*id).is_some_and(named)),
-    }
-}
-
-fn loop_at(plan: &Plan, index: usize) -> Option<(usize, usize, Option<String>)> {
-    let steps = plan.steps();
-    let (group, start, end) = repeating(plan, index)?;
-    // A section that comes again says so on its own line, from its dot.
-    if group.is_some_and(|at| !steps[at].is_loop()) {
-        return None;
-    }
-    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
-    // With something in it that repeats by itself, its own curl would be
-    // drawn round that one's: it is left to its heading to say.
-    if inside
-        .iter()
-        .any(|at| repeating(plan, *at).map(|(inner, ..)| inner) != Some(group))
-    {
-        return None;
-    }
-    let (first, last) = (*inside.first()?, *inside.last()?);
-    if first == last {
-        return None;
-    }
-    let flow = group.map_or(plan.flow, |at| steps[at].flow);
-    Some((first, last, repeat_words(flow.repeat)))
-}
-
-/// What draws an order round the step at `index`: the nearest section or
-/// group that does (where it is in the plan), or else the plan (`None`),
-/// with where what it holds starts and ends.
-fn shuffling(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
-    let steps = plan.steps();
-    plan.within(index)
-        .into_iter()
-        .rev()
-        .filter_map(|id| plan.position(id))
-        .find(|at| steps[*at].flow.shuffle)
-        .map(|at| (Some(at), at + 1, plan.group_end(at)))
-        .or(plan.flow.shuffle.then_some((None, 0, steps.len())))
-}
-
-/// The line of the drawn order the step at `index` is in: what draws
-/// the order, and its first and last steps. `None` for a step in no
-/// drawn order.
-fn order_at(plan: &Plan, index: usize) -> Option<(Option<usize>, usize, usize)> {
-    let steps = plan.steps();
-    let (group, start, end) = shuffling(plan, index)?;
-    let inside: Vec<usize> = (start..end).filter(|at| !steps[*at].is_section()).collect();
-    let (first, last) = (*inside.first()?, *inside.last()?);
-    (first != last).then_some((group, first, last))
-}
-
 /// How often something comes, in a few characters; `None` for once.
 pub(crate) fn repeat_words(repeat: Repeat) -> Option<String> {
     match repeat {
@@ -2957,39 +2950,52 @@ mod tests {
     }
 
     #[test]
-    fn the_curl_runs_from_the_last_step_of_what_repeats_to_its_first() {
+    fn each_span_is_a_lane_further_out_than_what_it_holds() {
         let mut plan = Plan::new("Sabbath");
         let music = plan.section("Music", None);
-        for label in ["A", "B", "C"] {
+        for label in ["A", "B", "C", "D"] {
             plan.push(label, Action::Blank);
         }
-        let sermon = plan.section("Sermon", None);
-        plan.push("D", Action::Blank);
-        // Nothing repeats: no curl.
-        assert_eq!(loop_at(&plan, 1), None);
-        // A section that comes again says so on its own line: none
-        // beside its steps.
-        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
-        for index in 1..=3 {
-            assert_eq!(loop_at(&plan, index), None);
+        plan.section("Sermon", None);
+        for label in ["E", "F"] {
+            plan.push(label, Action::Blank);
         }
-        assert_eq!(section_of(&plan, 2), Some(music));
-        assert_eq!(section_of(&plan, 0), Some(music), "a section is its own");
-        assert_eq!(section_of(&plan, 5), Some(sermon));
-        // The plan repeats: the steps in nothing nearer are its own.
-        plan.get_mut(sermon).unwrap().flow.repeat = Repeat::Once;
-        plan.get_mut(music).unwrap().flow.repeat = Repeat::Once;
+        let id = |at: usize| plan.steps()[at].id;
+        let again = |plan: &Plan| laid(plan, |flow| flow.repeat != Repeat::Once);
+        // Nothing comes again: no lane.
+        assert_eq!(again(&plan), vec![]);
+        // Music, A, B, C, D, Sermon, E, F. A loop round B and C.
+        let (b, c, d, e) = (id(2), id(3), id(4), id(6));
+        let inner = plan.loop_over(b, c).unwrap();
+        // The section it is in comes again too: one lane further out,
+        // from its heading.
+        let outer = plan.loop_section(music).unwrap();
+        // And a loop across the heading, from D to E, is refused: it
+        // would cut the section's.
+        assert!(plan.loop_over(d, e).is_err());
+        let found = again(&plan);
+        let lane = |of: FlowOf| {
+            found
+                .iter()
+                .find(|laid| laid.of == of)
+                .map(|laid| laid.lane)
+        };
+        assert_eq!(lane(FlowOf::Span(inner)), Some(0));
+        assert_eq!(lane(FlowOf::Span(outer)), Some(1));
+        let section = found
+            .iter()
+            .find(|laid| laid.of == FlowOf::Span(outer))
+            .unwrap();
+        assert_eq!(
+            (section.first, section.last, section.section),
+            (1, 4, Some(music))
+        );
+        // The plan itself: outermost of all.
         plan.flow.repeat = Repeat::Forever;
-        assert_eq!(loop_at(&plan, 1), Some((1, 5, Some("∞".to_string()))));
-        assert_eq!(loop_at(&plan, 5), Some((1, 5, Some("∞".to_string()))));
-        // A loop drawn round two steps has no heading: its line runs
-        // from one to the other.
-        plan.flow.repeat = Repeat::Once;
-        let (a, b) = (plan.steps()[1].id, plan.steps()[2].id);
-        plan.loop_over(a, b).unwrap();
-        // Music, the loop, A, B, C.
-        assert_eq!(loop_at(&plan, 2), Some((2, 3, Some("×2".to_string()))));
-        assert_eq!(loop_at(&plan, 3), Some((2, 3, Some("×2".to_string()))));
-        assert_eq!(loop_at(&plan, 4), None, "C is out of it");
+        let found = again(&plan);
+        assert_eq!(found[0].of, FlowOf::Plan);
+        assert_eq!((found[0].first, found[0].last, found[0].lane), (1, 7, 2));
+        // Drawn orders are counted apart.
+        assert_eq!(laid(&plan, |flow| flow.shuffle), vec![]);
     }
 }

@@ -11,7 +11,9 @@
 //! your place.
 //!
 //! [`Action::Section`] markers split a plan into parts with a time budget,
-//! and [`timing`] reports how each part is keeping to it.
+//! and [`timing`] reports how each part is keeping to it. Sections only
+//! name parts: what comes again, or in an order drawn afresh, is a
+//! [`Span`] laid over some of the steps.
 //!
 //! This crate knows nothing about screens; the engine connects it to the stage.
 
@@ -19,5 +21,8 @@ mod plan;
 mod session;
 pub mod timing;
 
-pub use plan::{Action, DEEPEST, Ending, Flow, Plan, PlanError, Repeat, Step, StepId, StepSound};
+pub use plan::{
+    Action, DEEPEST, Ending, Flow, FlowOf, Over, Plan, PlanError, Repeat, Span, SpanError, SpanId,
+    Step, StepId, StepSound,
+};
 pub use session::{LogEntry, Session};

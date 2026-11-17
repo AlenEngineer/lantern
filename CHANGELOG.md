@@ -420,6 +420,20 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A plan is one flow: one line runs through every step, straight past
+  the headings, and a section is only a name for a part of it, with its
+  time and an arrow that folds it. A loop or a drawn order is a span laid
+  over the steps, from one to another or over all a section holds, and a
+  loop can run across headings. Spans sit in lanes beside the line, each
+  further out the more it holds. Plans saved before are read as they
+  were: a section that came again becomes a span over that section.
+- What can't be is refused where it is pulled, in the colour of what is
+  wrong: a drawn order across a heading, and a span that would cut
+  through another.
+- In a service, a loop says which time round it is (1/2), the step that
+  is next is marked wherever the flow goes, and where the flow goes back
+  when the step that is on ends, what has played is shown along the
+  loop's line.
 - Each level of the plan has its own line. A section's runs down from
   its dot: on to the next section's dot where it hands over by itself,
   and curling back from the level of its last step where it comes again.

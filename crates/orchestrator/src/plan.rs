@@ -55,7 +55,9 @@ pub enum Action {
     Note,
     /// Starts a section: the steps after it, up to the next section, are
     /// one part of the service, such as the music or the sermon. Stepping
-    /// through the plan passes over it.
+    /// through the plan passes over it. A section is a name over some
+    /// steps, with a time and what its steps do unless they say: how the
+    /// plan moves is not its to say, but a [`Span`]'s.
     Section {
         /// How long the section should take.
         #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
@@ -66,12 +68,6 @@ pub enum Action {
         /// section no further in than itself.
         #[serde(default, skip_serializing_if = "is_zero")]
         depth: u8,
-        /// The last step it holds, when it ends before the next section:
-        /// what follows that step is back in whatever holds this one. A
-        /// section with this and no name is a loop drawn round some
-        /// steps, with no heading of its own. See [`Plan::loop_over`].
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        through: Option<StepId>,
     },
 }
 
@@ -83,8 +79,13 @@ fn is_zero(depth: &u8) -> bool {
     *depth == 0
 }
 
-/// How many times a step, a section or the plan comes before the plan
-/// moves past it.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_none_yet(next: &u64) -> bool {
+    *next == 0
+}
+
+/// How many times a step, a span of steps or the plan comes before the
+/// plan moves past it.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Repeat {
@@ -122,8 +123,8 @@ impl Ending {
     }
 }
 
-/// How a step, a section or the plan moves: how often it comes, and for
-/// a section or the plan, in what order its steps do. Unlike
+/// How a step, a span of steps or the plan moves: how often it comes,
+/// and for a span or the plan, in what order its steps do. Unlike
 /// [`Step::advance`], none of it carries down: it is about the one thing
 /// it is set on.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +171,131 @@ impl Flow {
     }
 }
 
+/// Identifies a span within its plan. Stays the same as its steps move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SpanId(pub(crate) u64);
+
+impl fmt::Display for SpanId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "~{}", self.0)
+    }
+}
+
+/// What a span is laid over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Over {
+    /// From one step to another, and all that is between them wherever
+    /// they move to. Neither is a section's heading.
+    Steps {
+        /// The first of them, as the plan runs.
+        first: StepId,
+        /// The last of them.
+        last: StepId,
+    },
+    /// Everything the section with this heading holds, whatever that
+    /// comes to be: a step put into the section later is in the span.
+    Section(StepId),
+}
+
+/// A loop or a drawn order laid over a run of the plan's steps. The plan
+/// is one sequence of steps, and its sections only name parts of it: a
+/// span is what has some of them come again, or in an order drawn
+/// afresh. See [`Plan::loop_over`] for the limits spans keep to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    /// Stable id.
+    pub id: SpanId,
+    /// The steps it is over.
+    pub over: Over,
+    /// How often they come, and in what order.
+    pub flow: Flow,
+}
+
+impl Span {
+    /// Whether its steps come again: a loop.
+    pub fn is_loop(&self) -> bool {
+        self.flow.repeat != Repeat::Once
+    }
+
+    /// Whether its steps come in an order drawn afresh each time round.
+    pub fn is_drawn(&self) -> bool {
+        self.flow.shuffle
+    }
+}
+
+/// What a [`Flow`] is set on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FlowOf {
+    /// The whole plan.
+    Plan,
+    /// A step by itself. For a section's heading, the span attached to
+    /// that section: everything it holds.
+    Step(StepId),
+    /// A span.
+    Span(SpanId),
+}
+
+impl From<Option<StepId>> for FlowOf {
+    /// A step, or the plan for `None`.
+    fn from(of: Option<StepId>) -> Self {
+        of.map_or(FlowOf::Plan, FlowOf::Step)
+    }
+}
+
+impl From<StepId> for FlowOf {
+    fn from(id: StepId) -> Self {
+        FlowOf::Step(id)
+    }
+}
+
+impl From<SpanId> for FlowOf {
+    fn from(id: SpanId) -> Self {
+        FlowOf::Span(id)
+    }
+}
+
+/// Why a span can't be where it was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SpanError {
+    /// A step, a section or a span it names isn't in the plan.
+    #[error("that is no longer in the plan")]
+    Missing,
+    /// A loop needs two steps, and a drawn order three.
+    #[error("too few steps: a loop goes round two or more, a drawn order three or more")]
+    TooFew,
+    /// A drawn order stays in one section: no heading comes among its
+    /// steps.
+    #[error("a drawn order can't cross a section's heading")]
+    AcrossHeading,
+    /// It would take in a part of the span it names: two spans are
+    /// apart, or one is wholly in the other.
+    #[error("it would cut another loop or drawn order ({0}) in two")]
+    HalfOver(SpanId),
+}
+
+/// Where a span is: its first and last step, or `None` over no steps.
+type Reach = Option<(usize, usize)>;
+
+/// Whether two spans each hold a part of the other and not all of it.
+fn half_over(a: Reach, b: Reach) -> bool {
+    let (Some((a, b)), Some((c, d))) = (a, b) else {
+        return false;
+    };
+    let apart = b < c || d < a;
+    let within = (a <= c && d <= b) || (c <= a && b <= d);
+    !apart && !within
+}
+
+/// What drawing a loop does to a flow: twice, unless it comes again
+/// already.
+fn come_again(flow: &mut Flow) {
+    if flow.repeat == Repeat::Once {
+        flow.repeat = Repeat::Times(2);
+    }
+}
+
 /// A sound that plays with a step, over what the step shows: music under
 /// a passage, or under the last slides of a deck.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,8 +334,9 @@ pub struct Step {
     /// See [`Plan::goes_on`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advance: Option<bool>,
-    /// How many times it comes, and for a section in what order its
-    /// steps do.
+    /// How many times the step comes, by itself. A section's heading
+    /// has none: what a section holds comes again, or in a drawn order,
+    /// by a [`Span`] attached to it. Set either with [`Plan::set_flow`].
     #[serde(default, skip_serializing_if = "Flow::is_usual")]
     pub flow: Flow,
     /// A sound that plays with the step. Only a step that shows something
@@ -239,24 +366,15 @@ impl Step {
             _ => None,
         }
     }
-
-    /// The last step this section holds, for one that ends before the
-    /// next section.
-    pub fn through(&self) -> Option<StepId> {
-        match self.action {
-            Action::Section { through, .. } => through,
-            _ => None,
-        }
-    }
-
-    /// Whether this is a loop round some steps: a section with no name
-    /// that ends at one of them. It has no heading in the rundown.
-    pub fn is_loop(&self) -> bool {
-        self.label.is_empty() && self.through().is_some()
-    }
 }
 
 /// An ordered list of steps, prepared ahead of time. Saved as JSON.
+///
+/// It is one flow: the steps come one after another, each going on by
+/// itself or waiting ([`Plan::goes_on`]). Sections name parts of it and
+/// say nothing of how it moves. What comes again, or in a drawn order, is
+/// a [`Span`] laid over some of the steps, or the plan's own
+/// [`flow`](Plan::flow) for all of it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     /// E.g. "Sunday service, March 3".
@@ -264,6 +382,11 @@ pub struct Plan {
     steps: Vec<Step>,
     #[serde(default)]
     next_id: u64,
+    /// The loops and drawn orders laid over the steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    spans: Vec<Span>,
+    #[serde(default, skip_serializing_if = "is_none_yet")]
+    next_span: u64,
     /// How the stage looks while this plan runs; `None` uses the app's
     /// default look. Saved with the plan, so it looks the same anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -314,6 +437,8 @@ impl Plan {
             title: title.into(),
             steps: Vec::new(),
             next_id: 0,
+            spans: Vec::new(),
+            next_span: 0,
             look: None,
             template: false,
             folders: Vec::new(),
@@ -411,14 +536,7 @@ impl Plan {
 
     /// Appends a section, which runs until the next one.
     pub fn section(&mut self, title: impl Into<String>, budget: Option<Duration>) -> StepId {
-        self.push(
-            title,
-            Action::Section {
-                budget,
-                depth: 0,
-                through: None,
-            },
-        )
+        self.push(title, Action::Section { budget, depth: 0 })
     }
 
     /// Where what the section at `at` holds ends: the next section no
@@ -428,15 +546,10 @@ impl Plan {
         let Some(depth) = self.steps.get(at).and_then(Step::depth) else {
             return (at + 1).min(self.steps.len());
         };
-        let next = self.steps[at + 1..]
+        self.steps[at + 1..]
             .iter()
             .position(|step| step.depth().is_some_and(|other| other <= depth))
-            .map_or(self.steps.len(), |n| at + 1 + n);
-        // One that ends at a step ends there, if that step is in it.
-        match self.steps[at].through().and_then(|id| self.position(id)) {
-            Some(last) if last > at && last < next => last + 1,
-            _ => next,
-        }
+            .map_or(self.steps.len(), |n| at + 1 + n)
     }
 
     /// The section that holds the row at `index` most closely, by where
@@ -464,35 +577,13 @@ impl Plan {
         }
     }
 
-    /// How far in the row at `index` is drawn: its [`level`], less the
-    /// loops it is in. A loop has no heading and its steps stay in line
-    /// with the ones around them.
-    ///
-    /// [`level`]: Plan::level
-    pub fn shown_level(&self, index: usize) -> u8 {
-        let loops = self
-            .within(index)
-            .into_iter()
-            .filter(|id| self.get(*id).is_some_and(Step::is_loop))
-            .count() as u8;
-        self.level(index).saturating_sub(loops)
-    }
-
     /// How far in something put at `at` would be, and the section that
-    /// would hold it: a section holds what is put at its end too, but one
-    /// that ends at a step holds only what is put before that step's end.
+    /// would hold it: a section holds what is put at its end too.
     pub fn level_put_at(&self, at: usize) -> (u8, Option<StepId>) {
         let at = at.min(self.steps.len());
-        let holder = (0..at).rev().find(|&section| {
-            let Some(_) = self.steps[section].depth() else {
-                return false;
-            };
-            let end = self.group_end(section);
-            match self.steps[section].through() {
-                Some(_) => at < end,
-                None => at <= end,
-            }
-        });
+        let holder = (0..at)
+            .rev()
+            .find(|&section| self.steps[section].is_section() && at <= self.group_end(section));
         match holder {
             Some(section) => (
                 self.steps[section].depth().unwrap_or(0) + 1,
@@ -530,19 +621,43 @@ impl Plan {
     }
 
     /// What the section `id` holds, as a plan of its own: its steps and
-    /// the sections in it, with its flow as the plan's and the way its
-    /// steps go on as it stood in this plan. For running a part of the
-    /// plan by itself. `None` if `id` isn't a section.
+    /// the sections in it, with the flow of the span attached to it as
+    /// the plan's and the way its steps go on as it stood in this plan.
+    /// The spans wholly in it come along. For running a part of the plan
+    /// by itself. `None` if `id` isn't a section.
     pub fn part(&self, id: StepId) -> Option<Plan> {
         let at = self.position(id)?;
         let depth = self.steps[at].depth()?;
         let mut part = self.clone();
         part.advance = self.goes_on(at);
-        part.flow = self.steps[at].flow;
+        part.flow = self.flow_of(id).unwrap_or_default();
         part.steps = self.steps[at + 1..self.group_end(at)].to_vec();
         for step in &mut part.steps {
             if let Action::Section { depth: inner, .. } = &mut step.action {
                 *inner = inner.saturating_sub(depth + 1);
+            }
+        }
+        part.settle();
+        Some(part)
+    }
+
+    /// The steps the span `id` is over, as a plan of its own, with the
+    /// span's flow as the plan's: for telling how long once round it
+    /// takes. The spans wholly in it come along. A section it holds only
+    /// the start of has no time of its own there: its time is for all of
+    /// it. `None` if there is no such span, or it is over no steps.
+    pub fn span_part(&self, id: SpanId) -> Option<Plan> {
+        let flow = self.span(id)?.flow;
+        let (first, last) = self.span_range(id)?;
+        let mut part = self.clone();
+        part.flow = flow;
+        part.spans.retain(|other| other.id != id);
+        part.steps = self.steps[first..=last].to_vec();
+        for (at, step) in part.steps.iter_mut().enumerate() {
+            if let Action::Section { budget, .. } = &mut step.action
+                && self.group_end(first + at) > last + 1
+            {
+                *budget = None;
             }
         }
         part.settle();
@@ -600,39 +715,14 @@ impl Plan {
         true
     }
 
-    /// Keeps every section where it can be: none more than one level
-    /// further in than the section that holds it, and the plan's own at
-    /// the plan's level. A section that ends at a step it no longer holds
-    /// ends as any other does, and a loop left holding nothing is gone.
-    /// Moving or removing steps can leave any of these.
+    /// Keeps every section and span where it can be. No section is more
+    /// than one level further in than the section that holds it, and the
+    /// plan's own are at the plan's level. A span that comes once, in
+    /// the plan's order, is nothing and is gone, as is one whose steps
+    /// or section are gone. A drawn order a heading has come into is the
+    /// plan's order again. Of two spans left half over each other, the
+    /// newer goes. Moving or removing steps can leave any of these.
     fn settle(&mut self) {
-        // A group with no name is there only for how its steps come:
-        // coming once, in the plan's order, it is nothing.
-        self.steps
-            .retain(|step| !(step.is_loop() && step.flow == Flow::default()));
-        // What a section ends at must be a step after it, before the
-        // next section no further in.
-        for at in (0..self.steps.len()).rev() {
-            let Some(last) = self.steps[at].through() else {
-                continue;
-            };
-            let depth = self.steps[at].depth().unwrap_or(0);
-            let next = self.steps[at + 1..]
-                .iter()
-                .position(|step| step.depth().is_some_and(|other| other <= depth))
-                .map_or(self.steps.len(), |n| at + 1 + n);
-            let holds = self
-                .position(last)
-                .is_some_and(|last| last > at && last < next && !self.steps[last].is_section());
-            if holds {
-                continue;
-            }
-            if self.steps[at].label.is_empty() {
-                self.steps.remove(at);
-            } else if let Action::Section { through, .. } = &mut self.steps[at].action {
-                *through = None;
-            }
-        }
         for at in 0..self.steps.len() {
             if self.steps[at].depth().is_none() {
                 continue;
@@ -649,191 +739,487 @@ impl Plan {
                 *depth = (*depth).min(most);
             }
         }
-    }
-
-    /// When the steps `leaving` go from where they are, a section that
-    /// ends at one of them ends at the step before it that stays.
-    fn end_before(&mut self, leaving: &[StepId]) {
-        for at in 0..self.steps.len() {
-            let Some(last) = self.steps[at]
-                .through()
-                .filter(|last| leaving.contains(last))
-            else {
+        let mut spans = std::mem::take(&mut self.spans);
+        spans.sort_by_key(|span| span.id);
+        let mut kept: Vec<(Span, Reach)> = Vec::new();
+        for mut span in spans {
+            // Its two steps in the plan's order, whichever way they moved.
+            if let Over::Steps { first, last } = span.over
+                && self.position(first) > self.position(last)
+            {
+                span.over = Over::Steps {
+                    first: last,
+                    last: first,
+                };
+            }
+            let Ok(reach) = self.reach(span.over) else {
                 continue;
             };
-            if leaving.contains(&self.steps[at].id) {
-                continue;
+            if reach.is_some_and(|reach| self.heading_among(reach)) {
+                span.flow.shuffle = false;
             }
-            let end = self.position(last).map_or(at, |last| last + 1);
-            let stays = self.steps[at + 1..end.max(at + 1)]
-                .iter()
-                .rev()
-                .find(|step| !step.is_section() && !leaving.contains(&step.id))
-                .map(|step| step.id);
-            if let Action::Section { through, .. } = &mut self.steps[at].action {
-                // With none left, it ends at what is gone: settling
-                // takes a loop away, and lets a section run on.
-                *through = stays.or(Some(last));
+            if !span.flow.is_usual() && kept.iter().all(|(_, other)| !half_over(reach, *other)) {
+                kept.push((span, reach));
             }
         }
+        self.spans = kept.into_iter().map(|(span, _)| span).collect();
+    }
+
+    /// Brings a plan saved before there were spans to how it is kept
+    /// now. `ended` is each section that ended at a step, with that step
+    /// ([`ends_before_spans`]). Such a section with no name was a loop
+    /// drawn round some steps: it becomes a span from the first step it
+    /// held to the one it ended at, and its row is gone. Any other
+    /// section that came again, or in a drawn order, hands that to a
+    /// span attached to it. A plan saved since has neither.
+    fn upgrade_before_spans(&mut self, ended: &[(StepId, StepId)]) {
+        let mut found = Vec::new();
+        let mut gone = Vec::new();
+        for (at, step) in self.steps.iter().enumerate() {
+            if !step.is_section() {
+                continue;
+            }
+            let last = ended.iter().find(|(section, _)| *section == step.id);
+            let over = match last {
+                Some((_, last)) if step.label.is_empty() => {
+                    gone.push(step.id);
+                    let first = self.steps[at + 1..].iter().find(|step| !step.is_section());
+                    let Some(first) = first.filter(|_| self.position(*last) > Some(at)) else {
+                        continue;
+                    };
+                    Over::Steps {
+                        first: first.id,
+                        last: *last,
+                    }
+                }
+                _ => Over::Section(step.id),
+            };
+            found.push((over, step.flow));
+        }
+        self.steps.retain(|step| !gone.contains(&step.id));
+        for step in self.steps.iter_mut().filter(|step| step.is_section()) {
+            step.flow = Flow::default();
+        }
+        for (over, flow) in found {
+            if !flow.is_usual() {
+                self.spans.push(Span {
+                    id: SpanId(self.next_span),
+                    over,
+                    flow,
+                });
+                self.next_span += 1;
+            }
+        }
+    }
+
+    /// Where `over` is in the plan now: its first and last step. `None`
+    /// for a section that holds no step yet. An error if what it names
+    /// is gone, or is not what it should be.
+    fn reach(&self, over: Over) -> Result<Reach, SpanError> {
+        let step = |at: &usize| !self.steps[*at].is_section();
+        match over {
+            Over::Steps { first, last } => {
+                let first = self.position(first).ok_or(SpanError::Missing)?;
+                let last = self.position(last).ok_or(SpanError::Missing)?;
+                if first > last || !step(&first) || !step(&last) {
+                    return Err(SpanError::Missing);
+                }
+                Ok(Some((first, last)))
+            }
+            Over::Section(id) => {
+                let at = self.position(id).ok_or(SpanError::Missing)?;
+                if step(&at) {
+                    return Err(SpanError::Missing);
+                }
+                let mut held = at + 1..self.group_end(at);
+                Ok(held.clone().find(step).zip(held.rfind(step)))
+            }
+        }
+    }
+
+    /// Whether a section's heading is among the rows from one step to
+    /// another.
+    fn heading_among(&self, (first, last): (usize, usize)) -> bool {
+        self.steps[first..=last].iter().any(Step::is_section)
+    }
+
+    /// Whether a span over `over` that moves as `flow` says can be in
+    /// the plan, beside every span there but `but`.
+    fn fits(&self, over: Over, flow: Flow, but: Option<SpanId>) -> Result<(), SpanError> {
+        let reach = self.reach(over)?;
+        if flow.shuffle && reach.is_some_and(|reach| self.heading_among(reach)) {
+            return Err(SpanError::AcrossHeading);
+        }
+        let others = self.spans.iter().filter(|span| Some(span.id) != but);
+        for other in others {
+            if half_over(reach, self.reach(other.over).ok().flatten()) {
+                return Err(SpanError::HalfOver(other.id));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every loop and drawn order laid over the steps.
+    pub fn spans(&self) -> &[Span] {
+        &self.spans
+    }
+
+    /// A span by id.
+    pub fn span(&self, id: SpanId) -> Option<&Span> {
+        self.spans.iter().find(|span| span.id == id)
+    }
+
+    /// The span attached to the section `section`, if what it holds
+    /// comes again or in a drawn order.
+    pub fn section_span(&self, section: StepId) -> Option<&Span> {
+        self.spans
+            .iter()
+            .find(|span| span.over == Over::Section(section))
+    }
+
+    /// Where the span `id` is now: its first and its last step. `None`
+    /// if there is no such span, or it is attached to a section that
+    /// holds no step yet.
+    pub fn span_range(&self, id: SpanId) -> Option<(usize, usize)> {
+        self.reach(self.span(id)?.over).ok().flatten()
+    }
+
+    /// Every span that is over some steps, with its first and its last
+    /// step, outermost first: one that holds another comes before it,
+    /// and otherwise they are in the plan's order.
+    pub fn span_ranges(&self) -> Vec<(SpanId, usize, usize)> {
+        let mut found: Vec<(Span, usize, usize)> = self
+            .spans
+            .iter()
+            .filter_map(|span| {
+                let (first, last) = self.reach(span.over).ok().flatten()?;
+                Some((*span, first, last))
+            })
+            .collect();
+        // Over the very same steps, a section's is outside one drawn
+        // from step to step, and an outer section's outside an inner's.
+        found.sort_by_key(|(span, first, last)| {
+            let heading = match span.over {
+                Over::Section(id) => self.position(id),
+                Over::Steps { .. } => None,
+            };
+            (
+                *first,
+                std::cmp::Reverse(*last),
+                heading.unwrap_or(usize::MAX),
+                span.id,
+            )
+        });
+        found
+            .into_iter()
+            .map(|(span, first, last)| (span.id, first, last))
+            .collect()
+    }
+
+    /// Every span that is over some steps, with its first and its last
+    /// step as they are now, outermost first as [`span_ranges`] has
+    /// them. A span attached to a section that holds no step yet is left
+    /// out.
+    ///
+    /// [`span_ranges`]: Plan::span_ranges
+    pub fn laid_spans(&self) -> Vec<(Span, usize, usize)> {
+        self.span_ranges()
+            .into_iter()
+            .filter_map(|(id, first, last)| Some((*self.span(id)?, first, last)))
+            .collect()
+    }
+
+    /// The step the plan goes to after the row at `index` when nothing
+    /// comes again: the next one that isn't a section's heading, across
+    /// any headings. `None` after the last step.
+    pub fn next_step(&self, index: usize) -> Option<usize> {
+        let from = index.saturating_add(1);
+        (from..self.steps.len()).find(|&at| !self.steps[at].is_section())
+    }
+
+    /// What [`loop_over`] would say, with the plan left as it is: the
+    /// span it would make or change, or why it can't.
+    ///
+    /// [`loop_over`]: Plan::loop_over
+    pub fn would_loop_over(&self, a: StepId, b: StepId) -> Result<SpanId, SpanError> {
+        self.clone().loop_over(a, b)
+    }
+
+    /// What [`shuffle_over`] would say, with the plan left as it is.
+    ///
+    /// [`shuffle_over`]: Plan::shuffle_over
+    pub fn would_shuffle_over(&self, a: StepId, b: StepId) -> Result<SpanId, SpanError> {
+        self.clone().shuffle_over(a, b)
+    }
+
+    /// What [`loop_section`] would say, with the plan left as it is.
+    ///
+    /// [`loop_section`]: Plan::loop_section
+    pub fn would_loop_section(&self, section: StepId) -> Result<SpanId, SpanError> {
+        self.clone().loop_section(section)
+    }
+
+    /// What [`shuffle_section`] would say, with the plan left as it is.
+    ///
+    /// [`shuffle_section`]: Plan::shuffle_section
+    pub fn would_shuffle_section(&self, section: StepId) -> Result<SpanId, SpanError> {
+        self.clone().shuffle_section(section)
+    }
+
+    /// The spans the row at `index` is in, outermost first.
+    pub fn spans_at(&self, index: usize) -> Vec<SpanId> {
+        self.span_ranges()
+            .into_iter()
+            .filter(|(_, first, last)| (*first..=*last).contains(&index))
+            .map(|(id, ..)| id)
+            .collect()
     }
 
     /// Draws a loop round the steps from `a` to `b`, whichever comes
-    /// first: they come twice, until that is changed. The steps must be
-    /// together in one section, or at the plan's own level, with no
-    /// section's heading among them. Round all a section holds, it is
-    /// that section that repeats; otherwise a section with no name is
-    /// put round them, ending at the last. Returns what now repeats, or
-    /// `None` where no loop can be: across a heading, round one step, or
-    /// further in than [`DEEPEST`].
-    pub fn loop_over(&mut self, a: StepId, b: StepId) -> Option<StepId> {
-        self.round(a, b, 2, |flow| {
-            if flow.repeat == Repeat::Once {
-                flow.repeat = Repeat::Times(2);
-            }
-        })
+    /// first: they come twice, until that is changed. It may cross a
+    /// section's heading: it is over the steps, not the sections. If a
+    /// span is over just these steps already, it is that one that comes
+    /// again. Returns the span.
+    ///
+    /// The limits every span keeps to: a loop goes round two steps or
+    /// more and a drawn order three, unless it is attached to a section;
+    /// a drawn order has no heading among its steps; and two spans are
+    /// apart, or one is wholly in the other.
+    pub fn loop_over(&mut self, a: StepId, b: StepId) -> Result<SpanId, SpanError> {
+        self.lay(Over::Steps { first: a, last: b }, 2, come_again)
     }
 
     /// Has the steps from `a` to `b` come in an order drawn afresh each
-    /// time, as [`loop_over`] has them come again: round all a section
-    /// holds it is the section, otherwise a section with no name round
-    /// them. Fewer than three have no order worth drawing: `None`, as
-    /// where no loop can be.
+    /// time, as [`loop_over`] has them come again. They are in one
+    /// section, or all at the plan's own level.
     ///
     /// [`loop_over`]: Plan::loop_over
-    pub fn shuffle_over(&mut self, a: StepId, b: StepId) -> Option<StepId> {
-        self.round(a, b, 3, |flow| flow.shuffle = true)
+    pub fn shuffle_over(&mut self, a: StepId, b: StepId) -> Result<SpanId, SpanError> {
+        self.lay(Over::Steps { first: a, last: b }, 3, |flow| {
+            flow.shuffle = true;
+        })
     }
 
-    /// The group round the steps from `a` to `b`, made if there is none,
-    /// with its flow changed by `set`: the section or the loop that
-    /// holds just these, or a new section with no name round them. A
-    /// loop or a drawn order already round some of them stays, inside
-    /// the new one, when all of it is among them. `None` with fewer
-    /// than `least` steps, across a section's heading, part way into a
-    /// loop, or further in than [`DEEPEST`].
-    fn round(
+    /// Has all the section `section` holds come again: twice, until that
+    /// is changed. A step put into the section later is in the loop.
+    /// Returns the span attached to the section.
+    pub fn loop_section(&mut self, section: StepId) -> Result<SpanId, SpanError> {
+        self.lay(Over::Section(section), 0, come_again)
+    }
+
+    /// Has all the section `section` holds come in an order drawn afresh
+    /// each time. Not a section that holds sections with steps before
+    /// them: a drawn order has no heading among its steps.
+    pub fn shuffle_section(&mut self, section: StepId) -> Result<SpanId, SpanError> {
+        self.lay(Over::Section(section), 0, |flow| flow.shuffle = true)
+    }
+
+    /// The span over `over`, made if there is none, with its flow
+    /// changed by `set`. A span over the very same steps is the one
+    /// changed, and it is attached to the section when a section is what
+    /// was asked for. An error with fewer than `least` steps from one
+    /// step to another, or where [`fits`] says it can't be.
+    ///
+    /// [`fits`]: Plan::fits
+    fn lay(
         &mut self,
-        a: StepId,
-        b: StepId,
+        over: Over,
         least: usize,
         set: impl FnOnce(&mut Flow),
-    ) -> Option<StepId> {
-        let (a, b) = (self.position(a)?, self.position(b)?);
-        let (mut first, last) = (a.min(b), a.max(b));
-        let bare = |step: &Step| step.is_section() && !step.is_loop();
-        let steps = self.steps[first..=last]
-            .iter()
-            .filter(|step| !step.is_section())
-            .count();
-        if steps < least || self.steps[first..=last].iter().any(bare) {
-            return None;
-        }
-        // Just what a section or a loop holds: that one is the group.
-        if let Some(section) = self.holder(first)
-            && section + 1 == first
-            && self.group_end(section) == last + 1
-        {
-            set(&mut self.steps[section].flow);
-            return Some(self.steps[section].id);
-        }
-        // A loop that starts with the first of them is among them, if
-        // all of it is: the new group goes round it.
-        while first > 0 && self.steps[first - 1].is_loop() && self.group_end(first - 1) <= last + 1
-        {
-            first -= 1;
-        }
-        // Every loop among them is whole, and the last of them is in
-        // nothing that starts before the first.
-        let holder = self.holder(first);
-        let whole = (first..=last)
-            .filter(|at| self.steps[*at].is_section())
-            .all(|at| self.group_end(at) <= last + 1);
-        let mut inner = self.holder(last);
-        while inner != holder {
-            match inner {
-                Some(at) if at >= first => inner = self.holder(at),
-                _ => return None,
+    ) -> Result<SpanId, SpanError> {
+        // From the first step among them to the last, in the plan's
+        // order: neither end is a heading.
+        let over = match over {
+            Over::Steps { first, last } => {
+                let a = self.position(first).ok_or(SpanError::Missing)?;
+                let b = self.position(last).ok_or(SpanError::Missing)?;
+                let mut steps = self.steps[a.min(b)..=a.max(b)]
+                    .iter()
+                    .filter(|step| !step.is_section());
+                let first = steps.next().ok_or(SpanError::TooFew)?;
+                if steps.clone().count() + 1 < least {
+                    return Err(SpanError::TooFew);
+                }
+                Over::Steps {
+                    first: first.id,
+                    last: steps.next_back().unwrap_or(first).id,
+                }
             }
-        }
-        if !whole {
-            return None;
-        }
-        let depth = holder
-            .and_then(|section| self.steps[section].depth())
-            .map_or(0, |depth| depth + 1);
-        let deepest = self.steps[first..=last]
+            Over::Section(_) => over,
+        };
+        let reach = self.reach(over)?;
+        let ranged = matches!(over, Over::Steps { .. });
+        let same = self
+            .spans
             .iter()
-            .filter_map(Step::depth)
-            .max()
-            .map_or(depth, |inner| inner + 1);
-        if deepest > DEEPEST {
-            return None;
-        }
-        // What is among them goes one further in, with the new group.
-        for step in &mut self.steps[first..=last] {
-            if let Action::Section { depth, .. } = &mut step.action {
-                *depth += 1;
-            }
-        }
-        let through = Some(self.steps[last].id);
-        let id = StepId(self.next_id);
-        self.next_id += 1;
-        let mut flow = Flow::default();
+            .position(|span| span.over == over)
+            .or_else(|| {
+                self.spans.iter().position(|span| {
+                    (ranged || matches!(span.over, Over::Steps { .. }))
+                        && reach.is_some()
+                        && self.reach(span.over) == Ok(reach)
+                })
+            });
+        let mut flow = same.map(|at| self.spans[at].flow).unwrap_or_default();
         set(&mut flow);
-        self.steps.insert(
-            first,
-            Step {
-                id,
-                label: String::new(),
-                notes: None,
-                action: Action::Section {
-                    budget: None,
-                    depth,
-                    through,
-                },
-                estimate: None,
-                advance: None,
-                flow,
-                sound: None,
-                look: None,
-                filled: false,
-            },
-        );
+        self.fits(over, flow, same.map(|at| self.spans[at].id))?;
+        let id = match same {
+            Some(at) => {
+                let span = &mut self.spans[at];
+                span.flow = flow;
+                if !ranged {
+                    span.over = over;
+                }
+                span.id
+            }
+            None => {
+                let id = SpanId(self.next_span);
+                self.next_span += 1;
+                self.spans.push(Span { id, over, flow });
+                id
+            }
+        };
         self.settle();
-        self.position(id).map(|_| id)
+        Ok(id)
     }
 
-    /// Takes away that `id` comes again: a section comes once, and a
-    /// loop drawn round some steps is gone unless it is there for their
-    /// order too. Returns whether it came again.
-    pub fn unloop(&mut self, id: StepId) -> bool {
-        let Some(step) = self.get_mut(id) else {
+    /// How `of` moves: the plan, a step by itself, or a span. A
+    /// section's heading says how the span attached to the section does,
+    /// which with no such span is once, in the plan's order. `None` if
+    /// there is no such step or span.
+    pub fn flow_of(&self, of: impl Into<FlowOf>) -> Option<Flow> {
+        match of.into() {
+            FlowOf::Plan => Some(self.flow),
+            FlowOf::Span(id) => self.span(id).map(|span| span.flow),
+            FlowOf::Step(id) => {
+                let step = self.get(id)?;
+                Some(match step.is_section() {
+                    true => self
+                        .section_span(id)
+                        .map(|span| span.flow)
+                        .unwrap_or_default(),
+                    false => step.flow,
+                })
+            }
+        }
+    }
+
+    /// Has `of` move as `flow` says: the plan, a step by itself, or a
+    /// span. For a section's heading it is the span attached to the
+    /// section, made if there is none. A span that would come once, in
+    /// the plan's order, is taken away. An error where a span can't be
+    /// so (see [`loop_over`]), with nothing changed.
+    ///
+    /// [`loop_over`]: Plan::loop_over
+    pub fn set_flow(&mut self, of: impl Into<FlowOf>, flow: Flow) -> Result<(), SpanError> {
+        let (over, id) = match of.into() {
+            FlowOf::Plan => {
+                self.flow = flow;
+                return Ok(());
+            }
+            FlowOf::Span(id) => (self.span(id).ok_or(SpanError::Missing)?.over, Some(id)),
+            FlowOf::Step(id) => {
+                let step = self.get_mut(id).ok_or(SpanError::Missing)?;
+                if !step.is_section() {
+                    step.flow = flow;
+                    return Ok(());
+                }
+                let span = self.section_span(id).map(|span| span.id);
+                (Over::Section(id), span)
+            }
+        };
+        let was = id.and_then(|id| self.span(id)).map(|span| span.flow);
+        // A drawn order newly asked for needs its three steps.
+        if flow.shuffle
+            && !was.is_some_and(|was| was.shuffle)
+            && matches!(over, Over::Steps { .. })
+            && self.reach(over)?.is_some_and(|(first, last)| {
+                let steps = self.steps[first..=last].iter();
+                steps.filter(|step| !step.is_section()).count() < 3
+            })
+        {
+            return Err(SpanError::TooFew);
+        }
+        self.fits(over, flow, id)?;
+        match id.and_then(|id| self.spans.iter_mut().find(|span| span.id == id)) {
+            Some(span) => span.flow = flow,
+            None => {
+                self.spans.push(Span {
+                    id: SpanId(self.next_span),
+                    over,
+                    flow,
+                });
+                self.next_span += 1;
+            }
+        }
+        self.settle();
+        Ok(())
+    }
+
+    /// Takes the span `id` away: its steps come once, in the plan's
+    /// order. Returns it, if it was there.
+    pub fn remove_span(&mut self, id: SpanId) -> Option<Span> {
+        let at = self.spans.iter().position(|span| span.id == id)?;
+        Some(self.spans.remove(at))
+    }
+
+    /// Takes away that `of` comes again: it comes once. A span is gone
+    /// unless it is there for the order of its steps too. Returns
+    /// whether it came again.
+    pub fn unloop(&mut self, of: impl Into<FlowOf>) -> bool {
+        let of = of.into();
+        let Some(mut flow) = self.flow_of(of) else {
             return false;
         };
-        let was = step.flow.repeat != Repeat::Once;
-        step.flow.repeat = Repeat::Once;
-        step.flow.ends = Ending::default();
-        self.settle();
-        was
+        let was = flow.repeat != Repeat::Once;
+        flow.repeat = Repeat::Once;
+        flow.ends = Ending::default();
+        self.set_flow(of, flow).is_ok() && was
     }
 
-    /// Takes away the drawn order of `id`: its steps come in the plan's
-    /// order, and a group drawn round some steps is gone unless it comes
-    /// again too. Returns whether it had one.
-    pub fn unshuffle(&mut self, id: StepId) -> bool {
-        let Some(step) = self.get_mut(id) else {
+    /// Takes away the drawn order of `of`: its steps come in the plan's
+    /// order. A span is gone unless it comes again too. Returns whether
+    /// it had one.
+    pub fn unshuffle(&mut self, of: impl Into<FlowOf>) -> bool {
+        let of = of.into();
+        let Some(mut flow) = self.flow_of(of) else {
             return false;
         };
-        let was = step.flow.shuffle;
-        step.flow.shuffle = false;
-        self.settle();
-        was
+        let was = flow.shuffle;
+        flow.shuffle = false;
+        self.set_flow(of, flow).is_ok() && was
     }
 
-    /// Removes a step.
+    /// When the steps `leaving` go from where they are, a span drawn
+    /// from or to one of them is drawn to the nearest of its steps that
+    /// stays. With none that stays, it goes with them.
+    fn let_go(&mut self, leaving: &[StepId]) {
+        for at in 0..self.spans.len() {
+            let Over::Steps { first, last } = self.spans[at].over else {
+                continue;
+            };
+            if !leaving.contains(&first) && !leaving.contains(&last) {
+                continue;
+            }
+            let Ok(Some((from, to))) = self.reach(self.spans[at].over) else {
+                continue;
+            };
+            let mut staying = self.steps[from..=to]
+                .iter()
+                .filter(|step| !step.is_section() && !leaving.contains(&step.id));
+            if let Some(first) = staying.next() {
+                self.spans[at].over = Over::Steps {
+                    first: first.id,
+                    last: staying.next_back().unwrap_or(first).id,
+                };
+            }
+        }
+    }
+
+    /// Removes a step. A section's steps stay, in the section before it,
+    /// and a span attached to it is gone.
     pub fn remove(&mut self, id: StepId) -> Option<Step> {
-        self.end_before(&[id]);
+        self.let_go(&[id]);
         let index = self.position(id)?;
         // The sections a removed section held move out one level, to
         // where it was, and don't fall into the section before it.
@@ -852,16 +1238,10 @@ impl Plan {
         Some(step)
     }
 
-    /// Moves a step to `index` (clamped to the end). Returns whether it exists.
+    /// Moves a step to `index` in the plan without it (clamped to the
+    /// end). Returns whether it exists.
     pub fn move_to(&mut self, id: StepId, index: usize) -> bool {
-        self.end_before(&[id]);
-        let Some(from) = self.position(id) else {
-            return false;
-        };
-        let step = self.steps.remove(from);
-        self.steps.insert(index.min(self.steps.len()), step);
-        self.settle();
-        true
+        self.move_steps(&[id], index)
     }
 
     /// What moving `id` takes along: the step alone, or a section with
@@ -879,6 +1259,10 @@ impl Plan {
 
     /// Moves the steps `ids`, in their plan order, to `index` in the plan
     /// without them (clamped to the end). Returns whether any exist.
+    ///
+    /// A span is over what is between its two steps, so a step moved in
+    /// between them is in it, and one moved out is not. A span whose
+    /// steps all move goes with them.
     pub fn move_steps(&mut self, ids: &[StepId], index: usize) -> bool {
         let moved = self.place(ids, index);
         self.settle();
@@ -888,8 +1272,8 @@ impl Plan {
     /// Moves the section `ids` begins with, and all it holds, to `index`
     /// in the plan without them, with the section at `depth`: the
     /// sections it holds go in or out as far as it does. Then every
-    /// section is kept where it can be, as after any move. Returns
-    /// whether any of `ids` exist.
+    /// section and span is kept where it can be, as after any move.
+    /// Returns whether any of `ids` exist.
     pub fn move_group(&mut self, ids: &[StepId], index: usize, depth: u8) -> bool {
         let own = ids
             .first()
@@ -910,17 +1294,24 @@ impl Plan {
     }
 
     /// Puts `ids`, in their plan order, at `index` in the plan without
-    /// them. Sections are left at whatever depth they have.
+    /// them. Sections are left at whatever depth they have. Put where
+    /// they already are, nothing changes.
     fn place(&mut self, ids: &[StepId], index: usize) -> bool {
-        self.end_before(ids);
+        let before: Vec<StepId> = self.steps.iter().map(|step| step.id).collect();
+        let (moving, mut after): (Vec<StepId>, Vec<StepId>) =
+            before.iter().partition(|id| ids.contains(*id));
+        let at = index.min(after.len());
+        after.splice(at..at, moving.iter().copied());
+        if after == before {
+            return !moving.is_empty();
+        }
+        self.let_go(ids);
         let (moving, mut rest): (Vec<Step>, Vec<Step>) = std::mem::take(&mut self.steps)
             .into_iter()
             .partition(|step| ids.contains(&step.id));
-        let moved = !moving.is_empty();
-        let at = index.min(rest.len());
         rest.splice(at..at, moving);
         self.steps = rest;
-        moved
+        true
     }
 
     /// A new plan titled `title` from this one as a template: its sections,
@@ -946,10 +1337,15 @@ impl Plan {
 
     /// Parses a plan from JSON.
     pub fn from_json(json: &str) -> Result<Self, PlanError> {
-        let mut plan: Plan = serde_json::from_str(json)?;
+        let saved: serde_json::Value = serde_json::from_str(json)?;
+        let ended = ends_before_spans(&saved);
+        let mut plan: Plan = serde_json::from_value(saved)?;
         // Hand-edited files may have a stale counter; never reuse an id.
         let max = plan.steps.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         plan.next_id = plan.next_id.max(max);
+        let max = plan.spans.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
+        plan.next_span = plan.next_span.max(max);
+        plan.upgrade_before_spans(&ended);
         plan.settle();
         Ok(plan)
     }
@@ -964,6 +1360,22 @@ impl Plan {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, PlanError> {
         Self::from_json(&std::fs::read_to_string(path)?)
     }
+}
+
+/// In a plan saved before there were spans, a section could end at a
+/// step: `"through"` in its action. Each such section's id, with the id
+/// of that step. None in a plan saved since.
+fn ends_before_spans(saved: &serde_json::Value) -> Vec<(StepId, StepId)> {
+    let steps = saved.get("steps").and_then(|steps| steps.as_array());
+    steps
+        .into_iter()
+        .flatten()
+        .filter_map(|step| {
+            let id = step.get("id")?.as_u64()?;
+            let last = step.get("action")?.get("through")?.as_u64()?;
+            Some((StepId(id), StepId(last)))
+        })
+        .collect()
 }
 
 /// Lengths as whole seconds in JSON, which people can read and edit.
@@ -1230,118 +1642,387 @@ mod tests {
         (plan, music, [steps[0], steps[1], steps[2], steps[3], e])
     }
 
+    /// The steps a span is over, by their labels.
+    fn over(plan: &Plan, span: SpanId) -> Vec<&str> {
+        let (first, last) = plan.span_range(span).expect("over some steps");
+        plan.steps()[first..=last]
+            .iter()
+            .filter(|step| !step.is_section())
+            .map(|step| step.label.as_str())
+            .collect()
+    }
+
+    /// The spans a step is in, outermost first.
+    fn spans_of(plan: &Plan, id: StepId) -> Vec<SpanId> {
+        plan.spans_at(plan.position(id).unwrap())
+    }
+
     #[test]
-    fn a_loop_is_drawn_round_some_steps_and_ends_at_the_last() {
-        let (mut plan, music, [a, b, c, d, e]) = hymns();
+    fn a_loop_is_a_span_over_some_steps_and_no_row_of_the_plan() {
+        let (mut plan, music, [a, b, c, d, _]) = hymns();
         // From C back up to A, as it is dragged.
         let looped = plan.loop_over(c, a).expect("a loop");
-        let at = plan.position(looped).unwrap();
-        assert!(plan.steps()[at].is_loop());
-        assert_eq!(plan.steps()[at].flow.repeat, Repeat::Times(2));
-        assert_eq!(plan.carried(looped), [looped, a, b, c]);
-        // What it holds is in it and in Music; D after it is in Music only.
-        let within = |plan: &Plan, id| plan.within(plan.position(id).unwrap());
-        assert_eq!(within(&plan, b), [music, looped]);
-        assert_eq!(within(&plan, d), [music]);
-        // Its steps stay in line with the ones around them.
-        let shown = |plan: &Plan, id| plan.shown_level(plan.position(id).unwrap());
-        assert_eq!((shown(&plan, b), shown(&plan, d)), (1, 1));
-        // Put before its last step, something is in it; after, it isn't.
-        let last = plan.position(c).unwrap();
-        assert_eq!(plan.level_put_at(last), (2, Some(looped)));
-        assert_eq!(plan.level_put_at(last + 1), (1, Some(music)));
-        // Music still holds everything up to Sermon.
-        assert_eq!(plan.carried(music).len(), 6);
-        // It reads back the same.
-        assert_eq!(Plan::from_json(&plan.to_json()).unwrap(), plan);
-        // Taken away, the steps stay.
-        assert!(plan.unloop(looped));
-        assert_eq!(plan.len(), 7);
-        assert_eq!(within(&plan, b), [music]);
-        let _ = e;
-    }
-
-    #[test]
-    fn a_loop_stays_in_one_section_and_round_all_of_one_is_the_section() {
-        let (mut plan, music, [a, _, _, d, e]) = hymns();
-        // Not across a heading, and not round one step.
-        assert_eq!(plan.loop_over(d, e), None);
-        assert_eq!(plan.loop_over(a, a), None);
         assert_eq!(plan.len(), 7, "nothing was put in");
-        // Round all Music holds: Music comes again, with nothing new.
-        assert_eq!(plan.loop_over(a, d), Some(music));
-        assert_eq!(plan.get(music).unwrap().flow.repeat, Repeat::Times(2));
-        assert_eq!(plan.len(), 7);
-        assert!(plan.unloop(music));
-        assert_eq!(plan.get(music).unwrap().flow.repeat, Repeat::Once);
+        let span = *plan.span(looped).unwrap();
+        assert_eq!(span.over, Over::Steps { first: a, last: c });
+        assert_eq!(span.flow.repeat, Repeat::Times(2));
+        assert_eq!(plan.span_range(looped), Some((1, 3)));
+        assert_eq!(over(&plan, looped), ["A", "B", "C"]);
+        // What it is over is in it; D after it is not. Both are in Music
+        // and at Music's level, as before.
+        assert_eq!(spans_of(&plan, b), [looped]);
+        assert!(spans_of(&plan, d).is_empty());
+        let within = |plan: &Plan, id| plan.within(plan.position(id).unwrap());
+        assert_eq!(within(&plan, b), [music]);
+        assert_eq!((plan.level(2), plan.level(4)), (1, 1));
+        // It reads back the same.
+        let json = plan.to_json();
+        assert!(json.contains("\"spans\""), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        // How it moves can be changed, and it can be taken away.
+        let forever = Flow {
+            repeat: Repeat::Forever,
+            ..Flow::default()
+        };
+        assert_eq!(plan.set_flow(looped, forever), Ok(()));
+        assert_eq!(plan.flow_of(looped), Some(forever));
+        assert!(plan.unloop(looped));
+        assert!(plan.spans().is_empty());
+        assert!(!plan.to_json().contains("\"spans\""));
+        assert_eq!(plan.len(), 7, "the steps stay");
     }
 
     #[test]
-    fn a_drawn_order_goes_round_three_steps_or_more_and_sits_with_a_loop() {
-        let (mut plan, music, [a, b, c, d, _]) = hymns();
-        // Two steps have no order worth drawing.
-        assert_eq!(plan.shuffle_over(a, b), None);
-        // B to D, in a drawn order: a group with no name round them.
+    fn a_loop_goes_across_a_heading_and_round_two_steps_or_more() {
+        let (mut plan, _, [a, _, _, d, e]) = hymns();
+        // Not round one step.
+        assert_eq!(plan.loop_over(a, a), Err(SpanError::TooFew));
+        assert_eq!(plan.loop_over(a, StepId(999)), Err(SpanError::Missing));
+        // From D in Music to E in Sermon: the heading is no bar.
+        let looped = plan.loop_over(e, d).expect("across the heading");
+        assert_eq!(plan.span_range(looped), Some((4, 6)));
+        assert_eq!(over(&plan, looped), ["D", "E"]);
+        // The heading between them is among its rows.
+        assert_eq!(plan.spans_at(5), [looped]);
+        // Going on from D is E, over Sermon's heading.
+        let at = |id| plan.position(id).unwrap();
+        assert_eq!(plan.next_step(at(d)), Some(at(e)));
+        assert_eq!(plan.next_step(at(e)), None);
+        assert_eq!(plan.would_shuffle_over(d, e), Err(SpanError::TooFew));
+        assert_eq!(plan.would_loop_section(d), Err(SpanError::Missing));
+        // Drawn from a heading, it starts at the first step after it.
+        let (mut plan, music, [a, b, ..]) = hymns();
+        let looped = plan.loop_over(music, b).unwrap();
+        assert_eq!(
+            plan.span(looped).unwrap().over,
+            Over::Steps { first: a, last: b }
+        );
+    }
+
+    #[test]
+    fn a_span_attached_to_a_section_takes_in_what_is_put_there_later() {
+        let (mut plan, music, [a, _, _, d, e]) = hymns();
+        let looped = plan.loop_section(music).unwrap();
+        assert_eq!(plan.span(looped).unwrap().over, Over::Section(music));
+        assert_eq!(plan.section_span(music).map(|span| span.id), Some(looped));
+        assert_eq!(over(&plan, looped), ["A", "B", "C", "D"]);
+        // The heading itself is not in it: it is over the steps.
+        assert!(plan.spans_at(0).is_empty());
+        // A new step in Music is in the loop; one in Sermon is not.
+        let new = plan.insert(5, "New", Action::Blank);
+        assert_eq!(spans_of(&plan, new), [looped]);
+        assert_eq!(over(&plan, looped), ["A", "B", "C", "D", "New"]);
+        assert!(spans_of(&plan, e).is_empty());
+        // So is one moved in, and one moved out is out.
+        plan.move_steps(&[e], 1);
+        plan.move_steps(&[a], 99);
+        assert_eq!(over(&plan, looped), ["E", "B", "C", "D", "New"]);
+        // A section's heading says how its span moves.
+        assert_eq!(
+            plan.flow_of(music).map(|flow| flow.repeat),
+            Some(Repeat::Times(2))
+        );
+        // A section with no steps yet can be looped, for what will come.
+        let empty = plan.section("Later", None);
+        let later = plan.loop_section(empty).unwrap();
+        assert_eq!(plan.span_range(later), None);
+        let step = plan.push("Step", Action::Blank);
+        assert_eq!(spans_of(&plan, step), [later]);
+        // Only a section has one.
+        assert_eq!(plan.loop_section(step), Err(SpanError::Missing));
+        // Without its section, it is gone; the steps stay.
+        plan.remove(music);
+        assert_eq!(plan.span(looped), None);
+        assert!(plan.position(d).is_some());
+    }
+
+    #[test]
+    fn a_range_that_has_a_span_already_changes_that_span() {
+        let (mut plan, music, [a, b, _, d, _]) = hymns();
+        // B to D, in a drawn order.
         let drawn = plan.shuffle_over(d, b).expect("a drawn order");
-        assert!(plan.get(drawn).unwrap().is_loop());
-        assert!(plan.get(drawn).unwrap().flow.shuffle);
-        assert_eq!(plan.carried(drawn), [drawn, b, c, d]);
-        // A loop round all four goes round the drawn order too.
-        let looped = plan.loop_over(a, d).expect("round all Music holds");
-        assert_eq!(looped, music, "all Music holds: Music comes again");
-        plan.unloop(music);
-        // Round A to C only would cut the drawn order in two.
-        assert_eq!(plan.loop_over(a, c), None);
-        // The same three again: the group they have comes again too.
-        assert_eq!(plan.loop_over(b, d), Some(drawn));
-        assert_eq!(plan.get(drawn).unwrap().flow.repeat, Repeat::Times(2));
-        // Neither taken away alone takes the group; both do.
+        assert!(plan.span(drawn).unwrap().flow.shuffle);
+        // The same three again: the span they have comes again too.
+        assert_eq!(plan.loop_over(b, d), Ok(drawn));
+        assert_eq!(plan.span(drawn).unwrap().flow.repeat, Repeat::Times(2));
+        assert_eq!(plan.spans().len(), 1);
+        // Neither taken away alone takes the span; both do.
         assert!(plan.unshuffle(drawn));
-        assert!(plan.position(drawn).is_some());
+        assert!(plan.span(drawn).is_some());
         assert!(plan.unloop(drawn));
-        assert_eq!(plan.position(drawn), None);
-        assert_eq!(plan.len(), 7);
+        assert_eq!(plan.span(drawn), None);
+        // Round all Music holds, from step to step, then Music itself:
+        // one span, now attached to the section.
+        let looped = plan.loop_over(a, d).unwrap();
+        assert_eq!(plan.loop_section(music), Ok(looped));
+        assert_eq!(plan.span(looped).unwrap().over, Over::Section(music));
+        assert_eq!(plan.spans().len(), 1);
+        // And from step to step again, it is still the section's.
+        assert_eq!(plan.loop_over(a, d), Ok(looped));
+        assert_eq!(plan.span(looped).unwrap().over, Over::Section(music));
     }
 
     #[test]
-    fn a_loop_goes_round_a_drawn_order_that_is_whole_among_its_steps() {
+    fn a_drawn_order_needs_three_steps_and_stays_in_one_section() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        // Two steps have no order worth drawing.
+        assert_eq!(plan.shuffle_over(a, b), Err(SpanError::TooFew));
+        // Not across Sermon's heading, though a loop goes there.
+        assert_eq!(plan.shuffle_over(c, e), Err(SpanError::AcrossHeading));
+        let looped = plan.loop_over(c, e).unwrap();
+        let drawn = Flow {
+            shuffle: true,
+            ..plan.span(looped).unwrap().flow
+        };
+        assert_eq!(plan.set_flow(looped, drawn), Err(SpanError::AcrossHeading));
+        assert!(!plan.span(looped).unwrap().flow.shuffle, "nothing changed");
+        plan.remove_span(looped);
+        // A loop round two steps can't be given a drawn order either.
+        let pair = plan.loop_over(a, b).unwrap();
+        assert_eq!(plan.set_flow(pair, drawn), Err(SpanError::TooFew));
+        plan.remove_span(pair);
+        // All at the plan's own level is one place too.
+        let mut flat = Plan::new("Flat");
+        let [x, _, z] = ["X", "Y", "Z"].map(|name| flat.push(name, Action::Blank));
+        assert!(flat.shuffle_over(x, z).is_ok());
+        // A section's own, while no heading is among its steps.
+        let drawn = plan.shuffle_section(music).unwrap();
+        assert!(plan.span(drawn).unwrap().flow.shuffle);
+        // A heading that comes among them ends it: the plan's order.
+        let inner = plan.insert(
+            3,
+            "Inner",
+            Action::Section {
+                budget: None,
+                depth: 0,
+            },
+        );
+        assert!(plan.nest(inner, true));
+        assert_eq!(plan.span(drawn), None);
+        assert_eq!(
+            plan.shuffle_section(music),
+            Err(SpanError::AcrossHeading),
+            "Music holds a heading with steps before it"
+        );
+        let _ = d;
+    }
+
+    #[test]
+    fn two_spans_are_apart_or_one_is_wholly_in_the_other() {
         let mut plan = Plan::new("Sabbath");
         let ids = ["A", "B", "C", "D", "E"].map(|name| plan.show(resource(name)));
-        let [a, b, _, d, e] = ids;
+        let [a, b, c, d, e] = ids;
         let drawn = plan.shuffle_over(b, d).unwrap();
-        // From A to D: the drawn order is all among them.
-        let looped = plan.loop_over(a, d).unwrap();
-        assert_ne!(looped, drawn);
-        let within = |plan: &Plan, id| plan.within(plan.position(id).unwrap());
-        assert_eq!(within(&plan, b), [looped, drawn]);
-        assert_eq!(within(&plan, a), [looped]);
-        assert!(within(&plan, e).is_empty());
-        let depths: Vec<u8> = plan.steps().iter().filter_map(Step::depth).collect();
-        assert_eq!(depths, [0, 1]);
+        // From A to C would cut the drawn order in two; so would C to E.
+        assert_eq!(plan.loop_over(a, c), Err(SpanError::HalfOver(drawn)));
+        assert_eq!(plan.loop_over(c, e), Err(SpanError::HalfOver(drawn)));
+        assert_eq!(plan.spans().len(), 1, "nothing was laid");
+        // From A to D the drawn order is all among them: round it.
+        let outer = plan.loop_over(a, d).unwrap();
+        assert_ne!(outer, drawn);
+        assert_eq!(spans_of(&plan, b), [outer, drawn]);
+        assert_eq!(spans_of(&plan, a), [outer]);
+        assert!(spans_of(&plan, e).is_empty());
+        // And inside it, round two of its steps.
+        let inner = plan.loop_over(b, c).unwrap();
+        assert_eq!(spans_of(&plan, c), [outer, drawn, inner]);
+        assert_eq!(
+            plan.span_ranges(),
+            [(outer, 0, 3), (drawn, 1, 3), (inner, 1, 2)]
+        );
+        let laid: Vec<_> = plan
+            .laid_spans()
+            .into_iter()
+            .map(|(span, first, last)| (span.id, span.is_loop(), span.is_drawn(), first, last))
+            .collect();
+        assert_eq!(
+            laid,
+            [
+                (outer, true, false, 0, 3),
+                (drawn, false, true, 1, 3),
+                (inner, true, false, 1, 2)
+            ]
+        );
+        // A dry run says the same as the real thing and changes nothing.
+        let before = plan.clone();
+        assert_eq!(plan.would_loop_over(c, e), Err(SpanError::HalfOver(drawn)));
+        assert!(plan.would_loop_over(d, e).is_err());
+        assert_eq!(plan.would_shuffle_over(a, b), Err(SpanError::TooFew));
+        assert_eq!(plan, before);
         assert_eq!(Plan::from_json(&plan.to_json()).unwrap(), plan);
+        // A section's span keeps to it as well: one from in it to out
+        // of it would cut it.
+        let (mut plan, music, [_, _, c, d, e]) = hymns();
+        let musics = plan.loop_section(music).unwrap();
+        assert_eq!(plan.loop_over(d, e), Err(SpanError::HalfOver(musics)));
+        assert!(plan.loop_over(c, d).is_ok());
+        // Edits that leave two half over each other take the newer away.
+        let (mut plan, _, [_, _, c, d, _]) = hymns();
+        let sermon = plan.steps()[5].id;
+        let first = plan.loop_section(sermon).unwrap();
+        let second = plan.loop_over(c, d).unwrap();
+        // Sermon's heading moves up between C and D: D is in Sermon now.
+        plan.move_steps(&[sermon], 4);
+        assert_eq!(over(&plan, first), ["D", "E"]);
+        assert_eq!(plan.span(second), None);
     }
 
     #[test]
-    fn a_loop_follows_its_steps_as_they_come_and_go() {
+    fn a_span_follows_its_steps_as_they_come_and_go() {
         let (mut plan, _, [a, b, c, d, _]) = hymns();
         let looped = plan.loop_over(a, c).unwrap();
         // Its last step moved out: it ends at the one before.
-        let end = plan.len();
-        plan.move_steps(&[c], end);
-        assert_eq!(plan.carried(looped), [looped, a, b]);
+        plan.move_steps(&[c], 99);
+        assert_eq!(over(&plan, looped), ["A", "B"]);
         // Its last step removed: the same.
         plan.remove(b);
-        assert_eq!(plan.carried(looped), [looped, a]);
+        assert_eq!(over(&plan, looped), ["A"]);
         // With nothing left in it, it is gone.
         plan.remove(a);
-        assert_eq!(plan.position(looped), None);
-        assert!(plan.steps().iter().all(|step| !step.is_loop()));
-        // A step put inside one is in it.
+        assert_eq!(plan.span(looped), None);
+        // A step put between its steps is in it.
         let (mut plan, _, [a, b, c, ..]) = hymns();
         let looped = plan.loop_over(a, c).unwrap();
         let at = plan.position(b).unwrap();
         plan.move_steps(&[d], at);
-        assert_eq!(plan.carried(looped), [looped, a, d, b, c]);
+        assert_eq!(over(&plan, looped), ["A", "D", "B", "C"]);
+        // Its first step moved out: it starts at the next.
+        plan.move_steps(&[a], 99);
+        assert_eq!(over(&plan, looped), ["D", "B", "C"]);
+        // Its last step moved in among the others stays in it.
+        plan.move_to(c, 2);
+        assert_eq!(over(&plan, looped), ["D", "C", "B"]);
+        // A step put back where it is changes nothing, an end of it too.
+        let before = plan.clone();
+        plan.move_to(c, 2);
+        plan.move_to(d, 1);
+        assert_eq!(plan, before);
+        // All its steps moved together: it goes with them.
+        let end = plan.len() - 3;
+        plan.move_steps(&[c, d, b], end);
+        assert_eq!(over(&plan, looped), ["D", "C", "B"]);
+        assert_eq!(plan.span_range(looped), Some((4, 6)));
+        // A section moved with its steps takes the spans in it along.
+        let (mut plan, music, [a, b, ..]) = hymns();
+        let looped = plan.loop_over(a, b).unwrap();
+        let carried = plan.carried(music);
+        assert!(plan.move_group(&carried, 2, 0));
+        assert_eq!(labels(&plan)[..3], ["Sermon", "E", "Music"]);
+        assert_eq!(over(&plan, looped), ["A", "B"]);
+    }
+
+    #[test]
+    fn a_plan_saved_before_spans_loads_with_its_loops_as_spans() {
+        // Saved by the plan as it was: Welcome twice; Music three times
+        // round, holding a loop with no name round A to D (until 10:30,
+        // there and then) and in it a drawn order round B to D, then E;
+        // Sermon in a drawn order, holding F and G; all of it forever.
+        let plan = Plan::from_json(include_str!("../fixtures/plan_before_spans.json")).unwrap();
+        // The loops with no name are no rows now.
+        assert_eq!(
+            labels(&plan),
+            [
+                "Welcome", "Music", "A", "B", "C", "D", "E", "Sermon", "F", "G"
+            ]
+        );
+        let id = |label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
+        let flow_over = |over: Over| {
+            let span = plan.spans().iter().find(|span| span.over == over);
+            span.expect("a span").flow
+        };
+        assert_eq!(plan.spans().len(), 4);
+        // Music's and Sermon's are attached to them.
+        assert_eq!(
+            flow_over(Over::Section(id("Music"))),
+            Flow {
+                repeat: Repeat::Times(3),
+                ..Flow::default()
+            }
+        );
+        assert_eq!(
+            flow_over(Over::Section(id("Sermon"))),
+            Flow {
+                shuffle: true,
+                ..Flow::default()
+            }
+        );
+        // The two with no name are from step to step.
+        let (first, last) = (id("A"), id("D"));
+        assert_eq!(
+            flow_over(Over::Steps { first, last }),
+            Flow {
+                repeat: Repeat::Until(TimeOfDay::parse("10:30").unwrap()),
+                ends: Ending::Sharp,
+                ..Flow::default()
+            }
+        );
+        let (first, last) = (id("B"), id("D"));
+        assert_eq!(
+            flow_over(Over::Steps { first, last }),
+            Flow {
+                shuffle: true,
+                ..Flow::default()
+            }
+        );
+        // No heading says how it moves by itself, a step still does, and
+        // the plan keeps its own.
+        assert!(
+            plan.steps()
+                .iter()
+                .all(|s| !s.is_section() || s.flow.is_usual())
+        );
+        assert_eq!(
+            plan.get(id("Welcome")).unwrap().flow.repeat,
+            Repeat::Times(2)
+        );
+        assert_eq!(plan.flow.repeat, Repeat::Forever);
+        // Nested as they were: Music's, the loop, the drawn order.
+        let nested: Vec<Over> = plan
+            .spans_at(plan.position(id("C")).unwrap())
+            .into_iter()
+            .map(|span| plan.span(span).unwrap().over)
+            .collect();
+        assert_eq!(
+            nested,
+            [
+                Over::Section(id("Music")),
+                Over::Steps {
+                    first: id("A"),
+                    last: id("D")
+                },
+                Over::Steps {
+                    first: id("B"),
+                    last: id("D")
+                },
+            ]
+        );
+        // Saved again it is in today's form, and reads back the same.
+        let json = plan.to_json();
+        assert!(!json.contains("through"), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        // New ids don't reuse the ones the loops had.
+        let mut plan = plan;
+        assert_eq!(plan.push("New", Action::Note), StepId(12));
     }
 
     #[test]
@@ -1446,7 +2127,9 @@ mod tests {
     fn a_section_is_a_plan_of_its_own() {
         let (mut plan, [music, praise, _, sermon]) = nested();
         plan.get_mut(music).unwrap().advance = Some(true);
-        plan.get_mut(music).unwrap().flow.repeat = Repeat::Times(2);
+        plan.loop_section(music).unwrap();
+        let (a, b) = (plan.steps()[2].id, plan.steps()[3].id);
+        let inner = plan.loop_over(a, b).unwrap();
         let part = plan.part(music).unwrap();
         assert_eq!(labels(&part), ["Praise", "A", "B", "Reading", "C"]);
         // The sections in it are its own sections now.
@@ -1455,6 +2138,14 @@ mod tests {
         assert!(part.advance);
         assert_eq!(part.flow.repeat, Repeat::Times(2));
         assert!(part.goes_on(1));
+        // The loop in it came along; Music's own is the part's flow.
+        assert_eq!(part.spans().len(), 1);
+        assert_eq!(part.span_range(inner), Some((1, 2)));
+        // A span is a plan of its own too: once round it.
+        let round = plan.span_part(inner).unwrap();
+        assert_eq!(labels(&round), ["A", "B"]);
+        assert!(round.spans().is_empty());
+        assert_eq!(round.flow.repeat, Repeat::Times(2));
         // The same steps, by the same ids.
         assert_eq!(part.steps()[1].id, plan.steps()[2].id);
         assert_eq!(labels(&plan.part(sermon).unwrap()), ["D"]);
