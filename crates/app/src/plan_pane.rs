@@ -1794,7 +1794,12 @@ pub(crate) fn progress(media: &Media, resource: &Resource) -> Option<(String, f3
 }
 
 /// A thin bar, `done` of it filled in `color`, `indent` in from the left.
-fn bar<'a>(p: Palette, done: f32, color: iced::Color, indent: f32) -> Element<'a, Message> {
+pub(crate) fn bar<'a>(
+    p: Palette,
+    done: f32,
+    color: iced::Color,
+    indent: f32,
+) -> Element<'a, Message> {
     let done = done.clamp(0.0, 1.0);
     let part = |portion: f32| (portion * 1000.0).round().max(1.0) as u16;
     let fill =

@@ -248,8 +248,19 @@ sit inside another, three levels deep (Alt+→ and Alt+←, or the arrows on
 its row): it then folds, moves and counts its time with the one that
 holds it. A step shows
 what is inside it: the videos, sounds and pictures on a deck's slides, by
-slide, and the sound that plays with the step. Beside the preview is the
-**library**, the media folders as a tree: a click looks at a file on this
+slide, and the sound that plays with the step.
+
+Beside the preview is a panel with three lenses, picked at its top. **+**
+is the library. The sliders are the **look** of what is selected in the
+plan (the plan itself, with nothing selected): background, text colour,
+font, sizes, how far a picture is dimmed, the reference line. Each value
+says where it comes from (all plans, the plan, a section around it) and
+typing one sets it here; **set here ✕** gives it back to the level above.
+A section's look holds for everything in it. The tick is the **check**:
+what isn't ready (a click goes to the step), each section against its
+time, and where sound and the stage go.
+
+The **library** is the media folders as a tree: a click looks at a file on this
 screen, a double click or Enter adds it to the plan after the selected
 step, and it can be dragged to where it should go. F6 gives it the arrows
 (its heading lights up): ↑ ↓ walk its rows, → ← open and close folders,

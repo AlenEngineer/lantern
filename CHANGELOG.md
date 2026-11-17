@@ -297,6 +297,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   themselves add up to, when it ends, and a bar with a part for each
   section. What repeats a number of times counts that often, in the total
   and in each section's time.
+- A panel beside the preview with three lenses. **+** is the library, as
+  before. The sliders edit the look of what is selected (a step, a section
+  for everything in it, or the plan), each value saying which level it
+  comes from, with **set here ✕** to give it back. The tick shows what
+  isn't ready, each section against its time, and where sound and the
+  stage go.
 
 ### Fixed
 

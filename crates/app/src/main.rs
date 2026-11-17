@@ -36,6 +36,7 @@ mod script;
 mod search;
 mod settings;
 mod shelf;
+mod side;
 mod stage;
 mod thumbs;
 mod watch;
@@ -306,6 +307,14 @@ enum Message {
     Rename(StepId, String),
     /// Turn a step's "go on when done" on or off.
     SetAdvance(StepId, bool),
+    /// What the side panel shows.
+    Lens(side::Lens),
+    /// A value of the selected thing's look, as typed.
+    LookEdit(side::Field, String),
+    /// That value goes back to what the level above gives.
+    LookReset(side::Field),
+    /// Nothing in the plan is selected: the plan itself is in hand.
+    Unselect,
     /// The plan's target time is to be typed.
     EditTarget,
     /// How long the whole service is meant to take, as typed.
@@ -576,6 +585,12 @@ struct App {
     pub(crate) starts_typed: Option<String>,
     /// The plan's target time as typed, while its field is open.
     pub(crate) target_typed: Option<String>,
+    /// What the side panel shows while planning.
+    pub(crate) lens: side::Lens,
+    /// A look value as typed so far: whose, which, and the text.
+    pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
+    /// Where sound went when the Check lens was last opened.
+    pub(crate) sound_now: Option<before::Sound>,
     /// Delete was pressed once in the plan's settings: again deletes.
     pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
@@ -749,6 +764,9 @@ impl App {
             importing: None,
             starts_typed: None,
             target_typed: None,
+            lens: side::Lens::default(),
+            look_typed: None,
+            sound_now: None,
             deleting_plan: false,
             editing: None,
             list_pick: None,
@@ -1957,6 +1975,24 @@ impl App {
                     }
                 });
                 self.from_typed = Some((id, typed));
+            }
+            Message::Lens(lens) => {
+                self.lens = lens;
+                self.look_typed = None;
+                // The arrows are the library's only while it is in sight.
+                if lens != side::Lens::Add {
+                    self.in_library = false;
+                }
+                if lens == side::Lens::Check {
+                    self.sound_now = before::sound();
+                }
+            }
+            Message::LookEdit(field, typed) => self.look_edit(field, typed),
+            Message::LookReset(field) => self.look_reset(field),
+            Message::Unselect => {
+                self.selected = None;
+                self.look_typed = None;
+                self.engine.0.clear_preview();
             }
             Message::EditTarget => {
                 let target = self.engine.0.plan().target;
