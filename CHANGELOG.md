@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- When a service goes back round a loop, a light runs back along the
+  loop's line and its round count lights up as it changes.
 - Rows taken away close up where they were, and rows Ctrl+Z (or redo)
   puts back grow in.
 - Saving turns Save into a tick for a moment. A plan that becomes empty

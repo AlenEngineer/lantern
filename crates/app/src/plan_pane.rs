@@ -1359,6 +1359,7 @@ impl App {
                 mark,
                 pulled,
                 shift: 0.0,
+                pulse: self.motion.round_pulse(laid.of),
                 marks: match laid.of {
                     FlowOf::Span(id) => {
                         crate::notes::numbers_on(plan, lantern_engine::NoteOn::Span(id))
@@ -1472,6 +1473,7 @@ impl App {
                     pulled: true,
                     shift: 0.0,
                     marks: Vec::new(),
+                    pulse: None,
                 })
             };
             for laid in lanes.loops {

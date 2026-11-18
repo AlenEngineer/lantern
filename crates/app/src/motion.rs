@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use iced::animation::{Animation, Easing};
-use lantern_engine::{SceneId, StepId};
+use lantern_engine::{FlowOf, SceneId, StepId};
 
 use crate::mode::Mode;
 
@@ -37,6 +37,8 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// A light running back along a loop's line as the service goes round.
+pub const ROUND: Duration = Duration::from_millis(700);
 /// Rows taken away closing up, or put back growing in.
 pub const ROWS: Duration = Duration::from_millis(220);
 /// Save, a tick for a moment after it is pressed.
@@ -119,6 +121,8 @@ pub struct Motion {
     gone: Option<(Option<StepId>, usize, Run)>,
     /// Rows just put back, growing in.
     came: Option<(Vec<StepId>, Run)>,
+    /// What the service just went round, its light running back.
+    round: Option<(FlowOf, Run)>,
 }
 
 impl Motion {
@@ -148,6 +152,7 @@ impl Motion {
             breath: None,
             gone: None,
             came: None,
+            round: None,
         }
     }
 
@@ -180,6 +185,18 @@ impl Motion {
     pub fn tick(&self) -> Option<f32> {
         let t = self.along(self.saved.as_ref())?;
         Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// The service went round `of`.
+    pub fn went_round(&mut self, of: FlowOf) {
+        self.round = Some((of, self.run(ROUND, Instant::now())));
+    }
+
+    /// How far the light has run back along `of`'s line.
+    pub fn round_pulse(&self, of: FlowOf) -> Option<f32> {
+        let (on, run) = self.round.as_ref()?;
+        (*on == of).then_some(())?;
+        self.along(Some(run))
     }
 
     /// `rows` rows were taken away from before `anchor`.
@@ -416,7 +433,8 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 14] = [
+        let runs: [Option<&Run>; 15] = [
+            self.round.as_ref().map(|(_, run)| run),
             self.gone.as_ref().map(|(_, _, run)| run),
             self.came.as_ref().map(|(_, run)| run),
             self.saved.as_ref(),
