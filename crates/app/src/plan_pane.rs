@@ -129,7 +129,7 @@ const FOOT: f32 = 16.0;
 
 /// How wide the card of a picked section is: a little more than the
 /// room its name had.
-const CARD: f32 = track::LABEL + 64.0;
+const CARD: f32 = track::LABEL + 46.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -423,6 +423,8 @@ impl App {
         let current = self.engine.0.current_step().map(|step| step.id);
         let next = self.engine.0.up_next().map(|step| step.id);
         let at = current.and_then(|id| plan.position(id));
+        // What a shuffle has given already this round, wherever it stands.
+        let drawn = self.engine.0.drawn_before();
         // While a drag moves, its rows leave the list and a gap opens where
         // they'd land; the editing strip and marks step aside.
         let moving = self.drag.as_ref().filter(|drag| drag.moving);
@@ -1073,7 +1075,9 @@ impl App {
                 Place::Current
             } else if Some(step.id) == next {
                 Place::Next
-            } else if at.is_some_and(|at| index < at) {
+            } else if at.is_some_and(|at| index < at) || drawn.contains(&step.id) {
+                // Above the step that is on, or drawn before it in a
+                // shuffle.
                 Place::Done
             } else {
                 Place::Later
@@ -2248,8 +2252,13 @@ impl App {
         // The length is edited where it's read: on the selected row a click
         // on it turns it into its field. A live slot has none to set.
         let has_length = !matches!(step.action, Action::Live { .. });
+        // In a service the step that is on says what there is to say under
+        // its name, so its name keeps the row's width.
+        let on_now = place == Place::Current && self.mode == crate::mode::Mode::Run;
         let end: Element<'_, Message> = if self.editing(step.id, Part::Length) {
             self.step_length_field(step)
+        } else if on_now && said.is_some() {
+            Space::new().into()
         } else if selected && has_length {
             let shown = if length.is_empty() {
                 "min".to_string()
@@ -2282,7 +2291,9 @@ impl App {
         let mut label = column![title];
         if self.editing(step.id, Part::Search) {
             label = label.push(self.search_field(step));
-        } else if selected && let Some(said) = &said {
+        } else if (selected || on_now)
+            && let Some(said) = &said
+        {
             // The selected row says under its name what there is to say
             // of it: its end has the length to click.
             label = label.push(single_line(said.clone()).size(META).color(said_color));
@@ -2307,8 +2318,9 @@ impl App {
         {
             line = line.push(look::icon(Icon::Phone, 13.0, label_color));
         }
-        // Its notes' marks: pressed, one opens.
-        for (id, n) in noted {
+        // Its notes' marks: pressed, one opens. The step that is on in a
+        // service has its notes open under it.
+        for (id, n) in noted.iter().filter(|_| !on_now) {
             line = line.push(crate::notes::mark(*n, Some(Message::OpenNote(*id))));
         }
         // A step that comes again says so, and how often.
@@ -3158,7 +3170,7 @@ impl App {
         let quiet = p.on_surface_variant;
         let small = |label: &'static str, does: Message| -> Element<'_, Message> {
             button(text(label).size(META).font(BOLD).color(p.on_surface))
-                .padding([1, 7])
+                .padding([1, 4])
                 .on_press_maybe(can.then_some(does))
                 .style(look::pill(p, Tone::Plain))
                 .into()
@@ -3172,18 +3184,18 @@ impl App {
         let goal: Element<'_, Message> = match self.editing(id, Part::Length) {
             true => self.section_time_field(id, budget),
             false => button(text(goal_words).size(META).font(BOLD).color(p.on_surface))
-                .padding([2, 8])
+                .padding([2, 6])
                 .on_press_maybe(can.then_some(Message::EditStep(Some((id, Part::Length)))))
                 .style(look::pill(p, Tone::Plain))
                 .into(),
         };
         let goal = row![
-            look::icon(Icon::Target, 13.0, quiet),
+            look::icon(Icon::Target, 12.0, quiet),
             small("−", Message::SectionGoal(id, -60)),
             goal,
             small("+", Message::SectionGoal(id, 60)),
         ]
-        .spacing(4)
+        .spacing(3)
         .align_y(Alignment::Center);
         // The time of day it should be over by, set or typed.
         let done_by = step.done_by();
@@ -3250,9 +3262,8 @@ impl App {
             let ends = timing.ends?;
             Some(match timing.late() {
                 Some(late) => text(format!(
-                    "ends {ends}, {} past {}",
-                    length::clock(late),
-                    timing.done_by?
+                    "ends {ends}, {} min late",
+                    late.as_secs().div_ceil(60)
                 ))
                 .size(META)
                 .color(p.error)

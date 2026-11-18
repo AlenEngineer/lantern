@@ -357,6 +357,27 @@ impl Session {
         self.round(of.into())
     }
 
+    /// The steps that have come already this round of each shuffled span
+    /// the step that is on is in: some stand after it in the plan.
+    pub fn drawn_before(&self) -> Vec<StepId> {
+        let Some(at) = self.cursor.and_then(|id| self.plan.position(id)) else {
+            return Vec::new();
+        };
+        let mut groups = vec![None];
+        groups.extend(self.plan.spans_at(at).into_iter().map(Some));
+        let mut before = Vec::new();
+        for group in groups
+            .into_iter()
+            .filter(|group| self.flow_of(*group).shuffle)
+        {
+            let order = self.order(group, self.round(counted(group)));
+            if let Some(k) = order.iter().position(|&index| index == at) {
+                before.extend(order[..k].iter().map(|&index| self.plan.steps()[index].id));
+            }
+        }
+        before
+    }
+
     /// What going on from the step that is on goes back round: the step
     /// itself coming again, the span whose round it ends, or the plan.
     /// `None` when going on goes forward, or before the start. It is what
@@ -782,6 +803,23 @@ mod tests {
         }
         // Out of the section when its rounds are over.
         assert_eq!(label(session.next()), Some("Z"));
+    }
+
+    #[test]
+    fn what_a_shuffle_has_given_this_round_is_known_wherever_it_stands() {
+        let mut plan = Plan::new("Before");
+        let music = plan.section("Music", None);
+        for title in ["A", "B", "C", "D", "E"] {
+            plan.show(resource(title));
+        }
+        plan.shuffle_section(music).unwrap();
+        let mut session = Session::new(plan);
+        let mut came = Vec::new();
+        for _ in 0..4 {
+            came.push(session.next().unwrap().id);
+            let before = session.drawn_before();
+            assert_eq!(before, came[..came.len() - 1], "what came, in order");
+        }
     }
 
     /// Music { A, B }, Sermon { C, D }, Close { E }.
