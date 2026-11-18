@@ -484,6 +484,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The old heading row is gone. A section that holds only folded
+  sections is a bracket round their rows too, and a loop over it runs
+  beside the folded rows instead of disappearing.
 - A step cut off at a time of day starts fading early, so it is silent
   when the time comes, and a picture that goes on by itself fades out
   within its own time: a fade never adds time.

@@ -34,11 +34,6 @@ pub enum Key {
     Dot(StepId),
     /// The room beside a step for its dot and the lines either side.
     Row(StepId),
-    /// Where a section's heading is on the rail: level with the heading,
-    /// in line with the dots.
-    Heading(StepId),
-    /// Rows cut to a height while their section closes or opens.
-    Cut(u32),
     /// The room right of a step for the brackets of the sections it is
     /// in.
     Side(StepId),
@@ -257,8 +252,6 @@ pub struct Stop {
     /// which of [`Picture::loops`] it follows. What has played is then
     /// shown along that line, not the one down.
     pub back: Option<(usize, f32, Color)>,
-    /// The cut it is under, while its section closes or opens.
-    pub cut: Option<u32>,
 }
 
 /// What a span says of itself, at the middle of its line.
@@ -271,28 +264,10 @@ pub enum Mark {
     Crossed,
 }
 
-/// Where a span starts.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum From {
-    /// At a step.
-    Step(StepId),
-    /// At a section's heading: it is over all that section holds.
-    Heading(StepId),
-}
-
-impl From {
-    fn id(self) -> StepId {
-        match self {
-            From::Step(id) | From::Heading(id) => id,
-        }
-    }
-}
-
-/// A span laid over the line: from its first step in sight (or its
-/// section's heading) to its last.
+/// A span laid over the line: from its first step in sight to its last.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
-    pub first: From,
+    pub first: StepId,
     pub last: StepId,
     /// Whether the span really starts and ends at those two: not where
     /// its own first or last step is folded away.
@@ -330,7 +305,7 @@ pub struct Picture {
     /// Steps can be picked together by a box pulled from where there is
     /// nothing: its colour, where they can.
     pub select: Option<Color>,
-    /// Every row in sight, headings too: a press on one is not a press
+    /// Every row in sight: a press on one is not a press
     /// on nothing.
     pub rows: Vec<StepId>,
     /// A fill is open: a press on what it proposes is not on nothing.
@@ -384,7 +359,6 @@ pub struct Bracket {
     /// Where a section that is being carried would land: dashed, and
     /// what is written beside it faint.
     pub place: bool,
-    pub cut: Option<u32>,
 }
 
 /// How much room a bracket takes, and what is written beside it.
@@ -401,7 +375,7 @@ fn bracket_box(
     Some((
         first.x + bracket.offset + 3.0,
         first.y + 2.0,
-        (last.y + last.height - 4.0).min(limit(bracket.cut, at)),
+        last.y + last.height - 4.0,
     ))
 }
 
@@ -617,10 +591,10 @@ impl Moves {
             }
         }
         for span in &picture.loops {
-            draw(Thing::Loop(span.first.id(), span.last), span.pulled);
+            draw(Thing::Loop(span.first, span.last), span.pulled);
         }
         for span in &picture.orders {
-            draw(Thing::Order(span.first.id(), span.last), span.pulled);
+            draw(Thing::Order(span.first, span.last), span.pulled);
         }
         for bracket in &picture.brackets {
             draw(Thing::Bracket(bracket.id), false);
@@ -974,16 +948,9 @@ fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: 
     }
 }
 
-/// How far down something under `cut` may be drawn.
-fn limit(cut: Option<u32>, at: &dyn Fn(Key) -> Option<Rectangle>) -> f32 {
-    cut.and_then(|cut| at(Key::Cut(cut)))
-        .map_or(f32::INFINITY, |cut| cut.y + cut.height)
-}
-
 /// The way from the dot of the stop at `n` to the next step's, in
-/// straight parts: straight through any heading between them, and no
-/// further than a cut lets it be seen. To the foot of its own row where
-/// the step it goes to is not in sight.
+/// straight parts. To the foot of its own row where the step it goes to
+/// is not in sight.
 fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Vec<Run> {
     let stop = &picture.stops[n];
     let Some(dot) = at(Key::Dot(stop.id)) else {
@@ -1003,7 +970,7 @@ fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Ve
         .and_then(|next| Some((next, at(Key::Dot(next.id))?)));
     match next {
         Some((next, there)) => {
-            let to = (there.center_y() - next.dot.reach()).min(limit(next.cut, at));
+            let to = there.center_y() - next.dot.reach();
             let over = there.center_x();
             // Straight from the one to the other, like a thread: where
             // one of them is aside (as it shakes), the line leans.
@@ -1013,7 +980,7 @@ fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Ve
         }
         None => {
             if let Some(row) = at(Key::Row(stop.id)) {
-                let foot = (row.y + row.height - ROOM).min(limit(stop.cut, at));
+                let foot = row.y + row.height - ROOM;
                 down(&mut runs, x, y, foot);
             }
         }
@@ -1072,7 +1039,7 @@ fn paint(
         .find_map(|stop| Some((stop.id, stop.back?)));
     let pulling = picture.loops.iter().any(|span| span.pulled);
     for (n, span) in picture.loops.iter().enumerate() {
-        let far = moves.drawn(Thing::Loop(span.first.id(), span.last));
+        let far = moves.drawn(Thing::Loop(span.first, span.last));
         // What is there steps back while another is pulled over it.
         let color = match pulling && !span.pulled {
             true => faded(span.color, 0.35),
@@ -1085,7 +1052,7 @@ fn paint(
     }
     let pulling = picture.orders.iter().any(|span| span.pulled);
     for span in &picture.orders {
-        let far = moves.drawn(Thing::Order(span.first.id(), span.last));
+        let far = moves.drawn(Thing::Order(span.first, span.last));
         let color = match pulling && !span.pulled {
             true => faded(span.color, 0.35),
             false => span.color,
@@ -1281,38 +1248,13 @@ fn paint(
             continue;
         };
         let middle = place.center();
-        // Under a cut, only as much of it as the cut leaves.
-        let room = limit(stop.cut, at) - (middle.y - stop.dot.reach());
-        if room <= 0.0 {
-            continue;
+        if moves.over == Some(stop.id) {
+            frame.fill(
+                &Path::circle(middle, DOT + RING),
+                faded(stop.dot.color(), 0.22),
+            );
         }
-        let whole = room >= stop.dot.reach() * 2.0;
-        let draw = |frame: &mut Frame| {
-            if moves.over == Some(stop.id) {
-                frame.fill(
-                    &Path::circle(middle, DOT + RING),
-                    faded(stop.dot.color(), 0.22),
-                );
-            }
-            dot(frame, stop, middle, moves);
-        };
-        match whole {
-            true => draw(frame),
-            false => frame.with_clip(
-                Rectangle::new(
-                    Point::new(middle.x - 30.0, middle.y - stop.dot.reach() - 12.0),
-                    Size::new(60.0, room + 12.0),
-                ),
-                |frame| {
-                    // A clipped frame starts at its own corner.
-                    frame.translate(Vector::new(
-                        30.0 - middle.x,
-                        stop.dot.reach() + 12.0 - middle.y,
-                    ));
-                    draw(frame);
-                },
-            ),
-        }
+        dot(frame, stop, middle, moves);
     }
 }
 
@@ -1473,9 +1415,8 @@ fn round_mark(from: f32, to: f32, middle: Option<f32>) -> Vec<(f32, f32)> {
     }
 }
 
-/// Where a span's two ends are: the middle of its last step's dot, and
-/// of its first step's or of its heading's place on the rail; and the
-/// rows of those two, for a span that runs on out of sight.
+/// Where a span's two ends are: the middle of its first and last steps'
+/// dots; and the rows of those two, for a span that runs on out of sight.
 struct Ends {
     first: Rectangle,
     last: Rectangle,
@@ -1485,23 +1426,16 @@ struct Ends {
 
 fn ends(span: &Span, at: &dyn Fn(Key) -> Option<Rectangle>) -> Option<Ends> {
     Some(Ends {
-        first: match span.first {
-            From::Step(id) => at(Key::Dot(id))?,
-            From::Heading(id) => at(Key::Heading(id))?,
-        },
+        first: at(Key::Dot(span.first))?,
         last: at(Key::Dot(span.last))?,
-        first_row: match span.first {
-            From::Step(id) => at(Key::Row(id)),
-            From::Heading(_) => None,
-        },
+        first_row: at(Key::Row(span.first)),
         last_row: at(Key::Row(span.last)),
     })
 }
 
 /// The line of what comes again: out from its last step's dot, up beside
 /// the steps, and in to where it starts with an arrow's head: its first
-/// step's dot, or the rail level with its section's heading, marked
-/// there. `far` of it is drawn, from where it leaves the last step; and
+/// step's dot. `far` of it is drawn, from where it leaves the last step; and
 /// where the step that is playing goes back by it, `played` of it is
 /// solid in that colour.
 fn curl(
@@ -1533,18 +1467,7 @@ fn curl(
         (false, Some(row)) => row.y,
         _ => top + BEND,
     };
-    // A heading has no dot: the line comes in to a mark on the rail.
-    let heading = matches!(span.first, From::Heading(_));
-    let tip = match heading {
-        true => ends.first.center_x() - 5.0,
-        false => ends.first.center_x() - DOT - RING - 2.0,
-    };
-    if heading && span.starts {
-        frame.fill(
-            &Path::circle(Point::new(ends.first.center_x(), top), 2.5),
-            color,
-        );
-    }
+    let tip = ends.first.center_x() - DOT - RING - 2.0;
     let out = (rail - DOT - RING - 1.0 - (x + BEND + 1.0)).max(0.0);
     let into = (tip - 4.0 - (x + BEND + 1.0)).max(0.0);
     let up = (from - to).max(0.0);
@@ -1796,7 +1719,6 @@ mod tests {
             line,
             next: next.map(id),
             back: None,
-            cut: None,
         }
     }
 
@@ -1823,26 +1745,6 @@ mod tests {
         let at = places([(Key::Dot(id(1)), 20.0), (Key::Dot(id(2)), 80.0)]);
         let runs = way(&picture, 0, &at);
         assert_eq!(runs, vec![(Point::new(25.0, 25.0), Point::new(25.0, 75.0))]);
-    }
-
-    #[test]
-    fn a_line_runs_straight_through_a_heading_to_the_next_section() {
-        // A heading between the two takes room, and nothing else: the
-        // line is one run, past it.
-        let picture = Picture {
-            stops: vec![
-                stop(1, Some(Line::Plain(Color::WHITE)), Some(3)),
-                stop(3, None, None),
-            ],
-            ..Picture::default()
-        };
-        let at = places([
-            (Key::Dot(id(1)), 20.0),
-            (Key::Heading(id(2)), 60.0),
-            (Key::Dot(id(3)), 100.0),
-        ]);
-        let runs = way(&picture, 0, &at);
-        assert_eq!(runs, vec![(Point::new(25.0, 25.0), Point::new(25.0, 95.0))]);
     }
 
     #[test]

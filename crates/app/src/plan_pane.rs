@@ -13,7 +13,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Fill, Length, Rectangle, mouse};
 use lantern_engine::{
     Action, Basis, FadeTime, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource,
-    SectionTiming, Step, StepId, TimeOfDay, Timing,
+    SectionTiming, Step, StepId, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, unit};
@@ -220,13 +220,6 @@ fn apart<'a>(row: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(row)
         .padding(iced::Padding::default().bottom(2.0))
         .into()
-}
-
-/// A section's steps, cut to as much of their height as is in sight.
-fn cut<'a>(
-    (steps, tall, open): (iced::widget::Column<'a, Message>, f32, f32),
-) -> Element<'a, Message> {
-    container(steps).max_height(tall * open).clip(true).into()
 }
 
 /// Where a step is in the service.
@@ -643,10 +636,9 @@ impl App {
         // Where the dots are, said by the rows as they are laid out, and
         // what one drawing over the list makes of them.
         let places = self.places.clone();
-        // A section with steps in sight is a bracket beside them: it has
-        // no row of its own. One folded away, or with nothing in it yet,
-        // keeps its row. Each bracket is a lane further out than those
-        // it holds.
+        // Every section is a bracket beside what it holds, unless one
+        // folded round it hides it. Each bracket is a lane further out
+        // than those it holds.
         // Folded by hand, or over in a service: its steps are gathered
         // into one row beside its bracket.
         let over = |id: StepId| {
@@ -660,15 +652,7 @@ impl App {
         let shut = |id: StepId| self.folded.contains(&id) || over(id);
         let bracketed = |plan: &Plan, at: usize| {
             let step = &plan.steps()[at];
-            step.is_section()
-                && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
-                && (shut(step.id)
-                    || plan.group_end(at) == at + 1
-                    || (at + 1..plan.group_end(at)).any(|row| {
-                        let is = &plan.steps()[row];
-                        (!is.is_section() || plan.group_end(row) == row + 1)
-                            && !plan.within(row).iter().any(|id| self.folded.contains(id))
-                    }))
+            step.is_section() && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
         };
         let mut braced = lay_brackets(plan, &bracketed);
         // A bracket's foot being pulled: the brackets as letting go would
@@ -799,9 +783,9 @@ impl App {
         // The sections with nothing in it that have a place in sight:
         // a bracket round them runs beside those too.
         let mut placed: Vec<usize> = Vec::new();
+        // The folded sections in sight: each one row for all it holds.
+        let mut gathered: Vec<usize> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
-        let mut headings: Vec<usize> = Vec::new();
-        let mut cuts = 0u32;
         // While planning, the pane is a tree: the open plan, its sections
         // and their steps, and under them the other plans.
         let tree = self.mode == crate::mode::Mode::Plan;
@@ -865,26 +849,10 @@ impl App {
                 put_whole!(apart($row))
             };
         }
-        // Rows cut to a height say where the cut is: what is drawn for
-        // them stops there.
-        macro_rules! put_cut {
-            ($steps:expr $(,)?) => {{
-                put_whole!(track::seen(track::Key::Cut(cuts), &places, cut($steps)));
-                cuts += 1;
-            }};
-        }
         // Up to where rows are folded away with the section that holds
-        // them, and whether that section is the one closing or opening
-        // now: then they are still drawn, under the cut.
+        // them.
         let mut hidden_to = 0;
-        let mut hidden_by_moving = false;
-        // Up to where the section that is closing or opening reaches.
-        let folding_to = 0;
         let mut rest = 0;
-        // The steps of a section that is closing or opening, kept apart
-        // to be cut to the height they have so far: with how tall they
-        // are in all, and how much of that is in sight.
-        let mut folding: Option<(iced::widget::Column<'_, Message>, f32, f32)> = None;
         for (index, step) in plan.steps().iter().enumerate() {
             if carried.contains(&step.id) {
                 continue;
@@ -917,210 +885,55 @@ impl App {
             {
                 put!(track::seen(track::Key::Fill, &places, proposed));
             }
-            // Every step is on the one line, as far in as any other: the
-            // brackets say what is in what.
-            let inward = 0.0;
-            let hidden = index < hidden_to && !(hidden_by_moving && index < folding_to);
+            let hidden = index < hidden_to;
             if step.is_section() {
-                // The section that was closing or opening ends here.
-                if index >= folding_to
-                    && let Some(steps) = folding.take()
-                {
-                    put_cut!(steps);
-                }
                 // Folded away with the section it is in.
-                if hidden && !selected {
+                if hidden {
                     continue;
                 }
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 // In a service, a section that is over folds away to its
-                // one line: what it was, and how long it took.
+                // one row: what it was, and how long it took.
                 let over = running
                     && section.is_some_and(|section| matches!(section.phase, Phase::Done { .. }));
                 let folded = over || self.folded.contains(&step.id);
-                if folded && index >= hidden_to {
+                if folded {
                     hidden_to = plan.group_end(index);
-                    hidden_by_moving = false;
                 }
-                // Its arrow folds its steps away, and opens them again.
-                let id = step.id;
-                // A heading is a label: it has no dot. Its place on the
-                // rail is kept, for a loop over all the section holds to
-                // come in to, and the line of the steps runs past it.
-                let ink = match over {
-                    true => p.outline,
-                    false => p.on_surface_variant,
-                };
-                let bracket = braced.iter().any(|braced| braced.at == index);
-                if !bracket {
-                    headings.push(index);
-                }
-                let mark = container(track::seen(
-                    track::Key::Heading(id),
-                    &places,
-                    Space::new().width(6).height(6),
-                ))
-                .center_x(RAIL)
-                .center_y(Length::Shrink);
-                // Its arrow folds its steps away, and opens them again;
-                // a right click on it opens the ring of what holds for
-                // all of it.
-                let fold = container(look::icon(
-                    match folded {
-                        true => Icon::Folded,
-                        false => Icon::Open,
-                    },
-                    14.0,
-                    ink,
-                ))
-                .center_x(INDENT)
-                .center_y(Length::Shrink);
-                let mut fold = mouse_area(fold).interaction(mouse::Interaction::Pointer);
-                // One that is over in a service is folded as a matter of
-                // course: there is nothing to open.
-                if !over {
-                    fold = fold.on_press(Message::Fold(id));
-                }
-                if self.can_edit() {
-                    fold = fold.on_right_press(Message::Rail(crate::rail::Act::Ring(
-                        crate::rail::RingOn::All(Some(id)),
-                    )));
-                }
-                // Left and right of its place on the rail, the same lanes
-                // as beside a step: the lines of the spans it is in, and
-                // of one over the section itself, run past it there.
-                let covers = |laid: &Laid| {
-                    laid.section == Some(id) || (laid.first <= index && index < laid.last)
-                };
-                let arrow = row![
-                    self.loop_lanes(lanes, &covers, false, None),
-                    mark,
-                    self.order_lanes(lanes, &covers, false, None),
-                    Space::new().width(inward),
-                    hinted(
-                        p,
-                        fold,
-                        if folded {
-                            "Open it. Right click: what holds for all of it".to_string()
-                        } else {
-                            "Fold it away. Right click: what holds for all of it".to_string()
-                        },
-                        tooltip::Position::Right,
-                    ),
-                ]
-                .align_y(Alignment::Center)
-                .height(20);
-                // Between two sections: whether the one before hands
-                // over by itself or waits.
-                let before = plan.steps()[..index]
-                    .iter()
-                    .rposition(|step| !step.is_section());
-                // Not before a bracket: the line runs on past where it
-                // starts, and the dot of a step that waits says so.
-                if let Some(before) = before
-                    && !bracket
-                    && !plan.goes_on(before)
-                    && folding.is_none()
-                    && !hidden
-                {
-                    put!(
-                        container(look::icon(Icon::Pause, 12.0, p.on_surface_variant))
-                            .padding(iced::Padding::default().left(lanes.curl + RAIL / 2.0 - 6.0)),
-                    );
-                }
-                // The one something held would be a part of is lit.
-                let lit = host_id == Some(step.id);
-                let heading = container(
-                    container(
-                        row![
-                            arrow,
-                            self.draggable(
-                                step.id,
-                                self.section_row(
-                                    plan,
-                                    step,
-                                    section,
-                                    due.as_ref().and_then(|due| due(step.id))
-                                )
-                            )
-                        ]
-                        .align_y(Alignment::Center),
-                    )
-                    .style(move |_| match lit {
-                        true => container::Style {
-                            background: Some(Palette::tint(p.primary, 0.12 * host_lit).into()),
-                            border: iced::Border {
-                                radius: 10.0.into(),
-                                ..iced::Border::default()
+                // A bracket beside its steps: no row. One folded has its
+                // steps gathered into one row; one with nothing in it has
+                // a place where its steps will be.
+                let wide = track::side_room(side.lanes, side.wide) + side.more;
+                if folded {
+                    whole.push(step.id);
+                    placed.push(index);
+                    gathered.push(index);
+                    put!(self.folded_place(plan, step, over, lanes, wide, &places));
+                    stops.push(track::Stop {
+                        id: step.id,
+                        dot: track::Dot::Stack {
+                            color: match over {
+                                true => p.outline,
+                                false => p.primary,
                             },
-                            ..container::Style::default()
+                            solid: over,
                         },
-                        false => container::Style::default(),
-                    }),
-                );
-                // A right click anywhere on it opens the same ring as its
-                // dot: what holds for all of it.
-                let heading: Element<'_, Message> = match self.can_edit() {
-                    true => mouse_area(heading)
-                        .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                            crate::rail::RingOn::All(Some(step.id)),
-                        )))
-                        .into(),
-                    false => heading.into(),
-                };
-                // A section inside the one that is closing or opening
-                // goes under the cut with its steps.
-                // A heading that has a row is a row to press, too.
-                let heading = match bracket {
-                    true => heading,
-                    false => {
-                        whole.push(step.id);
-                        track::seen(track::Key::Whole(step.id), &places, heading)
-                    }
-                };
-                match (bracket, folding.take()) {
-                    // A bracket beside its steps: no row. One with nothing
-                    // in it has a place where its steps will be.
-                    (true, kept) => {
-                        folding = kept;
-                        let wide = track::side_room(side.lanes, side.wide) + side.more;
-                        if folded {
-                            whole.push(step.id);
-                            placed.push(index);
-                            put!(self.folded_place(plan, step, over, lanes, wide, &places));
-                            stops.push(track::Stop {
-                                id: step.id,
-                                dot: track::Dot::Stack {
-                                    color: match over {
-                                        true => p.outline,
-                                        false => p.primary,
-                                    },
-                                    solid: over,
-                                },
-                                line: None,
-                                next: None,
-                                back: None,
-                                cut: None,
-                            });
-                        } else if plan.group_end(index) == index + 1 {
-                            whole.push(step.id);
-                            placed.push(index);
-                            put!(self.empty_place(step.id, lanes, wide, &places));
-                        }
-                    }
-                    (false, Some((steps, so_far, open))) => {
-                        folding = Some((steps.push(apart(heading)), so_far + ROW_TALL, open));
-                    }
-                    (false, None) => put!(heading),
+                        line: None,
+                        next: None,
+                        back: None,
+                    });
+                } else if plan.group_end(index) == index + 1 {
+                    whole.push(step.id);
+                    placed.push(index);
+                    put!(self.empty_place(step.id, lanes, wide, &places));
                 }
                 if selected && adds {
-                    put!(insertion_mark(p, inward + INDENT));
+                    put!(insertion_mark(p, INDENT));
                 }
                 continue;
             }
             // Folded away with its section, unless it is the step the
-            // service is at or the one being worked on. On its way there
-            // it is still drawn, under the cut.
+            // service is at or the one being worked on.
             if hidden && Some(step.id) != current && !selected {
                 continue;
             }
@@ -1183,8 +996,6 @@ impl App {
             // The rail is as tall as the row and the room under it, so
             // its line meets the next row's.
             let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
-            // Every dot is on the one line; what is in a section sits a
-            // little further in, as its heading's name does.
             // A step that was not let go where it was carried shakes.
             let aside = alarm
                 .filter(|_| self.alarm.0.contains(&step.id))
@@ -1195,20 +1006,12 @@ impl App {
             let row = row![
                 Space::new().width(aside),
                 rail,
-                Space::new().width(inward),
                 apart(row),
                 self.side(plan, index, side, &places)
             ]
             .height(Length::Shrink);
             whole.push(step.id);
             let row = track::seen(track::Key::Whole(step.id), &places, row);
-            // A step that stays in sight when its section is folded (the
-            // one the service is at, the one being worked on) stays put
-            // while the others close around it.
-            let stays = Some(step.id) == current || selected;
-            if folding.is_some() && !stays {
-                stop.cut = Some(cuts);
-            }
             // Put back just now: it grows in.
             let row: Element<'_, Message> = match self.motion.growing(step.id) {
                 Some(grown) => container(row).max_height(tall * grown).clip(true).into(),
@@ -1226,27 +1029,12 @@ impl App {
                 ),
                 None => row,
             };
-            // Its own cut, if any, is closed before it: after that.
-            let item = stop;
-            match folding.take() {
-                Some((steps, so_far, open)) if stays => {
-                    put_cut!((steps, so_far, open));
-                    put_whole!(row);
-                    folding = Some((column![], 0.0, open));
-                }
-                Some((steps, so_far, open)) => {
-                    folding = Some((steps.push(row), so_far + tall, open));
-                }
-                None => put_whole!(row),
-            }
-            stops.push(item);
+            put_whole!(row);
+            stops.push(stop);
             shown.push(index);
         }
         if let Some((rows, left)) = self.motion.gone_before(None) {
             put!(Space::new().height(ROW_TALL * rows as f32 * left));
-        }
-        if let Some(steps) = folding.take() {
-            put_whole!(track::seen(track::Key::Cut(cuts), &places, cut(steps)));
         }
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
@@ -1333,31 +1121,33 @@ impl App {
             }
         }
         // The spans beside the line: each from the first to the last of
-        // its steps in sight, or from its section's heading.
+        // its steps in sight.
         let id_at = |at: usize| plan.steps()[at].id;
         let span = |laid: &Laid, color, mark, pulled| {
-            let mut inside = shown
+            // A folded section's row stands for all it holds.
+            let reach = |at: usize| match gathered.contains(&at) {
+                true => (at, plan.group_end(at) - 1),
+                false => (at, at),
+            };
+            let mut inside: Vec<usize> = shown
                 .iter()
+                .chain(&gathered)
                 .copied()
-                .filter(|at| (laid.first..=laid.last).contains(at));
-            let from = inside.next()?;
-            let to = inside.next_back().unwrap_or(from);
-            // One over a section comes in at its heading, where that is
-            // in sight.
-            let heading = laid
-                .section
-                .filter(|id| headings.iter().any(|at| id_at(*at) == *id));
-            if heading.is_none() && from == to {
+                .filter(|at| {
+                    let (top, foot) = reach(*at);
+                    top <= laid.last && laid.first <= foot
+                })
+                .collect();
+            inside.sort_unstable();
+            let (&from, &to) = (inside.first()?, inside.last()?);
+            if from == to {
                 return None;
             }
             Some(track::Span {
-                first: match heading {
-                    Some(id) => track::From::Heading(id),
-                    None => track::From::Step(id_at(from)),
-                },
+                first: id_at(from),
                 last: id_at(to),
-                starts: heading.is_some() || from == laid.first,
-                ends: to == laid.last,
+                starts: reach(from).0 <= laid.first,
+                ends: reach(to).1 >= laid.last,
                 lane: laid.lane,
                 color,
                 mark,
@@ -1458,7 +1248,6 @@ impl App {
                     line: goes.then_some(track::Line::Plain(ink)),
                     next: next.filter(|_| goes),
                     back: None,
-                    cut: None,
                 }
             }));
             let brought = |laid: &Laid, mark: track::Mark| {
@@ -1467,7 +1256,7 @@ impl App {
                         .filter(|at| !plan.steps()[*at].is_section())
                         .all(|at| stepwise.contains(&id_at(at)));
                 all.then(|| track::Span {
-                    first: track::From::Step(id_at(laid.first)),
+                    first: id_at(laid.first),
                     last: id_at(laid.last),
                     starts: true,
                     ends: true,
@@ -1687,7 +1476,6 @@ impl App {
                         .into_iter()
                         .map(|(_, n)| n)
                         .collect(),
-                        cut: None,
                         bulge: 0.0,
                     });
                 }
@@ -1730,7 +1518,6 @@ impl App {
                         .into_iter()
                         .map(|(_, n)| n)
                         .collect(),
-                        cut: None,
                         bulge: 0.0,
                     });
                 }
@@ -1844,7 +1631,6 @@ impl App {
                         .into_iter()
                         .map(|(_, n)| n)
                         .collect(),
-                    cut: None,
                     bulge: self
                         .motion
                         .tipped(step.id)
@@ -1890,7 +1676,6 @@ impl App {
                 bare: false,
                 place: true,
                 marks: Vec::new(),
-                cut: None,
                 bulge: 0.0,
             });
         }
@@ -2216,194 +2001,6 @@ impl App {
         } else {
             area.into()
         }
-    }
-
-    /// A section's header: its name and its time in words ("12 of 15 min
-    /// planned", "6:40 of 15 min") over a bar, or a button to set one.
-    /// Clicking it selects it, to rename it or change its time.
-    fn section_row(
-        &self,
-        plan: &Plan,
-        step: &Step,
-        timing: Option<&SectionTiming>,
-        due: Option<TimeOfDay>,
-    ) -> Element<'_, Message> {
-        let p = self.palette;
-        let id = step.id;
-        let budget = match step.action {
-            Action::Section { budget, .. } => budget,
-            _ => None,
-        };
-        let phase = timing.map_or(
-            Phase::Coming {
-                planned: self.planned(plan, id),
-            },
-            |t| t.phase,
-        );
-        let selected =
-            self.selected == Some(id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
-        let running = self.mode == crate::mode::Mode::Run;
-        // Over, in a service: a tick, its name and how long it took, in
-        // the colour of what is past.
-        if let (true, Phase::Done { took }) = (running, &phase) {
-            return button(
-                row![
-                    look::icon(Icon::Check, 14.0, p.outline),
-                    container(
-                        single_line(step.label.clone())
-                            .size(BODY)
-                            .font(BOLD)
-                            .color(p.outline)
-                    )
-                    .width(Fill)
-                    .clip(true),
-                    text(took.map(length::clock).unwrap_or_default())
-                        .size(META)
-                        .color(p.outline),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .padding([6, 8])
-            .on_press(Message::Click(Clicked::Step(id)))
-            .style(look::row(p, Tone::Plain))
-            .into();
-        }
-        // The name is edited where it's read. The section the service is
-        // in has the stage's colour.
-        let editing_name = self.editing(id, Part::Name);
-        let on_now = running && matches!(phase, Phase::Running { .. });
-        let title: Element<'_, Message> = if editing_name {
-            self.name_field(step)
-        } else {
-            single_line(step.label.clone())
-                .size(BODY)
-                .font(BOLD)
-                .color(if on_now { p.tertiary } else { p.primary })
-                .into()
-        };
-        // One line: its name, how full its time is as a bar, the same in
-        // numbers, how it moves, and the way to rehearse it.
-        let minutes = |length: Duration| (length.as_secs() + 30) / 60;
-        let part = |of: Duration, whole: Duration| of.as_secs_f32() / whole.as_secs_f32();
-        let quiet = p.on_surface_variant;
-        let (numbers, full, colour) = match (&phase, budget.filter(|budget| !budget.is_zero())) {
-            // In a service: when it is due, and how long it has.
-            (Phase::Coming { .. }, Some(budget)) if running => (
-                match due {
-                    Some(due) => format!("{due} · {}", length::clock(budget)),
-                    None => length::clock(budget),
-                },
-                None,
-                quiet,
-            ),
-            (Phase::Coming { planned }, Some(budget)) => (
-                format!("{}/{}", minutes(*planned), minutes(budget)),
-                Some(part(*planned, budget)),
-                if *planned > budget { p.tertiary } else { quiet },
-            ),
-            (Phase::Coming { planned }, None) => (length::clock(*planned), None, quiet),
-            (Phase::Running { elapsed, expected }, Some(budget)) => (
-                format!("{} / {}", length::clock(*elapsed), length::clock(budget)),
-                Some(part(*elapsed, budget)),
-                if *expected > budget {
-                    p.error
-                } else {
-                    p.tertiary
-                },
-            ),
-            (Phase::Running { elapsed, .. }, None) => (length::clock(*elapsed), None, p.tertiary),
-            (Phase::Done { took }, _) => {
-                (took.map(length::clock).unwrap_or_default(), None, p.outline)
-            }
-        };
-        let fill = match &phase {
-            Phase::Running { .. } => p.tertiary,
-            Phase::Coming { planned } if budget.is_some_and(|budget| *planned > budget) => {
-                p.tertiary
-            }
-            _ => p.primary,
-        };
-        // Selected, its row has every choice of how it moves: the name
-        // gives way so they all fit, and the bar is left out.
-        let mut line = row![match editing_name || selected {
-            true => container(title).width(Fill).clip(true),
-            false => container(title),
-        }]
-        .spacing(6)
-        .align_y(Alignment::Center);
-        if !editing_name && !selected {
-            line = line.push(match full {
-                Some(full) => container(bar(p, full, fill, 0.0)).width(Fill),
-                None => container(Space::new()).width(Fill),
-            });
-        }
-        let set_time = Message::EditStep(Some((id, Part::Length)));
-        if self.editing(id, Part::Length) {
-            // The time is edited where it's read.
-            line = line.push(self.section_time_field(id, budget));
-        } else if selected {
-            // On the selected section a click on its time changes it; one
-            // without a time offers to set one.
-            let words = match budget {
-                Some(_) => numbers,
-                None => format!("◎ {numbers}"),
-            };
-            line = line.push(
-                button(text(words).size(META).color(colour))
-                    .padding([2, 6])
-                    .on_press(set_time)
-                    .style(look::pill(p, Tone::Plain)),
-            );
-        } else {
-            line = line.push(text(numbers).size(META).color(colour));
-        }
-        let flow = plan.flow_of(id).unwrap_or_default();
-        line = line.push(self.flow_marks(Some(id), flow));
-        // Under the pointer, a heading can be taken out like a step.
-        if self.pointed(id) {
-            line = line.push(self.pointed_actions(id));
-        }
-        let mut content = column![line].spacing(6);
-        // What can be done to the selected section, on a line of its
-        // own: nothing on the first line moves as the pointer comes.
-        if selected {
-            // With them, while planning: fill it from the library.
-            let mut second = row![].align_y(Alignment::Center);
-            if self.mode == crate::mode::Mode::Plan {
-                second = second.push(hinted(
-                    p,
-                    button(look::icon(Icon::Fill, 14.0, p.primary))
-                        .padding([3, 6])
-                        .on_press(Message::Fill(crate::fill_panel::FillEdit::Open(id)))
-                        .style(look::row(p, Tone::Plain)),
-                    "Fill it from the library, to its time or to a number of things".to_string(),
-                    tooltip::Position::Top,
-                ));
-            }
-            content = content.push(
-                second
-                    .push(Space::new().width(Fill))
-                    .push(self.step_actions(step)),
-            );
-        }
-        // Selected, or the one being rehearsed: lit.
-        let rehearsed = self
-            .rehearsal
-            .as_ref()
-            .is_some_and(|rehearsal| rehearsal.of == Some(id));
-        let tone = if self.selected == Some(id) || rehearsed {
-            Tone::Selected
-        } else {
-            Tone::Plain
-        };
-        button(content)
-            .width(Fill)
-            .padding([6, 8])
-            .on_press(Message::Click(Clicked::Step(id)))
-            .style(look::row(p, tone))
-            .into()
     }
 
     fn step_row(
@@ -2863,61 +2460,6 @@ impl App {
             .into()
     }
 
-    /// How a section or the plan (`None`) moves, as its buttons: its
-    /// steps go on by themselves or wait, it comes again, its steps come
-    /// in a drawn order. What is on is always in sight; with `all`, what
-    /// is off is too, to be turned on.
-    /// How a section moves, said beside its name in marks that are not
-    /// buttons: its steps go straight on, it comes again (and how
-    /// often, or which time round this is in a service), its steps come
-    /// in a drawn order. Nothing for what is not so. They are set in the
-    /// ring of the section's dot.
-    fn flow_marks<'a>(&self, of: Option<StepId>, flow: Flow) -> Element<'a, Message> {
-        let p = self.palette;
-        let mut marks = row![].spacing(6).align_y(Alignment::Center);
-        if flow.joined {
-            marks = marks.push(look::icon(Icon::Joined, 13.0, p.primary));
-        }
-        if flow.repeat != Repeat::Once {
-            let words = match flow.repeat {
-                Repeat::Times(times) if self.mode == crate::mode::Mode::Run => {
-                    let round = self.engine.0.round_of(of).saturating_add(1).min(times);
-                    Some(format!("{round} / {times}"))
-                }
-                repeat => repeat_words(repeat),
-            };
-            let mut again = row![look::icon(Icon::Repeat, 13.0, p.primary)]
-                .spacing(3)
-                .align_y(Alignment::Center);
-            if let Some(words) = words {
-                again = again.push(text(words).size(META).font(BOLD).color(p.primary));
-            }
-            // Until a time, it says how far past the time it ends.
-            if let Repeat::Until(time) = flow.repeat {
-                let plan = self.engine.0.plan();
-                let over = lantern_engine::timing::lands(&plan, of, time, flow.ends, &|step| {
-                    self.loaded_length(step)
-                })
-                .and_then(|lands| lands.ends)
-                .map(|ends| ends.over)
-                .filter(|over| *over >= Duration::from_secs(30));
-                if let Some(over) = over {
-                    again = again.push(
-                        text(format!("+{}", (over.as_secs() + 30) / 60))
-                            .size(META)
-                            .font(BOLD)
-                            .color(p.tertiary),
-                    );
-                }
-            }
-            marks = marks.push(again);
-        }
-        if flow.shuffle {
-            marks = marks.push(look::icon(Icon::Shuffle, 13.0, p.primary));
-        }
-        marks.into()
-    }
-
     pub(crate) fn flow_buttons<'a>(
         &self,
         of: Option<StepId>,
@@ -3176,7 +2718,6 @@ impl App {
             line,
             next: next.map(|next| next.id),
             back: None,
-            cut: None,
         };
         // What is here in the row is only room to press: the dot, the
         // line over it and the line under it.
