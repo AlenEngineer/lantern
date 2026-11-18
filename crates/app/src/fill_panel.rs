@@ -695,7 +695,41 @@ impl App {
             .filter(|(share, _)| *share >= 0.0005),
             8.0,
         );
-        let mut rows = column![parts, sums].spacing(6);
+        let some = !fill.picks.is_empty();
+        // Above what is proposed, so they stay put as it changes.
+        let buttons = row![
+            hinted(
+                p,
+                button(look::icon(Icon::Shuffle, 16.0, p.on_surface))
+                    .padding([6, 12])
+                    .on_press(edit(FillEdit::Again))
+                    .style(look::pill(p, Tone::Plain)),
+                "Draw again, keeping what is kept".to_string(),
+                tooltip::Position::Top,
+            ),
+            Space::new().width(Fill),
+            button(text("✕").size(BODY).color(p.on_surface_variant))
+                .padding([6, 12])
+                .on_press(edit(FillEdit::Close))
+                .style(look::row(p, Tone::Plain)),
+            button(
+                row![
+                    look::icon(Icon::Check, 16.0, p.on_primary),
+                    text(fill.picks.len().to_string())
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.on_primary)
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 14])
+            .on_press_maybe(some.then(|| edit(FillEdit::Accept)))
+            .style(look::pill(p, Tone::Solid)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        let mut rows = column![parts, sums, buttons].spacing(6);
         for pick in &fill.picks {
             let kept = fill.kept.contains(&pick.id);
             let times = self.usage.times(&pick.id);
@@ -776,41 +810,6 @@ impl App {
                 .clip(true),
             );
         }
-        let some = !fill.picks.is_empty();
-        rows = rows.push(
-            row![
-                hinted(
-                    p,
-                    button(look::icon(Icon::Shuffle, 16.0, p.on_surface))
-                        .padding([6, 12])
-                        .on_press(edit(FillEdit::Again))
-                        .style(look::pill(p, Tone::Plain)),
-                    "Draw again, keeping what is kept".to_string(),
-                    tooltip::Position::Top,
-                ),
-                Space::new().width(Fill),
-                button(text("✕").size(BODY).color(p.on_surface_variant))
-                    .padding([6, 12])
-                    .on_press(edit(FillEdit::Close))
-                    .style(look::row(p, Tone::Plain)),
-                button(
-                    row![
-                        look::icon(Icon::Check, 16.0, p.on_primary),
-                        text(fill.picks.len().to_string())
-                            .size(BODY)
-                            .font(BOLD)
-                            .color(p.on_primary)
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .padding([6, 14])
-                .on_press_maybe(some.then(|| edit(FillEdit::Accept)))
-                .style(look::pill(p, Tone::Solid)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        );
         Some(
             container(rows)
                 .padding(iced::Padding::default().left(indent).top(4.0).bottom(6.0))
