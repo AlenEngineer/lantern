@@ -73,6 +73,36 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
         .into()
 }
 
+/// What the place of a file carried in from the library goes by, among the
+/// places of steps: no step of a plan has it.
+fn held_place() -> StepId {
+    serde_json::from_value(serde_json::Value::from(u64::MAX)).expect("a step id is a number")
+}
+
+/// The sections that are brackets in `plan` (as `bracketed` says), each
+/// a lane further out than those it holds.
+fn lay_brackets(plan: &Plan, bracketed: &dyn Fn(&Plan, usize) -> bool) -> Vec<Braced> {
+    let mut braced: Vec<Braced> = (0..plan.len())
+        .filter(|at| bracketed(plan, *at))
+        .map(|at| Braced {
+            at,
+            end: plan.group_end(at),
+            lane: 0,
+        })
+        .collect();
+    for at in (0..braced.len()).rev() {
+        let (outer, inner) = braced.split_at_mut(at + 1);
+        let this = &mut outer[at];
+        this.lane = inner
+            .iter()
+            .filter(|held| held.end <= this.end)
+            .map(|held| held.lane + 1)
+            .max()
+            .unwrap_or(0);
+    }
+    braced
+}
+
 /// A section that is a bracket beside its steps: where its heading is,
 /// where what it holds ends, and how far out its bracket is.
 #[derive(Debug, Clone, Copy)]
@@ -439,6 +469,8 @@ impl App {
         let stepwise: Vec<StepId> = moving
             .filter(|drag| !drag.is_section())
             .map(|drag| drag.carried.iter().copied().take(PLACES).collect())
+            // A file carried in from the library has a step's place too.
+            .or_else(|| held.map(|_| vec![held_place()]))
             .unwrap_or_default();
         let blockwise = moving
             .filter(|drag| drag.is_section())
@@ -571,7 +603,7 @@ impl App {
         // no row of its own. One folded away, or with nothing in it yet,
         // keeps its row. Each bracket is a lane further out than those
         // it holds.
-        let bracketed = |at: usize| {
+        let bracketed = |plan: &Plan, at: usize| {
             let step = &plan.steps()[at];
             let over = self.mode == crate::mode::Mode::Run
                 && timing
@@ -595,27 +627,48 @@ impl App {
                             && !plan.within(row).iter().any(|id| self.folded.contains(id))
                     }))
         };
-        let mut braced: Vec<Braced> = (0..plan.len())
-            .filter(|at| bracketed(*at))
-            .map(|at| Braced {
-                at,
-                end: plan.group_end(at),
-                lane: 0,
-            })
-            .collect();
-        for at in (0..braced.len()).rev() {
-            let (outer, inner) = braced.split_at_mut(at + 1);
-            let this = &mut outer[at];
-            this.lane = inner
-                .iter()
-                .filter(|held| held.end <= this.end)
-                .map(|held| held.lane + 1)
-                .max()
-                .unwrap_or(0);
+        let mut braced = lay_brackets(plan, &bracketed);
+        // A section that is carried is laid out as letting go would have
+        // it: a dry run of the drop says which sections it would be in,
+        // which it would take into itself, and how far out each bracket
+        // is then.
+        let dropped = moving
+            .filter(|drag| drag.is_section())
+            .and_then(|drag| Some((drag, drag.landing?)))
+            .and_then(|(drag, at)| {
+                let mut after = plan.clone();
+                after
+                    .move_group(&drag.carried, at, drag.level)
+                    .then_some((drag, after))
+            });
+        let mut carried_lane = 0;
+        let mut taken: Vec<StepId> = Vec::new();
+        let mut holders: Vec<StepId> = Vec::new();
+        if let Some((drag, after)) = &dropped {
+            let lanes: std::collections::HashMap<StepId, u8> = lay_brackets(after, &bracketed)
+                .into_iter()
+                .map(|laid| (after.steps()[laid.at].id, laid.lane))
+                .collect();
+            braced.retain(|laid| !drag.carried.contains(&plan.steps()[laid.at].id));
+            for laid in &mut braced {
+                if let Some(lane) = lanes.get(&plan.steps()[laid.at].id) {
+                    laid.lane = *lane;
+                }
+            }
+            carried_lane = lanes.get(&drag.step).copied().unwrap_or(0);
+            if let Some(at) = after.position(drag.step) {
+                holders = after.within(at).into_iter().rev().collect();
+                taken = after.steps()[at + 1..after.group_end(at)]
+                    .iter()
+                    .map(|step| step.id)
+                    .filter(|id| !drag.carried.contains(id))
+                    .collect();
+            }
         }
         let side_lanes = braced
             .iter()
             .map(|braced| braced.lane + 1)
+            .chain(dropped.as_ref().map(|_| carried_lane + 1))
             .max()
             .unwrap_or(0);
         // The steps that are a section's own: in it and in no section
@@ -1369,8 +1422,19 @@ impl App {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Some(_) => host_id.into_iter().collect(),
-            None => Vec::new(),
+            // The sections the dry run of the drop has it in.
+            Some(_) => holders.clone(),
+            // A file carried in: the section it would be a part of, and
+            // those round that.
+            None => host_id
+                .filter(|_| held.is_some())
+                .map(|host| {
+                    let around = plan.position(host).map(|at| plan.within(at));
+                    std::iter::once(host)
+                        .chain(around.unwrap_or_default().into_iter().rev())
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
         // The first and last of the places that were opened.
         let place_keys = match (stepwise.first(), stepwise.last(), blockwise) {
@@ -1515,11 +1579,18 @@ impl App {
                 Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
                 _ => None,
             };
+            // Down past what it would take into itself.
+            let last = taken
+                .iter()
+                .rev()
+                .find(|id| plan.position(**id).is_some_and(|at| beside.contains(&at)))
+                .copied()
+                .unwrap_or(section);
             brackets.push(track::Bracket {
                 id: section,
                 first: section,
-                last: section,
-                offset: track::brace_at(0),
+                last,
+                offset: track::brace_at(carried_lane),
                 beside: None,
                 color: p.primary,
                 name: step.label.clone(),

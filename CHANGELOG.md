@@ -426,6 +426,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A section that is carried is shown as letting go would have it: the
+  section it would go into slides out a lane and takes its place in.
+  Brackets slide to where they go instead of jumping.
 - A section with nothing in it is a bracket too: beside a dashed place
   where its steps will be, with its name and the time it is given. A
   press on the place picks it, and steps carried over it land in it.
@@ -530,6 +533,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A file carried in from the library made the list jump: the place that
+  opened for it moved the row it was over from under the pointer, which
+  forgot where it would land, closed the place, and so on. It keeps the
+  last row it was over now, and its place is a step's, taken in by the
+  section it would land in.
 - Carrying a file in from the library, or a section by its bracket, made
   the rows jump about: with the pointer in the room of a step's brackets,
   where it would land flipped between that row and the start of the

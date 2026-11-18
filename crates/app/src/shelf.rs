@@ -42,6 +42,10 @@ pub struct Carried {
     pub at: iced::Point,
     /// It has moved far enough to be a drag and not a click.
     pub moving: bool,
+    /// Where it would land, among the plan's rows: kept from the last
+    /// row the pointer was over, so that the place opening for it, which
+    /// moves that row from under the pointer, does not take it away.
+    pub landing: Option<usize>,
 }
 
 impl Carried {
@@ -51,6 +55,7 @@ impl Carried {
             from: None,
             at: iced::Point::ORIGIN,
             moving: false,
+            landing: None,
         }
     }
 
