@@ -129,7 +129,12 @@ const FOOT: f32 = 16.0;
 
 /// How wide the card of a picked section is: a little more than the
 /// room its name had.
-const CARD: f32 = track::LABEL + 46.0;
+const CARD: f32 = track::LABEL + 30.0;
+
+/// How wide the steps' room is kept, for their dots, names and times,
+/// before a section that holds only sections gives up the room for its
+/// name.
+const NAMES_ROOM: f32 = 150.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -724,9 +729,18 @@ impl App {
             }
             best
         };
-        let side_wide = braced
-            .iter()
-            .any(|braced| braced.lane > 0 && own_of(braced).is_none());
+        // That room is given only while the steps keep enough of theirs
+        // for their names: without it, such a section is its brace alone,
+        // its name in its card.
+        let roomy = self
+            .places
+            .borrow()
+            .get(&track::Key::Canvas)
+            .is_none_or(|canvas| canvas.width - track::side_room(side_lanes, true) >= NAMES_ROOM);
+        let side_wide = roomy
+            && braced
+                .iter()
+                .any(|braced| braced.lane > 0 && own_of(braced).is_none());
         // A picked section's card takes the room its name had, and more:
         // the steps give way to it, so it covers none of them.
         let carded = braced
@@ -1087,9 +1101,12 @@ impl App {
             let mut row =
                 column![self.draggable(step.id, self.step_row(step, place, issue, &noted))];
             // In a service, what is noted of the step that is on is said
-            // under it: its own notes, its sections', and its loops'.
+            // under it: its own notes, its loops', and its sections' with
+            // the first of their steps to come.
             if place == Place::Current && running {
-                for (_, n, words) in crate::notes::on_step(plan, step.id, true) {
+                for (_, n, words) in
+                    crate::notes::on_step(plan, step.id, true, &|id| self.engine.0.reached(id))
+                {
                     row = row.push(
                         container(crate::notes::said(p, n, words))
                             .padding(iced::Padding::default().top(4.0)),
@@ -1612,6 +1629,10 @@ impl App {
                     }
                 }
                 let picked = self.selected == Some(step.id);
+                let beside = Some(braced)
+                    .filter(|braced| braced.lane > 0)
+                    .and_then(own_of)
+                    .map(|(first, last)| (id_at(first), id_at(last)));
                 Some(track::Bracket {
                     id: step.id,
                     first: first_key,
@@ -1622,10 +1643,7 @@ impl App {
                             _ => side.more,
                         },
                     // One that holds others writes beside its own steps.
-                    beside: Some(braced)
-                        .filter(|braced| braced.lane > 0)
-                        .and_then(own_of)
-                        .map(|(first, last)| (id_at(first), id_at(last))),
+                    beside,
                     color: match on {
                         _ if foot_refused == Some(step.id) => p.error,
                         true => p.tertiary,
@@ -1638,7 +1656,7 @@ impl App {
                         || host_id == Some(step.id)
                         || into.first() == Some(&step.id)
                         || footed == Some(step.id),
-                    bare: picked,
+                    bare: picked || (braced.lane > 0 && beside.is_none() && !side.wide),
                     place: false,
                     marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
                         .into_iter()
@@ -1723,7 +1741,7 @@ impl App {
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 let card = container(self.section_card(plan, step, section))
                     .width(wide)
-                    .padding(8)
+                    .padding([8, 6])
                     .style(look::card(p, 0.0, 12.0));
                 Some(
                     iced::widget::pin(card)
@@ -1834,6 +1852,8 @@ impl App {
             .iter()
             .filter_map(|id| plan.position(*id))
             .max()
+            // A bracket's mark goes by the last of what is in it.
+            .map(|last| (last..plan.group_end(last)).last().unwrap_or(last))
             .filter(|_| self.picked.len() > 1 && tree && can && moving.is_none());
         if let Some(last) = last_picked
             && let Some((origin, row)) = {

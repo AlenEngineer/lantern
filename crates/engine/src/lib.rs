@@ -213,6 +213,11 @@ impl Engine {
         lock(&self.session).round_of(of)
     }
 
+    /// Whether the service has reached step `id` yet.
+    pub fn reached(&self, id: StepId) -> bool {
+        lock(&self.session).entered(id).is_some()
+    }
+
     /// The steps that have come already this round of each shuffled span
     /// the step that is on is in.
     pub fn drawn_before(&self) -> Vec<StepId> {

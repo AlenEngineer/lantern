@@ -566,6 +566,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A press on nothing in the plan closes the kinds of step to add and the
+  fill, as it closes a note.
+- Brackets picked with Ctrl (on their name too, not only their line) are
+  taken in whole when a section is made of them; its `{ + }` sits by the
+  last of them.
+- Three levels of brackets in a narrow pane no longer squeeze the step
+  names away: a section that holds only sections is then its brace alone,
+  its name in its card. The open section card is narrower.
+- A note on a section shows in a service only with the first of its
+  steps to come, and in Up next just before it, not under every step.
 - In a service the step that is on keeps its whole name: how far it
   is goes under the name, and its note marks come off its row (its notes
   are open under it).
