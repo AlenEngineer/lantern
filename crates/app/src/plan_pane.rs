@@ -219,9 +219,8 @@ impl App {
             container(line).padding([2, 8]),
         );
         mouse_area(line)
-            .on_press(Message::Rail(crate::rail::Act::Ring(
-                crate::rail::RingOn::All(None),
-            )))
+            .on_press(Message::PickPlan)
+            .on_double_click(Message::FoldPlan)
             .on_right_press(Message::Rail(crate::rail::Act::Ring(
                 crate::rail::RingOn::All(None),
             )))
@@ -955,7 +954,13 @@ impl App {
         // them.
         let mut hidden_to = 0;
         let mut rest = 0;
-        for (index, step) in plan.steps().iter().enumerate() {
+        // Folded, the open plan is one row, as the others are.
+        let folded_plan = tree && self.plan_folded;
+        let listed: &[Step] = match folded_plan {
+            true => &[],
+            false => plan.steps(),
+        };
+        for (index, step) in listed.iter().enumerate() {
             if carried.contains(&step.id) {
                 continue;
             }
@@ -1158,6 +1163,25 @@ impl App {
         if let Some(held) = hosting.take() {
             list = list.push(hosted(p, held, host_in, host_lit));
         }
+        if folded_plan {
+            let sums = self.plan_sums(plan);
+            let steps = plan
+                .steps()
+                .iter()
+                .filter(|step| !step.is_section())
+                .count();
+            list = list.push(self.folded_plan_row(
+                plan.title.clone(),
+                steps,
+                length::clock(sums.filled),
+                true,
+                lanes.curl,
+                Message::FoldPlan,
+                Some(Message::Rail(crate::rail::Act::Ring(
+                    crate::rail::RingOn::All(None),
+                ))),
+            ));
+        }
         rows = rows.push(list);
         if adds
             && self.selected.is_none()
@@ -1182,7 +1206,7 @@ impl App {
         }
         // The last row adds a section. Steps come from the library and
         // its search; Live and Black screen are first in the library.
-        if moving.is_none() && self.can_edit() {
+        if moving.is_none() && self.can_edit() && !folded_plan {
             // An empty plan's + breathes a few times: it is where to begin.
             let breath = match plan.is_empty() {
                 true => self.motion.breath(),
@@ -1233,7 +1257,21 @@ impl App {
                 rows = rows.push(Space::new().height(14));
             }
             for entry in others {
-                rows = rows.push(self.folded_plan(entry, lanes.curl));
+                let Ok(summary) = &entry.summary else {
+                    continue;
+                };
+                let when = ago(SystemTime::now()
+                    .duration_since(entry.modified)
+                    .unwrap_or_default());
+                rows = rows.push(self.folded_plan_row(
+                    summary.title.clone(),
+                    summary.steps,
+                    when,
+                    false,
+                    lanes.curl,
+                    Message::OpenPlan(entry.path.clone()),
+                    None,
+                ));
             }
         }
         // The spans beside the line: each from the first to the last of
@@ -1819,7 +1857,7 @@ impl App {
                         (sign, words, ink)
                     })
                     .collect(),
-                strong: plan_ringed,
+                strong: plan_ringed || self.plan_picked,
                 // Its words are at its head, over the rows: there is
                 // room there in the narrowest pane.
                 bare: true,
@@ -3343,13 +3381,13 @@ impl App {
         card.into()
     }
 
-    /// The plan's bracket's part of the room right of a row, `wide`: a
-    /// press there picks the plan, a right click opens its ring.
+    /// The plan's bracket's part of the room right of a row, `wide`: as
+    /// a section's, a press there picks the plan, twice folds or opens
+    /// it, and a right click opens its ring.
     fn plans_part<'a>(&self, wide: f32) -> Element<'a, Message> {
         mouse_area(Space::new().width(wide).height(Fill))
-            .on_press(Message::Rail(crate::rail::Act::Ring(
-                crate::rail::RingOn::All(None),
-            )))
+            .on_press(Message::PickPlan)
+            .on_double_click(Message::FoldPlan)
             .on_right_press(Message::Rail(crate::rail::Act::Ring(
                 crate::rail::RingOn::All(None),
             )))
@@ -4063,18 +4101,27 @@ fn pace_tone(pace: Pace) -> Tone {
 /// starts a new plan from it, and its Edit opens the template itself. The
 /// star makes a plan a template, or not.
 impl App {
-    /// A plan that is not open, as one folded row: its steps gathered
-    /// into a stacked dot, how many and when it was saved, and its
-    /// bracket with its name. Pressed, it opens.
-    fn folded_plan<'a>(&self, entry: &'a Entry, curl: f32) -> Element<'a, Message> {
+    /// A plan folded into one row: its steps gathered into a stacked
+    /// dot, how many, `detail` (when it was saved, or what it takes), and
+    /// its bracket with its name; `open` in the colours of the plan that
+    /// is open. Pressed or pressed twice, `opens` is done; a right click
+    /// does `ring`.
+    #[allow(clippy::too_many_arguments)]
+    fn folded_plan_row<'a>(
+        &self,
+        title: String,
+        steps: usize,
+        detail: String,
+        open: bool,
+        curl: f32,
+        opens: Message,
+        ring: Option<Message>,
+    ) -> Element<'a, Message> {
         let p = self.palette;
-        let Ok(summary) = &entry.summary else {
-            return Space::new().into();
+        let ink = match open {
+            true => p.primary,
+            false => p.on_surface_variant,
         };
-        let when = ago(SystemTime::now()
-            .duration_since(entry.modified)
-            .unwrap_or_default());
-        let ink = p.on_surface_variant;
         let mark = |shape: Shape, wide: f32| {
             iced::widget::canvas(Marked { shape, ink })
                 .width(wide)
@@ -4085,32 +4132,29 @@ impl App {
             mark(Shape::Stack, RAIL),
             container(
                 row![
-                    single_line(count(summary.steps, "step"))
-                        .size(BODY)
-                        .color(ink),
+                    single_line(count(steps, "step")).size(BODY).color(ink),
                     Space::new().width(Fill),
-                    text(when).size(META).color(ink),
+                    text(detail).size(META).color(ink),
                 ]
                 .align_y(Alignment::Center),
             )
             .width(Fill)
             .padding([0, 10]),
             mark(Shape::Brace, track::BRACE),
-            container(
-                single_line(summary.title.clone())
-                    .size(META)
-                    .font(BOLD)
-                    .color(ink)
-            )
-            .width(track::LABEL)
-            .center_y(ROW_TALL),
+            container(single_line(title).size(META).font(BOLD).color(ink))
+                .width(track::LABEL)
+                .center_y(ROW_TALL),
         ]
         .height(ROW_TALL)
         .align_y(Alignment::Center);
-        mouse_area(line)
-            .on_press(Message::OpenPlan(entry.path.clone()))
-            .interaction(mouse::Interaction::Pointer)
-            .into()
+        let mut area = mouse_area(line)
+            .on_press(opens.clone())
+            .on_double_click(opens)
+            .interaction(mouse::Interaction::Pointer);
+        if let Some(ring) = ring {
+            area = area.on_right_press(ring);
+        }
+        area.into()
     }
 }
 
