@@ -769,6 +769,8 @@ struct App {
     pub(crate) in_library: bool,
     pub(crate) carried: Option<shelf::Carried>,
     pub(crate) shelf_pick: Option<ResourceId>,
+    /// Files of the library picked together, in its order.
+    pub(crate) shelf_many: Vec<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
@@ -933,6 +935,7 @@ impl App {
             in_library: false,
             carried: None,
             shelf_pick: None,
+            shelf_many: Vec::new(),
             scrub: None,
             balk: None,
             seen: (None, HashMap::new()),
@@ -1526,6 +1529,23 @@ impl App {
                     .as_ref()
                     .and_then(|id| self.shelf_file(id))
                     .map(shelf::Carried::new);
+                // One of the files picked together carries them all, in
+                // their order.
+                let together: Vec<_> = self
+                    .shelf_many
+                    .iter()
+                    .filter_map(|id| self.shelf_file(id))
+                    .collect();
+                if let Some(carried) = self.carried.as_mut()
+                    && together.len() > 1
+                    && together.iter().any(|file| file.id == carried.file.id)
+                {
+                    let mut all = together.into_iter();
+                    if let Some(first) = all.next() {
+                        carried.file = first;
+                        carried.more = all.collect();
+                    }
+                }
             }
             // Let go over the plan: it goes in where the gap showed.
             Message::Pointer(_, false) if self.carried.is_some() => {
@@ -1535,17 +1555,28 @@ impl App {
                 let carried = self.carried.take().filter(|carried| carried.moving);
                 if let Some((carried, at)) = carried.zip(landing) {
                     self.remember(None);
-                    let id = self.engine.0.edit_plan(|plan| {
-                        plan.insert(
-                            at,
-                            carried.file.title.clone(),
-                            Action::Show {
-                                resource: (*carried.file).clone(),
-                            },
-                        )
+                    let ids = self.engine.0.edit_plan(|plan| {
+                        std::iter::once(&carried.file)
+                            .chain(&carried.more)
+                            .enumerate()
+                            .map(|(n, file)| {
+                                plan.insert(
+                                    at + n,
+                                    file.title.clone(),
+                                    Action::Show {
+                                        resource: (**file).clone(),
+                                    },
+                                )
+                            })
+                            .collect::<Vec<_>>()
                     });
-                    self.selected = Some(id);
+                    self.selected = ids.first().copied();
+                    self.picked = match ids.len() {
+                        1 => Vec::new(),
+                        _ => ids,
+                    };
                     self.shelf_pick = None;
+                    self.shelf_many.clear();
                     self.engine.0.preview(carried.file);
                     return self.preload();
                 }
@@ -1871,9 +1902,14 @@ impl App {
                     // Looked at on this screen; the plan's selection
                     // stays, so it is added after the selected step.
                     Clicked::Shelf(id) => {
+                        let (ctrl, shift) = (self.mods.control(), self.mods.shift());
+                        self.shelf_pick_many(&id, ctrl, shift);
                         if let Some(file) = self.shelf_file(&id) {
                             self.search.unpick();
-                            self.shelf_pick = Some(id);
+                            // Shift keeps where it was taken from.
+                            if !shift || self.shelf_pick.is_none() {
+                                self.shelf_pick = Some(id);
+                            }
                             self.shelf_folder = None;
                             self.in_library = true;
                             self.engine.0.preview(file);
@@ -1881,7 +1917,7 @@ impl App {
                         self.preload()
                     }
                 };
-                if double {
+                if double && self.shelf_many.len() < 2 {
                     return Task::batch([lined_up, self.op(Op::Take)]);
                 }
                 return lined_up;
