@@ -488,6 +488,10 @@ pub enum Icon {
     Open,
     /// One pointing right: it is folded away.
     Folded,
+    /// A sticky note: something to remember.
+    Note,
+    /// A cross: close, take away.
+    Close,
     /// A triangle with a mark in it: this can't be.
     Warning,
 }
@@ -527,6 +531,12 @@ impl Icon {
             ),
             Icon::Command => mdi!(
                 "M13,19V16H21V19H13M8.5,13L2.47,7H6.71L11.67,11.95C12.25,12.54 12.25,13.5 11.67,14.07L6.74,19H2.5L8.5,13Z"
+            ),
+            Icon::Note => mdi!(
+                "M14,10V4.5L19.5,10M5,3C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9L15,3H5Z"
+            ),
+            Icon::Close => mdi!(
+                "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"
             ),
             Icon::Open => mdi!("M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"),
             Icon::Folded => mdi!("M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"),

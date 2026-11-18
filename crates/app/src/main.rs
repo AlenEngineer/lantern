@@ -27,6 +27,7 @@ mod library;
 mod look;
 mod mode;
 mod motion;
+mod notes;
 mod outputs;
 mod palette;
 mod paths;
@@ -306,6 +307,14 @@ enum Message {
     Mods(iced::keyboard::Modifiers),
     /// The steps picked together become a section.
     BracketPicked,
+    /// A note's mark was pressed: it opens.
+    OpenNote(lantern_engine::NoteId),
+    /// A note on these: the one there is, opened, or a new one.
+    NoteFor(Vec<lantern_engine::NoteOn>),
+    /// Written in the open note.
+    NoteEdit(iced::widget::text_editor::Action),
+    /// The open note is taken away.
+    NoteGone(lantern_engine::NoteId),
     /// A section's bracket was pressed: it is picked, and held and moved
     /// it is carried with all it holds.
     Grab(StepId),
@@ -554,6 +563,11 @@ struct App {
     /// click adds or drops one, Shift and a click takes all from the
     /// selected step to there. Empty when only one is selected.
     pub(crate) picked: Vec<StepId>,
+    /// The note open, what it says as it is written, and whether an undo
+    /// step was kept for this writing.
+    pub(crate) note_open: Option<lantern_engine::NoteId>,
+    pub(crate) note_text: iced::widget::text_editor::Content,
+    pub(crate) note_kept: bool,
     /// The keys held that change what a press does.
     pub(crate) mods: iced::keyboard::Modifiers,
     /// The steps that were not let go where they were carried, and the
@@ -820,6 +834,9 @@ impl App {
             usage,
             places: track::Places::default(),
             picked: Vec::new(),
+            note_open: None,
+            note_text: iced::widget::text_editor::Content::new(),
+            note_kept: false,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
@@ -2068,6 +2085,62 @@ impl App {
                 self.grabbed = false;
                 self.foot = Some((section, None));
             }
+            Message::OpenNote(id) => {
+                self.close_note();
+                let text = self
+                    .engine
+                    .0
+                    .plan()
+                    .note(id)
+                    .map(|note| note.text.clone())
+                    .unwrap_or_default();
+                self.note_text = iced::widget::text_editor::Content::with_text(&text);
+                self.note_open = Some(id);
+                self.note_kept = false;
+                self.ring = None;
+                return iced::widget::operation::focus(notes::NOTE_FIELD);
+            }
+            Message::NoteFor(on) => {
+                let plan = self.engine.0.plan();
+                // The one note there is on just this, opened.
+                if let [one] = on.as_slice()
+                    && let Some(note) = plan.notes_on(*one).first()
+                {
+                    return self.update(Message::OpenNote(note.id));
+                }
+                self.remember(None);
+                let made = self.engine.0.edit_plan(|plan| plan.add_note(&on, ""));
+                self.picked.clear();
+                if let Some(id) = made {
+                    let opened = self.update(Message::OpenNote(id));
+                    // Made just now: what it says is its first undo step.
+                    self.note_kept = true;
+                    return opened;
+                }
+            }
+            Message::NoteEdit(action) => {
+                let Some(id) = self.note_open else {
+                    return Task::none();
+                };
+                let edits = action.is_edit();
+                self.note_text.perform(action);
+                if edits {
+                    if !self.note_kept {
+                        self.remember(None);
+                        self.note_kept = true;
+                    }
+                    let words = self.note_text.text();
+                    let words = words.trim_end_matches('\n').to_string();
+                    self.engine
+                        .0
+                        .edit_plan(|plan| plan.set_note_text(id, words));
+                }
+            }
+            Message::NoteGone(id) => {
+                self.remember(None);
+                self.engine.0.edit_plan(|plan| plan.remove_note(id));
+                self.note_open = None;
+            }
             Message::Grab(section) => {
                 if self.can_edit() && self.mode != mode::Mode::Run {
                     self.grabbed = true;
@@ -2076,6 +2149,10 @@ impl App {
                 return self.update(Message::Click(Clicked::Step(section)));
             }
             Message::Marquee(steps) => {
+                // A press on nothing closes the note that is open.
+                if steps.is_empty() {
+                    self.close_note();
+                }
                 self.editing = None;
                 self.selected = steps.first().copied();
                 self.picked = match steps.len() {
@@ -3780,6 +3857,22 @@ impl App {
             self.carry_place(plan, drag, at),
             self.carry_how(),
         ))
+    }
+
+    /// Closes the open note; one that says nothing is taken away.
+    pub(crate) fn close_note(&mut self) {
+        let Some(id) = self.note_open.take() else {
+            return;
+        };
+        let empty = self
+            .engine
+            .0
+            .plan()
+            .note(id)
+            .is_some_and(|note| note.text.trim().is_empty());
+        if empty {
+            self.engine.0.edit_plan(|plan| plan.remove_note(id));
+        }
     }
 
     fn program_changed(&mut self) -> Task<Message> {

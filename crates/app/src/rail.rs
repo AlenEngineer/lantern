@@ -552,6 +552,30 @@ impl App {
                 ));
             }
         }
+        // Every ring has a note's place, on the left: what is noted of
+        // what it is open on, opened, or a note for it made.
+        let noted = match ring.on {
+            RingOn::Dot(id) => Some(lantern_engine::NoteOn::Step(id)),
+            RingOn::Loop(FlowOf::Span(id)) | RingOn::Shuffle(FlowOf::Span(id)) => {
+                Some(lantern_engine::NoteOn::Span(id))
+            }
+            RingOn::Loop(FlowOf::Step(id))
+            | RingOn::Shuffle(FlowOf::Step(id))
+            | RingOn::All(Some(id)) => Some(lantern_engine::NoteOn::Step(id)),
+            _ => None,
+        };
+        if let Some(on) = noted {
+            let has = !plan.notes_on(on).is_empty();
+            petals.push(petal(
+                180.0,
+                46.0,
+                PETAL,
+                has,
+                glyph(Icon::Note, has),
+                if has { "Its note" } else { "A note on it" },
+                Some(Message::NoteFor(vec![on])),
+            ));
+        }
         if let Some((of, flow, at)) = again_at {
             let clear = (at.x + PETAL / 2.0 + 8.0).max(middle.x + 50.0 + PETAL / 2.0 + 8.0);
             layers.push(

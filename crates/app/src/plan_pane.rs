@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use iced::widget::{
     Space, button, column, container, mouse_area, row, stack, text, text_input, tooltip,
 };
-use iced::{Alignment, Element, Fill, Length, mouse};
+use iced::{Alignment, Element, Fill, Length, Rectangle, mouse};
 use lantern_engine::{
     Action, Basis, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming,
     Step, StepId, TimeOfDay, Timing,
@@ -1079,7 +1079,19 @@ impl App {
                 Place::Later
             };
             let issue = issues.iter().find(|i| i.step == step.id);
-            let mut row = column![self.draggable(step.id, self.step_row(step, place, issue))];
+            let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id));
+            let mut row =
+                column![self.draggable(step.id, self.step_row(step, place, issue, &noted))];
+            // In a service, what is noted of the step that is on is said
+            // under it: its own notes, its sections', and its loops'.
+            if place == Place::Current && running {
+                for (_, n, words) in crate::notes::on_step(plan, step.id, true) {
+                    row = row.push(
+                        container(crate::notes::said(p, n, words))
+                            .padding(iced::Padding::default().top(4.0)),
+                    );
+                }
+            }
             // The result would go after the selected step, or with nothing
             // selected after the current one.
             let after = selected
@@ -1245,6 +1257,15 @@ impl App {
                 mark,
                 pulled,
                 shift: 0.0,
+                marks: match laid.of {
+                    FlowOf::Span(id) => {
+                        crate::notes::numbers_on(plan, lantern_engine::NoteOn::Span(id))
+                            .into_iter()
+                            .map(|(_, n)| n)
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                },
             })
         };
         // In a service, the span the flow goes back round when the step
@@ -1333,6 +1354,7 @@ impl App {
                     mark,
                     pulled: true,
                     shift: 0.0,
+                    marks: Vec::new(),
                 })
             };
             for laid in lanes.loops {
@@ -1502,6 +1524,13 @@ impl App {
                             || into.first() == Some(&step.id),
                         bare: picked,
                         place: false,
+                        marks: crate::notes::numbers_on(
+                            plan,
+                            lantern_engine::NoteOn::Step(step.id),
+                        )
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .collect(),
                         cut: None,
                     });
                 }
@@ -1591,6 +1620,10 @@ impl App {
                         || footed == Some(step.id),
                     bare: picked,
                     place: false,
+                    marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .collect(),
                     cut: None,
                 })
             })
@@ -1632,6 +1665,7 @@ impl App {
                 strong: false,
                 bare: false,
                 place: true,
+                marks: Vec::new(),
                 cut: None,
             });
         }
@@ -1696,6 +1730,44 @@ impl App {
                 }
             }
         }
+        // The open note's threads: from its card's edge to each thing it
+        // is on, where those are now.
+        let threads: Vec<(iced::Point, iced::Point)> = self
+            .note_open
+            .and_then(|id| plan.note(id))
+            .map(|note| {
+                let places = places.borrow();
+                let Some(origin) = places.get(&track::Key::Canvas).copied() else {
+                    return Vec::new();
+                };
+                let rows: Vec<Rectangle> = note
+                    .on
+                    .iter()
+                    .filter_map(|on| crate::notes::anchor(plan, *on))
+                    .filter_map(|id| places.get(&track::Key::Side(id)).copied())
+                    .collect();
+                let Some(first) = rows.iter().max_by(|a, b| a.y.total_cmp(&b.y)) else {
+                    return Vec::new();
+                };
+                // From the card's top edge, near its mark, to where each
+                // mark is: just left of the time at the row's end.
+                let card = iced::Point::new(
+                    (origin.width - crate::notes::CARD - 4.0).max(0.0) + 14.0,
+                    first.y + first.height - origin.y + 2.0,
+                );
+                rows.iter()
+                    .map(|row| {
+                        (
+                            card,
+                            iced::Point::new(
+                                row.x - origin.x - 44.0,
+                                row.center_y() - origin.y + 7.0,
+                            ),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let picture = track::Picture {
             stops,
             loops: drawn_loops,
@@ -1703,6 +1775,7 @@ impl App {
             still: self.motion.still,
             hot: can,
             brackets,
+            threads,
             select: (tree && can).then_some(p.primary),
             rows: whole,
         };
@@ -1710,6 +1783,29 @@ impl App {
         let mut layers = stack![rows, track::over(picture, &places, Message::Marquee)].width(Fill);
         if let Some(card) = card {
             layers = layers.push(card);
+        }
+        // The open note's card, beside the first thing it is on, with a
+        // thread to each of them.
+        if let Some(card) = self.note_card(plan)
+            && let Some(note) = self.note_open.and_then(|id| plan.note(id))
+        {
+            let places = places.borrow();
+            let origin = places.get(&track::Key::Canvas).copied();
+            let rows: Vec<Rectangle> = note
+                .on
+                .iter()
+                .filter_map(|on| crate::notes::anchor(plan, *on))
+                .filter_map(|id| places.get(&track::Key::Side(id)).copied())
+                .collect();
+            if let (Some(origin), Some(first)) =
+                (origin, rows.iter().max_by(|a, b| a.y.total_cmp(&b.y)))
+            {
+                // Just under the last thing it is on, so all of them stay
+                // in sight with their marks.
+                let x = (origin.width - crate::notes::CARD - 4.0).max(0.0);
+                let y = (first.y + first.height - origin.y + 2.0).max(0.0);
+                layers = layers.push(iced::widget::pin(card).x(x).y(y));
+            }
         }
         // Steps picked together can be made a section: a mark beside the
         // last of them does it.
@@ -1737,10 +1833,25 @@ impl App {
                 "Make a section of them".to_string(),
                 tooltip::Position::Top,
             );
+            // And a note on all of them.
+            let note = hinted(
+                p,
+                button(look::icon(Icon::Note, 13.0, crate::notes::INK))
+                    .padding([5, 8])
+                    .on_press(Message::NoteFor(
+                        self.picked
+                            .iter()
+                            .map(|id| lantern_engine::NoteOn::Step(*id))
+                            .collect(),
+                    ))
+                    .style(look::pill(p, Tone::Selected)),
+                "A note on them".to_string(),
+                tooltip::Position::Top,
+            );
             layers = layers.push(
-                iced::widget::pin(make)
+                iced::widget::pin(row![make, note].spacing(4))
                     // Just left of the brackets, level with that row.
-                    .x((row.x - origin.x - 64.0).max(0.0))
+                    .x((row.x - origin.x - 100.0).max(0.0))
                     .y((row.y - origin.y + 5.0).max(0.0)),
             );
         }
@@ -2036,7 +2147,13 @@ impl App {
             .into()
     }
 
-    fn step_row(&self, step: &Step, place: Place, issue: Option<&Issue>) -> Element<'_, Message> {
+    fn step_row(
+        &self,
+        step: &Step,
+        place: Place,
+        issue: Option<&Issue>,
+        noted: &[(lantern_engine::NoteId, usize)],
+    ) -> Element<'_, Message> {
         let p = self.palette;
         // The current step is on stage unless something off the plan was
         // shown since.
@@ -2173,6 +2290,10 @@ impl App {
         if place == Place::Current && shown && self.motion.by_phone() && self.motion.rung_by_phone()
         {
             line = line.push(look::icon(Icon::Phone, 13.0, label_color));
+        }
+        // Its notes' marks: pressed, one opens.
+        for (id, n) in noted {
+            line = line.push(crate::notes::mark(*n, Some(Message::OpenNote(*id))));
         }
         // A step that comes again says so, and how often.
         if let Some(words) = repeat_words(step.flow.repeat) {
@@ -3075,6 +3196,12 @@ impl App {
                     look::icon(Icon::Pencil, 13.0, p.primary).into(),
                     Message::EditStep(Some((id, Part::Name))),
                     "Rename",
+                ))
+                .push(act(
+                    p,
+                    look::icon(Icon::Note, 13.0, crate::notes::INK).into(),
+                    Message::NoteFor(vec![lantern_engine::NoteOn::Step(id)]),
+                    "A note on the section",
                 ))
                 .push(act(
                     p,
