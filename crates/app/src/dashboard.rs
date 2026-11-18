@@ -385,7 +385,14 @@ impl App {
                 Would::Rub { .. } => (
                     p.on_surface_variant,
                     row![
-                        look::icon(Icon::Shuffle, 14.0, p.on_surface_variant),
+                        look::icon(
+                            match pull.side {
+                                crate::rail::Side::Right => Icon::Shuffle,
+                                _ => Icon::Repeat,
+                            },
+                            14.0,
+                            p.on_surface_variant
+                        ),
                         text("−").size(META).font(BOLD).color(p.on_surface_variant)
                     ]
                     .spacing(4)

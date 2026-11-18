@@ -267,6 +267,15 @@ impl From<SpanId> for FlowOf {
     }
 }
 
+/// What drawing a loop by hand did: see [`Plan::loop_by_hand`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Looped {
+    /// A new loop, of its own.
+    Made(SpanId),
+    /// One that was there, now round more steps.
+    Grown(SpanId),
+}
+
 /// What drawing an order by hand did: see [`Plan::draw_over`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Drawn {
@@ -1260,6 +1269,94 @@ impl Plan {
         self.lay(Over::Steps { first: a, last: b }, 3, |flow| {
             flow.shuffle = true;
         })
+    }
+
+    /// What [`loop_by_hand`] would do, with the plan left as it is.
+    ///
+    /// [`loop_by_hand`]: Plan::loop_by_hand
+    pub fn would_loop_by_hand(&self, a: StepId, b: StepId) -> Result<Looped, SpanError> {
+        self.clone().loop_by_hand(a, b)
+    }
+
+    /// Draws a loop round the steps from `a` to `b` as a hand does it
+    /// along the plan. Where [`loop_over`] would refuse it for taking in
+    /// a part of another loop drawn from step to step, the two become
+    /// one loop round all of their steps, coming as often as the one
+    /// that was there. A loop wholly inside another, or round it, is a
+    /// loop of its own, as before.
+    ///
+    /// [`loop_over`]: Plan::loop_over
+    pub fn loop_by_hand(&mut self, a: StepId, b: StepId) -> Result<Looped, SpanError> {
+        let met = match self.would_loop_over(a, b) {
+            Ok(_) => return self.loop_over(a, b).map(Looped::Made),
+            Err(SpanError::HalfOver(met)) => met,
+            Err(why) => return Err(why),
+        };
+        let other = *self.span(met).ok_or(SpanError::Missing)?;
+        let ranged = matches!(other.over, Over::Steps { .. });
+        let Some((from, to)) = self
+            .reach(other.over)?
+            .filter(|_| ranged && !other.is_drawn())
+        else {
+            return Err(SpanError::HalfOver(met));
+        };
+        let (a, b) = (
+            self.position(a).ok_or(SpanError::Missing)?,
+            self.position(b).ok_or(SpanError::Missing)?,
+        );
+        let (first, last) = (from.min(a).min(b), to.max(a).max(b));
+        let mut next = self.clone();
+        next.remove_span(met);
+        let (first, last) = (next.steps[first].id, next.steps[last].id);
+        let grown = next.loop_over(first, last)?;
+        next.set_flow(grown, other.flow)?;
+        *self = next;
+        Ok(Looped::Grown(grown))
+    }
+
+    /// What [`rub_loop`] would do, with the plan left as it is.
+    ///
+    /// [`rub_loop`]: Plan::rub_loop
+    pub fn would_rub_loop(&self, id: SpanId, a: StepId, b: StepId) -> Result<(), SpanError> {
+        self.clone().rub_loop(id, a, b)
+    }
+
+    /// Rubs the steps from `a` to `b` out of the loop `id`, one drawn
+    /// from step to step: what is left of it either side still comes
+    /// again, as often, where two steps or more are left there. A drawn
+    /// order the span has as well is left as it was.
+    pub fn rub_loop(&mut self, id: SpanId, a: StepId, b: StepId) -> Result<(), SpanError> {
+        let span = *self.span(id).ok_or(SpanError::Missing)?;
+        let ranged = matches!(span.over, Over::Steps { .. });
+        let Some((from, to)) = self.reach(span.over)?.filter(|_| ranged && span.is_loop()) else {
+            return Err(SpanError::Missing);
+        };
+        let (a, b) = (
+            self.position(a).ok_or(SpanError::Missing)?,
+            self.position(b).ok_or(SpanError::Missing)?,
+        );
+        let (first, last) = (a.min(b).max(from), a.max(b).min(to));
+        if first > last {
+            return Err(SpanError::Missing);
+        }
+        let mut next = self.clone();
+        next.unloop(id);
+        let steps = |plan: &Plan, of: std::ops::Range<usize>| -> Vec<StepId> {
+            of.filter(|at| !plan.steps[*at].is_section())
+                .map(|at| plan.steps[at].id)
+                .collect()
+        };
+        for left in [steps(&next, from..first), steps(&next, last + 1..to + 1)] {
+            if let (Some(from), Some(to), true) = (left.first(), left.last(), left.len() >= 2) {
+                let again = next.loop_over(*from, *to)?;
+                let mut flow = next.flow_of(again).unwrap_or_default();
+                flow.repeat = span.flow.repeat;
+                flow.ends = span.flow.ends;
+                next.set_flow(again, flow)?;
+            }
+        }
+        *self = next;
+        Ok(())
     }
 
     /// What [`draw_over`] would do, with the plan left as it is.
@@ -3575,5 +3672,61 @@ mod tests {
         assert_eq!(holds(&plan, duet), ["B"]);
         assert_eq!(plan.within(plan.position(d).unwrap()), [music]);
         let _ = a;
+    }
+
+    #[test]
+    fn a_loop_drawn_by_hand_joins_one_it_overlaps_and_can_be_rubbed_out_in_part() {
+        let mut plan = Plan::new("Sabbath");
+        let steps: Vec<StepId> = ["A", "B", "C", "D", "E", "F"]
+            .into_iter()
+            .map(|name| plan.push(name, Action::Blank))
+            .collect();
+        let at = |n: usize| steps[n];
+        let loops = |plan: &Plan| -> Vec<(usize, usize)> {
+            plan.laid_spans()
+                .into_iter()
+                .filter(|(span, ..)| span.is_loop())
+                .map(|(_, first, last)| (first, last))
+                .collect()
+        };
+        let Ok(Looped::Made(first)) = plan.loop_by_hand(at(0), at(2)) else {
+            panic!("a loop of its own");
+        };
+        let mut flow = plan.flow_of(first).unwrap();
+        flow.repeat = Repeat::Times(3);
+        plan.set_flow(first, flow).unwrap();
+        // One inside it is a loop of its own, as before.
+        assert!(matches!(
+            plan.loop_by_hand(at(0), at(1)),
+            Ok(Looped::Made(_))
+        ));
+        assert_eq!(loops(&plan), vec![(0, 2), (0, 1)]);
+        let inner = plan.spans_at(0)[1];
+        plan.remove_span(inner);
+        // One that takes in a part of it joins it: one loop round all of
+        // them, coming as often as the one that was there.
+        let Ok(Looped::Grown(grown)) = plan.loop_by_hand(at(2), at(4)) else {
+            panic!("it grows");
+        };
+        assert_eq!(loops(&plan), vec![(0, 4)]);
+        assert_eq!(plan.flow_of(grown).unwrap().repeat, Repeat::Times(3));
+        // Rubbing its middle out leaves a loop either side, as often.
+        assert_eq!(plan.would_rub_loop(grown, at(2), at(2)), Ok(()));
+        assert_eq!(loops(&plan), vec![(0, 4)], "a dry run changes nothing");
+        plan.rub_loop(grown, at(2), at(2)).unwrap();
+        assert_eq!(loops(&plan), vec![(0, 1), (3, 4)]);
+        assert!(
+            plan.spans()
+                .iter()
+                .all(|span| span.flow.repeat == Repeat::Times(3))
+        );
+        // One step left is no loop.
+        let left = plan.spans_at(0)[0];
+        plan.rub_loop(left, at(1), at(1)).unwrap();
+        assert_eq!(loops(&plan), vec![(3, 4)]);
+        // Rubbing all of one out.
+        let right = plan.spans_at(3)[0];
+        plan.rub_loop(right, at(3), at(4)).unwrap();
+        assert_eq!(loops(&plan), vec![]);
     }
 }

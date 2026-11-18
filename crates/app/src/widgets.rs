@@ -241,3 +241,18 @@ pub(crate) fn bar<'a>(
             .into(),
     }))
 }
+
+/// How wide a time such as "12:03" is given at `size`, whatever its
+/// figures are: every figure counts as wide as the widest, so what is
+/// beside a clock stays where it is as the clock counts.
+pub fn steady(words: &str, size: f32) -> f32 {
+    words
+        .chars()
+        .map(|c| match c {
+            '0'..='9' => 0.66,
+            ':' | '.' | ' ' | '·' => 0.32,
+            _ => 0.72,
+        })
+        .sum::<f32>()
+        * size
+}
