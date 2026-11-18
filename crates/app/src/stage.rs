@@ -31,6 +31,7 @@ use lantern_engine::{
     Engine, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId, StageState, Timed,
 };
 
+use crate::fading::{Fades, Levels, loudness};
 use crate::youtube::{Download, Downloads, Stream, YoutubeVideo};
 
 /// What the stage has loaded for one resource.
@@ -252,6 +253,15 @@ fn streamed(video: &YoutubeVideo) -> Result<Content, String> {
         player,
         streamed: true,
     })
+}
+
+/// Sets how loud a player plays, from 0 (silent) to 1 (as recorded): a
+/// stream's through its volume element, a file's through its `playbin`.
+fn set_volume(player: &mut Video, volume: f64) {
+    match player.pipeline().by_name(STREAM_VOLUME) {
+        Some(element) => element.set_property("volume", volume),
+        None => player.set_volume(volume),
+    }
 }
 
 /// Lets a player be heard. A file's player is a `playbin`, which has its
@@ -476,6 +486,10 @@ impl Sound {
 
     fn unmute(&self) {
         self.player.set_property("mute", false);
+    }
+
+    fn set_volume(&self, volume: f64) {
+        self.player.set_property("volume", volume);
     }
 
     /// Where it is, or `None` while it is settling after a jump.
@@ -727,6 +741,11 @@ pub struct Stage {
     /// The real length of every video loaded so far, for timing the plan.
     lengths: HashMap<ResourceId, Duration>,
     downloads: Arc<Downloads>,
+    /// How far up, or down, what is on stage has faded.
+    fades: Fades,
+    /// The levels last played and drawn. A fade ends between two ticks,
+    /// and goes on until its last level has been.
+    played: Levels,
 }
 
 impl Stage {
@@ -748,6 +767,62 @@ impl Stage {
             lengths: HashMap::new(),
             wanted: Arc::default(),
             dwelling: HashMap::new(),
+            fades: Fades::default(),
+            played: Levels::FULL,
+        }
+    }
+
+    /// Follows the stage's fades: what left it, and a fade out begun or
+    /// called off, which plays what is on as loud as it was.
+    pub fn sync_fades(&mut self, stage: &StageState) {
+        let now = Instant::now();
+        self.fades.sync(stage, now);
+        self.play_levels(stage, now);
+    }
+
+    /// How much of what is on gets through now, as it fades.
+    pub fn levels(&self, stage: &StageState) -> Levels {
+        self.fades.levels(stage, Instant::now())
+    }
+
+    /// Whether something on stage is fading up or out now, or its last
+    /// level is still to be played and drawn.
+    pub fn fading(&self, stage: &StageState) -> bool {
+        let now = Instant::now();
+        self.fades.moving(stage, now) || self.played != self.fades.levels(stage, now)
+    }
+
+    /// Plays what is on as loud as its fade says, and once what was
+    /// fading out has, tells the engine, which goes on. Returns whether
+    /// the engine took it.
+    pub fn fade(&mut self, stage: &StageState, engine: &Engine) -> bool {
+        let now = Instant::now();
+        self.fades.sync(stage, now);
+        self.play_levels(stage, now);
+        self.fades
+            .faded(stage, now)
+            .is_some_and(|program| engine.faded(program))
+    }
+
+    /// Plays the program as loud as its fade says at `now`, and keeps the
+    /// levels as played.
+    fn play_levels(&mut self, stage: &StageState, now: Instant) {
+        self.played = self.fades.levels(stage, now);
+        self.set_loudness(self.played.sound);
+    }
+
+    /// Sets how loud the program's player plays, `level` of the way up.
+    fn set_loudness(&mut self, level: f32) {
+        match &mut self.program {
+            Program::Showing {
+                content: Content::Video { player, .. },
+                ..
+            } => set_volume(player, loudness(level)),
+            Program::Showing {
+                content: Content::Sound(sound),
+                ..
+            } => sound.set_volume(loudness(level)),
+            _ => {}
         }
     }
 
@@ -857,6 +932,7 @@ impl Stage {
         stage: &StageState,
         engine: &Engine,
     ) -> iced::Task<Arc<Loaded>> {
+        self.fades.sync(stage, Instant::now());
         let task = self.show(stage, engine);
         self.ready.retain(|id, _| self.upcoming.contains(id));
         self.sync_wanted();
@@ -886,7 +962,11 @@ impl Stage {
         };
         let loader = match Loader::for_resource(&scene.resource) {
             Ok(Some(loader)) => loader,
-            Ok(None) => return iced::Task::none(),
+            // Drawn from the scene itself: ready as it goes on.
+            Ok(None) => {
+                self.fades.up(scene.id, Instant::now());
+                return iced::Task::none();
+            }
             Err(reason) => {
                 engine.report(scene.id, MediaReport::Failed { reason });
                 return iced::Task::none();
@@ -1016,6 +1096,10 @@ impl Stage {
                 return;
             }
         };
+        // Ready to show: one that fades in starts from silence.
+        let now = Instant::now();
+        self.fades.up(scene, now);
+        let volume = loudness(self.fades.levels(stage, now).sound);
         match &mut content {
             Content::Image(_) => {}
             Content::Pages(pages) => {
@@ -1025,11 +1109,13 @@ impl Stage {
             Content::Video { player, .. } => {
                 let duration = Some(player.duration()).filter(|d| !d.is_zero());
                 engine.report(scene, MediaReport::Timeline { duration });
+                set_volume(player, volume);
                 unmute(player);
             }
             Content::Sound(sound) => {
                 let duration = Some(sound.duration()).filter(|d| !d.is_zero());
                 engine.report(scene, MediaReport::Timeline { duration });
+                sound.set_volume(volume);
                 sound.unmute();
             }
         }
@@ -1465,6 +1551,64 @@ mod tests {
     use lantern_engine::SourceId;
 
     use super::*;
+
+    #[test]
+    fn a_fade_runs_to_its_last_level_and_a_fade_out_moves_the_plan_on() {
+        let text = |name: &str| {
+            let source = SourceId::new("test").unwrap();
+            Resource::new(
+                ResourceId::new(&source, name),
+                name,
+                Kind::Text,
+                Location::Inline(name.into()),
+            )
+        };
+        let one_second = lantern_engine::FadeTime::from_secs(1);
+        let stage_with = |fade: lantern_engine::Fade| {
+            let engine = Engine::new();
+            let next = engine.edit_plan(|plan| {
+                let first = plan.show(text("Uno"));
+                plan.get_mut(first).unwrap().fade = fade;
+                plan.show(text("Dos"))
+            });
+            engine.next();
+            let mut stage = Stage::new(Downloads::new(PathBuf::from("/nowhere")));
+            let _load = stage.program_changed(&engine.stage(), &engine);
+            (engine, stage, next)
+        };
+
+        let (up, mut rising, _) = stage_with(lantern_engine::Fade {
+            fade_in: one_second,
+            fade_out: None,
+        });
+        let state = up.stage();
+        assert!(rising.fading(&state), "it comes up");
+        rising.fade(&state, &up);
+        assert!(rising.levels(&state).picture < 1.0);
+
+        let (down, mut going, next) = stage_with(lantern_engine::Fade {
+            fade_in: None,
+            fade_out: one_second,
+        });
+        assert!(matches!(down.next(), lantern_engine::Moved::FadingOut(_)));
+        going.sync_fades(&down.stage());
+        assert!(!going.fade(&down.stage(), &down), "not faded yet");
+
+        std::thread::sleep(Duration::from_millis(1100));
+        assert!(
+            rising.fading(&state),
+            "up by now, but its last level is still to be played"
+        );
+        rising.fade(&state, &up);
+        assert_eq!(rising.levels(&state).picture, 1.0);
+        assert!(!rising.fading(&state));
+
+        assert!(
+            going.fade(&down.stage(), &down),
+            "faded out, the plan went on"
+        );
+        assert_eq!(down.current_step().map(|step| step.id), Some(next));
+    }
 
     #[test]
     fn a_picture_fills_the_room_it_fits_in_its_own_shape() {
