@@ -37,6 +37,11 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// Save, a tick for a moment after it is pressed.
+pub const SAVED: Duration = Duration::from_millis(1200);
+/// An empty plan's + breathing, all its breaths.
+pub const BREATH: Duration = Duration::from_millis(3600);
+const BREATHS: f32 = 3.0;
 /// The phone's press and what it put on stage are this close together.
 const SOON: Duration = Duration::from_millis(1500);
 
@@ -102,6 +107,11 @@ pub struct Motion {
     picked: Option<Run>,
     /// The section what is carried would be a part of, lighting up.
     host: Option<(StepId, Run)>,
+    /// The plan was just saved: its Save is a tick for a moment.
+    saved: Option<Run>,
+    /// The plan just became empty: its + breathes a few times, then
+    /// rests.
+    breath: Option<Run>,
 }
 
 impl Motion {
@@ -127,6 +137,8 @@ impl Motion {
             indent: None,
             picked: None,
             host: None,
+            saved: None,
+            breath: None,
         }
     }
 
@@ -147,6 +159,40 @@ impl Motion {
             return None;
         }
         run?.along(Instant::now())
+    }
+
+    /// The plan was saved just now.
+    pub fn saved(&mut self) {
+        self.saved = Some(Run::new(Instant::now(), self.length(SAVED), Easing::Linear));
+    }
+
+    /// How much the tick that took Save's place shows: whole, then fading
+    /// over the last part.
+    pub fn tick(&self) -> Option<f32> {
+        let t = self.along(self.saved.as_ref())?;
+        Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// The plan is empty now, or not: becoming empty, its + breathes.
+    pub fn empty_plan(&mut self, empty: bool) {
+        match (empty, self.breath.is_some()) {
+            (true, false) => {
+                self.breath = Some(Run::new(
+                    Instant::now(),
+                    self.length(BREATH),
+                    Easing::Linear,
+                ));
+            }
+            (false, true) => self.breath = None,
+            _ => {}
+        }
+    }
+
+    /// How far into a breath the + is: 0 at rest, 1 at its fullest.
+    pub fn breath(&self) -> f32 {
+        self.along(self.breath.as_ref()).map_or(0.0, |t| {
+            (1.0 - (t * BREATHS * std::f32::consts::TAU).cos()) / 2.0
+        })
     }
 
     /// The projector shows `program` now. Something new going up rings.
@@ -336,7 +382,9 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 10] = [
+        let runs: [Option<&Run>; 12] = [
+            self.saved.as_ref(),
+            self.breath.as_ref(),
             self.went_up.as_ref(),
             self.left.as_ref().map(|(_, run)| run),
             self.fold.as_ref().map(|(_, _, run)| run),

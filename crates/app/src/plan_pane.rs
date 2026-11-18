@@ -400,6 +400,19 @@ impl App {
                 keys::with_key("Save the plan", Op::Save),
                 tooltip::Position::Bottom,
             ));
+        } else if let Some(shown) = self.motion.tick() {
+            // Saved: Save is a tick for a moment, fading.
+            header = header.push(
+                container(look::icon(
+                    Icon::Check,
+                    14.0,
+                    iced::Color {
+                        a: shown,
+                        ..p.primary
+                    },
+                ))
+                .padding([3, 10]),
+            );
         }
         header.spacing(6).align_y(Alignment::Center).into()
     }
@@ -1262,11 +1275,24 @@ impl App {
         // The last row adds a step that isn't a search result; it opens
         // on the kinds there are.
         if moving.is_none() && self.can_edit() {
-            rows = rows.push(list_action(
-                p,
+            // An empty plan's + breathes a few times: it is where to begin.
+            let breath = match plan.is_empty() && self.adding.is_none() {
+                true => self.motion.breath(),
+                false => 0.0,
+            };
+            rows = rows.push(breathing_action(
+                Palette {
+                    on_surface_variant: crate::motion::blend(
+                        p.on_surface_variant,
+                        p.primary,
+                        breath,
+                    ),
+                    ..p
+                },
                 if self.adding.is_some() { "−" } else { "+" },
                 String::new(),
                 Message::ToggleAdd,
+                breath,
             ));
             if let Some(on) = self.adding {
                 // The arrows move among the kinds; Enter adds the lit one.
@@ -4036,10 +4062,23 @@ fn list_action<'a>(
     label: String,
     message: Message,
 ) -> Element<'a, Message> {
+    breathing_action(p, sign, label, message, 0.0)
+}
+
+/// A row's action, its sign `breath` of the way to its fullest: larger,
+/// and in the accent colour.
+fn breathing_action<'a>(
+    p: Palette,
+    sign: &'a str,
+    label: String,
+    message: Message,
+    breath: f32,
+) -> Element<'a, Message> {
     button(
         row![
             text(sign)
-                .size(HEADING)
+                .size(HEADING + 8.0 * breath)
+                .line_height(iced::widget::text::LineHeight::Absolute(HEADING.into()))
                 .color(p.on_surface_variant)
                 .width(16)
                 .align_x(iced::alignment::Horizontal::Center),
