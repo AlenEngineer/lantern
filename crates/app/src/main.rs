@@ -568,6 +568,9 @@ struct App {
     pub(crate) note_open: Option<lantern_engine::NoteId>,
     pub(crate) note_text: iced::widget::text_editor::Content,
     pub(crate) note_kept: bool,
+    /// The loop or drawn order whose line was pressed last: Delete takes
+    /// it away, its steps staying.
+    pub(crate) line_picked: Option<lantern_engine::SpanId>,
     /// The keys held that change what a press does.
     pub(crate) mods: iced::keyboard::Modifiers,
     /// The steps that were not let go where they were carried, and the
@@ -837,6 +840,7 @@ impl App {
             note_open: None,
             note_text: iced::widget::text_editor::Content::new(),
             note_kept: false,
+            line_picked: None,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
@@ -1663,6 +1667,8 @@ impl App {
                             self.selected = Some(*first);
                             self.picked = steps;
                         }
+                        // The line itself is what Delete would take away.
+                        self.line_picked = pull.line;
                     }
                     // Out of the loop whose line it began on.
                     (true, Some(rail::Would::Rub { first, last }), _) if pull.rubs => {
@@ -2141,6 +2147,21 @@ impl App {
                 self.engine.0.edit_plan(|plan| plan.remove_note(id));
                 self.note_open = None;
             }
+            // With Ctrl, a bracket is added to what is picked, or dropped.
+            Message::Grab(section) if self.mods.control() => {
+                if self.picked.is_empty()
+                    && let Some(first) = self.selected
+                {
+                    self.picked.push(first);
+                }
+                match self.picked.iter().position(|id| *id == section) {
+                    Some(at) => {
+                        self.picked.remove(at);
+                    }
+                    None => self.picked.push(section),
+                }
+                self.selected = self.picked.first().copied();
+            }
             Message::Grab(section) => {
                 if self.can_edit() && self.mode != mode::Mode::Run {
                     self.grabbed = true;
@@ -2153,6 +2174,7 @@ impl App {
                 if steps.is_empty() {
                     self.close_note();
                 }
+                self.line_picked = None;
                 self.editing = None;
                 self.selected = steps.first().copied();
                 self.picked = match steps.len() {
@@ -2197,6 +2219,7 @@ impl App {
                 }
             }
             Message::Select(step) => {
+                self.line_picked = None;
                 // Ctrl adds a step to those picked, or drops it; Shift takes
                 // all from the selected step to this one; a plain click
                 // picks this one alone.
@@ -3230,9 +3253,79 @@ impl App {
                     return self.update(Message::EditStep(Some((step, plan_edit::Part::Name))));
                 }
             }
-            Op::RemoveStep => {
-                if let Some(step) = self.selected.filter(|_| !self.searching()) {
-                    return self.update(Message::Remove(step));
+            // A copy of what is selected, right after it: the steps picked
+            // together, or the selected step or section; and selected.
+            Op::Duplicate if !self.searching() => {
+                let ids: Vec<StepId> = match self.picked.len() > 1 {
+                    true => self.picked.clone(),
+                    false => self.selected.into_iter().collect(),
+                };
+                if ids.is_empty() {
+                    return Task::none();
+                }
+                self.remember(None);
+                let copies = engine.edit_plan(|plan| plan.duplicate(&ids));
+                if let Some(first) = copies.first() {
+                    self.motion.changed(*first);
+                    self.selected = Some(*first);
+                    self.picked = match copies.len() > 1 {
+                        true => copies,
+                        false => Vec::new(),
+                    };
+                }
+                return self.preload();
+            }
+            Op::Duplicate => {}
+            // Delete takes away what is selected, whatever it is: the loop
+            // or drawn order whose line was pressed (its steps stay); the
+            // steps picked together; the selected step; a bracket (its
+            // steps stay, and with Shift they go too). One undo brings it
+            // all back.
+            Op::RemoveStep if !self.searching() => {
+                if let Some(line) = self.line_picked.take() {
+                    self.remember(None);
+                    engine.edit_plan(|plan| plan.remove_span(line));
+                    self.picked.clear();
+                    return self.preload();
+                }
+                let ids: Vec<StepId> = match self.picked.len() > 1 {
+                    true => self.picked.clone(),
+                    false => self.selected.into_iter().collect(),
+                };
+                if !ids.is_empty() {
+                    let whole = self.mods.shift();
+                    self.remember(None);
+                    engine.edit_plan(|plan| {
+                        for id in &ids {
+                            let section = plan.get(*id).is_some_and(|step| step.is_section());
+                            match (section, whole) {
+                                (true, false) => {
+                                    plan.unbracket(*id);
+                                }
+                                (true, true) => {
+                                    let rows: Vec<StepId> = plan
+                                        .position(*id)
+                                        .map(|at| {
+                                            plan.steps()[at..plan.group_end(at)]
+                                                .iter()
+                                                .map(|step| step.id)
+                                                .collect()
+                                        })
+                                        .unwrap_or_default();
+                                    for row in rows.into_iter().rev() {
+                                        plan.remove(row);
+                                    }
+                                }
+                                (false, _) => {
+                                    plan.remove(*id);
+                                }
+                            }
+                        }
+                    });
+                    self.selected = None;
+                    self.picked.clear();
+                    self.close_note();
+                    return self.preload();
                 }
                 // With no step selected, what's lined up from standby.
                 if let Some(at) = self.standby_lined_up().filter(|_| !self.searching()) {
@@ -3241,6 +3334,7 @@ impl App {
                 }
             }
             // With no edit to take back, a plan just deleted comes back.
+            Op::RemoveStep => {}
             Op::Undo if self.undo.is_empty() && self.plans.undelete(&engine) => {
                 return self.switched(true);
             }

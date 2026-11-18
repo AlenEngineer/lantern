@@ -1615,6 +1615,7 @@ impl App {
                     name: step.label.clone(),
                     lines,
                     strong: picked
+                        || self.picked.contains(&step.id)
                         || host_id == Some(step.id)
                         || into.first() == Some(&step.id)
                         || footed == Some(step.id),

@@ -12,6 +12,14 @@ and the project uses [Semantic Versioning](https://semver.org/).
   it, a section whole; down, it lets go of its first steps, which stay in
   the section round it. It shows what it would make as it is pulled, and
   goes back where it can't start there.
+- Delete takes away what is selected, whatever it is: the steps picked
+  together, the selected step, a bracket (its steps stay; with Shift they
+  go too), or a loop or drawn order whose line was pressed (its steps
+  stay). Ctrl+Z brings it back.
+- Ctrl+D copies what is selected right after it, and selects the copy:
+  a step, steps picked together, or a section with all it holds; a loop
+  or a drawn order wholly among them comes with them. Ctrl and a click on
+  a bracket adds its section to what is picked, so several can be copied.
 - A bracket's foot can be pulled: down, it takes in what comes after it,
   a section whole; up, it lets go. As it is pulled the brackets show what
   letting go would make, in the colour of what is wrong where it can't

@@ -1619,6 +1619,96 @@ impl Plan {
         Ok(())
     }
 
+    /// Copies `ids` (steps; a section with all it holds), putting the
+    /// copies right after the last row copied, in the same order and as
+    /// far in. A loop or a drawn order wholly among what is copied is
+    /// copied with it, onto the copies. A section that ended at the last
+    /// row copied ends at its copy, so the copies stay in it. Returns the
+    /// copies of `ids`, in the plan's order; empty where none is in the
+    /// plan.
+    pub fn duplicate(&mut self, ids: &[StepId]) -> Vec<StepId> {
+        let mut rows: Vec<usize> = Vec::new();
+        for id in ids {
+            let Some(at) = self.position(*id) else {
+                continue;
+            };
+            let end = match self.steps[at].is_section() {
+                true => self.group_end(at),
+                false => at + 1,
+            };
+            for row in at..end {
+                if !rows.contains(&row) {
+                    rows.push(row);
+                }
+            }
+        }
+        rows.sort_unstable();
+        let Some(&anchor) = rows.last() else {
+            return Vec::new();
+        };
+        let anchor_id = self.steps[anchor].id;
+        // The copies, with new ids.
+        let mut made: Vec<(StepId, StepId)> = Vec::new();
+        let mut copies: Vec<Step> = Vec::new();
+        for row in &rows {
+            let mut step = self.steps[*row].clone();
+            let new = StepId(self.next_id);
+            self.next_id += 1;
+            made.push((step.id, new));
+            step.id = new;
+            copies.push(step);
+        }
+        let copy_of = |id: StepId| made.iter().find(|(was, _)| *was == id).map(|(_, new)| *new);
+        // A copied section ends at the copy of where it ended.
+        for step in &mut copies {
+            if let Action::Section {
+                last: Some(last), ..
+            } = &mut step.action
+                && let Some(new) = copy_of(*last)
+            {
+                *last = new;
+            }
+        }
+        // A section round them that ended at the last row copied ends at
+        // its copy now.
+        let anchor_copy = copy_of(anchor_id);
+        for step in &mut self.steps {
+            if let Action::Section { last, .. } = &mut step.action
+                && *last == Some(anchor_id)
+                && !made.iter().any(|(was, _)| *was == step.id)
+            {
+                *last = anchor_copy;
+            }
+        }
+        self.steps.splice(anchor + 1..anchor + 1, copies);
+        // The loops and drawn orders wholly among them, onto the copies.
+        let mut spans: Vec<Span> = Vec::new();
+        for span in &self.spans {
+            let over = match span.over {
+                Over::Steps { first, last } => match (copy_of(first), copy_of(last)) {
+                    (Some(first), Some(last)) => Over::Steps { first, last },
+                    _ => continue,
+                },
+                Over::Section(id) => match copy_of(id) {
+                    Some(id) => Over::Section(id),
+                    None => continue,
+                },
+            };
+            let id = SpanId(self.next_span);
+            self.next_span += 1;
+            spans.push(Span {
+                id,
+                over,
+                flow: span.flow,
+            });
+        }
+        self.spans.extend(spans);
+        self.settle();
+        let mut found: Vec<StepId> = ids.iter().filter_map(|id| copy_of(*id)).collect();
+        found.sort_by_key(|id| self.position(*id));
+        found
+    }
+
     /// Takes the span `id` away: its steps come once, in the plan's
     /// order. Returns it, if it was there.
     pub fn remove_span(&mut self, id: SpanId) -> Option<Span> {
@@ -3740,5 +3830,43 @@ mod tests {
         let right = plan.spans_at(3)[0];
         plan.rub_loop(right, at(3), at(4)).unwrap();
         assert_eq!(loops(&plan), vec![]);
+    }
+
+    #[test]
+    fn a_copy_comes_right_after_with_its_flows() {
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let a = plan.push("A", Action::Blank);
+        let b = plan.push("B", Action::Blank);
+        let c = plan.push("C", Action::Blank);
+        let school = plan.section("School", None);
+        let d = plan.push("D", Action::Blank);
+        plan.loop_over(a, b).unwrap();
+        // A and B, with their loop: the copies after B, in Music, looped.
+        let copies = plan.duplicate(&[b, a]);
+        assert_eq!(copies.len(), 2);
+        assert_eq!(
+            labels(&plan),
+            ["Music", "A", "B", "A", "B", "C", "School", "D"]
+        );
+        assert_eq!(plan.within(plan.position(copies[0]).unwrap()), vec![music]);
+        let loops: Vec<(usize, usize)> = plan
+            .laid_spans()
+            .into_iter()
+            .filter(|(span, ..)| span.is_loop())
+            .map(|(_, first, last)| (first, last))
+            .collect();
+        assert_eq!(loops, vec![(1, 2), (3, 4)]);
+        // A section, with all it holds: the copy right after it.
+        let copies = plan.duplicate(&[school]);
+        assert_eq!(copies.len(), 1);
+        assert_eq!(&labels(&plan)[6..], ["School", "D", "School", "D"]);
+        let copy = copies[0];
+        let d2 = plan.steps()[9].id;
+        assert_eq!(plan.within(plan.position(d2).unwrap()), vec![copy]);
+        assert_eq!(plan.within(plan.position(d).unwrap()), vec![school]);
+        // Nothing in the plan: nothing copied.
+        assert!(plan.duplicate(&[StepId(999)]).is_empty());
+        let _ = c;
     }
 }
