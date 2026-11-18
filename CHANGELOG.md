@@ -613,6 +613,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A fill's buttons sit above what it proposes, so they stay put while
+  more of the library is measured and the proposals change.
 - Accepting a fill with its ✓ did nothing: since a press on nothing
   closes the fill, the press on its buttons counted as one. Opening a fill
   also closes its section's card, which lay over what it proposes.
