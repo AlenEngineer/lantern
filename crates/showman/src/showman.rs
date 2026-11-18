@@ -5,6 +5,7 @@ use std::time::Duration;
 use lantern_resource::Resource;
 use serde::{Deserialize, Serialize};
 
+use crate::fade::{FadeOut, FadeTime};
 use crate::scene::{Media, MediaReport, Playback, Scene, SceneId, Timed};
 
 /// Everything a window needs to draw the stage from scratch.
@@ -21,6 +22,9 @@ pub struct StageState {
     /// plays over what the audience was looking at.
     #[serde(default)]
     pub under: Option<Scene>,
+    /// What is on is fading out, for the plan to go on once it has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fading_out: Option<FadeOut>,
 }
 
 impl StageState {
@@ -39,6 +43,7 @@ impl StageState {
                 if self.program == *scene {
                     return false;
                 }
+                self.fading_out = None;
                 let was = self.program.take();
                 self.under = match (scene, was) {
                     // A sound after a sound plays over the same picture.
@@ -57,11 +62,18 @@ impl StageState {
             }
             StageEvent::Preview { scene } => set_if_different(&mut self.preview, scene),
             // Under a sound, the frames are the picture's: its slides
-            // go on turning while the sound plays.
-            StageEvent::Frame { frame } => match self.picture_media() {
-                Some(Media::Frames { frame: current, .. }) => set_if_different(current, frame),
-                _ => false,
-            },
+            // go on turning while the sound plays. Turning to another
+            // slide calls a fade out off: that slide is wanted on.
+            StageEvent::Frame { frame } => {
+                let turned = match self.picture_media() {
+                    Some(Media::Frames { frame: current, .. }) => set_if_different(current, frame),
+                    _ => false,
+                };
+                if turned {
+                    self.fading_out = None;
+                }
+                turned
+            }
             StageEvent::Playback { playback } => match self.program_media() {
                 Some(Media::Timed(timed)) => set_if_different(&mut timed.playback, playback),
                 _ => false,
@@ -77,6 +89,9 @@ impl StageState {
             StageEvent::Media { scene, media } => self
                 .scene_mut(*scene)
                 .is_some_and(|scene| set_if_different(&mut scene.media, media)),
+            StageEvent::FadingOut { fade } => {
+                self.program.is_some() && set_if_different(&mut self.fading_out, &Some(*fade))
+            }
         }
     }
 
@@ -134,9 +149,9 @@ fn set_if_different<T: PartialEq + Clone>(slot: &mut T, value: &T) -> bool {
 /// (a webview stage) unchanged.
 ///
 /// A stage window applies every event to its mirror with
-/// [`StageState::apply`], then acts on three: `Program` (load the new
-/// scene), `Playback` (play or pause the player) and `Seek` (jump).
-/// Everything else only needs a redraw.
+/// [`StageState::apply`], then acts on four: `Program` (load the new
+/// scene), `Playback` (play or pause the player), `Seek` (jump) and
+/// `FadingOut` (start fading). Everything else only needs a redraw.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum StageEvent {
@@ -180,6 +195,12 @@ pub enum StageEvent {
         scene: SceneId,
         /// Its media now.
         media: Media,
+    },
+    /// What is on starts fading out. The renderer says when it has
+    /// faded, by the program's id.
+    FadingOut {
+        /// How.
+        fade: FadeOut,
     },
 }
 
@@ -237,17 +258,37 @@ impl Showman {
     /// Puts a resource on stage as a new scene. A video or audio starts
     /// playing: going on stage is the cue for it.
     pub fn show(&mut self, resource: Arc<Resource>) {
-        let scene = Scene::new(self.next_id(), resource);
-        self.emit(StageEvent::Program { scene: Some(scene) });
-        self.start_timed();
+        self.show_fading_in(resource, 0, None);
     }
 
     /// [`show`](Self::show), starting at `frame`: back to the slide of a
     /// deck that was left for something else.
     pub fn show_at(&mut self, resource: Arc<Resource>, frame: usize) {
-        let scene = Scene::new_at(self.next_id(), resource, frame);
+        self.show_fading_in(resource, frame, None);
+    }
+
+    /// [`show_at`](Self::show_at), coming up from nothing over `fade_in`.
+    pub fn show_fading_in(
+        &mut self,
+        resource: Arc<Resource>,
+        frame: usize,
+        fade_in: Option<FadeTime>,
+    ) {
+        let scene = Scene {
+            fade_in,
+            ..Scene::new_at(self.next_id(), resource, frame)
+        };
         self.emit(StageEvent::Program { scene: Some(scene) });
         self.start_timed();
+    }
+
+    /// Starts what is on fading out. Returns `false` with nothing on.
+    pub fn fade_out(&mut self, fade: FadeOut) -> bool {
+        if self.program().is_none() {
+            return false;
+        }
+        self.emit(StageEvent::FadingOut { fade });
+        true
     }
 
     /// Lines a resource up in preview as a new scene.
@@ -497,6 +538,37 @@ mod tests {
         assert!(!stage.next_frame());
         assert!(!stage.goto_frame(3));
         assert!(stage.goto_frame(0));
+    }
+
+    #[test]
+    fn what_fades_out_stops_fading_when_something_else_is_shown() {
+        let fade = FadeOut {
+            over: FadeTime::from_secs(4).unwrap(),
+            picture: true,
+        };
+        let mut stage = Showman::new();
+        assert!(!stage.fade_out(fade), "nothing on to fade");
+        stage.show_fading_in(hymn(), 0, FadeTime::from_secs(2));
+        assert_eq!(stage.program().unwrap().fade_in, FadeTime::from_secs(2));
+        let mut mirror = stage.subscribe();
+        assert!(stage.fade_out(fade));
+        assert_eq!(stage.state().fading_out, Some(fade));
+        assert!(stage.next_frame());
+        assert_eq!(
+            stage.state().fading_out,
+            None,
+            "another slide calls the fade out off"
+        );
+        stage.fade_out(fade);
+        stage.show(video());
+        assert_eq!(stage.state().fading_out, None, "something else is on");
+        assert_eq!(stage.program().unwrap().fade_in, None, "and at once");
+        stage.fade_out(fade);
+        for event in mirror.events.try_iter() {
+            mirror.state.apply(&event);
+        }
+        assert_eq!(mirror.state, *stage.state());
+        assert_eq!(mirror.state.fading_out, Some(fade));
     }
 
     #[test]
@@ -908,6 +980,19 @@ mod tests {
             r#"{"event":"media","scene":7,"media":{"type":"timed","playback":"playing","position_ms":250,"duration_ms":null}}"#
         );
         assert_eq!(serde_json::from_str::<StageEvent>(&json).unwrap(), media);
+
+        let fading = StageEvent::FadingOut {
+            fade: FadeOut {
+                over: FadeTime::from_secs(4).unwrap(),
+                picture: false,
+            },
+        };
+        let json = serde_json::to_string(&fading).unwrap();
+        assert_eq!(
+            json,
+            r#"{"event":"fading_out","fade":{"over":4,"picture":false}}"#
+        );
+        assert_eq!(serde_json::from_str::<StageEvent>(&json).unwrap(), fading);
 
         let report = MediaReport::Position(secs(2));
         assert_eq!(

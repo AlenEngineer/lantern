@@ -17,6 +17,7 @@ mod deck;
 mod desktop;
 mod drag;
 mod drawn;
+mod fading;
 mod fill;
 mod fill_panel;
 mod fit;
@@ -224,6 +225,14 @@ enum Clicked {
     Shelf(ResourceId),
 }
 
+/// Which way a step fades: up as it goes on stage, or out as the plan
+/// goes on from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FadeEnd {
+    In,
+    Out,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     /// The stage as it was when the feed started. Always the feed's first message.
@@ -246,6 +255,9 @@ enum Message {
     Progress,
     /// Time to draw what is moving a little further along.
     Frame,
+    /// Time to take what fades on stage a little further, in sight and
+    /// in sound.
+    Fading,
     /// The script performed a command. The plan may have changed, which the
     /// stage feed doesn't announce.
     Acted,
@@ -317,6 +329,9 @@ enum Message {
     NoteGone(lantern_engine::NoteId),
     /// A section's time made longer or shorter by so many seconds.
     SectionGoal(StepId, i64),
+    /// How long a step fades in, or out, made longer or shorter by so
+    /// many seconds.
+    SetFade(StepId, FadeEnd, i64),
     /// Typed in a section's time of day to be over by.
     DoneBy(StepId, String),
     /// A section's bracket was pressed: it is picked, and held and moved
@@ -1307,6 +1322,12 @@ impl App {
             }
             Message::Progress => return self.go_on(),
             Message::Frame => {}
+            Message::Fading => {
+                // What faded out has gone, and the plan with it.
+                if self.media.fade(&self.stage, &self.engine.0) {
+                    return Task::batch([self.preload(), self.arrive()]);
+                }
+            }
             Message::Acted => return self.preload(),
             Message::ScriptDone => {
                 log("script finished, exiting");
@@ -2268,6 +2289,20 @@ impl App {
                         let now = budget.unwrap_or_default().as_secs() as i64;
                         let to = (now + by).max(0) as u64;
                         *budget = (to > 0).then(|| Duration::from_secs(to));
+                    }
+                });
+            }
+            Message::SetFade(id, end, by) => {
+                // One undo for a run of presses on the same step.
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(step) = plan.get_mut(id) {
+                        let fade = match end {
+                            FadeEnd::In => &mut step.fade.fade_in,
+                            FadeEnd::Out => &mut step.fade.fade_out,
+                        };
+                        let now = fade.map_or(0, lantern_engine::FadeTime::secs);
+                        *fade = lantern_engine::FadeTime::from_secs(now.saturating_add_signed(by));
                     }
                 });
             }
@@ -3296,12 +3331,15 @@ impl App {
                 } else {
                     engine.prev()
                 };
-                // The operator moved the plan on: the step that was being
-                // looked at lets go, so the row on stage is the only one
-                // lit and Up next shows what follows. A step going on by
-                // itself leaves the selection alone: it may be mid-edit.
-                if matches!(moved, lantern_engine::Moved::Step(_))
-                    && self.selected.take().is_some()
+                // The operator moved the plan on, or began to as the step
+                // fades out: the step that was being looked at lets go, so
+                // the row on stage is the only one lit and Up next shows
+                // what follows. A step going on by itself leaves the
+                // selection alone: it may be mid-edit.
+                if matches!(
+                    moved,
+                    lantern_engine::Moved::Step(_) | lantern_engine::Moved::FadingOut(_)
+                ) && self.selected.take().is_some()
                     && self.search.picked().is_none()
                 {
                     engine.clear_preview();
@@ -3931,7 +3969,11 @@ impl App {
                 }
             }
             StageEvent::Seek { position } => self.media.seek(*position, engine),
-            StageEvent::Frame { .. } | StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
+            // Another slide calls a fade out off.
+            StageEvent::FadingOut { .. } | StageEvent::Frame { .. } => {
+                self.media.sync_fades(&self.stage);
+            }
+            StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
         }
         Task::none()
     }
@@ -4245,11 +4287,13 @@ impl App {
     /// among its slides, counted from when the current slide went up. A
     /// video goes on when it ends, which the engine does.
     pub(crate) fn goes_on_in(&self) -> Option<Duration> {
+        // Fading out, it is going on already: going on again would cut
+        // the fade short.
         let step = self
             .engine
             .0
             .current_step()
-            .filter(|_| self.engine.0.goes_on())?;
+            .filter(|_| self.engine.0.goes_on() && self.stage.fading_out.is_none())?;
         if !matches!(step.action, Action::Show { .. } | Action::Blank) {
             return None;
         }
@@ -4526,10 +4570,17 @@ impl App {
                     ),
                 },
             };
+        let shown = backdrop(look, content, over);
+        // Fading, the stage with nothing on shows through what is on.
+        let through = 1.0 - self.media.levels(&self.stage).picture;
+        let shown = match through > 0.0 {
+            true => stack![shown, veil(look, through)].into(),
+            false => shown,
+        };
         if self.stage.blackout {
-            stack![backdrop(look, content, over), black(Space::new())].into()
+            stack![shown, black(Space::new())].into()
         } else {
-            backdrop(look, content, over)
+            shown
         }
     }
 
@@ -4584,6 +4635,13 @@ impl App {
         if playing {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
+        }
+        // What fades on stage goes on often enough to look and sound
+        // smooth, whether or not a window draws: a fade out ends in the
+        // plan going on.
+        if self.media.fading(&self.stage) {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(33)).map(|_| Message::Fading));
         }
         // A fill waiting on files being measured looks again as they come.
         if self.fill_measuring() {
@@ -4744,6 +4802,30 @@ pub(crate) fn backdrop<'a>(
         .clip(true)
         .style(move |_| container::Style::default().background(colour))
         .into()
+}
+
+/// The stage with nothing on, `amount` of the way over what is on: the
+/// look's image, else its colour. A crossfade from or to it, laid over.
+fn veil<'a>(look: &Look, amount: f32) -> Element<'a, Message> {
+    let Some(path) = &look.image else {
+        let colour = fit::color(look.background).scale_alpha(amount);
+        return container(Space::new())
+            .width(Fill)
+            .height(Fill)
+            .style(move |_| container::Style::default().background(colour))
+            .into();
+    };
+    container(
+        image(image::Handle::from_path(path))
+            .width(Fill)
+            .height(Fill)
+            .content_fit(ContentFit::Cover)
+            .opacity(amount),
+    )
+    .width(Fill)
+    .height(Fill)
+    .clip(true)
+    .into()
 }
 
 fn black<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

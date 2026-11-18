@@ -209,6 +209,12 @@ Showman is the model of the audience window. It doesn't draw anything.
   page count, a timeline, a position, the end, or a failure. A report for a
   scene that has left the stage is ignored. Inline text ignores `Frames` and
   `Timeline` reports, because the Showman splits it into frames itself.
+- **Fades**: a scene can carry a `fade_in`, and `fading_out` says that
+  what is on is fading out. Both are lengths, not clocks: the renderer
+  starts a fade in when it has the scene ready, and a fade out when it
+  hears of it, and does the fading (loudness, and the stage with nothing
+  on laid over the picture). Another program or another slide ends a
+  fade out.
 
 Windows don't poll. `subscribe()` returns a `StageFeed`: a snapshot and a
 receiver made under one lock, so no event is lost or counted twice. A window
@@ -226,7 +232,10 @@ the engine is the only way to change its stage.
 
 - `next()` / `prev()` behave like a presentation clicker: next frame if
   there is one, otherwise next step. Reaching a step *performs* it
-  (`Show` → stage, `Blank` → clear, `Live`/`Note` → nothing).
+  (`Show` → stage, `Blank` → clear, `Live`/`Note` → nothing). A step
+  with a fade out that still has something on stage fades it out first.
+  The renderer calls `faded(scene)` when it has, and the plan goes on.
+  `next()` again during the fade goes on at once.
 - `preview` / `take` / `show_now` handle off-plan content.
 - `clear`, `clear_preview`, `set_blackout`, `toggle_blackout`,
   `goto_frame`, `play`, `pause`, `toggle_playback` and `seek` are the other

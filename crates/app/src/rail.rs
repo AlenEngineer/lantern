@@ -95,6 +95,8 @@ const PETAL: f32 = 34.0;
 /// round the time stands off its pill.
 const PILL: f32 = 30.0;
 const CARD: f32 = 6.0;
+/// How wide the card is that says how a step fades.
+const FADES: f32 = 300.0;
 
 impl App {
     /// How often `of` comes, beside the ring's repeat button: a number
@@ -432,6 +434,32 @@ impl App {
                 ));
                 if again {
                     again_at = Some((FlowOf::Step(id), step.flow, place(30.0, 46.0)));
+                }
+                // How it fades, under the ring and clear of its buttons:
+                // in and out, a second a press.
+                if matches!(step.action, lantern_engine::Action::Show { .. }) {
+                    let card = container(crate::plan_pane::fade_steppers(p, step))
+                        .padding([6, 12])
+                        .center_x(FADES)
+                        .style(move |_| container::Style {
+                            background: Some(p.surface_container.into()),
+                            border: iced::Border {
+                                radius: (PILL / 2.0).into(),
+                                ..iced::Border::default()
+                            },
+                            shadow: iced::Shadow {
+                                color: iced::Color::BLACK.scale_alpha(0.45),
+                                offset: iced::Vector::new(0.0, 2.0),
+                                blur_radius: 8.0,
+                            },
+                            ..container::Style::default()
+                        });
+                    layers.push(
+                        pin(card)
+                            .x((middle.x - FADES / 2.0).max(8.0))
+                            .y(middle.y + 46.0 + PETAL / 2.0)
+                            .into(),
+                    );
                 }
             }
             RingOn::Line(id) => {

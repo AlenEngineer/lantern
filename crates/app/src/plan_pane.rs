@@ -12,8 +12,8 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, Rectangle, mouse};
 use lantern_engine::{
-    Action, Basis, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource, SectionTiming,
-    Step, StepId, TimeOfDay, Timing,
+    Action, Basis, FadeTime, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource,
+    SectionTiming, Step, StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, unit};
@@ -26,7 +26,7 @@ use crate::plan_edit::{NewStep, Part, goes_on_when, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
 use crate::ready::Issue;
 use crate::widgets::{self, Filled, hinted, pill, scrolling, single_line, wide};
-use crate::{App, Clicked, Message, track};
+use crate::{App, Clicked, FadeEnd, Message, track};
 
 /// The id of the pane's rows, to scroll them.
 pub const ROWS: &str = "plan-rows";
@@ -2174,6 +2174,30 @@ impl App {
         parts
     }
 
+    /// How the picked step fades, in a card under its name: in and out, a
+    /// second less or more each press. Only for a step that shows
+    /// something, where it can change.
+    fn fade_card<'a>(&self, step: &Step) -> Option<Element<'a, Message>> {
+        if !matches!(step.action, Action::Show { .. }) {
+            return None;
+        }
+        let changes = self.can_edit()
+            && (self.mode != crate::mode::Mode::Run || self.ahead(&self.engine.0.plan(), step.id));
+        if !changes {
+            return None;
+        }
+        let p = self.palette;
+        Some(
+            container(
+                container(fade_steppers(p, step))
+                    .padding([4, 5])
+                    .style(look::card(p, 0.0, 10.0)),
+            )
+            .padding(iced::Padding::default().top(6.0))
+            .into(),
+        )
+    }
+
     /// `row`, telling the app which half of it the pointer is over, so a
     /// held row can be dropped above or below it. While a drag moves, the
     /// pointer is a closed hand.
@@ -2484,14 +2508,16 @@ impl App {
                 length.clone()
             };
             // Filled like a button, so it reads as something to click.
-            button(text(shown).size(META).color(p.on_surface))
-                .padding([2, 6])
-                .on_press(Message::EditStep(Some((step.id, Part::Length))))
-                .style(look::pill(p, Tone::Plain))
-                .into()
+            button(ramped(
+                step,
+                text(shown).size(META).color(p.on_surface).into(),
+                p.on_surface,
+            ))
+            .padding([2, 6])
+            .on_press(Message::EditStep(Some((step.id, Part::Length))))
+            .style(look::pill(p, Tone::Plain))
+            .into()
         } else {
-            // What there is to say, else the length; a step that goes on
-            // by itself is marked.
             // What there is to say, else the length. Whether it goes on
             // by itself is the rail's to show.
             let words = said.clone().unwrap_or_else(|| length.clone());
@@ -2500,11 +2526,15 @@ impl App {
             } else {
                 p.on_surface_variant
             };
-            text(words)
-                .size(META)
-                .color(color)
-                .wrapping(iced::widget::text::Wrapping::None)
-                .into()
+            ramped(
+                step,
+                text(words)
+                    .size(META)
+                    .color(color)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .into(),
+                p.on_surface_variant,
+            )
         };
         let mut label = column![title];
         if self.editing(step.id, Part::Search) {
@@ -2579,6 +2609,11 @@ impl App {
         let fill = match self.motion.flash(step.id) {
             Some(faded) => crate::motion::blend(Palette::tint(p.primary, 0.5), fill, faded),
             None => fill,
+        };
+        // Picked, how it fades, under all of its line.
+        let line: Element<'_, Message> = match self.fade_card(step).filter(|_| selected) {
+            Some(card) => column![line, card].into(),
+            None => line.into(),
         };
         let row = button(line)
             .width(Fill)
@@ -3123,6 +3158,10 @@ impl App {
                     (Some(_), _) => Palette::tint(live, 0.35),
                     (None, true) => planned,
                     (None, false) => Palette::tint(p.on_surface_variant, 0.5),
+                },
+                thick: match rehearsed {
+                    Some(_) => 1.0,
+                    None => self.media.levels(&self.stage).left.unwrap_or(1.0),
                 },
             }),
             (false, ..) => None,
@@ -4149,6 +4188,57 @@ pub(crate) fn section_status(section: &SectionTiming) -> (String, Tone) {
         ),
     };
     (text, pace_tone(pace))
+}
+
+/// How long `step` fades in and out, each a second less or more with −
+/// and +.
+pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
+    let id = step.id;
+    let small = move |label: &'static str, does: Option<Message>| {
+        button(text(label).size(META).font(BOLD).color(p.on_surface))
+            .padding([1, 4])
+            .on_press_maybe(does)
+            .style(look::pill(p, Tone::Plain))
+    };
+    // Its ramp says which end it is, as on the row: up in, down out.
+    let one = move |name: &'static str, end: FadeEnd, now: Option<FadeTime>| {
+        let shown = now.map_or("—".to_string(), |time| format!("{} s", time.secs()));
+        let ramp = look::ramp(end == FadeEnd::In, end == FadeEnd::Out, 10.0, p.primary);
+        row![
+            hinted(p, ramp, name.to_string(), tooltip::Position::Left),
+            small("−", now.map(|_| Message::SetFade(id, end, -1))),
+            container(text(shown).size(META).font(BOLD).color(p.on_surface)).center_x(28),
+            small(
+                "+",
+                (now != Some(FadeTime::LONGEST)).then_some(Message::SetFade(id, end, 1))
+            ),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center)
+    };
+    column![
+        one("Fades in", FadeEnd::In, step.fade.fade_in),
+        one("Fades out", FadeEnd::Out, step.fade.fade_out),
+    ]
+    .spacing(4)
+    .into()
+}
+
+/// `words` at a row's end, after a small ramp where the step fades: up
+/// where it fades in, down where it fades out.
+fn ramped<'a>(
+    step: &Step,
+    words: Element<'a, Message>,
+    color: iced::Color,
+) -> Element<'a, Message> {
+    if !matches!(step.action, Action::Show { .. }) || step.fade.is_none() {
+        return words;
+    }
+    let (fades_in, fades_out) = (step.fade.fade_in.is_some(), step.fade.fade_out.is_some());
+    row![look::ramp(fades_in, fades_out, 8.0, color), words]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// How far into its media the stage is: "slide 2 of 5", "page 1 of 3",

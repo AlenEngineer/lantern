@@ -96,6 +96,7 @@ fn does(message: &Message) -> Does {
             | crate::rail::Act::Ends(FlowOf::Step(id), _),
         )
         | M::StepSound(id, _)
+        | M::SetFade(id, ..)
         | M::KeepCopy(id)
         | M::SoundFrom(id, _)
         | M::SlotSearch(id, _)

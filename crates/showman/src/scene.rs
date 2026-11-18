@@ -6,6 +6,8 @@ use std::time::Duration;
 use lantern_resource::{Kind, Location, Resource};
 use serde::{Deserialize, Serialize};
 
+use crate::fade::FadeTime;
+
 /// Names one scene for its whole life.
 ///
 /// The [`Showman`](crate::Showman) is the only code that makes ids, and it
@@ -42,6 +44,10 @@ pub struct Scene {
     pub resource: Arc<Resource>,
     /// How it is presented right now.
     pub media: Media,
+    /// It comes up from nothing over this long, from when the stage has
+    /// it ready: its picture, and its sound. `None` comes up at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_in: Option<FadeTime>,
 }
 
 /// How a scene is presented. Exactly one shape at a time, so "playing, on
@@ -151,6 +157,7 @@ impl Scene {
             id,
             resource,
             media,
+            fade_in: None,
         }
     }
 
