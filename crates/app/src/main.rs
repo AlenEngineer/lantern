@@ -332,7 +332,6 @@ enum Message {
     SectionGoal(StepId, i64),
     /// The plan's bracket was pressed: the plan is picked, and its card
     /// shows what it is set to.
-    PickPlan,
     /// The plan's target made longer or shorter by so many seconds.
     PlanGoal(i64),
     /// How long a step fades in, or out, made longer or shorter by so
@@ -601,8 +600,6 @@ struct App {
     /// The loop or drawn order whose line was pressed last: Delete takes
     /// it away, its steps staying.
     pub(crate) line_picked: Option<lantern_engine::SpanId>,
-    /// The plan's own bracket was pressed last: its card is open.
-    pub(crate) plan_picked: bool,
     /// The keys held that change what a press does.
     pub(crate) mods: iced::keyboard::Modifiers,
     /// The steps that were not let go where they were carried, and the
@@ -877,7 +874,6 @@ impl App {
             done_typed: None,
             edits: 0,
             line_picked: None,
-            plan_picked: false,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
@@ -1130,10 +1126,6 @@ impl App {
             }
             None => self.handle(message),
         };
-        // Whatever else is picked, the plan is not.
-        if self.selected.is_some() || !self.picked.is_empty() || self.line_picked.is_some() {
-            self.plan_picked = false;
-        }
         // An edit that put a section over its time shows it tipping.
         if self.edits != edits
             && let Some(before) = self.undo.last()
@@ -1677,6 +1669,7 @@ impl App {
                 });
                 self.repeat_until.clear();
                 self.motion.picked_up();
+                self.motion.ring_opens();
             }
             Message::Rail(rail::Act::RingClose) => {
                 self.ring = None;
@@ -2315,15 +2308,6 @@ impl App {
                         .edit_plan(|plan| plan.set_note_text(id, words));
                 }
             }
-            Message::PickPlan => {
-                self.selected = None;
-                self.picked.clear();
-                self.line_picked = None;
-                self.editing = None;
-                self.look_typed = None;
-                self.engine.0.clear_preview();
-                self.plan_picked = true;
-            }
             Message::PlanGoal(by) => {
                 self.remember(None);
                 self.engine
@@ -2416,7 +2400,6 @@ impl App {
                 }
                 self.line_picked = None;
                 self.editing = None;
-                self.plan_picked = false;
                 self.selected = steps.first().copied();
                 self.picked = match steps.len() {
                     0 | 1 => Vec::new(),
@@ -2866,7 +2849,6 @@ impl App {
             Message::LookReset(field) => self.look_reset(field),
             Message::Unselect => {
                 self.selected = None;
-                self.plan_picked = false;
                 self.look_typed = None;
                 self.engine.0.clear_preview();
             }
@@ -3003,11 +2985,9 @@ impl App {
             }
             // The name is typed in the plan's card.
             Message::EditPlanName => {
-                self.ring = None;
                 self.selected = None;
                 self.picked.clear();
                 self.line_picked = None;
-                self.plan_picked = true;
                 self.plans.edit_name(&self.engine.0);
                 return Task::batch([operation::focus(NAME_BOX), operation::select_all(NAME_BOX)]);
             }

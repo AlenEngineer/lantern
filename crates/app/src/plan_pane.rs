@@ -122,9 +122,6 @@ struct Side<'a> {
     braced: &'a [Braced],
     lanes: u8,
     wide: bool,
-    /// How much wider the innermost brackets' room is while a picked
-    /// section's card is in it.
-    more: f32,
     /// The lane of the plan's own bracket, round all of its steps,
     /// where there is one: the outermost.
     plan: Option<u8>,
@@ -133,17 +130,13 @@ struct Side<'a> {
 impl Side<'_> {
     /// How wide all of it is.
     fn room(&self) -> f32 {
-        track::side_room(self.lanes, self.wide) + self.more
+        track::side_room(self.lanes, self.wide)
     }
 
     /// How wide the plan's part of it is, from its brace to the right.
     fn plans_room(&self) -> Option<f32> {
         let lane = self.plan?;
-        let more = match lane {
-            0 => 0.0,
-            _ => self.more,
-        };
-        Some(self.room() - track::brace_at(lane) - more)
+        Some(self.room() - track::brace_at(lane))
     }
 }
 
@@ -226,7 +219,9 @@ impl App {
             container(line).padding([2, 8]),
         );
         mouse_area(line)
-            .on_press(Message::PickPlan)
+            .on_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(None),
+            )))
             .on_right_press(Message::Rail(crate::rail::Act::Ring(
                 crate::rail::RingOn::All(None),
             )))
@@ -240,10 +235,6 @@ const GOAL_WIDE: f32 = 54.0;
 
 /// How tall the foot of a bracket is, to be pulled.
 const FOOT: f32 = 16.0;
-
-/// How wide the card of a picked section is: a little more than the
-/// room its name had.
-const CARD: f32 = track::LABEL + 30.0;
 
 /// How wide the steps' room is kept, for their dots, names and times,
 /// before a section that holds only sections gives up the room for its
@@ -865,19 +856,14 @@ impl App {
                 .iter()
                 .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none())
                 || plan_lane.is_some_and(|lane| lane > 0 && plans_steps.is_none()));
-        // The plan's card, picked, takes the room its name had, and more:
-        // the steps give way to it, so it covers none of them. A section's
-        // is under its ring.
-        let plan_carded = self.plan_picked && plan_lane.is_some();
-        let carded = plan_carded;
+        // The plan's ring is open: its bracket is drawn strong.
+        let plan_ringed = self
+            .ring
+            .is_some_and(|ring| ring.on == crate::rail::RingOn::All(None));
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
             wide: side_wide,
-            more: match carded {
-                true => CARD - track::LABEL,
-                false => 0.0,
-            },
             plan: plan_lane,
         };
         let mut stops: Vec<track::Stop> = Vec::new();
@@ -1739,11 +1725,7 @@ impl App {
                     id: Some(step.id),
                     first: first_key,
                     last: last_key,
-                    offset: track::brace_at(braced.lane)
-                        + match braced.lane {
-                            0 => 0.0,
-                            _ => side.more,
-                        },
+                    offset: track::brace_at(braced.lane),
                     // One that holds others writes beside its own steps.
                     beside,
                     color: match on {
@@ -1822,11 +1804,7 @@ impl App {
                 id: None,
                 first: id_at(*first),
                 last: id_at(*last),
-                offset: track::brace_at(lane)
-                    + match lane {
-                        0 => 0.0,
-                        _ => side.more,
-                    },
+                offset: track::brace_at(lane),
                 beside,
                 color: p.primary,
                 name: plan.title.clone(),
@@ -1841,7 +1819,7 @@ impl App {
                         (sign, words, ink)
                     })
                     .collect(),
-                strong: plan_carded,
+                strong: plan_ringed,
                 // Its words are at its head, over the rows: there is
                 // room there in the narrowest pane.
                 bare: true,
@@ -1850,34 +1828,6 @@ impl App {
                 bulge: 0.0,
             });
         }
-        // The section that is picked says what it is set to, and what
-        // can be done to it, in a card over its bracket's name. The plan,
-        // picked, says the same of itself in the same place.
-        let plan_card: Option<Element<'_, Message>> =
-            plan_rows.filter(|_| plan_carded).and_then(|(first, last)| {
-                let (first, last) = plans_steps.unwrap_or((*first, *last));
-                let (origin, top, foot) = {
-                    let places = places.borrow();
-                    (
-                        *places.get(&track::Key::Canvas)?,
-                        *places.get(&track::Key::Side(id_at(first)))?,
-                        *places.get(&track::Key::Side(id_at(last)))?,
-                    )
-                };
-                let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
-                let left = origin.width - side.room() + track::BRACE;
-                let card = container(self.plan_bracket_card(plan))
-                    .width(CARD)
-                    .padding([8, 6])
-                    .style(look::card(p, 0.0, 12.0));
-                Some(
-                    iced::widget::pin(card)
-                        .x(left.max(0.0))
-                        .y((middle - 52.0).max(0.0))
-                        .into(),
-                )
-            });
-        let card = plan_card;
         // A line that was pulled where none can be stays a moment, where
         // it was, shaking and flashing while why is said.
         if let (Some(aside), Some((pulled_to, first, last))) = (alarm, self.alarm_pull) {
@@ -1961,9 +1911,6 @@ impl App {
         };
         // Leaving the list means letting go would move nothing.
         let mut layers = stack![rows, track::over(picture, &places, Message::Marquee)].width(Fill);
-        if let Some(card) = card {
-            layers = layers.push(card);
-        }
         // The open note's card, beside the first thing it is on, with a
         // thread to each of them.
         if let Some(card) = self.note_card(plan)
@@ -2540,12 +2487,12 @@ impl App {
     /// picked section's card says of the section: its name, the time it
     /// is meant to take, when it starts and so ends, what its steps come
     /// to, how it moves, and its other settings.
-    fn plan_bracket_card(&self, plan: &Plan) -> Element<'_, Message> {
-        let p = self.palette;
+    /// What the plan's ring shows under it, in `p`, the ring's colours:
+    /// its name (a field while it is renamed), its goal, when it starts,
+    /// what it takes, and how it moves.
+    pub(crate) fn plan_bracket_card(&self, p: Palette, plan: &Plan) -> Element<'_, Message> {
         let quiet = p.on_surface_variant;
         let can = self.can_edit();
-        // Renamed, copied and deleted only while planning.
-        let manages = can && self.mode == crate::mode::Mode::Plan;
         let name: Element<'_, Message> = match &self.plans.mode {
             plans::Mode::Renaming(draft) => text_input("Plan name", draft)
                 .id(NAME_BOX)
@@ -2669,48 +2616,18 @@ impl App {
                     .color(ink),
             );
         }
-        let act = |mark: Element<'static, Message>, does: Message, says: &str| {
-            hinted(
-                p,
-                button(mark)
-                    .padding([3, 7])
-                    .on_press(does)
-                    .style(look::row(p, Tone::Plain)),
-                says.to_string(),
-                tooltip::Position::Top,
-            )
-        };
         // How the whole plan moves, and rehearsing it.
-        let flow = self.flow_buttons(None, plan.flow, false);
-        let mut card = column![name, goal, starts, sum, flow].spacing(6);
-        if manages {
-            card = card.push(
-                row![
-                    act(
-                        look::icon(Icon::Pencil, 13.0, p.primary).into(),
-                        Message::EditPlanName,
-                        "Rename",
-                    ),
-                    act(
-                        look::icon(Icon::Settings, 13.0, p.primary).into(),
-                        Message::PlanSettings,
-                        "Its media, look and the rest",
-                    ),
-                ]
-                .spacing(2)
-                .align_y(Alignment::Center),
-            );
-        }
-        card.into()
+        let flow = self.flow_buttons(p, None, plan.flow, false);
+        column![name, goal, starts, sum, flow].spacing(6).into()
     }
 
     pub(crate) fn flow_buttons<'a>(
         &self,
+        p: Palette,
         of: Option<StepId>,
         flow: Flow,
         all: bool,
     ) -> Element<'a, Message> {
-        let p = self.palette;
         let goes = flow.joined;
         let can = self.can_edit();
         let glyph = |icon: Icon, on: bool| {
@@ -3430,7 +3347,9 @@ impl App {
     /// press there picks the plan, a right click opens its ring.
     fn plans_part<'a>(&self, wide: f32) -> Element<'a, Message> {
         mouse_area(Space::new().width(wide).height(Fill))
-            .on_press(Message::PickPlan)
+            .on_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(None),
+            )))
             .on_right_press(Message::Rail(crate::rail::Act::Ring(
                 crate::rail::RingOn::All(None),
             )))
@@ -3536,10 +3455,7 @@ impl App {
         // and the room right of those, which is the outermost's.
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
         if side.lanes > 0 {
-            parts.push(part(
-                track::BRACE + track::LABEL + side.more,
-                covering(None),
-            ));
+            parts.push(part(track::BRACE + track::LABEL, covering(None)));
         }
         for lane in 1..side.lanes {
             parts.push(part(track::BRACE, covering(Some(lane))));

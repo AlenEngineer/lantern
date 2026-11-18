@@ -35,6 +35,27 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// How long a ring takes to open, all its buttons popped out.
+pub const BUBBLE: Duration = Duration::from_millis(420);
+
+/// How far out the `n`th of `of` buttons of a ring is when it has
+/// opened `t` of the way: each pops out a little after the one before,
+/// past where it goes and back, like a bubble. 0 before it starts, 1
+/// once it has settled.
+pub fn bubble(t: f32, n: usize, of: usize) -> f32 {
+    // Each takes this much of the time; the rest is how late the last
+    // one starts.
+    const POP: f32 = 0.6;
+    let late = match of {
+        0 | 1 => 0.0,
+        of => (1.0 - POP) * n as f32 / (of - 1) as f32,
+    };
+    let x = ((t - late) / POP).clamp(0.0, 1.0);
+    // An overshoot that settles: easing out "back".
+    const BACK: f32 = 1.9;
+    let x = x - 1.0;
+    1.0 + (BACK + 1.0) * x * x * x + BACK * x * x
+}
 /// A search result travelling to its row in the plan.
 pub const FLIGHT: Duration = Duration::from_millis(420);
 /// Each thing a fill proposes dropping in, one after another.
@@ -115,6 +136,8 @@ pub struct Motion {
     indent: Option<(f32, f32, Run)>,
     /// What is carried was just picked up.
     picked: Option<Run>,
+    /// A ring opening: its buttons pop out one after another.
+    ringing: Option<Run>,
     /// The section what is carried would be a part of, lighting up.
     host: Option<(StepId, Run)>,
     /// The plan was just saved: its Save is a tick for a moment.
@@ -161,6 +184,7 @@ impl Motion {
             closing: None,
             indent: None,
             picked: None,
+            ringing: None,
             host: None,
             saved: None,
             breath: None,
@@ -454,6 +478,20 @@ impl Motion {
         self.picked = Some(self.run(LIFT, Instant::now()));
     }
 
+    /// A ring opens: its buttons pop out, one after another.
+    pub fn ring_opens(&mut self) {
+        self.ringing = Some(Run::new(
+            Instant::now(),
+            self.length(BUBBLE),
+            Easing::Linear,
+        ));
+    }
+
+    /// How far a ring has opened, evenly in time: 1 once it is open.
+    pub fn ring_open(&self) -> f32 {
+        self.along(self.ringing.as_ref()).unwrap_or(1.0)
+    }
+
     /// How far the card of what is carried has risen: 1 once it is up.
     pub fn lift(&self) -> f32 {
         self.along(self.picked.as_ref()).unwrap_or(1.0)
@@ -497,7 +535,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 18] = [
+        let runs: [Option<&Run>; 19] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
@@ -513,6 +551,7 @@ impl Motion {
             self.closing.as_ref().map(|(_, run)| run),
             self.indent.as_ref().map(|(_, _, run)| run),
             self.picked.as_ref(),
+            self.ringing.as_ref(),
             self.host.as_ref().map(|(_, run)| run),
             self.refused.as_ref().map(|(_, light, _)| light),
             self.changed.as_ref().map(|(_, run)| run),
@@ -661,5 +700,16 @@ mod tests {
         assert!(!motion.moving());
         assert!(motion.by_phone());
         assert!(motion.rung_by_phone());
+    }
+
+    #[test]
+    fn a_ring_s_buttons_pop_out_one_after_another_past_their_place_and_back() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(bubble(0.0, 0, 4), 0.0));
+        assert!(near(bubble(1.0, 3, 4), 1.0));
+        // The first is out before the last has started.
+        assert!(bubble(0.3, 0, 4) > 0.5 && near(bubble(0.3, 3, 4), 0.0));
+        // Somewhere on its way it goes past where it settles.
+        assert!((0..=100).any(|k| bubble(k as f32 / 100.0, 1, 4) > 1.05));
     }
 }
