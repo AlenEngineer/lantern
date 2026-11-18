@@ -424,7 +424,7 @@ fn a_video_that_goes_on_by_itself_moves_the_plan_when_it_ends() {
     let intro = plan.show(video("Intro"));
     let welcome = plan.show(image("Welcome"));
     let outro = plan.show(video("Outro"));
-    plan.get_mut(intro).unwrap().advance = Some(true);
+    plan.join_over(intro, welcome).unwrap();
     engine.load_plan(plan);
 
     engine.next();
@@ -437,7 +437,7 @@ fn a_video_that_goes_on_by_itself_moves_the_plan_when_it_ends() {
         "it went on"
     );
 
-    // Without the switch, an ended video waits for the operator.
+    // Not joined on, an ended video waits for the operator.
     engine.next();
     let scene = engine.stage().program.unwrap().id;
     engine.report(scene, MediaReport::Ended);

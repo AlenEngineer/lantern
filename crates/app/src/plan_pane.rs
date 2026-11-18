@@ -1324,6 +1324,22 @@ impl App {
             Some(Ok(carried)) => (Vec::new(), carried.left),
             _ => (Vec::new(), Vec::new()),
         };
+        // A join is the line between its dots: one that letting go would
+        // cut, or that was just not cut, is coloured as a loop's would be.
+        let refused = !would_cut.is_empty() || alarm.is_some();
+        for stop in stops.iter_mut().filter(|_| refused) {
+            let Some(track::Line::Plain(_)) = stop.line else {
+                continue;
+            };
+            let joins = plan
+                .position(stop.id)
+                .map_or_else(Vec::new, |at| plan.joins_of(at));
+            if alarm.is_some() && joins.iter().any(|id| self.alarm.1.contains(id)) {
+                stop.line = Some(track::Line::Plain(alarm_ink));
+            } else if joins.iter().any(|id| would_cut.contains(id)) {
+                stop.line = Some(track::Line::Plain(p.error));
+            }
+        }
         let at_now = at.filter(|_| running);
         let back = at_now.and_then(|_| self.engine.0.follows_back());
         let mut drawn_loops: Vec<track::Span> = Vec::new();
@@ -1362,20 +1378,19 @@ impl App {
             .filter_map(|laid| span(laid, p.primary, track::Mark::Crossed, false))
             .collect();
         // Where carried steps would land, each has a dot's place; and a
-        // loop or a drawn order that is wholly among them comes with
-        // them, drawn beside their places.
+        // loop, a drawn order or a join that is wholly among them comes
+        // with them, drawn beside their places.
         if gap_at.is_some() && !stepwise.is_empty() {
             let ink = Palette::tint(p.primary, 0.7);
             // With every flow stripped (Alt), the places show none: what
             // is seen is what letting go would give.
             let stripped = self.carry_how() == lantern_engine::Carry::Stripped;
+            let joined = moving.map_or_else(Vec::new, |drag| plan.joined_along(&drag.carried));
             stops.extend(stepwise.iter().enumerate().map(|(n, id)| {
                 // A carried step that goes on by itself goes on into the
                 // one carried after it: they land together.
                 let next = stepwise.get(n + 1).copied();
-                let goes = !stripped
-                    && next.is_some()
-                    && plan.position(*id).is_some_and(|at| plan.goes_on(at));
+                let goes = !stripped && next.is_some() && joined.contains(id);
                 track::Stop {
                     id: *id,
                     dot: track::Dot::Place(ink),
@@ -2178,9 +2193,8 @@ impl App {
         } else {
             line = line.push(text(numbers).size(META).color(colour));
         }
-        let goes = step.advance == Some(true);
         let flow = plan.flow_of(id).unwrap_or_default();
-        line = line.push(self.flow_marks(Some(id), goes, flow));
+        line = line.push(self.flow_marks(Some(id), flow));
         // Under the pointer, a heading can be taken out like a step.
         if self.pointed(id) {
             line = line.push(self.pointed_actions(id));
@@ -2637,12 +2651,9 @@ impl App {
                 );
             }
         }
-        under = under.push(Space::new().width(Fill)).push(self.flow_buttons(
-            None,
-            plan.advance,
-            plan.flow,
-            false,
-        ));
+        under = under
+            .push(Space::new().width(Fill))
+            .push(self.flow_buttons(None, plan.flow, false));
         // One part for each of the plan's own sections.
         let parts = timing
             .sections
@@ -2684,10 +2695,10 @@ impl App {
     /// often, or which time round this is in a service), its steps come
     /// in a drawn order. Nothing for what is not so. They are set in the
     /// ring of the section's dot.
-    fn flow_marks<'a>(&self, of: Option<StepId>, goes: bool, flow: Flow) -> Element<'a, Message> {
+    fn flow_marks<'a>(&self, of: Option<StepId>, flow: Flow) -> Element<'a, Message> {
         let p = self.palette;
         let mut marks = row![].spacing(6).align_y(Alignment::Center);
-        if goes {
+        if flow.joined {
             marks = marks.push(look::icon(Icon::Joined, 13.0, p.primary));
         }
         if flow.repeat != Repeat::Once {
@@ -2733,11 +2744,11 @@ impl App {
     pub(crate) fn flow_buttons<'a>(
         &self,
         of: Option<StepId>,
-        goes: bool,
         flow: Flow,
         all: bool,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        let goes = flow.joined;
         let can = self.can_edit();
         let glyph = |icon: Icon, on: bool| {
             look::icon(
@@ -2767,10 +2778,7 @@ impl App {
                 } else {
                     "Its steps wait for you. Click to make them go straight on"
                 },
-                match of {
-                    Some(id) => Message::SetAdvance(id, !goes),
-                    None => Message::PlanAdvance(!goes),
-                },
+                Message::SetJoined(FlowOf::from(of), !goes),
             ));
         }
         let repeats = flow.repeat != Repeat::Once;
@@ -3017,7 +3025,7 @@ impl App {
         let pressed = |part: Element<'a, Message>, of: &Step, goes: bool| -> Element<'a, Message> {
             tooltip(
                 mouse_area(part)
-                    .on_press(Message::SetAdvance(of.id, !goes))
+                    .on_press(Message::SetJoined(FlowOf::Step(of.id), !goes))
                     .interaction(mouse::Interaction::Pointer),
                 container(
                     text(if goes {

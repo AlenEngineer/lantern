@@ -1,0 +1,136 @@
+{
+  "title": "Sabbath",
+  "steps": [
+    {
+      "id": 0,
+      "label": "Before",
+      "action": {
+        "type": "section"
+      },
+      "advance": true
+    },
+    {
+      "id": 1,
+      "label": "Countdown",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 2,
+      "label": "Notices",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 3,
+      "label": "Music",
+      "action": {
+        "type": "section",
+        "budget": 900
+      }
+    },
+    {
+      "id": 4,
+      "label": "Welcome",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 5,
+      "label": "Song",
+      "action": {
+        "type": "blank"
+      },
+      "advance": false
+    },
+    {
+      "id": 6,
+      "label": "Hymn",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 7,
+      "label": "Word",
+      "action": {
+        "type": "section",
+        "budget": 1800
+      },
+      "advance": false
+    },
+    {
+      "id": 8,
+      "label": "Video",
+      "action": {
+        "type": "blank"
+      },
+      "advance": true
+    },
+    {
+      "id": 9,
+      "label": "Sermon",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 10,
+      "label": "Prayer",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 11,
+      "label": "Farewell",
+      "action": {
+        "type": "section"
+      },
+      "advance": true
+    },
+    {
+      "id": 12,
+      "label": "Thanks",
+      "action": {
+        "type": "blank"
+      }
+    },
+    {
+      "id": 13,
+      "label": "Goodbye",
+      "action": {
+        "type": "blank"
+      }
+    }
+  ],
+  "next_id": 14,
+  "spans": [
+    {
+      "id": 0,
+      "over": {
+        "section": 0
+      },
+      "flow": {
+        "repeat": {
+          "until": "10:30"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "over": {
+        "section": 11
+      },
+      "flow": {
+        "repeat": "forever"
+      }
+    }
+  ],
+  "next_span": 2,
+  "starts": "10:00",
+  "advance": true
+}

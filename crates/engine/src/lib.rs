@@ -192,8 +192,8 @@ impl Engine {
         lock(&self.session).current().cloned()
     }
 
-    /// Whether the current step goes on by itself when done: as it
-    /// says, or the sections it is in, or the plan ([`Plan::goes_on`]).
+    /// Whether the current step goes on by itself when done: a join
+    /// holds it ([`Plan::goes_on`]).
     pub fn goes_on(&self) -> bool {
         let session = lock(&self.session);
         session
@@ -482,7 +482,7 @@ impl Engine {
     /// change which scene is on program, so there is nothing to log.
     ///
     /// When the current step's video ends and the step goes on by itself
-    /// ([`Step::advance`]), the plan moves to its next step.
+    /// ([`Plan::goes_on`]), the plan moves to its next step.
     pub fn report(&self, scene: SceneId, report: MediaReport) -> bool {
         let ended = report == MediaReport::Ended;
         let applied = lock(&self.stage).report(scene, report);

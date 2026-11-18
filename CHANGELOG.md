@@ -460,6 +460,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Steps that go on by themselves are a join**, part of the plan's one
+  flow as a loop or a drawn order is: the line down the dots from one
+  step into the next. Carrying keeps to it as to a loop. A step carried
+  out of a join, or out of a section whose steps all go straight on, is
+  refused and the join's line turns red; Ctrl cuts it loose, and the
+  steps either side of it go on into one another; Alt strips it. Steps
+  carried in between two joined steps are joined too. A join may lie
+  across a loop, a drawn order or a heading. Making one step wait parts
+  the join there. A section's "every step goes straight on" is its own
+  join now, and turned off it no longer makes steps wait that the plan
+  or a join has go on. Plans saved before go on by themselves where
+  they did.
 - A section carried over steps lands among them, before or after the step
   under the pointer: it goes into the section that holds them and holds
   only its own steps, and those after it stay where they were.

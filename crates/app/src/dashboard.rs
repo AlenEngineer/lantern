@@ -330,10 +330,7 @@ impl App {
                 said = said.push(text("}").size(BODY).font(BOLD).color(p.primary));
             } else if self.carry_how() != lantern_engine::Carry::Stripped {
                 // Steps that go on into one another come joined.
-                let joined = drag
-                    .carried
-                    .windows(2)
-                    .any(|pair| plan.position(pair[0]).is_some_and(|at| plan.goes_on(at)));
+                let joined = drag.carried.len() > 1 && !plan.joined_along(&drag.carried).is_empty();
                 if joined {
                     said = said.push(look::icon(Icon::Joined, 14.0, p.primary));
                 }
