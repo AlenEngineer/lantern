@@ -620,6 +620,54 @@ impl App {
                 ));
             }
         }
+        // The plan's has the same, and where the note would be, the rest
+        // of its settings. Plans are managed only while planning.
+        if ring.on == RingOn::All(None) && self.mode == crate::mode::Mode::Plan {
+            let deleting = self.deleting_plan;
+            for (angle, icon, lit, words, message) in [
+                (
+                    -90.0,
+                    Icon::Pencil,
+                    false,
+                    "Rename the plan",
+                    Message::EditPlanName,
+                ),
+                (
+                    -140.0,
+                    Icon::Copy,
+                    false,
+                    "A copy of the plan",
+                    Message::DuplicatePlan,
+                ),
+                (
+                    140.0,
+                    Icon::Close,
+                    deleting,
+                    match deleting {
+                        true => "Press again to delete the plan for good",
+                        false => "Delete the plan",
+                    },
+                    Message::DeletePlan,
+                ),
+                (
+                    180.0,
+                    Icon::Settings,
+                    false,
+                    "Its media, look and the rest",
+                    Message::PlanSettings,
+                ),
+            ] {
+                petals.push(petal(
+                    angle,
+                    48.0,
+                    PETAL,
+                    lit,
+                    glyph(icon, lit),
+                    words,
+                    Some(message),
+                ));
+            }
+        }
         // Every ring has a note's place, on the left: what is noted of
         // what it is open on, opened, or a note for it made.
         let noted = match ring.on {

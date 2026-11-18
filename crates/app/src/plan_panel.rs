@@ -1,7 +1,7 @@
-//! The open plan's own settings, beside the plan: its name, when it
-//! starts, how long it should take, whether it is a template; the media
-//! only it needs; its look where that differs from the look for all
-//! plans; a copy of it, and deleting it.
+//! The open plan's own settings, beside the plan: whether it is a
+//! template; the media only it needs; its look where that differs from
+//! the look for all plans; a copy of it, and deleting it. Its name, when
+//! it starts and how long it should take are on its card, by its bracket.
 //!
 //! They sit where the side panel is, opened from the plan's name. What
 //! holds for this computer and for every plan is in Settings.
@@ -14,7 +14,7 @@ use iced::{Alignment, Element, Fill};
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::side::{self, Field, From};
 use crate::widgets;
-use crate::{App, Message, length, library};
+use crate::{App, Message, library};
 
 /// A change made in the plan's panel.
 #[derive(Debug, Clone)]
@@ -22,8 +22,6 @@ pub enum PlanEdit {
     /// Opens the panel, or closes it.
     Toggle,
     Close,
-    /// How long the plan should take, as typed.
-    Target(String),
     /// The path of its own folder N, as typed.
     Folder(usize, String),
     /// What is typed is meant: Enter was pressed.
@@ -32,13 +30,6 @@ pub enum PlanEdit {
     RemoveFolder(usize),
     /// It searches the Bible of this name, or stops.
     Bible(String),
-}
-
-/// What is being typed in the panel and isn't in the plan yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Typing {
-    Target,
-    Folder(usize),
 }
 
 /// How wide the names of the fields are.
@@ -58,7 +49,6 @@ impl App {
                 // The panel has the side to itself.
                 self.filling = None;
                 self.look_typed = None;
-                self.starts_typed = None;
                 self.plan_typed = None;
                 self.deleting_plan = false;
             }
@@ -66,31 +56,20 @@ impl App {
                 self.keep_typed();
                 self.plan_panel = false;
                 self.look_typed = None;
-                self.starts_typed = None;
                 self.deleting_plan = false;
-            }
-            PlanEdit::Target(typed) => {
-                // Kept as typed until it reads as a length. Emptied, the
-                // plan has no target.
-                if length::typeable(&typed) {
-                    if let Some(target) = length::parse(&typed) {
-                        self.engine.0.edit_plan(|plan| plan.target = target);
-                    }
-                    self.plan_typed = Some((Typing::Target, typed));
-                }
             }
             PlanEdit::Folder(at, typed) => {
                 // Another row was being typed in: that one is meant.
-                if self.plan_typed.as_ref().map(|(typing, _)| *typing) != Some(Typing::Folder(at)) {
+                if self.plan_typed.as_ref().map(|(typing, _)| *typing) != Some(at) {
                     self.keep_typed();
                 }
-                self.plan_typed = Some((Typing::Folder(at), typed));
+                self.plan_typed = Some((at, typed));
             }
             PlanEdit::Done => self.keep_typed(),
             PlanEdit::AddFolder => {
                 self.keep_typed();
                 let at = self.engine.0.plan().folders.len();
-                self.plan_typed = Some((Typing::Folder(at), String::new()));
+                self.plan_typed = Some((at, String::new()));
                 return iced::widget::operation::focus(folder_box(at));
             }
             PlanEdit::RemoveFolder(at) => {
@@ -103,7 +82,7 @@ impl App {
                         plan.folders.remove(at);
                     });
                     self.sync_library();
-                } else if typing.as_ref().map(|(typing, _)| *typing) != Some(Typing::Folder(at)) {
+                } else if typing.as_ref().map(|(typing, _)| *typing) != Some(at) {
                     self.plan_typed = typing;
                 }
             }
@@ -131,7 +110,7 @@ impl App {
     /// the plan reads the same on another computer). Typed empty, the
     /// folder is gone. The library then looks in what the plan has now.
     fn keep_typed(&mut self) {
-        let Some((Typing::Folder(at), typed)) = self.plan_typed.take() else {
+        let Some((at, typed)) = self.plan_typed.take() else {
             return;
         };
         let typed = typed.trim().to_string();
@@ -191,45 +170,13 @@ impl App {
         .spacing(8)
         .align_y(Alignment::Center);
 
-        // As typed while it doesn't read as a time yet.
-        let starts = match (&self.starts_typed, plan.starts) {
-            (Some(typed), _) => typed.clone(),
-            (None, Some(starts)) => starts.to_string(),
-            (None, None) => String::new(),
-        };
-        let target = match (&self.plan_typed, plan.target) {
-            (Some((Typing::Target, typed)), _) => typed.clone(),
-            (_, Some(target)) => length::clock(target),
-            (_, None) => String::new(),
-        };
         let template = button(widgets::switch(p, plan.template))
             .padding(0)
             .on_press(Message::PlanTemplate(!plan.template))
             .style(look::row(p, Tone::Plain));
-        let about = column![
-            line(
-                name("Name").into(),
-                input("Plan name", &plan.title)
-                    .on_input(Message::RenamePlan)
-                    .into()
-            ),
-            line(
-                name("Starts").into(),
-                input("10:30", &starts)
-                    .on_input(Message::PlanStarts)
-                    .width(72)
-                    .into()
-            ),
-            line(
-                name("Target").into(),
-                input("45:00", &target)
-                    .on_input(move |typed| edit(PlanEdit::Target(typed)))
-                    .width(72)
-                    .into()
-            ),
-            line(name("Template").into(), template.into()),
-        ]
-        .spacing(8);
+        let about = row![name("Template"), template]
+            .spacing(10)
+            .align_y(Alignment::Center);
 
         // Its own folders, each as typed; the one being typed in may not
         // be in the plan yet.
@@ -239,7 +186,7 @@ impl App {
             .iter()
             .map(|folder| folder.display().to_string())
             .collect();
-        if let Some((Typing::Folder(at), typed)) = &self.plan_typed {
+        if let Some((at, typed)) = &self.plan_typed {
             match rows.get_mut(*at) {
                 Some(row) => row.clone_from(typed),
                 None => rows.push(typed.clone()),
@@ -253,8 +200,7 @@ impl App {
             .to_path_buf();
         for (at, folder) in rows.iter().enumerate() {
             // One that isn't on this computer says so by its colour.
-            let typing =
-                self.plan_typed.as_ref().map(|(typing, _)| *typing) == Some(Typing::Folder(at));
+            let typing = self.plan_typed.as_ref().map(|(typing, _)| *typing) == Some(at);
             let there = folder.trim().is_empty()
                 || crate::config::resolve(
                     Path::new(folder.trim()),
@@ -412,12 +358,4 @@ impl App {
             .into(),
         )
     }
-}
-
-/// A field's name and the field, on one line.
-fn line<'a>(
-    name: Element<'a, Message>,
-    control: Element<'a, Message>,
-) -> iced::widget::Row<'a, Message> {
-    row![name, control].spacing(10).align_y(Alignment::Center)
 }
