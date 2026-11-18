@@ -37,6 +37,8 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// Rows taken away closing up, or put back growing in.
+pub const ROWS: Duration = Duration::from_millis(220);
 /// Save, a tick for a moment after it is pressed.
 pub const SAVED: Duration = Duration::from_millis(1200);
 /// An empty plan's + breathing, all its breaths.
@@ -112,6 +114,11 @@ pub struct Motion {
     /// The plan just became empty: its + breathes a few times, then
     /// rests.
     breath: Option<Run>,
+    /// Rows just taken away, closing up before the row named (the end of
+    /// the plan for none): how many.
+    gone: Option<(Option<StepId>, usize, Run)>,
+    /// Rows just put back, growing in.
+    came: Option<(Vec<StepId>, Run)>,
 }
 
 impl Motion {
@@ -139,6 +146,8 @@ impl Motion {
             host: None,
             saved: None,
             breath: None,
+            gone: None,
+            came: None,
         }
     }
 
@@ -171,6 +180,31 @@ impl Motion {
     pub fn tick(&self) -> Option<f32> {
         let t = self.along(self.saved.as_ref())?;
         Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// `rows` rows were taken away from before `anchor`.
+    pub fn rows_gone(&mut self, anchor: Option<StepId>, rows: usize) {
+        self.gone = Some((anchor, rows, self.run(ROWS, Instant::now())));
+    }
+
+    /// How much room the rows taken away still take before `anchor`, as a
+    /// share of their height: 1 just taken, 0 closed.
+    pub fn gone_before(&self, anchor: Option<StepId>) -> Option<(usize, f32)> {
+        let (at, rows, run) = self.gone.as_ref()?;
+        (*at == anchor).then_some(())?;
+        Some((*rows, 1.0 - self.along(Some(run))?))
+    }
+
+    /// The rows `came` were put back.
+    pub fn rows_came(&mut self, came: Vec<StepId>) {
+        self.came = Some((came, self.run(ROWS, Instant::now())));
+    }
+
+    /// How far a row put back has grown in: `None` once it is whole.
+    pub fn growing(&self, step: StepId) -> Option<f32> {
+        let (came, run) = self.came.as_ref()?;
+        came.contains(&step).then_some(())?;
+        self.along(Some(run))
     }
 
     /// The plan is empty now, or not: becoming empty, its + breathes.
@@ -382,7 +416,9 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 12] = [
+        let runs: [Option<&Run>; 14] = [
+            self.gone.as_ref().map(|(_, _, run)| run),
+            self.came.as_ref().map(|(_, run)| run),
             self.saved.as_ref(),
             self.breath.as_ref(),
             self.went_up.as_ref(),
