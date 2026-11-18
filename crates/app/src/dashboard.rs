@@ -260,13 +260,13 @@ impl App {
                 .x(EDGE)
                 .y(EDGE),
         );
-        // A file carried from the library follows the pointer the same
+        // What is carried from the library follows the pointer the same
         // way, until it is let go over the plan.
         if let Some(carried) = self.carried.as_ref().filter(|carried| carried.moving) {
             let mut words = row![
-                look::icon(Icon::of(&carried.file.kind), 14.0, p.primary),
+                look::icon(carried.icon(), 14.0, p.primary),
                 container(
-                    single_line(carried.file.title.clone())
+                    single_line(carried.title())
                         .size(BODY)
                         .font(BOLD)
                         .color(p.primary)

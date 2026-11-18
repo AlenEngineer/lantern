@@ -12,7 +12,7 @@ use iced::widget::{
     Space, button, column, container, operation, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Fill, Task};
-use lantern_engine::{Location, Query, Resource, ResourceId};
+use lantern_engine::{Action, Location, Query, Resource, ResourceId};
 
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::plan_edit::NewStep;
@@ -35,9 +35,24 @@ fn within(file: &Resource) -> String {
     file.tags.get(1..).unwrap_or_default().join("/")
 }
 
-/// A file of the library held by the pointer, on its way into the plan.
+/// What of the library the pointer is over: one of its files, or one of
+/// the steps it always has.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Grip {
+    File(ResourceId),
+    New(NewStep),
+}
+
+/// What is held: a file of the library, or a step it always has. A
+/// new step is not a file, so it is not made to look like one.
+pub enum Held {
+    File(Arc<Resource>),
+    New(NewStep),
+}
+
+/// Something of the library held by the pointer, on its way into the plan.
 pub struct Carried {
-    pub file: Arc<Resource>,
+    pub what: Held,
     /// The other files picked with it, carried after it in their order.
     pub more: Vec<Arc<Resource>>,
     /// Where it was picked up, and where the pointer is now.
@@ -52,14 +67,58 @@ pub struct Carried {
 }
 
 impl Carried {
-    pub fn new(file: Arc<Resource>) -> Carried {
+    pub fn new(what: Held) -> Carried {
         Carried {
-            file,
+            what,
             more: Vec::new(),
             from: None,
             at: iced::Point::ORIGIN,
             moving: false,
             landing: None,
+        }
+    }
+
+    /// The file held, when it is one.
+    pub fn file(&self) -> Option<&Arc<Resource>> {
+        match &self.what {
+            Held::File(file) => Some(file),
+            Held::New(_) => None,
+        }
+    }
+
+    /// What it goes by while it is held.
+    pub fn title(&self) -> String {
+        match &self.what {
+            Held::File(file) => file.title.clone(),
+            Held::New(new) => new.step().0.to_string(),
+        }
+    }
+
+    pub fn icon(&self) -> Icon {
+        match &self.what {
+            Held::File(file) => Icon::of(&file.kind),
+            Held::New(new) => new_icon(*new),
+        }
+    }
+
+    /// The steps letting it go puts in the plan, in their order.
+    pub fn steps(&self) -> Vec<(String, Action)> {
+        match &self.what {
+            Held::File(file) => std::iter::once(file)
+                .chain(&self.more)
+                .map(|file| {
+                    (
+                        file.title.clone(),
+                        Action::Show {
+                            resource: (**file).clone(),
+                        },
+                    )
+                })
+                .collect(),
+            Held::New(new) => {
+                let (label, action) = new.step();
+                vec![(label.to_string(), action)]
+            }
         }
     }
 
@@ -70,6 +129,15 @@ impl Carried {
         if from.distance(at) > 6.0 {
             self.moving = true;
         }
+    }
+}
+
+/// The icon of a step the library always has.
+fn new_icon(new: NewStep) -> Icon {
+    match new {
+        NewStep::LiveSlot => Icon::Screen,
+        NewStep::BlackScreen => Icon::ScreenOff,
+        NewStep::Section => Icon::Plus,
     }
 }
 
@@ -573,7 +641,7 @@ impl App {
                         if picked { Tone::Selected } else { Tone::Plain },
                     )),
             )
-            .on_enter(Message::ShelfHover(Some(file.id.clone())))
+            .on_enter(Message::ShelfHover(Some(Grip::File(file.id.clone()))))
             .on_exit(Message::ShelfHover(None))
             .interaction(iced::mouse::Interaction::Grab)
         };
@@ -647,13 +715,14 @@ impl App {
 
 impl App {
     /// What the library always has, before its files: a live slot and a
-    /// black screen. Pressed, one is added after the selected step.
+    /// black screen. Pressed, one is added after the selected step;
+    /// pressed and pulled, it is carried into the plan like a file.
     fn always_there(&self) -> Element<'_, Message> {
         let p = self.palette;
         let can = self.can_edit();
-        let item = |icon: Icon, ink: iced::Color, name: &'static str, says: &'static str, new| {
+        let item = |ink: iced::Color, name: &'static str, says: &'static str, new| {
             let body = row![
-                look::icon(icon, 16.0, ink),
+                look::icon(new_icon(new), 16.0, ink),
                 column![
                     text(name).size(BODY).font(BOLD).color(p.on_surface),
                     text(says).size(META).color(p.on_surface_variant),
@@ -662,25 +731,30 @@ impl App {
             ]
             .spacing(10)
             .align_y(Alignment::Center);
-            button(body)
+            let pressed = button(body)
                 .width(Fill)
                 .padding([6, 10])
                 .on_press_maybe(can.then_some(Message::AddStep(new)))
                 .style(look::row_filled(
                     p,
                     crate::palette::Palette::tint(p.on_surface, 0.06),
-                ))
+                ));
+            let held = iced::widget::mouse_area(pressed)
+                .on_enter(Message::ShelfHover(Some(Grip::New(new))))
+                .on_exit(Message::ShelfHover(None));
+            match can {
+                true => held.interaction(iced::mouse::Interaction::Grab),
+                false => held,
+            }
         };
         column![
             item(
-                Icon::Screen,
                 p.tertiary,
                 "Live",
                 "show anything as it comes",
                 NewStep::LiveSlot
             ),
             item(
-                Icon::ScreenOff,
                 p.on_surface,
                 "Black screen",
                 "nothing on the projector",
@@ -695,7 +769,50 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::Go;
+    use std::sync::Arc;
+
+    use lantern_engine::{Action, Kind, Location, Resource, ResourceId, SourceId};
+
+    use super::{Carried, Go, Held};
+    use crate::plan_edit::NewStep;
+
+    fn file(title: &str) -> Arc<Resource> {
+        let source = SourceId::new("test").unwrap();
+        Arc::new(Resource::new(
+            ResourceId::new(&source, title),
+            title,
+            Kind::Image,
+            Location::Url(title.into()),
+        ))
+    }
+
+    #[test]
+    fn files_let_go_are_each_shown_in_their_order() {
+        let mut carried = Carried::new(Held::File(file("Psalm 23")));
+        carried.more = vec![file("Amazing Grace")];
+        let steps = carried.steps();
+        let titles: Vec<_> = steps.iter().map(|(label, _)| label.as_str()).collect();
+        assert_eq!(titles, ["Psalm 23", "Amazing Grace"]);
+        assert!(
+            matches!(&steps[1].1, Action::Show { resource } if resource.title == "Amazing Grace")
+        );
+        assert_eq!(carried.title(), "Psalm 23");
+        assert!(carried.file().is_some());
+    }
+
+    #[test]
+    fn a_step_the_library_always_has_lets_go_as_that_step() {
+        let carried = Carried::new(Held::New(NewStep::BlackScreen));
+        let steps = carried.steps();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].0, "Black screen");
+        assert!(matches!(steps[0].1, Action::Blank));
+        assert_eq!(carried.title(), "Black screen");
+        assert!(carried.file().is_none(), "no file to look at");
+
+        let live = Carried::new(Held::New(NewStep::LiveSlot));
+        assert!(matches!(live.steps()[0].1, Action::Live { .. }));
+    }
 
     #[test]
     fn the_arrows_go_round_and_home_and_end_go_to_the_ends() {

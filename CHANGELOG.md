@@ -534,6 +534,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   folded row to see what was played, and double-click its bracket to
   fold it back. Double-clicking a bracket in a service no longer takes
   that section live.
+- Live and Black screen in the library can be dragged into the plan like
+  its files: the same place opens where they would land, and letting go
+  puts the step there. A press without moving still adds it after the
+  selected step.
 - A joined line runs into a folded section's stacked dot when the step
   it goes on to is folded away, as a loop over it does; and out of it,
   down to what follows, when the section's last step goes on by itself.

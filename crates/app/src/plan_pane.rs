@@ -558,7 +558,7 @@ impl App {
         // they'd land; the editing strip and marks step aside.
         let moving = self.drag.as_ref().filter(|drag| drag.moving);
         let carried = moving.map_or(&[][..], |drag| drag.carried.as_slice());
-        // A file carried in from the library opens the same gap.
+        // What is carried in from the library opens the same gap.
         let held = self.carried.as_ref().filter(|held| held.moving);
         let landing = moving
             .and_then(|drag| drag.landing)
@@ -704,7 +704,7 @@ impl App {
                 }
                 (true, None) => container(drop_gap(
                     p,
-                    held.map(|held| held.file.title.clone()).unwrap_or_default(),
+                    held.map(crate::shelf::Carried::title).unwrap_or_default(),
                 ))
                 .padding(iced::Padding::default().left(gap_in))
                 .into(),
