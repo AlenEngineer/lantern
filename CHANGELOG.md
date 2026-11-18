@@ -423,6 +423,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A section with nothing in it is a bracket too: beside a dashed place
+  where its steps will be, with its name and the time it is given. A
+  press on the place picks it, and steps carried over it land in it.
 - The places of carried steps show every flow the steps have among
   themselves: the line from one that goes on into the next, as well as a
   loop or a drawn order they bring whole; and none of them while Alt is
