@@ -566,6 +566,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Steps carried into an empty section: its bracket takes in the place
+  opened for them, as the result will be. A bracket's name is no longer
+  placed by steps that are being carried (it jumped over another's).
+- The buttons for steps picked together sit at the end of the last of
+  them, in place of its time, not over its name.
+- A section's loop or drawn order picked by its line carries the section
+  when one of its steps is dragged, rather than nothing moving.
 - A press on nothing in the plan closes the kinds of step to add and the
   fill, as it closes a note.
 - Brackets picked with Ctrl (on their name too, not only their line) are
