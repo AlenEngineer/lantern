@@ -951,9 +951,12 @@ impl App {
             };
             let issue = issues.iter().find(|i| i.step == step.id);
             let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id));
-            let mut row = column![self.draggable(
-                step.id,
-                self.step_row(step, place, issue, &noted, picked_end == Some(step.id))
+            let mut row = column![self.ringed(
+                crate::rail::RingOn::Dot(step.id),
+                self.draggable(
+                    step.id,
+                    self.step_row(step, place, issue, &noted, picked_end == Some(step.id))
+                )
             )];
             // In a service, what is noted of the step that is on is said
             // under it: its own notes, its loops', and its sections' with
@@ -1980,6 +1983,20 @@ impl App {
     /// `row`, telling the app which half of it the pointer is over, so a
     /// held row can be dropped above or below it. While a drag moves, the
     /// pointer is a closed hand.
+    /// `row` with its ring on a right click, where the plan can change.
+    fn ringed<'a>(
+        &self,
+        on: crate::rail::RingOn,
+        row: Element<'a, Message>,
+    ) -> Element<'a, Message> {
+        match self.can_edit() {
+            true => mouse_area(row)
+                .on_right_press(Message::Rail(crate::rail::Act::Ring(on)))
+                .into(),
+            false => row,
+        }
+    }
+
     fn draggable<'a>(&self, id: StepId, row: Element<'a, Message>) -> Element<'a, Message> {
         let half = |half: Half| {
             mouse_area(Space::new().width(Fill).height(Fill))
@@ -3013,7 +3030,10 @@ impl App {
         track::seen(
             track::Key::Whole(id),
             places,
-            self.draggable(id, place.into()),
+            self.ringed(
+                crate::rail::RingOn::All(Some(id)),
+                self.draggable(id, place.into()),
+            ),
         )
     }
 

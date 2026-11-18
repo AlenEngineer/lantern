@@ -39,6 +39,9 @@ pub enum Act {
     /// A right click: the ring of what can be done to that thing.
     Ring(RingOn),
     RingClose,
+    /// From the ring: what a key does to what is selected, done to the
+    /// step or section the ring is open on.
+    Do(StepId, crate::keys::Op),
     /// Takes a loop away: one drawn round some steps, or how often a
     /// step, a section or the plan comes.
     Unloop(FlowOf),
@@ -570,6 +573,50 @@ impl App {
                         true => Message::Rail(Act::Unshuffle(of_flow)),
                         false => Message::SetShuffle(of_flow, true),
                     }),
+                ));
+            }
+        }
+        // A step's ring and a section's have, on the left, what is done
+        // to it: renamed, copied, taken away. Its note is between.
+        if let RingOn::Dot(id) | RingOn::All(Some(id)) = ring.on {
+            let section = matches!(ring.on, RingOn::All(_));
+            for (angle, icon, words, op) in [
+                (
+                    -90.0,
+                    Icon::Pencil,
+                    match section {
+                        true => "Rename it, set its time",
+                        false => "Rename it, set its length",
+                    },
+                    crate::keys::Op::Rename,
+                ),
+                (
+                    -140.0,
+                    Icon::Copy,
+                    match section {
+                        true => "A copy of all of it, after it",
+                        false => "A copy of it, after it",
+                    },
+                    crate::keys::Op::Duplicate,
+                ),
+                (
+                    140.0,
+                    Icon::Close,
+                    match section {
+                        true => "Take the section away; its steps stay",
+                        false => "Take it away",
+                    },
+                    crate::keys::Op::RemoveStep,
+                ),
+            ] {
+                petals.push(petal(
+                    angle,
+                    48.0,
+                    PETAL,
+                    false,
+                    glyph(icon, false),
+                    words,
+                    Some(Message::Rail(Act::Do(id, op))),
                 ));
             }
         }
