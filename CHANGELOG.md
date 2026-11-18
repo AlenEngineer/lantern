@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Saving turns Save into a tick for a moment. A plan that becomes empty
+  has its + breathe three times, then rest.
 - Several files of the library can be picked together: Ctrl+click adds
   or drops one, Shift+click takes all from the one picked to it. Carried
   into the plan, they go in together in the library's order, a place

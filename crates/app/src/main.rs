@@ -1101,6 +1101,7 @@ impl App {
             .stage_shows(self.stage.program.as_ref().map(|scene| scene.id));
         self.sync_lock();
         self.motion.mode_is(self.mode);
+        self.motion.empty_plan(self.engine.0.plan_is_empty());
         // The gap opens where what is held would land, as that moves.
         match (&self.drag, &self.carried) {
             // Just picked up: its gap is where it was, open already.
@@ -3356,6 +3357,7 @@ impl App {
             }
             Op::Save => {
                 self.plans.save(&engine);
+                self.motion.saved();
             }
             Op::Search => {
                 self.search_open = true;

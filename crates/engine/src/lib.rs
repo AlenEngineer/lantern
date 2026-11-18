@@ -139,6 +139,11 @@ impl Engine {
         lock(&self.session).plan().clone()
     }
 
+    /// Whether the plan has no steps, asked without copying it.
+    pub fn plan_is_empty(&self) -> bool {
+        lock(&self.session).plan().is_empty()
+    }
+
     /// Edits the plan in place, even while running. See [`Session::edit`].
     pub fn edit_plan<R>(&self, f: impl FnOnce(&mut Plan) -> R) -> R {
         lock(&self.session).edit(f)
