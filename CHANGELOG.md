@@ -486,6 +486,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.
+- The session can say the road ahead: every step still to come, in the
+  order the service will reach it, which round it comes in, when, and
+  whether it waits for the operator. Nothing shows it yet; Run's line
+  will.
 - In a service, a section that is over can be opened again: press its
   folded row to see what was played, and double-click its bracket to
   fold it back. Double-clicking a bracket in a service no longer takes
