@@ -232,6 +232,17 @@ impl Engine {
         lock(&self.session).drawn_before()
     }
 
+    /// The road ahead: what comes after the step that is on, in the
+    /// order the service will reach it, and when ([`Session::ahead`]).
+    pub fn ahead(
+        &self,
+        length: impl Fn(&Step) -> Duration,
+        left: Duration,
+        most: usize,
+    ) -> Vec<lantern_orchestrator::Coming> {
+        lock(&self.session).ahead(length, left, most)
+    }
+
     /// What going on from the step that is on goes back round: the step
     /// itself, a span or the plan. `None` when it goes forward.
     pub fn follows_back(&self) -> Option<FlowOf> {

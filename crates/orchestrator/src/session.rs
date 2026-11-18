@@ -42,6 +42,21 @@ pub struct Session {
     now: Option<Duration>,
 }
 
+/// A step still to come, as the service will reach it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Coming {
+    /// The step.
+    pub step: StepId,
+    /// Which time round it comes in, from 0: of the step itself when it
+    /// repeats, else of the innermost loop it is in, else of the plan.
+    pub round: u16,
+    /// How long from now until it starts.
+    pub after: Duration,
+    /// Whether what comes before it goes on to it by itself; if not, it
+    /// waits for the operator.
+    pub joined: bool,
+}
+
 /// What the steps go round in: a span by its id, or the plan.
 type Group = Option<SpanId>;
 
@@ -128,6 +143,102 @@ impl Session {
             };
         }
         self.move_to_index(index)
+    }
+
+    /// The road ahead: what comes after the step that is on, in the
+    /// order the service will reach it, at most `most` of them. `length`
+    /// is how long a step takes, and `left` how long the step that is on
+    /// has still to go. The time of day moves on with the steps, so a
+    /// repeat until a time ends where it will.
+    pub fn ahead(
+        &self,
+        length: impl Fn(&Step) -> Duration,
+        left: Duration,
+        most: usize,
+    ) -> Vec<Coming> {
+        let mut road = Session {
+            plan: self.plan.clone(),
+            cursor: self.cursor,
+            log: Vec::new(),
+            entered: HashMap::new(),
+            rounds: self.rounds.clone(),
+            seed: self.seed,
+            now: self.now,
+        };
+        let base = self.now;
+        let (mut start, mut after) = match self.cursor {
+            Some(_) => (Duration::ZERO, left),
+            None => (Duration::ZERO, Duration::ZERO),
+        };
+        let mut found = Vec::new();
+        while found.len() < most {
+            // Cut off there and then: what is on ends at that time.
+            if let (Some(base), Some(cut)) = (base, road.cut_at()) {
+                after = after.min(cut.saturating_sub(base).max(start));
+            }
+            road.now = base.map(|base| base + after);
+            let joined = road.current_index().is_some_and(|at| road.plan.goes_on(at));
+            let Some(step) = road.next() else {
+                break;
+            };
+            let id = step.id;
+            let took = length(step);
+            found.push(Coming {
+                step: id,
+                round: road.counting(id),
+                after,
+                joined,
+            });
+            start = after;
+            after += took;
+        }
+        found
+    }
+
+    /// The time of day, as time since midnight, the step that is on is
+    /// to be cut off at: the soonest of what it is in that ends there and
+    /// then at a time, as early as it takes to fade out.
+    fn cut_at(&self) -> Option<Duration> {
+        let at = self.current_index()?;
+        let step = &self.plan.steps()[at];
+        let fade = step
+            .fade
+            .fade_out
+            .map_or(Duration::ZERO, |fade| fade.duration());
+        let groups = self.plan.spans_at(at).into_iter().map(Some).chain([None]);
+        std::iter::once(step.flow)
+            .chain(groups.map(|group| self.flow_of(group)))
+            .filter_map(|flow| match (flow.repeat, flow.ends) {
+                (Repeat::Until(time), Ending::Sharp) => {
+                    Some(time.since_midnight().saturating_sub(fade))
+                }
+                _ => None,
+            })
+            .min()
+    }
+
+    /// Which time round the step `id` is on, as [`Coming::round`] says.
+    fn counting(&self, id: StepId) -> u16 {
+        let Some(at) = self.plan.position(id) else {
+            return 0;
+        };
+        let repeats = |of: FlowOf| {
+            self.plan
+                .flow_of(of)
+                .is_some_and(|flow| flow.repeat != Repeat::Once)
+        };
+        let own = FlowOf::Step(id);
+        if self.plan.steps()[at].flow.repeat != Repeat::Once {
+            return self.round(own);
+        }
+        self.plan
+            .spans_at(at)
+            .into_iter()
+            .rev()
+            .map(FlowOf::Span)
+            .chain([FlowOf::Plan])
+            .find(|of| repeats(*of))
+            .map_or(0, |of| self.round(of))
     }
 
     /// The time of day, as time since midnight: a repeat that ends at a
@@ -740,6 +851,115 @@ mod tests {
         assert!(session.cut_now());
         assert_eq!(walk(&mut session, 1), "C");
         assert!(!session.cut_now(), "out of it, nothing more to cut");
+    }
+
+    fn road(session: &Session, left: u64, most: usize) -> String {
+        session
+            .ahead(|_| Duration::from_secs(60), Duration::from_secs(left), most)
+            .iter()
+            .map(|coming| {
+                let label = &session.plan().get(coming.step).unwrap().label;
+                format!("{label}{}@{}", coming.round, coming.after.as_secs())
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn the_road_ahead_is_what_going_on_reaches_and_when() {
+        let (mut session, music, _) = two_sections();
+        session.edit(|plan| plan.loop_section(music).unwrap());
+        assert_eq!(road(&session, 0, 10), "A0@0 B0@60 A1@120 B1@180 C0@240");
+        session.next();
+        assert_eq!(road(&session, 25, 10), "B0@25 A1@85 B1@145 C0@205");
+        // It does not move the session.
+        assert_eq!(label(session.current()), Some("A"));
+    }
+
+    #[test]
+    fn the_road_ahead_of_a_drawn_order_is_the_order_it_will_come_in() {
+        let mut plan = Plan::new("Before");
+        let music = plan.section("Music", None);
+        for title in ["A", "B", "C", "D", "E"] {
+            plan.show(resource(title));
+        }
+        plan.section("Sermon", None);
+        plan.show(resource("Z"));
+        let mut session = Session::new(plan);
+        let twice_drawn = Flow {
+            repeat: Repeat::Times(2),
+            shuffle: true,
+            ..Flow::default()
+        };
+        session.edit(|plan| plan.set_flow(music, twice_drawn).unwrap());
+        session.next();
+        session.next();
+        let ahead: Vec<StepId> = session
+            .ahead(|_| Duration::from_secs(60), Duration::ZERO, 100)
+            .iter()
+            .map(|coming| coming.step)
+            .collect();
+        let mut going = session.clone();
+        let went: Vec<StepId> = std::iter::from_fn(|| going.next().map(|step| step.id)).collect();
+        assert_eq!(ahead, went);
+        assert_eq!(ahead.len(), 9, "the rest of this round, the next, then Z");
+    }
+
+    #[test]
+    fn the_road_ahead_ends_a_repeat_until_a_time_where_the_time_comes() {
+        use crate::timing::TimeOfDay;
+        let at = |text: &str| TimeOfDay::parse(text).unwrap();
+        let until = |ends: Ending| {
+            let (mut session, music, _) = two_sections();
+            let flow = Flow {
+                repeat: Repeat::Until(at("10:30")),
+                ends,
+                ..Flow::default()
+            };
+            session.edit(|plan| plan.set_flow(music, flow).unwrap());
+            // Five minutes to go, and each step a minute.
+            session.tell_time(at("10:25").since_midnight());
+            session.next();
+            session
+        };
+        // A on now, ends at 10:26: B, A, B, A to 10:30, then B finishes
+        // the round, and C.
+        assert_eq!(
+            road(&until(Ending::Round), 60, 10),
+            "B0@60 A1@120 B1@180 A2@240 B2@300 C0@360"
+        );
+        // With the step: B ends at 10:30, C follows it.
+        assert_eq!(
+            road(&until(Ending::Step), 60, 10),
+            "B0@60 A1@120 B1@180 A2@240 C0@300"
+        );
+        // There and then: the same here, as a step ends at 10:30 anyway.
+        assert_eq!(
+            road(&until(Ending::Sharp), 60, 10),
+            "B0@60 A1@120 B1@180 A2@240 C0@300"
+        );
+        // Cut there and then mid-step: C starts at 10:30 sharp.
+        let mut session = until(Ending::Sharp);
+        session.tell_time(at("10:24").since_midnight() + Duration::from_secs(30));
+        assert_eq!(
+            road(&session, 60, 10),
+            "B0@60 A1@120 B1@180 A2@240 B2@300 C0@330"
+        );
+    }
+
+    #[test]
+    fn the_road_ahead_says_where_it_waits_and_stops_at_most() {
+        let (mut session, ..) = two_sections();
+        session.edit(|plan| plan.flow.repeat = Repeat::Forever);
+        assert_eq!(road(&session, 0, 4), "A0@0 B0@60 C0@120 A1@180");
+        let mut joined = session.clone();
+        joined.edit(|plan| plan.flow.joined = true);
+        joined.next();
+        let ahead = joined.ahead(|_| Duration::from_secs(60), Duration::ZERO, 2);
+        assert!(ahead.iter().all(|coming| coming.joined));
+        session.next();
+        let ahead = session.ahead(|_| Duration::from_secs(60), Duration::ZERO, 2);
+        assert!(ahead.iter().all(|coming| !coming.joined));
     }
 
     #[test]
