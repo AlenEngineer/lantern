@@ -790,6 +790,8 @@ struct App {
     pub(crate) shelf_many: Vec<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
+    /// Sections over in this service that the operator opened again.
+    pub(crate) opened: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
     /// was shown since.
     pub(crate) live_from: usize,
@@ -943,6 +945,7 @@ impl App {
             kept: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
+            opened: std::collections::HashSet::new(),
             parts: HashMap::new(),
             shelf: Vec::new(),
             shelf_read: None,
@@ -1951,6 +1954,14 @@ impl App {
                 if !double {
                     self.last_click = Some((target.clone(), now));
                 }
+                // Twice on a section folds it; in a service it must not
+                // also go live.
+                let section = match &target {
+                    Clicked::Step(id) => {
+                        self.engine.0.plan().get(*id).is_some_and(Step::is_section)
+                    }
+                    _ => false,
+                };
                 let lined_up = match target {
                     Clicked::Result(id) => self.update(Message::Pick(id)),
                     Clicked::Step(step) => self.update(Message::Select(step)),
@@ -1973,7 +1984,7 @@ impl App {
                         self.preload()
                     }
                 };
-                if double && self.shelf_many.len() < 2 {
+                if double && !section && self.shelf_many.len() < 2 {
                     return Task::batch([lined_up, self.op(Op::Take)]);
                 }
                 return lined_up;
@@ -2172,10 +2183,17 @@ impl App {
                 return self.preload();
             }
             Message::Fold(section) => {
-                let closed = !self.folded.remove(&section);
-                if closed {
-                    self.folded.insert(section);
+                // One over folds by itself; pressed, it stays open.
+                let over = self.over(&self.timing(), section);
+                let marked = match over {
+                    true => &mut self.opened,
+                    false => &mut self.folded,
+                };
+                let added = marked.insert(section);
+                if !added {
+                    marked.remove(&section);
                 }
+                let closed = added != over;
                 // Its rows close up into its one row, or grow out of it.
                 let plan = self.engine.0.plan();
                 if let Some(at) = plan.position(section) {
@@ -3145,7 +3163,7 @@ impl App {
                 let into = op == Op::In;
                 let step = &steps[at];
                 if step.is_section() {
-                    let folded = self.folded.contains(&step.id);
+                    let folded = self.shut(&self.timing(), step.id);
                     // Into it: its first row, a step or a section in it.
                     let inside = steps.get(at + 1).filter(|_| plan.group_end(at) > at + 1);
                     match (into, folded, inside) {
@@ -3384,6 +3402,7 @@ impl App {
                     let plan = engine.plan();
                     let current = engine.current_step().map(|step| step.id);
                     let mut hidden_to = 0;
+                    let timing = self.timing();
                     let seen: Vec<StepId> = plan
                         .steps()
                         .iter()
@@ -3391,7 +3410,7 @@ impl App {
                         .filter(|(index, step)| {
                             let hidden = *index < hidden_to;
                             if step.is_section() {
-                                if !hidden && self.folded.contains(&step.id) {
+                                if !hidden && self.shut(&timing, step.id) {
                                     hidden_to = plan.group_end(*index);
                                 }
                                 return !hidden;
@@ -3887,6 +3906,7 @@ impl App {
         // Another plan's sections are folded or not on their own account.
         if replaced {
             self.folded.clear();
+            self.opened.clear();
         }
         let preload = self.preload_if(replaced);
         if replaced && self.plans.is_blank(&self.engine.0.plan()) {

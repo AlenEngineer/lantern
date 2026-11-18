@@ -641,15 +641,7 @@ impl App {
         // than those it holds.
         // Folded by hand, or over in a service: its steps are gathered
         // into one row beside its bracket.
-        let over = |id: StepId| {
-            self.mode == crate::mode::Mode::Run
-                && timing
-                    .sections
-                    .iter()
-                    .find(|section| section.id == id)
-                    .is_some_and(|section| matches!(section.phase, Phase::Done { .. }))
-        };
-        let shut = |id: StepId| self.folded.contains(&id) || over(id);
+        let shut = |id: StepId| self.shut(timing, id);
         let bracketed = |plan: &Plan, at: usize| {
             let step = &plan.steps()[at];
             step.is_section() && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
@@ -891,12 +883,10 @@ impl App {
                 if hidden {
                     continue;
                 }
-                let section = timing.sections.iter().find(|s| s.id == step.id);
                 // In a service, a section that is over folds away to its
                 // one row: what it was, and how long it took.
-                let over = running
-                    && section.is_some_and(|section| matches!(section.phase, Phase::Done { .. }));
-                let folded = over || self.folded.contains(&step.id);
+                let over = self.over(timing, step.id);
+                let folded = self.shut(timing, step.id);
                 if folded {
                     hidden_to = plan.group_end(index);
                 }
@@ -1460,7 +1450,7 @@ impl App {
                         last: step.id,
                         offset: track::brace_at(0),
                         beside: None,
-                        color: match over(step.id) {
+                        color: match self.over(timing, step.id) {
                             true => p.outline,
                             false => p.primary,
                         },
@@ -1558,6 +1548,8 @@ impl App {
                     ),
                     Phase::Done { took } => (took.unwrap_or_default(), false, false),
                 };
+                // Over in a service and opened again: grey, as folded.
+                let past = self.over(timing, step.id);
                 let mut lines = Vec::new();
                 if let Some(budget) = budget {
                     lines.push((
@@ -1575,6 +1567,7 @@ impl App {
                         (true, _, Some(t)) => crate::motion::blend(p.on_surface, p.error, t),
                         (true, _, None) => p.error,
                         (false, true, _) => p.tertiary,
+                        (false, false, _) if past => p.outline,
                         (false, false, _) => p.on_surface,
                     },
                 ));
@@ -1615,6 +1608,7 @@ impl App {
                     beside,
                     color: match on {
                         _ if foot_refused == Some(step.id) => p.error,
+                        _ if past => p.outline,
                         true => p.tertiary,
                         false => p.primary,
                     },
@@ -2930,9 +2924,28 @@ impl App {
         )
     }
 
+    /// A section over in a service, by the clock of its run.
+    pub(crate) fn over(&self, timing: &Timing, id: StepId) -> bool {
+        self.mode == crate::mode::Mode::Run
+            && timing
+                .sections
+                .iter()
+                .find(|section| section.id == id)
+                .is_some_and(|section| matches!(section.phase, Phase::Done { .. }))
+    }
+
+    /// A section showing as its one row: folded by hand, or over and not
+    /// opened again.
+    pub(crate) fn shut(&self, timing: &Timing, id: StepId) -> bool {
+        match self.over(timing, id) {
+            true => !self.opened.contains(&id),
+            false => self.folded.contains(&id),
+        }
+    }
+
     /// A folded section's one row: its steps gathered into a stacked dot
     /// on the line, how many there are, and how long they take. Pressed,
-    /// one folded by hand opens.
+    /// it opens, one over in a service too.
     fn folded_place<'a>(
         &self,
         plan: &Plan,
@@ -2979,16 +2992,9 @@ impl App {
             );
         }
         let words = words.align_y(Alignment::Center).padding([0, 10]);
-        let open = Message::Fold(id);
-        let body =
-            mouse_area(container(words).width(Fill).center_y(Fill)).interaction(match over {
-                true => mouse::Interaction::default(),
-                false => mouse::Interaction::Pointer,
-            });
-        let body = match over {
-            true => body,
-            false => body.on_press(open.clone()),
-        };
+        let body = mouse_area(container(words).width(Fill).center_y(Fill))
+            .interaction(mouse::Interaction::Pointer)
+            .on_press(Message::Fold(id));
         let mut beside = mouse_area(Space::new().width(side).height(Fill));
         if !over {
             beside = beside
