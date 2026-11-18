@@ -634,25 +634,25 @@ impl App {
         // no row of its own. One folded away, or with nothing in it yet,
         // keeps its row. Each bracket is a lane further out than those
         // it holds.
-        let bracketed = |plan: &Plan, at: usize| {
-            let step = &plan.steps()[at];
-            let over = self.mode == crate::mode::Mode::Run
+        // Folded by hand, or over in a service: its steps are gathered
+        // into one row beside its bracket.
+        let over = |id: StepId| {
+            self.mode == crate::mode::Mode::Run
                 && timing
                     .sections
                     .iter()
-                    .find(|section| section.id == step.id)
-                    .is_some_and(|section| matches!(section.phase, Phase::Done { .. }));
+                    .find(|section| section.id == id)
+                    .is_some_and(|section| matches!(section.phase, Phase::Done { .. }))
+        };
+        let shut = |id: StepId| self.folded.contains(&id) || over(id);
+        let bracketed = |plan: &Plan, at: usize| {
+            let step = &plan.steps()[at];
             step.is_section()
-                && !over
-                && !self.folded.contains(&step.id)
+                && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
                 && self.motion.open(step.id).is_none()
-                // One with nothing in it yet is a bracket too, beside a
-                // place for what will be put in it.
-                && (plan.group_end(at) == at + 1
+                && (shut(step.id)
+                    || plan.group_end(at) == at + 1
                     || (at + 1..plan.group_end(at)).any(|row| {
-                        // Something of it is in sight: a step, or the
-                        // place of a section with nothing in it, that no
-                        // folded section holds.
                         let is = &plan.steps()[row];
                         (!is.is_section() || plan.group_end(row) == row + 1)
                             && !plan.within(row).iter().any(|id| self.folded.contains(id))
@@ -1071,10 +1071,28 @@ impl App {
                     // in it has a place where its steps will be.
                     (true, kept) => {
                         folding = kept;
-                        if plan.group_end(index) == index + 1 {
+                        let wide = track::side_room(side.lanes, side.wide) + side.more;
+                        if folded {
                             whole.push(step.id);
                             placed.push(index);
-                            let wide = track::side_room(side.lanes, side.wide) + side.more;
+                            put!(self.folded_place(plan, step, over, lanes, wide, &places));
+                            stops.push(track::Stop {
+                                id: step.id,
+                                dot: track::Dot::Stack {
+                                    color: match over {
+                                        true => p.outline,
+                                        false => p.primary,
+                                    },
+                                    solid: over,
+                                },
+                                line: None,
+                                next: None,
+                                back: None,
+                                cut: None,
+                            });
+                        } else if plan.group_end(index) == index + 1 {
+                            whole.push(step.id);
+                            placed.push(index);
                             put!(self.empty_place(step.id, lanes, wide, &places));
                         }
                     }
@@ -1559,6 +1577,75 @@ impl App {
                     .copied()
                     .filter(|at| (braced.at + 1..braced.end).contains(at));
                 let picked = self.selected == Some(step.id);
+                // Folded: beside its one row, with its name, and how long
+                // it took against its time when it is over, else its time
+                // and what it would take.
+                if shut(step.id) {
+                    let goal = match step.action {
+                        Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+                        _ => None,
+                    };
+                    let section = timing.sections.iter().find(|s| s.id == step.id);
+                    let mut lines = Vec::new();
+                    match section.map(|section| section.phase) {
+                        Some(Phase::Done { took }) => {
+                            let took = took.unwrap_or_default();
+                            let late = goal.is_some_and(|goal| took > goal);
+                            lines.push((
+                                track::Sign::Sum,
+                                match goal {
+                                    Some(goal) => {
+                                        format!(
+                                            "{} of {}",
+                                            length::clock(took),
+                                            length::clock(goal)
+                                        )
+                                    }
+                                    None => length::clock(took),
+                                },
+                                if late { p.error } else { p.outline },
+                            ));
+                        }
+                        _ => {
+                            if let Some(goal) = goal {
+                                lines.push((
+                                    track::Sign::Goal,
+                                    length::clock(goal),
+                                    p.on_surface_variant,
+                                ));
+                            }
+                            lines.push((
+                                track::Sign::Sum,
+                                length::clock(self.planned(plan, step.id)),
+                                p.on_surface_variant,
+                            ));
+                        }
+                    }
+                    return Some(track::Bracket {
+                        id: step.id,
+                        first: step.id,
+                        last: step.id,
+                        offset: track::brace_at(0),
+                        beside: None,
+                        color: match over(step.id) {
+                            true => p.outline,
+                            false => p.primary,
+                        },
+                        name: step.label.clone(),
+                        lines,
+                        strong: picked,
+                        bare: picked,
+                        place: false,
+                        marks: crate::notes::numbers_on(
+                            plan,
+                            lantern_engine::NoteOn::Step(step.id),
+                        )
+                        .into_iter()
+                        .map(|(_, n)| n)
+                        .collect(),
+                        cut: None,
+                    });
+                }
                 // With nothing in it: beside its place, with its name and
                 // the time it is given.
                 if braced.end == braced.at + 1 {
@@ -3205,6 +3292,86 @@ impl App {
             track::Key::Whole(section),
             places,
             self.draggable(section, place.into()),
+        )
+    }
+
+    /// A folded section's one row: its steps gathered into a stacked dot
+    /// on the line, how many there are, and how long they take. Pressed,
+    /// one folded by hand opens.
+    fn folded_place<'a>(
+        &self,
+        plan: &Plan,
+        step: &Step,
+        over: bool,
+        lanes: Lanes<'_>,
+        side: f32,
+        places: &track::Places,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let id = step.id;
+        let at = plan.position(id).unwrap_or_default();
+        let steps = (at + 1..plan.group_end(at))
+            .filter(|row| !plan.steps()[*row].is_section())
+            .count();
+        let ink = match over {
+            true => p.outline,
+            false => p.on_surface,
+        };
+        let dot = column![
+            Space::new().height(RAIL_TOP - 2.0),
+            track::seen(
+                track::Key::Dot(id),
+                places,
+                Space::new().width(RAIL_DOT).height(RAIL_DOT)
+            ),
+        ]
+        .width(RAIL)
+        .align_x(Alignment::Center);
+        let mut words = row![
+            text(match steps {
+                1 => "1 step".to_string(),
+                n => format!("{n} steps"),
+            })
+            .size(BODY)
+            .color(ink),
+            Space::new().width(Fill),
+        ];
+        if !over {
+            words = words.push(
+                text(length::clock(self.planned(plan, id)))
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+        }
+        let words = words.align_y(Alignment::Center).padding([0, 10]);
+        let open = Message::Fold(id);
+        let body =
+            mouse_area(container(words).width(Fill).center_y(Fill)).interaction(match over {
+                true => mouse::Interaction::default(),
+                false => mouse::Interaction::Pointer,
+            });
+        let body = match over {
+            true => body,
+            false => body.on_press(open.clone()),
+        };
+        let mut beside = mouse_area(Space::new().width(side).height(Fill));
+        if !over {
+            beside = beside
+                .on_press(Message::Click(Clicked::Step(id)))
+                .interaction(mouse::Interaction::Pointer);
+        }
+        let place = row![
+            Space::new().width(lanes.curl),
+            track::seen(track::Key::Row(id), places, dot),
+            Space::new().width(lanes.drawn),
+            body,
+            track::seen(track::Key::Side(id), places, beside),
+        ]
+        .height(ROW_TALL);
+        track::seen(
+            track::Key::Whole(id),
+            places,
+            self.draggable(id, place.into()),
         )
     }
 
