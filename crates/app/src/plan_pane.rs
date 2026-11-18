@@ -3705,24 +3705,8 @@ impl App {
                 })
                 .unwrap_or((None, None));
             let pulls = self.can_edit() && self.mode == crate::mode::Mode::Plan;
-            let p = self.palette;
-            // A small grip shows where each is.
-            let grip = || {
-                container(container(Space::new().width(14).height(3)).style(move |_| {
-                    container::Style {
-                        background: Some(Palette::tint(p.primary, 0.55).into()),
-                        border: iced::Border {
-                            radius: 1.5.into(),
-                            ..iced::Border::default()
-                        },
-                        ..container::Style::default()
-                    }
-                }))
-                .padding(iced::Padding::default().left(2.0))
-                .center_y(FOOT)
-            };
             let handle = |pressed: Message| {
-                mouse_area(container(grip()).width(wide).height(FOOT))
+                mouse_area(Space::new().width(wide).height(FOOT))
                     .on_press(pressed)
                     .interaction(mouse::Interaction::ResizingVertically)
             };
