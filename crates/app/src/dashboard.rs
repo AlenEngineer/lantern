@@ -623,16 +623,30 @@ impl App {
                 );
                 length::drift(behind)
             });
+        // Each as wide as its widest figures, so nothing beside it moves
+        // as it counts.
         let said = |words: String| {
+            let wide = crate::widgets::steady(&words, BODY);
             text(words)
                 .size(BODY)
                 .color(p.on_surface)
                 .wrapping(text::Wrapping::None)
+                .width(wide)
         };
         match (timing.running(), timing.end) {
             (Some(section), end) => {
                 let (status, tone) = section_status(section);
-                strip = strip.push(chip(p, &status, tone));
+                strip = strip.push(
+                    container(
+                        text(status.clone())
+                            .size(META)
+                            .font(BOLD)
+                            .wrapping(text::Wrapping::None)
+                            .width(crate::widgets::steady(&status, META)),
+                    )
+                    .padding([3, 10])
+                    .style(look::chip(p, tone)),
+                );
                 if let Some(drift) = &drift {
                     strip = strip.push(container(said(drift.clone())).padding([0, 10]));
                 } else if let Some(end) = end {
@@ -666,12 +680,15 @@ impl App {
         // The time of day, where there's room for it.
         if wide >= 1100.0 {
             strip = strip.push(
-                container(
-                    text(length::clock_of_day(length::now_of_day()))
+                container({
+                    let clock = length::clock_of_day(length::now_of_day());
+                    let wide = crate::widgets::steady(&clock, BODY);
+                    text(clock)
                         .size(BODY)
                         .font(BOLD)
-                        .color(p.on_surface_variant),
-                )
+                        .color(p.on_surface_variant)
+                        .width(wide)
+                })
                 .padding([0, 10]),
             );
         }

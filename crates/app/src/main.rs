@@ -4313,7 +4313,13 @@ impl App {
             _ => Instant::now(),
         };
         let each = self.estimate(&step).length / u32::try_from(frames).unwrap_or(1).max(1);
-        Some(each.saturating_sub(since.elapsed()))
+        // Its last slide starts fading out early, so the fade takes none
+        // of the time the step is given.
+        let fading = match (step.fade.fade_out, frame + 1 >= frames) {
+            (Some(fade), true) if program.is_some() => fade.duration(),
+            _ => Duration::ZERO,
+        };
+        Some(each.saturating_sub(fading).saturating_sub(since.elapsed()))
     }
 
     /// Notes when what's on stage (scene or slide) changed.
