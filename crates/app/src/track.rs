@@ -305,6 +305,9 @@ pub struct Span {
     pub shift: f32,
     /// The numbers of the notes on it.
     pub marks: Vec<usize>,
+    /// The service just went round it: how far a light has run back up
+    /// its line.
+    pub pulse: Option<f32>,
 }
 
 /// Everything the canvas draws.
@@ -1526,6 +1529,27 @@ fn curl(
     let into = (tip - 4.0 - (x + BEND + 1.0)).max(0.0);
     let up = (from - to).max(0.0);
     let whole = out + up + into;
+    // Gone round: a light runs back along it, out, up and in.
+    if let Some(t) = span.pulse {
+        let run = whole * t;
+        let at = if run < out {
+            Point::new(x + BEND + 1.0 + out - run, bottom)
+        } else if run < out + up {
+            Point::new(x, from - (run - out))
+        } else {
+            Point::new(x + BEND + 1.0 + (run - out - up).min(into), top)
+        };
+        let fade = 1.0 - t * t;
+        let light = crate::motion::blend(color, Color::WHITE, 0.7);
+        frame.fill(&Path::circle(at, 9.0), faded(light, 0.18 * fade));
+        frame.fill(&Path::circle(at, 5.5), faded(light, 0.35 * fade));
+        frame.fill(&Path::circle(at, 3.5), faded(light, fade));
+    }
+    // The words say the new round brightly while the light runs.
+    let color = match span.pulse {
+        Some(t) => crate::motion::blend(Color::WHITE, color, t),
+        None => color,
+    };
     let mut left = whole * far;
     // How much of it has played, from where it leaves.
     let filled =

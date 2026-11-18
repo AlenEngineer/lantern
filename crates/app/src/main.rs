@@ -1088,6 +1088,10 @@ impl App {
         }
         // The modes' limits, for whatever asks: a click, a key, a script,
         // the phone.
+        // What going on would go back round, and where the service is:
+        // after, a step that went back round lights its line.
+        let round = self.engine.0.follows_back();
+        let was_at = self.engine.0.current_step().map(|step| step.id);
         let task = match self.refused(&message) {
             Some(why) => {
                 log(format!("mode: {why}"));
@@ -1096,6 +1100,11 @@ impl App {
             }
             None => self.handle(message),
         };
+        if let Some(of) = round
+            && self.engine.0.current_step().map(|step| step.id) != was_at
+        {
+            self.motion.went_round(of);
+        }
         // Whatever put it there: something new on the projector rings.
         self.motion
             .stage_shows(self.stage.program.as_ref().map(|scene| scene.id));
