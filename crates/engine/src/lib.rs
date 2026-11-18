@@ -29,9 +29,9 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, BracketError, Carried, Carry, CarryError, Coming, DEEPEST, Drawn, Ending, Fade, Flow,
-    FlowOf, LogEntry, Looped, Note, NoteId, NoteOn, Over, Place, Plan, PlanError, Repeat, Session,
-    Span, SpanError, SpanId, Step, StepId, StepSound,
+    Action, BracketError, COLORS, Carried, Carry, CarryError, Coming, DEEPEST, Drawn, Ending, Fade,
+    Flow, FlowOf, LogEntry, Looped, Note, NoteId, NoteOn, Over, Place, Plan, PlanError, Repeat,
+    Session, Span, SpanError, SpanId, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,

@@ -37,6 +37,7 @@ impl NewStep {
                     depth: 0,
                     last: None,
                     done_by: None,
+                    color: None,
                 },
             ),
             NewStep::LiveSlot => (

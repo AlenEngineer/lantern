@@ -90,6 +90,7 @@ fn does(message: &Message) -> Does {
         | M::SetJoined(FlowOf::Step(id), _)
         | M::SetRepeat(FlowOf::Step(id), _)
         | M::SetShuffle(FlowOf::Step(id), _)
+        | M::SectionColor(id, _)
         | M::Rail(
             crate::rail::Act::Unloop(FlowOf::Step(id))
             | crate::rail::Act::Unshuffle(FlowOf::Step(id))

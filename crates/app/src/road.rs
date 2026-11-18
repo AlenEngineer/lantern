@@ -21,6 +21,7 @@ use lantern_engine::{Action, Coming, FlowOf, Plan, Step, StepId};
 
 use crate::look::{self, BODY, BOLD, META, Tone};
 use crate::motion::{Glide, blend, ease};
+use crate::palette::Palette;
 use crate::plan_pane::{RAIL, RAIL_DOT, RAIL_TOP};
 use crate::settle::{Heights, settle};
 use crate::track::{self, Key, Places};
@@ -489,7 +490,9 @@ impl App {
             .map(|brace| brace.lane + 1)
             .max()
             .unwrap_or(0);
-        let wide = track::side_room(lanes, false);
+        let wide = track::side_room(lanes, false, true);
+        let colors = plan.section_colors();
+        let hue = |id: StepId| crate::plan_pane::section_hue(p, &colors, id);
         let places = self.places.clone();
         let section_of = |id: StepId| timing.sections.iter().find(|s| s.id == id);
         let motion = &self.motion;
@@ -593,8 +596,8 @@ impl App {
                     color: p.on_surface_variant,
                     solid: false,
                 },
-                (What::Folded { .. }, Place::Played) => Mark::Stack {
-                    color: p.outline,
+                (What::Folded { section, .. }, Place::Played) => Mark::Stack {
+                    color: Palette::tint(hue(section), 0.45),
                     solid: true,
                 },
                 (What::Folded { .. }, Place::On) => Mark::Stack {
@@ -605,8 +608,8 @@ impl App {
                     color: p.tertiary,
                     solid: false,
                 },
-                (What::Folded { .. }, Place::Coming) => Mark::Stack {
-                    color: p.primary,
+                (What::Folded { section, .. }, Place::Coming) => Mark::Stack {
+                    color: hue(section),
                     solid: false,
                 },
                 // What was on fades to played, its ring closing.
@@ -695,12 +698,10 @@ impl App {
             .filter_map(|brace| {
                 let step = plan.get(brace.section)?;
                 let things = &road.things[brace.first..=brace.last];
-                let color = if things.iter().any(|t| t.place == Place::On) {
-                    p.tertiary
-                } else if things.iter().all(|t| t.place == Place::Played) {
-                    p.outline
-                } else {
-                    p.primary
+                // Its own colour, faded once all of it has played.
+                let color = match things.iter().all(|t| t.place == Place::Played) {
+                    true => Palette::tint(hue(brace.section), 0.45),
+                    false => hue(brace.section),
                 };
                 let goal = match step.action {
                     Action::Section { budget, .. } => budget.filter(|b| !b.is_zero()),
@@ -889,12 +890,11 @@ fn again(round: u16) -> String {
     format!("{n}{tail}")
 }
 
-/// A dot's radius, a ring's room round the one that is on, a tube's
-/// width, and a brace's curve.
+/// A dot's radius, a ring's room round the one that is on, and a
+/// tube's width.
 const DOT: f32 = 5.0;
 const RING: f32 = 4.0;
 const TUBE: f32 = 8.0;
-const CURVE: f32 = 7.0;
 /// How long the tube takes to fill to where it was last measured: as
 /// long as it is till the next measure, so between them it fills evenly.
 const GLIDE: Duration = Duration::from_millis(500);
@@ -1105,37 +1105,19 @@ impl canvas::Program<Message> for Drawn {
             ) else {
                 continue;
             };
-            let x = first.x + track::brace_at(brace.lane) + 3.0;
+            let x = first.x + track::brace_at(brace.lane, true) + 3.0;
             let (top, foot) = (first.y + 2.0, last.y + last.height - 4.0);
             if foot - top < 12.0 {
                 continue;
             }
             let middle = (top + foot) / 2.0;
-            let round = CURVE.min((foot - top) / 4.0);
-            let shape = Path::new(|path| {
-                path.move_to(Point::new(x, top));
-                path.quadratic_curve_to(
-                    Point::new(x + round, top),
-                    Point::new(x + round, top + round),
-                );
-                path.line_to(Point::new(x + round, middle - round));
-                path.quadratic_curve_to(
-                    Point::new(x + round, middle),
-                    Point::new(x + round + 6.0, middle),
-                );
-                path.quadratic_curve_to(
-                    Point::new(x + round, middle),
-                    Point::new(x + round, middle + round),
-                );
-                path.line_to(Point::new(x + round, foot - round));
-                path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
-            });
+            let shape = track::square(x, top, foot, 0.0);
             frame.stroke(&shape, Stroke::default().with_width(1.6).with_color(*color));
             // Gone round: a light runs back up it, to where the round
             // begins, and its words say the new round brightly.
             let color = match *pulse {
                 Some(t) => {
-                    let at = Point::new(x + round, foot - (foot - top) * t);
+                    let at = Point::new(x + track::TICK, foot - (foot - top) * t);
                     let fade = 1.0 - t * t;
                     let light = blend(*color, Color::WHITE, 0.7);
                     for (size, alpha) in [(9.0, 0.18), (5.5, 0.35), (3.5, 1.0)] {

@@ -564,7 +564,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 19] = [
+        let runs: [Option<&Run>; 20] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),

@@ -321,6 +321,9 @@ pub struct Picture {
     pub brackets: Vec<Bracket>,
     /// The open note's threads: from its card to each thing it is on.
     pub threads: Vec<(Point, Point)>,
+    /// The steps whose rows have a mark of the colour of the section
+    /// they are most nearly in, between the dot and the name.
+    pub ties: Vec<(StepId, Color)>,
 }
 
 /// What a line beside a bracket is about.
@@ -336,14 +339,14 @@ pub enum Sign {
     Start,
 }
 
-/// A section: a bracket to the right of the steps it holds, from the
-/// first of them in sight to the last, with its name and its times
-/// beside it. The plan is one too, round all of them.
+/// A section: a square bracket to the right of the steps it holds, from
+/// the first of them in sight to the last, in its own colour, with its
+/// name and its times beside it. The plan is one too, round all of them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bracket {
     /// The section's heading; `None` for the plan's own, which has none.
     pub id: Option<StepId>,
-    /// How far out it bulges, 0 to 1: it just took in what put it over
+    /// How far out it stands, 0 to 1: it just took in what put it over
     /// its time.
     pub bulge: f32,
     pub first: StepId,
@@ -374,6 +377,20 @@ pub struct Bracket {
 /// How much room a bracket takes, and what is written beside it.
 pub const BRACE: f32 = 18.0;
 pub const LABEL: f32 = 86.0;
+/// How far a square bracket's ends reach back towards the rows.
+pub const TICK: f32 = 6.0;
+
+/// A square bracket from `top` to `foot`, its ends reaching back to `x`
+/// and its upright `out` further right of them.
+pub fn square(x: f32, top: f32, foot: f32, out: f32) -> Path {
+    let upright = x + TICK + out;
+    Path::new(|path| {
+        path.move_to(Point::new(x, top));
+        path.line_to(Point::new(upright, top));
+        path.line_to(Point::new(upright, foot));
+        path.line_to(Point::new(x, foot));
+    })
+}
 
 /// Where a bracket's brace is: across, and from its top to its foot.
 fn bracket_box(
@@ -392,10 +409,12 @@ fn bracket_box(
 /// How much room right of the steps the brackets need, `lanes` deep:
 /// the innermost and what is written beside it, and a brace for each
 /// one further out; with room right of those too (`wide`) where one of
-/// them has no steps of its own to write beside.
-pub fn side_room(lanes: u8, wide: bool) -> f32 {
+/// them has no steps of its own to write beside. Not `named`, a brace
+/// for each and nothing written.
+pub fn side_room(lanes: u8, wide: bool, named: bool) -> f32 {
     match lanes {
         0 => 0.0,
+        lanes if !named => BRACE * f32::from(lanes),
         lanes => {
             BRACE
                 + LABEL
@@ -408,10 +427,12 @@ pub fn side_room(lanes: u8, wide: bool) -> f32 {
     }
 }
 
-/// How far right of where the brackets start the brace in `lane` is.
-pub fn brace_at(lane: u8) -> f32 {
+/// How far right of where the brackets start the brace in `lane` is,
+/// with the innermost's words beside it where they are `named`.
+pub fn brace_at(lane: u8, named: bool) -> f32 {
     match lane {
         0 => 0.0,
+        lane if !named => BRACE * f32::from(lane),
         lane => BRACE + LABEL + BRACE * f32::from(lane - 1),
     }
 }
@@ -1067,8 +1088,7 @@ fn paint(
     }
     // The sections' brackets.
     for bracket in &picture.brackets {
-        let (Some(first), Some(last)) = (at(Key::Side(bracket.first)), at(Key::Side(bracket.last)))
-        else {
+        let Some(first) = at(Key::Side(bracket.first)) else {
             continue;
         };
         let far = moves.drawn(Thing::Bracket(bracket.id));
@@ -1082,7 +1102,6 @@ fn paint(
         else {
             continue;
         };
-        let _ = (first, last);
         if foot - top < 12.0 {
             continue;
         }
@@ -1099,25 +1118,7 @@ fn paint(
                 false => far,
             },
         );
-        let round = 7.0_f32.min((foot - top) / 4.0);
-        let brace = Path::new(|path| {
-            path.move_to(Point::new(x, top));
-            path.quadratic_curve_to(
-                Point::new(x + round, top),
-                Point::new(x + round, top + round),
-            );
-            path.line_to(Point::new(x + round, middle - round));
-            path.quadratic_curve_to(
-                Point::new(x + round + 10.0 * bracket.bulge, middle),
-                Point::new(x + round + 6.0 + 10.0 * bracket.bulge, middle),
-            );
-            path.quadratic_curve_to(
-                Point::new(x + round + 10.0 * bracket.bulge, middle),
-                Point::new(x + round, middle + round),
-            );
-            path.line_to(Point::new(x + round, foot - round));
-            path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
-        });
+        let brace = square(x, top, foot, 6.0 * bracket.bulge);
         frame.stroke(
             &brace,
             Stroke {
@@ -1156,7 +1157,7 @@ fn paint(
                 (from.y + to.y + to.height) / 2.0,
                 to.y + to.height - from.y,
             ),
-            None => (x + round + 12.0, middle, foot - top),
+            None => (x + TICK + 12.0, middle, foot - top),
         };
         let room = ((tall + 10.0) / TALL).floor().max(1.0) as usize;
         let names = &names[..names.len().min(room)];
@@ -1232,6 +1233,23 @@ fn paint(
         // Its notes' marks, under what is written.
         for (n, number) in bracket.marks.iter().enumerate() {
             note_mark(frame, Point::new(left + 6.5 + 16.0 * n as f32, y), *number);
+        }
+    }
+    // Each row's mark of the section it is most nearly in.
+    for (id, color) in &picture.ties {
+        let Some(row) = at(Key::Row(*id)) else {
+            continue;
+        };
+        let (top, foot) = (row.y + 8.0, row.y + row.height - 8.0);
+        if foot > top {
+            frame.fill(
+                &Path::rounded_rectangle(
+                    Point::new(row.x + row.width - 4.5, top),
+                    Size::new(3.0, foot - top),
+                    1.5.into(),
+                ),
+                faded(*color, 0.8),
+            );
         }
     }
     // The open note's threads, from its card to what it is on.

@@ -79,7 +79,25 @@ pub enum Action {
         /// The time of day it should be over by, such as 11:45.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         done_by: Option<TimeOfDay>,
+        /// Which of the [`COLORS`] it is told apart by. Without one it
+        /// takes one by where it is: see [`Plan::section_colors`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<u8>,
     },
+}
+
+/// How many colours sections are told apart by.
+pub const COLORS: u8 = 6;
+
+/// The colour a section takes that has none of its own: the next after
+/// `before`'s, the section before it, that none of `near` has, going
+/// round. The first when there is none before it, or all are taken.
+pub fn next_color(before: Option<u8>, near: &[u8]) -> u8 {
+    let from = before.map_or(0, |before| before + 1);
+    (0..COLORS)
+        .map(|n| (from + n) % COLORS)
+        .find(|slot| Some(*slot) != before && !near.contains(slot))
+        .unwrap_or(from % COLORS)
 }
 
 /// The furthest in a section sits: three levels of section in all.
@@ -605,6 +623,15 @@ impl Step {
         }
     }
 
+    /// The colour this section was given; `None` for one that takes one
+    /// by where it is, and for a step.
+    pub fn color(&self) -> Option<u8> {
+        match self.action {
+            Action::Section { color, .. } => color,
+            _ => None,
+        }
+    }
+
     /// Gives this section its last row, or none; nothing for a step.
     fn set_last(&mut self, to: Option<StepId>) {
         if let Action::Section { last, .. } = &mut self.action {
@@ -828,6 +855,7 @@ impl Plan {
             depth: 0,
             last: None,
             done_by: None,
+            color: None,
         };
         self.push(title, action)
     }
@@ -915,6 +943,43 @@ impl Plan {
         }
         found.reverse();
         found
+    }
+
+    /// Each section's colour, in plan order: its own, else the next after
+    /// the section before it's that neither the sections round it nor
+    /// the section after it, where that has its own, are in
+    /// ([`next_color`]). So a plan that gave none has them all the same.
+    pub fn section_colors(&self) -> Vec<(StepId, u8)> {
+        let mut found: Vec<(StepId, u8)> = Vec::new();
+        for (at, step) in self.steps.iter().enumerate() {
+            if !step.is_section() {
+                continue;
+            }
+            let color = step.color().unwrap_or_else(|| {
+                let of = |id: StepId| found.iter().find(|(was, _)| *was == id).map(|(_, c)| *c);
+                let mut near: Vec<u8> = self.within(at).into_iter().filter_map(of).collect();
+                near.extend(
+                    self.steps[at + 1..]
+                        .iter()
+                        .find(|next| next.is_section())
+                        .and_then(Step::color),
+                );
+                next_color(found.last().map(|(_, color)| *color), &near)
+            });
+            found.push((step.id, color % COLORS));
+        }
+        found
+    }
+
+    /// Gives the section `id` the colour `slot`; whether it is one.
+    pub fn set_section_color(&mut self, id: StepId, slot: u8) -> bool {
+        match self.get_mut(id).map(|step| &mut step.action) {
+            Some(Action::Section { color, .. }) => {
+                *color = Some(slot % COLORS);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Whether the step at `index` goes on by itself when done, without
@@ -2339,6 +2404,7 @@ impl Plan {
             depth: 0,
             last: Some(self.steps[last].id),
             done_by: None,
+            color: None,
         };
         let heading = next.new_step(label, action);
         let id = heading.id;
@@ -2945,6 +3011,73 @@ mod tests {
     }
 
     #[test]
+    fn a_section_takes_the_next_colour_its_neighbours_do_not_have() {
+        assert_eq!(next_color(None, &[]), 0);
+        assert_eq!(next_color(Some(0), &[]), 1);
+        assert_eq!(next_color(Some(COLORS - 1), &[]), 0);
+        assert_eq!(next_color(Some(0), &[1, 2]), 3);
+        assert_eq!(next_color(Some(4), &[5, 0]), 1);
+        assert_eq!(next_color(None, &[0]), 1);
+        // All taken: the next anyway.
+        assert_eq!(next_color(Some(0), &[1, 2, 3, 4, 5]), 1);
+    }
+
+    #[test]
+    fn sections_without_a_colour_take_one_by_where_they_are() {
+        let mut plan = Plan::new("Sunday");
+        let music = plan.section("Music", None);
+        plan.show(resource("Song"));
+        let word = plan.section("Word", None);
+        plan.show(resource("Reading"));
+        let sermon = plan.section("Sermon", None);
+        let colors = |plan: &Plan| -> Vec<u8> {
+            plan.section_colors().into_iter().map(|(_, c)| c).collect()
+        };
+        assert_eq!(colors(&plan), [0, 1, 2]);
+        // One given its own keeps it, and the one before it steps round it.
+        assert!(plan.set_section_color(sermon, 2));
+        assert!(plan.set_section_color(music, 1));
+        assert_eq!(colors(&plan), [1, 3, 2]);
+        assert_eq!(plan.get(word).unwrap().color(), None);
+        // A step has none to set.
+        let song = plan.steps()[1].id;
+        assert!(!plan.set_section_color(song, 0));
+    }
+
+    #[test]
+    fn a_section_inside_another_never_takes_its_colour() {
+        let mut plan = Plan::new("Sunday");
+        let music = plan.section("Music", None);
+        plan.show(resource("Song"));
+        let hymns = plan.section("Hymns", None);
+        plan.show(resource("Hymn"));
+        let psalms = plan.section("Psalms", None);
+        plan.show(resource("Psalm"));
+        for inner in [hymns, psalms] {
+            plan.get_mut(inner).unwrap().set_depth(1);
+        }
+        plan.set_section_color(music, 3);
+        plan.set_section_color(hymns, 2);
+        assert_eq!(plan.within(4), [music]);
+        let colors: Vec<u8> = plan.section_colors().into_iter().map(|(_, c)| c).collect();
+        assert_eq!(colors, [3, 2, 4]);
+    }
+
+    #[test]
+    fn a_plan_written_before_colours_reads_and_writes_the_same() {
+        let mut plan = Plan::new("Sunday");
+        let music = plan.section("Music", None);
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(!json.contains("color"));
+        let back: Plan = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get(music).unwrap().color(), None);
+        plan.set_section_color(music, 4);
+        let json = serde_json::to_string(&plan).unwrap();
+        let back: Plan = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.get(music).unwrap().color(), Some(4));
+    }
+
+    #[test]
     fn a_section_carries_its_steps_and_moves_as_one() {
         let mut plan = Plan::new("Sunday");
         let welcome = plan.show(resource("Welcome"));
@@ -3371,6 +3504,7 @@ mod tests {
                 depth: 0,
                 last: None,
                 done_by: None,
+                color: None,
             },
         );
         assert!(plan.nest(inner, true));

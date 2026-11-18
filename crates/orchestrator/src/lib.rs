@@ -24,7 +24,8 @@ pub mod timing;
 
 pub use note::{Note, NoteId, NoteOn};
 pub use plan::{
-    Action, BracketError, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Fade, Flow, FlowOf,
-    Looped, Over, Place, Plan, PlanError, Repeat, Span, SpanError, SpanId, Step, StepId, StepSound,
+    Action, BracketError, COLORS, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Fade, Flow,
+    FlowOf, Looped, Over, Place, Plan, PlanError, Repeat, Span, SpanError, SpanId, Step, StepId,
+    StepSound,
 };
 pub use session::{Coming, LogEntry, Session};

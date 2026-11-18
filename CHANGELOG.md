@@ -553,6 +553,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
   picked (F2 renames it, Ctrl+D copies it, Delete twice deletes it, Esc
   lets go); pressed twice, the plan folds into one row like the others
   under it, and opens again the same way; a right click opens its ring.
+- A section's bracket is square, and in a colour of its own, from six
+  that read on dark and on light themes. Its rows have a thin mark of
+  that colour between the dot and the name, and its folded row, its
+  brackets on the Run rail and the top bar's goal take it too. A
+  section takes the next colour its neighbours don't have; its ring has
+  a swatch that fans out the six to pick another. Where the brackets'
+  names leave the steps too little room, the names fold away and only
+  the coloured brackets stay; a bracket's name and what it takes come
+  up under the pointer.
 - The plan's card is its ring too: its head or its brace pressed, or
   a right click, opens the ring with the card under it (its name,
   goal, start, what it takes, how it moves). The ring opens like
