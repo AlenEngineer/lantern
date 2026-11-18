@@ -306,6 +306,9 @@ enum Message {
     Mods(iced::keyboard::Modifiers),
     /// The steps picked together become a section.
     BracketPicked,
+    /// A section's bracket was pressed: it is picked, and held and moved
+    /// it is carried with all it holds.
+    Grab(StepId),
     /// A box pulled over the plan picked these steps; none, for a press
     /// where there is nothing, which lets go of whatever was picked.
     Marquee(Vec<StepId>),
@@ -554,6 +557,9 @@ struct App {
     /// The line that was pulled where none can be, the same way: which
     /// side it was on, and from which row to which.
     pub(crate) alarm_pull: Option<(rail::Side, usize, usize)>,
+    /// A bracket was pressed just now: what is carried is its section,
+    /// not the row the pointer is on.
+    pub(crate) grabbed: bool,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -803,6 +809,7 @@ impl App {
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
+            grabbed: false,
             attached: None,
             left: None,
             config,
@@ -1540,6 +1547,7 @@ impl App {
             // step goes on or waits. Pulled to another step's, a loop is
             // drawn back up to it, or the steps down to it are joined.
             Message::Pointer(_, false) if self.pull.is_some() => {
+                self.grabbed = false;
                 let pull = self.pull.take().expect("checked above");
                 match (pull.moving, pull.would, pull.toggle) {
                     (false, _, Some(on)) => return self.update(Message::SetAdvance(pull.from, on)),
@@ -1626,11 +1634,17 @@ impl App {
                 // one still ahead, once the plan is unlocked.
                 let running = self.mode == mode::Mode::Run;
                 // Not from the rail: a dot pressed there is its own thing.
-                self.drag = self
-                    .hovered
-                    .filter(|_| self.rail_over.is_none() && self.pull.is_none())
-                    .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
-                    .map(|(step, _)| Drag::new(&plan, step));
+                // A bracket pressed just now carries its section: that
+                // stays, whichever of the two is heard first.
+                if !std::mem::take(&mut self.grabbed) {
+                    self.drag = self
+                        .hovered
+                        .filter(|_| self.rail_over.is_none() && self.pull.is_none())
+                        .filter(|(step, _)| {
+                            self.can_edit() && (!running || self.ahead(&plan, *step))
+                        })
+                        .map(|(step, _)| Drag::new(&plan, step));
+                }
                 // One of the steps picked together carries them all.
                 if let Some(drag) = self.drag.as_mut()
                     && !drag.is_section()
@@ -1650,6 +1664,7 @@ impl App {
                 }
             }
             Message::Pointer(_, false) => {
+                self.grabbed = false;
                 let dropped = self.drag.take().filter(|drag| drag.moving);
                 // In a run it lands after the step the service is at, or
                 // not at all.
@@ -1956,6 +1971,13 @@ impl App {
                 }
             }
             Message::Mods(mods) => self.mods = mods,
+            Message::Grab(section) => {
+                if self.can_edit() && self.mode != mode::Mode::Run {
+                    self.grabbed = true;
+                    self.drag = Some(Drag::new(&self.engine.0.plan(), section));
+                }
+                return self.update(Message::Click(Clicked::Step(section)));
+            }
             Message::Marquee(steps) => {
                 self.editing = None;
                 self.selected = steps.first().copied();
