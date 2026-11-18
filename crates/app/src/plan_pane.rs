@@ -1684,6 +1684,7 @@ impl App {
                         .map(|(_, n)| n)
                         .collect(),
                         cut: None,
+                        bulge: 0.0,
                     });
                 }
                 // With nothing in it: beside its place, with its name and
@@ -1726,6 +1727,7 @@ impl App {
                         .map(|(_, n)| n)
                         .collect(),
                         cut: None,
+                        bulge: 0.0,
                     });
                 }
                 let first = inside.next()?;
@@ -1773,13 +1775,16 @@ impl App {
                         p.on_surface_variant,
                     ));
                 }
+                // Just tipped over its time: the sum turns red as it goes.
+                let tipped = self.motion.tipped(step.id);
                 lines.push((
                     track::Sign::Sum,
                     length::clock(sum),
-                    match (late, on) {
-                        (true, _) => p.error,
-                        (false, true) => p.tertiary,
-                        (false, false) => p.on_surface,
+                    match (late, on, tipped) {
+                        (true, _, Some(t)) => crate::motion::blend(p.on_surface, p.error, t),
+                        (true, _, None) => p.error,
+                        (false, true, _) => p.tertiary,
+                        (false, false, _) => p.on_surface,
                     },
                 ));
                 // The time of day it should be over by, in the colour of
@@ -1836,6 +1841,10 @@ impl App {
                         .map(|(_, n)| n)
                         .collect(),
                     cut: None,
+                    bulge: self
+                        .motion
+                        .tipped(step.id)
+                        .map_or(0.0, |t| (t * std::f32::consts::PI).sin()),
                 })
             })
             .collect();
@@ -1878,6 +1887,7 @@ impl App {
                 place: true,
                 marks: Vec::new(),
                 cut: None,
+                bulge: 0.0,
             });
         }
         // The section that is picked says what it is set to, and what

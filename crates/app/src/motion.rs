@@ -37,6 +37,8 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// A section put over its time: its sum turning red, its bracket bulging.
+pub const TIPPED: Duration = Duration::from_millis(600);
 /// A light running back along a loop's line as the service goes round.
 pub const ROUND: Duration = Duration::from_millis(700);
 /// Rows taken away closing up, or put back growing in.
@@ -123,6 +125,8 @@ pub struct Motion {
     came: Option<(Vec<StepId>, Run)>,
     /// What the service just went round, its light running back.
     round: Option<(FlowOf, Run)>,
+    /// Sections an edit just put over their time.
+    tipped: Option<(Vec<StepId>, Run)>,
 }
 
 impl Motion {
@@ -153,6 +157,7 @@ impl Motion {
             gone: None,
             came: None,
             round: None,
+            tipped: None,
         }
     }
 
@@ -185,6 +190,19 @@ impl Motion {
     pub fn tick(&self) -> Option<f32> {
         let t = self.along(self.saved.as_ref())?;
         Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// An edit just put `sections` over their time.
+    pub fn tipped_over(&mut self, sections: Vec<StepId>) {
+        self.tipped = Some((sections, self.run(TIPPED, Instant::now())));
+    }
+
+    /// How far a section just put over its time has gone: its sum turning
+    /// red, its bracket bulging and settling.
+    pub fn tipped(&self, section: StepId) -> Option<f32> {
+        let (sections, run) = self.tipped.as_ref()?;
+        sections.contains(&section).then_some(())?;
+        self.along(Some(run))
     }
 
     /// The service went round `of`.
@@ -433,7 +451,8 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 15] = [
+        let runs: [Option<&Run>; 16] = [
+            self.tipped.as_ref().map(|(_, run)| run),
             self.round.as_ref().map(|(_, run)| run),
             self.gone.as_ref().map(|(_, _, run)| run),
             self.came.as_ref().map(|(_, run)| run),

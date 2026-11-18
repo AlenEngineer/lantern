@@ -573,6 +573,9 @@ struct App {
     pub(crate) note_kept: bool,
     /// The time of day a section should be over by, as it is typed.
     pub(crate) done_typed: Option<(StepId, String)>,
+    /// How many edits have been kept for undo: one more says the plan
+    /// was just edited.
+    edits: u64,
     /// The loop or drawn order whose line was pressed last: Delete takes
     /// it away, its steps staying.
     pub(crate) line_picked: Option<lantern_engine::SpanId>,
@@ -848,6 +851,7 @@ impl App {
             note_text: iced::widget::text_editor::Content::new(),
             note_kept: false,
             done_typed: None,
+            edits: 0,
             line_picked: None,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
@@ -1090,6 +1094,7 @@ impl App {
         // the phone.
         // What going on would go back round, and where the service is:
         // after, a step that went back round lights its line.
+        let edits = self.edits;
         let round = self.engine.0.follows_back();
         let was_at = self.engine.0.current_step().map(|step| step.id);
         let task = match self.refused(&message) {
@@ -1100,6 +1105,29 @@ impl App {
             }
             None => self.handle(message),
         };
+        // An edit that put a section over its time shows it tipping.
+        if self.edits != edits
+            && let Some(before) = self.undo.last()
+        {
+            let after = self.engine.0.plan();
+            let over = |plan: &Plan, section: &Step| match section.action {
+                Action::Section {
+                    budget: Some(budget),
+                    ..
+                } if !budget.is_zero() => self.planned(plan, section.id) > budget,
+                _ => false,
+            };
+            let tipped: Vec<StepId> = after
+                .steps()
+                .iter()
+                .filter(|section| over(&after, section))
+                .filter(|section| before.get(section.id).is_none_or(|was| !over(before, was)))
+                .map(|section| section.id)
+                .collect();
+            if !tipped.is_empty() {
+                self.motion.tipped_over(tipped);
+            }
+        }
         if let Some(of) = round
             && self.engine.0.current_step().map(|step| step.id) != was_at
         {
@@ -3745,6 +3773,7 @@ impl App {
     /// Keeps the plan as it is, before an edit, for Ctrl+Z. Keystrokes in
     /// one step's fields (`typing`) are kept once, so they undo together.
     fn remember(&mut self, typing: Option<StepId>) {
+        self.edits += 1;
         if typing.is_some() && typing == self.typing {
             return;
         }

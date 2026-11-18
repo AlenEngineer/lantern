@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An edit that puts a section over its time shows it: the section's
+  bracket bulges out and settles, and its time turns red as it goes.
 - When a service goes back round a loop, a light runs back along the
   loop's line and its round count lights up as it changes.
 - Rows taken away close up where they were, and rows Ctrl+Z (or redo)

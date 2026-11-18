@@ -352,6 +352,9 @@ pub enum Sign {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bracket {
     pub id: StepId,
+    /// How far out it bulges, 0 to 1: it just took in what put it over
+    /// its time.
+    pub bulge: f32,
     pub first: StepId,
     pub last: StepId,
     /// How far right of where the brackets start its brace is: further
@@ -1115,11 +1118,11 @@ fn paint(
             );
             path.line_to(Point::new(x + round, middle - round));
             path.quadratic_curve_to(
-                Point::new(x + round, middle),
-                Point::new(x + round + 6.0, middle),
+                Point::new(x + round + 10.0 * bracket.bulge, middle),
+                Point::new(x + round + 6.0 + 10.0 * bracket.bulge, middle),
             );
             path.quadratic_curve_to(
-                Point::new(x + round, middle),
+                Point::new(x + round + 10.0 * bracket.bulge, middle),
                 Point::new(x + round, middle + round),
             );
             path.line_to(Point::new(x + round, foot - round));
