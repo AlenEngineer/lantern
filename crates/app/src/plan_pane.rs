@@ -1223,6 +1223,28 @@ impl App {
                 rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
             }
         }
+        // Under the open plan, the other plans, each folded into one row
+        // as a bracket: pressed, it opens in this one's place.
+        if tree && moving.is_none() {
+            let others: Vec<&Entry> = self
+                .plans
+                .entries
+                .iter()
+                .filter(|entry| {
+                    Some(entry.path.as_path()) != self.plans.file()
+                        && entry
+                            .summary
+                            .as_ref()
+                            .is_ok_and(|summary| !summary.template)
+                })
+                .collect();
+            if !others.is_empty() {
+                rows = rows.push(Space::new().height(14));
+            }
+            for entry in others {
+                rows = rows.push(self.folded_plan(entry, lanes.curl));
+            }
+        }
         // The spans beside the line: each from the first to the last of
         // its steps in sight.
         let id_at = |at: usize| plan.steps()[at].id;
@@ -4188,6 +4210,129 @@ fn pace_tone(pace: Pace) -> Tone {
 /// A saved plan in the list. Clicking a plan opens it; clicking a template
 /// starts a new plan from it, and its Edit opens the template itself. The
 /// star makes a plan a template, or not.
+impl App {
+    /// A plan that is not open, as one folded row: its steps gathered
+    /// into a stacked dot, how many and when it was saved, and its
+    /// bracket with its name. Pressed, it opens.
+    fn folded_plan<'a>(&self, entry: &'a Entry, curl: f32) -> Element<'a, Message> {
+        let p = self.palette;
+        let Ok(summary) = &entry.summary else {
+            return Space::new().into();
+        };
+        let when = ago(SystemTime::now()
+            .duration_since(entry.modified)
+            .unwrap_or_default());
+        let ink = p.on_surface_variant;
+        let mark = |shape: Shape, wide: f32| {
+            iced::widget::canvas(Marked { shape, ink })
+                .width(wide)
+                .height(ROW_TALL)
+        };
+        let line = row![
+            Space::new().width(curl),
+            mark(Shape::Stack, RAIL),
+            container(
+                row![
+                    single_line(count(summary.steps, "step"))
+                        .size(BODY)
+                        .color(ink),
+                    Space::new().width(Fill),
+                    text(when).size(META).color(ink),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([0, 10]),
+            mark(Shape::Brace, track::BRACE),
+            container(
+                single_line(summary.title.clone())
+                    .size(META)
+                    .font(BOLD)
+                    .color(ink)
+            )
+            .width(track::LABEL)
+            .center_y(ROW_TALL),
+        ]
+        .height(ROW_TALL)
+        .align_y(Alignment::Center);
+        mouse_area(line)
+            .on_press(Message::OpenPlan(entry.path.clone()))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    }
+}
+
+/// What a folded plan's row draws: its steps' stacked dot, or its brace.
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    Stack,
+    Brace,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Marked {
+    shape: Shape,
+    ink: iced::Color,
+}
+
+impl<Message> iced::widget::canvas::Program<Message> for Marked {
+    type State = ();
+
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &iced::Renderer,
+        _: &iced::Theme,
+        bounds: Rectangle,
+        _: mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        use iced::widget::canvas::{Frame, Path, Stroke};
+        let mut frame = Frame::new(renderer, bounds.size());
+        let ink = self.ink;
+        match self.shape {
+            Shape::Stack => {
+                let y = RAIL_TOP + RAIL_DOT / 2.0;
+                let x = bounds.width / 2.0;
+                for (aside, fade) in [(-5.0, 0.35), (0.0, 0.6), (5.0, 1.0)] {
+                    frame.stroke(
+                        &Path::circle(iced::Point::new(x + aside, y), 4.0),
+                        Stroke::default().with_width(1.6).with_color(iced::Color {
+                            a: ink.a * fade,
+                            ..ink
+                        }),
+                    );
+                }
+            }
+            Shape::Brace => {
+                let (x, top, foot) = (3.0, 6.0, bounds.height - 6.0);
+                let middle = (top + foot) / 2.0;
+                let round = 7.0_f32.min((foot - top) / 4.0);
+                let brace = Path::new(|path| {
+                    use iced::Point;
+                    path.move_to(Point::new(x, top));
+                    path.quadratic_curve_to(
+                        Point::new(x + round, top),
+                        Point::new(x + round, top + round),
+                    );
+                    path.line_to(Point::new(x + round, middle - round));
+                    path.quadratic_curve_to(
+                        Point::new(x + round, middle),
+                        Point::new(x + round + 6.0, middle),
+                    );
+                    path.quadratic_curve_to(
+                        Point::new(x + round, middle),
+                        Point::new(x + round, middle + round),
+                    );
+                    path.line_to(Point::new(x + round, foot - round));
+                    path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
+                });
+                frame.stroke(&brace, Stroke::default().with_width(1.6).with_color(ink));
+            }
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
 fn saved_plan(p: Palette, entry: &Entry, when: String, picked: bool) -> Element<'_, Message> {
     let (title, detail, color, template) = match &entry.summary {
         Ok(summary) => (
