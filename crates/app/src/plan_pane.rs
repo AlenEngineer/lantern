@@ -41,10 +41,10 @@ pub(crate) const TARGET_BOX: &str = "plan-target";
 
 /// The rail beside the steps: how wide its column is, its dots, its
 /// line, and how far down a row its dot sits, level with the step's name.
-const RAIL: f32 = 20.0;
-const RAIL_DOT: f32 = 10.0;
+pub(crate) const RAIL: f32 = 20.0;
+pub(crate) const RAIL_DOT: f32 = 10.0;
 const RAIL_LINE: f32 = 2.0;
-const RAIL_TOP: f32 = 15.0;
+pub(crate) const RAIL_TOP: f32 = 15.0;
 /// How far the ring round the dot of the step that is up stands off it.
 const RAIL_RING: f32 = 4.0;
 
@@ -224,7 +224,7 @@ fn apart<'a>(row: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
 
 /// Where a step is in the service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Place {
+pub(crate) enum Place {
     Done,
     Current,
     Next,
@@ -804,6 +804,14 @@ impl App {
             rows = rows.push(plans_own(self.time_row(plan, timing), can));
         } else if running {
             rows = rows.push(plans_own(self.run_time_row(plan, timing), can));
+        }
+        // A service locked is watched, not changed: its rail is the road
+        // it takes.
+        if running && !can {
+            rows = rows.push(self.road_rail(plan, timing, issues));
+            return mouse_area(scrolling(rows).id(ROWS))
+                .on_exit(Message::LeftPlan)
+                .into();
         }
         // In a service with a start time, a section still to come says
         // when it is due.
@@ -2014,7 +2022,7 @@ impl App {
         }
     }
 
-    fn step_row(
+    pub(crate) fn step_row(
         &self,
         step: &Step,
         place: Place,
