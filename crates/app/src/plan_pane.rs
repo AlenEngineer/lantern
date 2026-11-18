@@ -84,10 +84,14 @@ struct Side<'a> {
     braced: &'a [Braced],
     lanes: u8,
     wide: bool,
+    /// How much wider the innermost brackets' room is while a picked
+    /// section's card is in it.
+    more: f32,
 }
 
-/// How wide the card of a picked section is, where there is room.
-const CARD: f32 = 214.0;
+/// How wide the card of a picked section is: a little more than the
+/// room its name had.
+const CARD: f32 = track::LABEL + 46.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -536,10 +540,19 @@ impl App {
         let side_wide = braced
             .iter()
             .any(|braced| braced.lane > 0 && own_of(braced).is_none());
+        // A picked section's card takes the room its name had, and more:
+        // the steps give way to it, so it covers none of them.
+        let carded = braced
+            .iter()
+            .any(|braced| self.selected == Some(plan.steps()[braced.at].id));
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
             wide: side_wide,
+            more: match carded {
+                true => CARD - track::LABEL,
+                false => 0.0,
+            },
         };
         let mut stops: Vec<track::Stop> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
@@ -732,7 +745,7 @@ impl App {
                     laid.section == Some(id) || (laid.first <= index && index < laid.last)
                 };
                 let arrow = row![
-                    self.loop_lanes(lanes, &covers, false),
+                    self.loop_lanes(lanes, &covers, false, None),
                     mark,
                     self.order_lanes(lanes, &covers, false, None),
                     Space::new().width(inward),
@@ -1011,6 +1024,7 @@ impl App {
                 color,
                 mark,
                 pulled,
+                shift: 0.0,
             })
         };
         // In a service, the span the flow goes back round when the step
@@ -1100,14 +1114,31 @@ impl App {
                     track::Mark::Crossed,
                     true,
                 )),
-                // The part that would be rubbed out, over the order it
-                // is in.
-                Some(Would::Rub { first, last }) => drawn_orders.extend(span(
-                    &would(first, last, &[]),
-                    p.error,
-                    track::Mark::Nothing,
-                    true,
-                )),
+                // The part that would be rubbed out, over the loop or
+                // the order it is in.
+                Some(Would::Rub { first, last }) if pull.side == Side::Right => drawn_orders
+                    .extend(span(
+                        &would(first, last, &[]),
+                        p.error,
+                        track::Mark::Nothing,
+                        true,
+                    )),
+                Some(Would::Rub { first, last }) => {
+                    let lane = pull
+                        .line
+                        .and_then(|line| {
+                            lanes
+                                .loops
+                                .iter()
+                                .find(|laid| laid.of == FlowOf::Span(line))
+                        })
+                        .map_or(0, |laid| laid.lane);
+                    let rubbed = Laid {
+                        lane,
+                        ..would(first, last, &[])
+                    };
+                    drawn_loops.extend(span(&rubbed, p.error, track::Mark::Nothing, true));
+                }
                 Some(Would::Not { first, last, .. }) if pull.side == Side::Right => drawn_orders
                     .extend(span(
                         &would(first, last, lanes.orders),
@@ -1187,7 +1218,11 @@ impl App {
                     id: step.id,
                     first: id_at(first),
                     last: id_at(last),
-                    offset: track::brace_at(braced.lane),
+                    offset: track::brace_at(braced.lane)
+                        + match braced.lane {
+                            0 => 0.0,
+                            _ => side.more,
+                        },
                     // One that holds others writes beside its own steps.
                     beside: Some(braced)
                         .filter(|braced| braced.lane > 0)
@@ -1228,25 +1263,41 @@ impl App {
                         *places.get(&track::Key::Side(id_at(last)))?,
                     )
                 };
-                let wide = CARD.min(origin.width - 8.0);
+                let wide = CARD;
                 let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
+                // Right of the innermost brace, where the names are.
+                let left = origin.width - track::side_room(side.lanes, side.wide) - side.more
+                    + track::BRACE;
                 let section = timing.sections.iter().find(|s| s.id == step.id);
-                let card = container(self.section_row(
-                    plan,
-                    step,
-                    section,
-                    due.as_ref().and_then(|due| due(step.id)),
-                ))
-                .width(wide)
-                .padding(4)
-                .style(look::card(p, 0.0, 12.0));
+                let card = container(self.section_card(plan, step, section))
+                    .width(wide)
+                    .padding(8)
+                    .style(look::card(p, 0.0, 12.0));
                 Some(
                     iced::widget::pin(card)
-                        .x((origin.width - wide - 4.0).max(0.0))
-                        .y((middle - 34.0).max(0.0))
+                        .x(left.max(0.0))
+                        .y((middle - 52.0).max(0.0))
                         .into(),
                 )
             });
+        // A line that was pulled where none can be stays a moment, where
+        // it was, shaking and flashing while why is said.
+        if let (Some(aside), Some((pulled_to, first, last))) = (alarm, self.alarm_pull) {
+            let refused = Laid {
+                of: FlowOf::Plan,
+                first,
+                last,
+                lane: 0,
+                section: None,
+            };
+            if let Some(mut line) = span(&refused, alarm_ink, track::Mark::Nothing, true) {
+                line.shift = aside;
+                match pulled_to {
+                    crate::rail::Side::Right => drawn_orders.push(line),
+                    _ => drawn_loops.push(line),
+                }
+            }
+        }
         let picture = track::Picture {
             stops,
             loops: drawn_loops,
@@ -1790,7 +1841,8 @@ impl App {
             text(length::clock(elapsed))
                 .size(22)
                 .font(BOLD)
-                .color(p.on_surface),
+                .color(p.on_surface)
+                .width(widgets::steady(&length::clock(elapsed), 22.0)),
             container(
                 text(format!("◎ {}", length::clock(against)))
                     .size(META)
@@ -1818,23 +1870,24 @@ impl App {
                 } else {
                     ("↓", p.primary)
                 };
+                let late = format!(
+                    "{sign} {}",
+                    length::clock(Duration::from_secs(late.unsigned_abs()))
+                );
                 top = top.push(
-                    text(format!(
-                        "{sign} {}",
-                        length::clock(Duration::from_secs(late.unsigned_abs()))
-                    ))
-                    .size(META)
-                    .font(BOLD)
-                    .color(colour),
+                    text(late.clone())
+                        .size(META)
+                        .font(BOLD)
+                        .color(colour)
+                        .width(widgets::steady(&late, META)),
                 );
             }
+            let ends = format!("→ {}", length::clock_of_day(length::now_of_day() + left));
             top = top.push(
-                text(format!(
-                    "→ {}",
-                    length::clock_of_day(length::now_of_day() + left)
-                ))
-                .size(META)
-                .color(p.on_surface_variant),
+                text(ends.clone())
+                    .size(META)
+                    .color(p.on_surface_variant)
+                    .width(widgets::steady(&ends, META)),
             );
         }
         let parts = timing
@@ -1964,10 +2017,12 @@ impl App {
                 false => ("↓", against - filled, p.tertiary),
             };
             if !off.is_zero() {
+                let off = format!("{sign} {}", length::clock(off));
                 under = under.push(
-                    text(format!("{sign} {}", length::clock(off)))
+                    text(off.clone())
                         .size(META)
-                        .color(colour),
+                        .color(colour)
+                        .width(widgets::steady(&off, META)),
                 );
             }
         }
@@ -2456,7 +2511,7 @@ impl App {
         // on a line there opens what is that span's own.
         let pulling = would.is_some();
         let covers = |laid: &Laid| (laid.first..=laid.last).contains(&index);
-        let curl = self.loop_lanes(lanes, &covers, pulling);
+        let curl = self.loop_lanes(lanes, &covers, pulling, Some(step.id));
         let drawn = self.order_lanes(lanes, &covers, pulling, Some(step.id));
         // The rail says when the pointer is on it, for a dot pulled here
         // and for a ring opened here, and where it is, for what is drawn
@@ -2473,6 +2528,103 @@ impl App {
         .on_exit(Message::Rail(crate::rail::Act::Left(id)))
         .into();
         (rail, stop)
+    }
+
+    /// What a picked section is set to and what can be done to it, one
+    /// under another so it is no wider than its bracket's name was: its
+    /// name, the time it is given (pressed, it is set), the time it
+    /// takes, and filling it, renaming it and taking it out.
+    fn section_card(
+        &self,
+        plan: &Plan,
+        step: &Step,
+        timing: Option<&SectionTiming>,
+    ) -> Element<'_, Message> {
+        let p = self.palette;
+        let id = step.id;
+        let budget = match step.action {
+            Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+            _ => None,
+        };
+        let name: Element<'_, Message> = match self.editing(id, Part::Name) {
+            true => self.name_field(step),
+            false => container(
+                single_line(step.label.clone())
+                    .size(BODY)
+                    .font(BOLD)
+                    .color(p.primary),
+            )
+            .width(Fill)
+            .clip(true)
+            .into(),
+        };
+        let goal: Element<'_, Message> = match self.editing(id, Part::Length) {
+            true => self.section_time_field(id, budget),
+            false => button(
+                text(match budget {
+                    Some(budget) => format!("◎ {}", length::clock(budget)),
+                    None => "◎ —".to_string(),
+                })
+                .size(META)
+                .color(p.on_surface),
+            )
+            .padding([2, 8])
+            .on_press(Message::EditStep(Some((id, Part::Length))))
+            .style(look::pill(p, Tone::Plain))
+            .into(),
+        };
+        let took = match timing.map(|timing| timing.phase) {
+            Some(Phase::Running { elapsed, .. }) => elapsed,
+            Some(Phase::Done { took }) => took.unwrap_or_default(),
+            Some(Phase::Coming { planned }) => planned,
+            None => self.planned(plan, id),
+        };
+        let late = budget.is_some_and(|budget| took > budget);
+        let sum = text(format!("Σ {}", length::clock(took)))
+            .size(META)
+            .font(BOLD)
+            .color(if late { p.error } else { p.on_surface });
+        fn act<'a>(
+            p: Palette,
+            mark: Element<'a, Message>,
+            does: Message,
+            says: &str,
+        ) -> Element<'a, Message> {
+            hinted(
+                p,
+                button(mark)
+                    .padding([3, 7])
+                    .on_press(does)
+                    .style(look::row(p, Tone::Plain)),
+                says.to_string(),
+                tooltip::Position::Top,
+            )
+        }
+        let mut acts = row![].spacing(2).align_y(Alignment::Center);
+        if self.mode == crate::mode::Mode::Plan {
+            acts = acts.push(act(
+                p,
+                look::icon(Icon::Fill, 14.0, p.primary).into(),
+                Message::Fill(crate::fill_panel::FillEdit::Open(id)),
+                "Fill it from the library",
+            ));
+        }
+        if self.can_edit() {
+            acts = acts
+                .push(act(
+                    p,
+                    look::icon(Icon::Pencil, 13.0, p.primary).into(),
+                    Message::EditStep(Some((id, Part::Name))),
+                    "Rename",
+                ))
+                .push(act(
+                    p,
+                    text("✕").size(META).color(p.on_surface_variant).into(),
+                    Message::Remove(id),
+                    "Take the section out; its steps stay",
+                ));
+        }
+        column![name, goal, sum, acts].spacing(6).into()
     }
 
     /// The room right of the step at `index` for the brackets of the
@@ -2516,7 +2668,10 @@ impl App {
         // and the room right of those, which is the outermost's.
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
         if side.lanes > 0 {
-            parts.push(part(track::BRACE + track::LABEL, covering(None)));
+            parts.push(part(
+                track::BRACE + track::LABEL + side.more,
+                covering(None),
+            ));
         }
         for lane in 1..side.lanes {
             parts.push(part(track::BRACE, covering(Some(lane))));
@@ -2532,7 +2687,7 @@ impl App {
             track::Key::Side(plan.steps()[index].id),
             places,
             row(parts)
-                .width(track::side_room(side.lanes, side.wide))
+                .width(track::side_room(side.lanes, side.wide) + side.more)
                 .height(Fill),
         )
     }
@@ -2546,6 +2701,7 @@ impl App {
         lanes: Lanes<'_>,
         covers: &dyn Fn(&Laid) -> bool,
         quiet: bool,
+        beside: Option<StepId>,
     ) -> Element<'a, Message> {
         let rings = self.can_edit() && !quiet;
         let parts = (0..lanes.loop_lanes).rev().map(|lane| {
@@ -2566,12 +2722,18 @@ impl App {
                         .on_right_press(Message::Rail(crate::rail::Act::Ring(
                             crate::rail::RingOn::Loop(laid.of),
                         )))
+                        .on_double_click(Message::Rail(crate::rail::Act::Unloop(laid.of)))
                         .interaction(mouse::Interaction::Pointer);
-                    // Held and moved, the line carries all it holds.
-                    match laid.of {
-                        FlowOf::Span(span) if self.mode == crate::mode::Mode::Plan => line
-                            .on_press(Message::Rail(crate::rail::Act::CarrySpan(span)))
-                            .into(),
+                    // Beside a step, pressed and pulled along, that part
+                    // of the loop is rubbed out; let go where it was
+                    // pressed, the steps it holds are picked.
+                    match (laid.of, beside) {
+                        (FlowOf::Span(span), Some(step))
+                            if self.mode == crate::mode::Mode::Plan =>
+                        {
+                            line.on_press(Message::Rail(crate::rail::Act::PressLoop(step, span)))
+                                .into()
+                        }
                         _ => line.into(),
                     }
                 }
@@ -2617,7 +2779,13 @@ impl App {
                         .interaction(mouse::Interaction::Pointer);
                     match beside.filter(|_| pulls) {
                         Some(step) => line
-                            .on_press(Message::Rail(crate::rail::Act::PressOrder(step)))
+                            .on_press(Message::Rail(crate::rail::Act::PressOrder(
+                                step,
+                                match laid.of {
+                                    FlowOf::Span(span) => Some(span),
+                                    _ => None,
+                                },
+                            )))
                             .into(),
                         None => line.into(),
                     }

@@ -548,6 +548,9 @@ struct App {
     /// loops and drawn orders that would have been cut: they shake and
     /// flash while the refusal is said.
     pub(crate) alarm: (Vec<StepId>, Vec<lantern_engine::SpanId>),
+    /// The line that was pulled where none can be, the same way: which
+    /// side it was on, and from which row to which.
+    pub(crate) alarm_pull: Option<(rail::Side, usize, usize)>,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -796,6 +799,7 @@ impl App {
             picked: Vec::new(),
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
+            alarm_pull: None,
             attached: None,
             left: None,
             config,
@@ -1469,9 +1473,13 @@ impl App {
                 self.drag = None;
                 self.pull = Some(rail::Pull::new(step, toggle));
             }
-            Message::Rail(rail::Act::PressOrder(step)) => {
+            Message::Rail(rail::Act::PressOrder(step, line)) => {
                 self.drag = None;
-                self.pull = Some(rail::Pull::on_order(step));
+                self.pull = Some(rail::Pull::on_order(step, line));
+            }
+            Message::Rail(rail::Act::PressLoop(step, line)) => {
+                self.drag = None;
+                self.pull = Some(rail::Pull::on_loop(step, line));
             }
             Message::Rail(rail::Act::Ring(on)) => {
                 self.pull = None;
@@ -1497,6 +1505,9 @@ impl App {
                 });
             }
             Message::Rail(rail::Act::Unloop(of)) => {
+                // Its line was pressed twice: the steps the first press
+                // picked are let go.
+                self.picked.clear();
                 self.ring = None;
                 self.repeat_until.clear();
                 self.remember(None);
@@ -1504,6 +1515,9 @@ impl App {
                 return self.preload();
             }
             Message::Rail(rail::Act::Unshuffle(of)) => {
+                // Its line was pressed twice: the steps the first press
+                // picked are let go.
+                self.picked.clear();
                 self.ring = None;
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| plan.unshuffle(of));
@@ -1526,11 +1540,35 @@ impl App {
                 let pull = self.pull.take().expect("checked above");
                 match (pull.moving, pull.would, pull.toggle) {
                     (false, _, Some(on)) => return self.update(Message::SetAdvance(pull.from, on)),
+                    // A line let go where it was pressed: the steps it holds
+                    // are picked together, to be carried as one.
+                    (false, _, None) if pull.line.is_some() => {
+                        let steps = pull
+                            .line
+                            .map(|line| self.engine.0.plan().span_steps(line))
+                            .unwrap_or_default();
+                        if let Some(first) = steps.first() {
+                            self.selected = Some(*first);
+                            self.picked = steps;
+                        }
+                    }
+                    // Out of the loop whose line it began on.
+                    (true, Some(rail::Would::Rub { first, last }), _) if pull.rubs => {
+                        if let Some(line) = pull.line {
+                            self.remember(None);
+                            let _ = self.engine.0.edit_plan(|plan| {
+                                let (a, b) = (plan.steps()[first].id, plan.steps()[last].id);
+                                plan.rub_loop(line, a, b)
+                            });
+                            self.motion.changed(pull.from);
+                        }
+                        return self.preload();
+                    }
                     (true, Some(rail::Would::Loop { first, last }), _) => {
                         self.remember(None);
                         let looped = self.engine.0.edit_plan(|plan| {
                             let (a, b) = (plan.steps()[last].id, plan.steps()[first].id);
-                            plan.loop_over(a, b)
+                            plan.loop_by_hand(a, b)
                         });
                         if looped.is_ok() {
                             self.motion.changed(pull.from);
@@ -1569,7 +1607,11 @@ impl App {
                         }
                         return self.preload();
                     }
-                    (true, Some(rail::Would::Not { why, .. }), _) => {
+                    // What can't be: its line shakes and flashes where it
+                    // was pulled, while why is said.
+                    (true, Some(rail::Would::Not { why, first, last }), _) => {
+                        self.alarm = (Vec::new(), Vec::new());
+                        self.alarm_pull = Some((pull.side, first, last));
                         self.motion.refuse(rail::why_not(why, pull.side));
                     }
                     _ => {}
@@ -1585,9 +1627,7 @@ impl App {
                     .hovered
                     .filter(|_| self.rail_over.is_none() && self.pull.is_none())
                     .filter(|(step, _)| self.can_edit() && (!running || self.ahead(&plan, *step)))
-                    .map(|(step, _)| Drag::new(&plan, step))
-                    // Picked up by its line just now: that stays.
-                    .or_else(|| self.drag.take().filter(|drag| drag.by_line));
+                    .map(|(step, _)| Drag::new(&plan, step));
                 // One of the steps picked together carries them all.
                 if let Some(drag) = self.drag.as_mut()
                     && !drag.is_section()
@@ -1636,6 +1676,7 @@ impl App {
                                 let _ = self.engine.0.carry(&drag.carried, place, how);
                             }
                             Err(lantern_engine::CarryError::Crosses(spans)) => {
+                                self.alarm_pull = None;
                                 self.alarm = (drag.carried.clone(), spans);
                                 self.motion.refuse(
                                     "It would cut a loop or a drawn order. Ctrl cuts it loose, Alt strips its flows",
@@ -1643,6 +1684,7 @@ impl App {
                                 return Task::none();
                             }
                             Err(_) => {
+                                self.alarm_pull = None;
                                 self.alarm = (drag.carried.clone(), Vec::new());
                                 self.motion.refuse("It can't go there");
                                 return Task::none();
@@ -1945,17 +1987,6 @@ impl App {
                         }
                         _ => "No section can be made there",
                     }),
-                }
-            }
-            Message::Rail(rail::Act::CarrySpan(span)) => {
-                let plan = self.engine.0.plan();
-                let steps = plan.span_steps(span);
-                if let Some(first) = steps.first().filter(|_| self.can_edit()) {
-                    let mut drag = Drag::new(&plan, *first);
-                    drag.carried = steps;
-                    drag.by_line = true;
-                    self.pull = None;
-                    self.drag = Some(drag);
                 }
             }
             Message::Select(step) => {

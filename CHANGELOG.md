@@ -420,6 +420,19 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A loop is worked on along its own line, as a drawn order is: pressed
+  and pulled along, that part of it is rubbed out, and what is left
+  either side still comes again; pressed twice, all of it goes. A loop
+  pulled over a part of another becomes one loop with it. A line pressed
+  once picks the steps it holds, to be carried together.
+- What can't be shakes and flashes where it is: the line that was pulled,
+  not only the words that say why. A line to a step that is aside leans
+  to it, like a thread.
+- A picked section's card is beside its bracket and covers no step: its
+  name, the time it is given, the time it takes, and filling, renaming
+  and taking it out.
+- The clocks that count keep their width, so what is beside them stays
+  still.
 - Steps are picked together: Ctrl and a click adds one or drops it, Shift
   and a click takes all from the selected step to there. A mark beside
   the last of them makes a section of them, and asks its name. Held and

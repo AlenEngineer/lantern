@@ -288,6 +288,8 @@ pub struct Span {
     pub mark: Mark,
     /// One a pull would make: it is not drawn in, it is there.
     pub pulled: bool,
+    /// How far aside it is, as it shakes.
+    pub shift: f32,
 }
 
 /// Everything the canvas draws.
@@ -740,6 +742,19 @@ fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: 
         return;
     }
     let (a, b) = (along(run, from), along(run, to));
+    // A line that leans is drawn as one stroke.
+    if (a.x - b.x).abs() > 0.01 && (a.y - b.y).abs() > 0.01 {
+        frame.stroke(
+            &Path::line(a, b),
+            Stroke::default()
+                .with_color(color)
+                .with_width(match hollow {
+                    true => SIDE * 2.0,
+                    false => LINE,
+                }),
+        );
+        return;
+    }
     if !hollow {
         let (corner, size) = bar(a, b, LINE);
         frame.fill_rectangle(corner, size, color);
@@ -788,14 +803,10 @@ fn way(picture: &Picture, n: usize, at: &dyn Fn(Key) -> Option<Rectangle>) -> Ve
         Some((next, there)) => {
             let to = (there.center_y() - next.dot.reach()).min(limit(next.cut, at));
             let over = there.center_x();
-            // Across first, where that one is further in or out.
-            if (over - x).abs() > 0.5 {
-                let turn = (to - BEND * 2.0).max(y);
-                down(&mut runs, x, y, turn);
-                runs.push((Point::new(x, turn), Point::new(over, turn)));
-                down(&mut runs, over, turn, to);
-            } else {
-                down(&mut runs, x, y, to);
+            // Straight from the one to the other, like a thread: where
+            // one of them is aside (as it shakes), the line leans.
+            if to > y {
+                runs.push((Point::new(x, y), Point::new(over, to)));
             }
         }
         None => {
@@ -1204,7 +1215,7 @@ fn curl(
         ..Stroke::default().with_color(color).with_width(1.5)
     };
     let rail = ends.last.center_x();
-    let x = rail - LOOP_FIRST - LOOP_STEP * f32::from(span.lane);
+    let x = rail - LOOP_FIRST - LOOP_STEP * f32::from(span.lane) + span.shift;
     let (top, bottom) = (ends.first.center_y(), ends.last.center_y());
     // Where it turns, or runs on out of sight where its own end is
     // folded away.
@@ -1353,7 +1364,7 @@ fn wander(
         line_join: canvas::LineJoin::Round,
         ..Stroke::default().with_color(color).with_width(1.5)
     };
-    let x = ends.last.center_x() + ORDER_FIRST + ORDER_STEP * f32::from(span.lane);
+    let x = ends.last.center_x() + ORDER_FIRST + ORDER_STEP * f32::from(span.lane) + span.shift;
     let top = match (span.starts, ends.first_row) {
         (false, Some(row)) => row.y,
         _ => ends.first.center_y(),

@@ -27,11 +27,12 @@ pub enum Act {
         toggle: Option<bool>,
     },
     /// The line of a drawn order was pressed beside a step: pulled along
-    /// from there, it draws more of the order or rubs some of it out.
-    PressOrder(StepId),
-    /// The line of a loop or a drawn order was pressed: held and moved,
-    /// all it holds is carried.
-    CarrySpan(lantern_engine::SpanId),
+    /// from there, it draws more of the order or rubs some of it out;
+    /// let go where it was pressed, the steps it holds are picked.
+    PressOrder(StepId, Option<lantern_engine::SpanId>),
+    /// The same for the line of a loop: pulled along, that part of the
+    /// loop is rubbed out.
+    PressLoop(StepId, lantern_engine::SpanId),
     /// The pointer came onto a step's rail, or left it.
     Over(StepId),
     Left(StepId),
@@ -718,6 +719,11 @@ pub struct Pull {
     /// The side it keeps whichever way it goes: one begun on a line, not
     /// on a dot, is about that line.
     held: Option<Side>,
+    /// The loop or drawn order whose line it began on.
+    pub line: Option<lantern_engine::SpanId>,
+    /// It began on a loop's line: what it goes over is rubbed out of
+    /// that loop.
+    pub rubs: bool,
     /// The step it was last over: it stays the one, past the rail's
     /// edge where there is no row under the pointer.
     over: Option<StepId>,
@@ -741,6 +747,8 @@ impl Pull {
             from,
             side: Side::Along,
             held: None,
+            line: None,
+            rubs: false,
             over: None,
             toggle,
             origin: None,
@@ -752,10 +760,23 @@ impl Pull {
 
     /// A press on the line of a drawn order beside `from`: a pull from
     /// there is to that side, wherever it goes.
-    pub fn on_order(from: StepId) -> Pull {
+    pub fn on_order(from: StepId, line: Option<lantern_engine::SpanId>) -> Pull {
         Pull {
             side: Side::Right,
             held: Some(Side::Right),
+            line,
+            ..Pull::new(from, None)
+        }
+    }
+
+    /// A press on the line of the loop `line` beside `from`: a pull from
+    /// there rubs what it goes over out of that loop.
+    pub fn on_loop(from: StepId, line: lantern_engine::SpanId) -> Pull {
+        Pull {
+            side: Side::Left,
+            held: Some(Side::Left),
+            line: Some(line),
+            rubs: true,
             ..Pull::new(from, None)
         }
     }
@@ -803,8 +824,18 @@ impl Pull {
                         Err(why) => Would::Not { first, last, why },
                     },
                     Side::Along if to > from => Would::Join { first, last },
+                    // Begun on a loop's line: out of that loop.
+                    Side::Left if self.rubs => match self.line {
+                        Some(line) => or_not(
+                            plan.would_rub_loop(line, self.from, over),
+                            Would::Rub { first, last },
+                        ),
+                        None => return None,
+                    },
+                    // A loop drawn by hand: new, or one with a loop it
+                    // takes in a part of.
                     Side::Left | Side::Along => or_not(
-                        plan.would_loop_over(self.from, over),
+                        plan.would_loop_by_hand(self.from, over).map(|_| ()),
                         Would::Loop { first, last },
                     ),
                 })
