@@ -129,7 +129,7 @@ const FOOT: f32 = 16.0;
 
 /// How wide the card of a picked section is: a little more than the
 /// room its name had.
-const CARD: f32 = track::LABEL + 46.0;
+const CARD: f32 = track::LABEL + 64.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -1588,9 +1588,24 @@ impl App {
                         (false, false) => p.on_surface,
                     },
                 ));
-                // In a service, when it is due.
-                if let Some(due) = due.as_ref().and_then(|due| due(step.id)).filter(|_| !on) {
-                    lines.push((track::Sign::Clock, due.to_string(), p.on_surface_variant));
+                // The time of day it should be over by, in the colour of
+                // what is wrong where it is expected to end after; else, in
+                // a service, when it is due.
+                match step.done_by() {
+                    Some(by) => lines.push((
+                        track::Sign::Clock,
+                        by.to_string(),
+                        match section.and_then(SectionTiming::late) {
+                            Some(_) => p.error,
+                            None => p.on_surface_variant,
+                        },
+                    )),
+                    None => {
+                        if let Some(due) = due.as_ref().and_then(|due| due(step.id)).filter(|_| !on)
+                        {
+                            lines.push((track::Sign::Clock, due.to_string(), p.on_surface_variant));
+                        }
+                    }
                 }
                 let picked = self.selected == Some(step.id);
                 Some(track::Bracket {
@@ -3139,32 +3154,112 @@ impl App {
             .clip(true)
             .into(),
         };
+        let can = self.can_edit();
+        let quiet = p.on_surface_variant;
+        let small = |label: &'static str, does: Message| -> Element<'_, Message> {
+            button(text(label).size(META).font(BOLD).color(p.on_surface))
+                .padding([1, 7])
+                .on_press_maybe(can.then_some(does))
+                .style(look::pill(p, Tone::Plain))
+                .into()
+        };
+        // The time it is given: a minute less or more each press, or
+        // typed.
+        let goal_words = match budget {
+            Some(budget) => length::clock(budget),
+            None => "—".to_string(),
+        };
         let goal: Element<'_, Message> = match self.editing(id, Part::Length) {
             true => self.section_time_field(id, budget),
+            false => button(text(goal_words).size(META).font(BOLD).color(p.on_surface))
+                .padding([2, 8])
+                .on_press_maybe(can.then_some(Message::EditStep(Some((id, Part::Length)))))
+                .style(look::pill(p, Tone::Plain))
+                .into(),
+        };
+        let goal = row![
+            look::icon(Icon::Target, 13.0, quiet),
+            small("−", Message::SectionGoal(id, -60)),
+            goal,
+            small("+", Message::SectionGoal(id, 60)),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
+        // The time of day it should be over by, set or typed.
+        let done_by = step.done_by();
+        let by: Element<'_, Message> = match self.editing(id, Part::DoneBy) {
+            true => text_input(
+                "11:30",
+                self.done_typed
+                    .as_ref()
+                    .filter(|(of, _)| *of == id)
+                    .map_or("", |(_, typed)| typed.as_str()),
+            )
+            .id(crate::plan_edit::part_id(id, Part::DoneBy))
+            .on_input(move |typed| Message::DoneBy(id, typed))
+            .on_submit(Message::EditStep(None))
+            .size(META)
+            .width(62)
+            .padding([2, 6])
+            .into(),
             false => button(
-                text(match budget {
-                    Some(budget) => format!("◎ {}", length::clock(budget)),
-                    None => "◎ —".to_string(),
-                })
-                .size(META)
-                .color(p.on_surface),
+                text(done_by.map_or("—".to_string(), |time| time.to_string()))
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.on_surface),
             )
             .padding([2, 8])
-            .on_press(Message::EditStep(Some((id, Part::Length))))
+            .on_press_maybe(can.then_some(Message::EditStep(Some((id, Part::DoneBy)))))
             .style(look::pill(p, Tone::Plain))
             .into(),
         };
+        let by = row![look::icon(Icon::Clock, 13.0, quiet), by]
+            .spacing(4)
+            .align_y(Alignment::Center);
         let took = match timing.map(|timing| timing.phase) {
             Some(Phase::Running { elapsed, .. }) => elapsed,
             Some(Phase::Done { took }) => took.unwrap_or_default(),
             Some(Phase::Coming { planned }) => planned,
             None => self.planned(plan, id),
         };
-        let late = budget.is_some_and(|budget| took > budget);
-        let sum = text(format!("Σ {}", length::clock(took)))
-            .size(META)
-            .font(BOLD)
-            .color(if late { p.error } else { p.on_surface });
+        let over = budget.is_some_and(|budget| took > budget);
+        let mut sum = row![
+            text(format!("Σ {}", length::clock(took)))
+                .size(META)
+                .font(BOLD)
+                .color(if over { p.error } else { p.on_surface })
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        // How far from the time it is given: over in the colour of what is
+        // wrong, under quietly.
+        if let Some(budget) = budget.filter(|budget| *budget != took) {
+            let (sign, by, ink) = match took > budget {
+                true => ("+", took - budget, p.error),
+                false => ("−", budget - took, quiet),
+            };
+            sum = sum.push(
+                text(format!("{sign}{}", length::clock(by)))
+                    .size(META)
+                    .color(ink),
+            );
+        }
+        // When it is expected to end, and how far past its time of day
+        // that is.
+        let ends: Option<Element<'_, Message>> = timing.and_then(|timing| {
+            let ends = timing.ends?;
+            Some(match timing.late() {
+                Some(late) => text(format!(
+                    "ends {ends}, {} past {}",
+                    length::clock(late),
+                    timing.done_by?
+                ))
+                .size(META)
+                .color(p.error)
+                .into(),
+                None => text(format!("ends {ends}")).size(META).color(quiet).into(),
+            })
+        });
         fn act<'a>(
             p: Palette,
             mark: Element<'a, Message>,
@@ -3211,7 +3306,11 @@ impl App {
                     "Take the section out; its steps stay",
                 ));
         }
-        column![name, goal, sum, acts].spacing(6).into()
+        let mut card = column![name, goal, by, sum].spacing(6);
+        if let Some(ends) = ends {
+            card = card.push(ends);
+        }
+        card.push(acts).into()
     }
 
     /// The room right of the step at `index` for the brackets of the

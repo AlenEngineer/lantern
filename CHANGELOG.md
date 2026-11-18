@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A picked section's card sets what the mockup has: the time it is
+  given, a minute less or more with − and + (or typed); a time of day it
+  should be over by; and the time it takes, with how far that is from its
+  time, and when it is expected to end, in red where that is past its
+  time of day. The time of day shows beside the bracket too.
 - A bracket's head can be pulled too: up, it takes in what comes before
   it, a section whole; down, it lets go of its first steps, which stay in
   the section round it. It shows what it would make as it is pulled, and
