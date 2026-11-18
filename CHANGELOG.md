@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- What a fill proposes drops in, one after another; accepted, the new
+  rows' dashed outlines fade into plain rows.
 - An edit that puts a section over its time shows it: the section's
   bracket bulges out and settles, and its time turns red as it goes.
 - When a service goes back round a loop, a light runs back along the
@@ -595,6 +597,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Accepting a fill with its ✓ did nothing: since a press on nothing
+  closes the fill, the press on its buttons counted as one. Opening a fill
+  also closes its section's card, which lay over what it proposes.
 - Steps carried into an empty section: its bracket takes in the place
   opened for them, as the result will be. A bracket's name is no longer
   placed by steps that are being carried (it jumped over another's).
