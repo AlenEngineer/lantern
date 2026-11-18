@@ -127,7 +127,10 @@ fn does(message: &Message) -> Does {
         | M::LookReset(_)
         | M::EditTarget
         | M::SetRepeat(FlowOf::Plan | FlowOf::Span(_), _)
-        | M::SetShuffle(FlowOf::Plan | FlowOf::Span(_), _) => Does::EditsPlan,
+        | M::SetShuffle(FlowOf::Plan | FlowOf::Span(_), _)
+        | M::NoteFor(_)
+        | M::NoteEdit(_)
+        | M::NoteGone(_) => Does::EditsPlan,
         M::RenamePlan(_)
         | M::PlanTemplate(_)
         | M::DuplicatePlan

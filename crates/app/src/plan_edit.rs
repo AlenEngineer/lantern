@@ -271,6 +271,12 @@ impl App {
                 Message::EditStep(Some((id, Part::Name))),
             ))
             .push(small(
+                look::icon(Icon::Note, 13.0, crate::notes::INK).into(),
+                Tone::Plain,
+                "A note on it".to_string(),
+                Message::NoteFor(vec![lantern_engine::NoteOn::Step(id)]),
+            ))
+            .push(small(
                 sign("↑"),
                 Tone::Plain,
                 keys::with_key("Move up", Op::MoveUp),

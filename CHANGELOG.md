@@ -16,6 +16,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
   a section whole; up, it lets go. As it is pulled the brackets show what
   letting go would make, in the colour of what is wrong where it can't
   end there. A grip at the foot shows where to take it.
+- Notes for the operator, on what they are about: a step, steps picked
+  together, a section, a loop or a drawn order. Each shows as a small
+  numbered mark where it is (the same number wherever one note is);
+  pressed, it opens, to be read and written, with a thread to each thing
+  it is on. One is made from the ring of what it is on, from a picked
+  step's or section's buttons, or beside the steps picked together. In a
+  service, what is noted of the step that is on is said under it, and
+  what is noted of the next step under Up next. Notes kept on steps
+  before are read as these.
 - A length can be typed in hours: `3h`, `3h15` (or `3h 15m`), `45m`, or
   as a clock with hours, `1:02:03`. A number alone is still minutes and
   `4:30` still four and a half.

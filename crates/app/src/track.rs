@@ -299,6 +299,8 @@ pub struct Span {
     pub pulled: bool,
     /// How far aside it is, as it shakes.
     pub shift: f32,
+    /// The numbers of the notes on it.
+    pub marks: Vec<usize>,
 }
 
 /// Everything the canvas draws.
@@ -322,6 +324,8 @@ pub struct Picture {
     pub rows: Vec<StepId>,
     /// The sections, each a bracket beside the steps it holds.
     pub brackets: Vec<Bracket>,
+    /// The open note's threads: from its card to each thing it is on.
+    pub threads: Vec<(Point, Point)>,
 }
 
 /// What a line beside a bracket is about.
@@ -359,6 +363,8 @@ pub struct Bracket {
     /// Its name and times are not written: something open over them
     /// says them.
     pub bare: bool,
+    /// The numbers of the notes on it.
+    pub marks: Vec<usize>,
     /// Where a section that is being carried would land: dashed, and
     /// what is written beside it faint.
     pub place: bool,
@@ -1214,6 +1220,33 @@ fn paint(
             });
             y += TALL;
         }
+        // Its notes' marks, under what is written.
+        for (n, number) in bracket.marks.iter().enumerate() {
+            note_mark(frame, Point::new(left + 6.5 + 16.0 * n as f32, y), *number);
+        }
+    }
+    // The open note's threads, from its card to what it is on.
+    for (from, to) in &picture.threads {
+        let thread = Path::new(|path| {
+            path.move_to(*from);
+            path.bezier_curve_to(
+                Point::new(from.x, from.y - 20.0),
+                Point::new(to.x, to.y + 20.0),
+                *to,
+            );
+        });
+        frame.stroke(
+            &thread,
+            Stroke {
+                line_dash: canvas::LineDash {
+                    segments: &[2.0, 3.0],
+                    offset: 0,
+                },
+                ..Stroke::default()
+                    .with_width(1.2)
+                    .with_color(Color::from_rgba(0.953, 0.835, 0.541, 0.8))
+            },
+        );
     }
     // The dots, over the ends of the lines.
     for stop in &picture.stops {
@@ -1307,6 +1340,29 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
             frame.fill(&Path::circle(middle, DOT), color);
         }
     }
+}
+
+/// A note's mark, numbered `n`, its middle at `at`.
+fn note_mark(frame: &mut Frame, at: Point, n: usize) {
+    const INK: Color = Color::from_rgb(0.953, 0.835, 0.541);
+    frame.fill(
+        &Path::rounded_rectangle(
+            Point::new(at.x - 6.5, at.y - 6.5),
+            Size::new(13.0, 13.0),
+            3.0.into(),
+        ),
+        INK,
+    );
+    frame.fill_text(canvas::Text {
+        content: n.to_string(),
+        position: at,
+        color: Color::from_rgb(0.09, 0.09, 0.11),
+        size: 9.0.into(),
+        font: crate::look::BOLD,
+        align_x: iced::widget::text::Alignment::Center,
+        align_y: iced::alignment::Vertical::Center,
+        ..canvas::Text::default()
+    });
 }
 
 /// `color`, `strength` as strong.
@@ -1510,6 +1566,16 @@ fn curl(
             gone += from - to;
         }
     }
+    // Its notes' marks, beside its middle, out from the steps.
+    if left >= up / 2.0 {
+        for (n, number) in span.marks.iter().enumerate() {
+            note_mark(
+                frame,
+                Point::new(x - 13.0 - 15.0 * n as f32, middle),
+                *number,
+            );
+        }
+    }
     if let Some(words) = words
         && left >= up / 2.0
     {
@@ -1611,6 +1677,16 @@ fn wander(
         frame.stroke(&line, stroke);
     };
     let middle = (top + bottom) / 2.0;
+    // Its notes' marks, beside its middle, out from the steps.
+    if shown >= middle {
+        for (n, number) in span.marks.iter().enumerate() {
+            note_mark(
+                frame,
+                Point::new(x + 13.0 + 15.0 * n as f32, middle),
+                *number,
+            );
+        }
+    }
     if span.mark != Mark::Crossed || whole < MARK_ROOM * 3.0 {
         swing(frame, top, bottom);
         return;

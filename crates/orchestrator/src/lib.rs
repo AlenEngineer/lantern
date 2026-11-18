@@ -17,10 +17,12 @@
 //!
 //! This crate knows nothing about screens; the engine connects it to the stage.
 
+mod note;
 mod plan;
 mod session;
 pub mod timing;
 
+pub use note::{Note, NoteId, NoteOn};
 pub use plan::{
     Action, BracketError, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Flow, FlowOf, Looped,
     Over, Place, Plan, PlanError, Repeat, Span, SpanError, SpanId, Step, StepId, StepSound,

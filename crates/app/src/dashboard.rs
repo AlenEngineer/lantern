@@ -1469,6 +1469,11 @@ impl App {
         });
         if let Some(step) = &next {
             section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
+            // What is noted of it, read before it comes.
+            let plan = self.engine.0.plan();
+            for (_, n, words) in crate::notes::on_step(&plan, step.id, false) {
+                section.push(crate::notes::said(p, n, words));
+            }
         }
         let (label, moves) = self.next_label(next.is_some());
         section.push(

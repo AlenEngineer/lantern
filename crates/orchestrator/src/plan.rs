@@ -603,6 +603,11 @@ pub struct Plan {
     spans: Vec<Span>,
     #[serde(default, skip_serializing_if = "is_none_yet")]
     next_span: u64,
+    /// Notes for the operator, on what they are about.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) notes: Vec<crate::note::Note>,
+    #[serde(default, skip_serializing_if = "is_none_yet")]
+    pub(crate) next_note: u64,
     /// How the stage looks while this plan runs; `None` uses the app's
     /// default look. Saved with the plan, so it looks the same anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -655,6 +660,8 @@ impl Plan {
             next_id: 0,
             spans: Vec::new(),
             next_span: 0,
+            notes: Vec::new(),
+            next_note: 0,
             look: None,
             template: false,
             folders: Vec::new(),
@@ -1033,6 +1040,8 @@ impl Plan {
             }
         }
         self.spans = kept.into_iter().map(|(span, _)| span).collect();
+        // And a note that was on what is gone is on what is left.
+        self.keep_notes();
     }
 
     /// Brings a plan saved before there were spans to how it is kept
@@ -1614,7 +1623,9 @@ impl Plan {
     /// order. Returns it, if it was there.
     pub fn remove_span(&mut self, id: SpanId) -> Option<Span> {
         let at = self.spans.iter().position(|span| span.id == id)?;
-        Some(self.spans.remove(at))
+        let span = self.spans.remove(at);
+        self.keep_notes();
+        Some(span)
     }
 
     /// Takes away that `of` comes again: it comes once. A span is gone
@@ -2365,6 +2376,7 @@ impl Plan {
         let max = plan.spans.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
         plan.next_span = plan.next_span.max(max);
         plan.upgrade_before_spans(&ended);
+        plan.upgrade_step_notes();
         plan.settle();
         Ok(plan)
     }
