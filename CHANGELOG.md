@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A search result added to the plan travels from the results to its row,
+  which grows in to take it.
 - What is taken to the projector comes into the live monitor from the
   side of Up next, a little smaller, and settles.
 - What a fill proposes drops in, one after another; accepted, the new
