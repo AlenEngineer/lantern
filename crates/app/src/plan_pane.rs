@@ -583,7 +583,10 @@ impl App {
                 && !over
                 && !self.folded.contains(&step.id)
                 && self.motion.open(step.id).is_none()
-                && (at + 1..plan.group_end(at)).any(|at| !plan.steps()[at].is_section())
+                // One with nothing in it yet is a bracket too, beside a
+                // place for what will be put in it.
+                && (plan.group_end(at) == at + 1
+                    || (at + 1..plan.group_end(at)).any(|at| !plan.steps()[at].is_section()))
         };
         let mut braced: Vec<Braced> = (0..plan.len())
             .filter(|at| bracketed(*at))
@@ -941,8 +944,16 @@ impl App {
                     }
                 };
                 match (bracket, folding.take()) {
-                    // A bracket beside its steps: no row.
-                    (true, kept) => folding = kept,
+                    // A bracket beside its steps: no row. One with nothing
+                    // in it has a place where its steps will be.
+                    (true, kept) => {
+                        folding = kept;
+                        if plan.group_end(index) == index + 1 {
+                            whole.push(step.id);
+                            let wide = track::side_room(side.lanes, side.wide) + side.more;
+                            put!(self.empty_place(step.id, lanes, wide, &places));
+                        }
+                    }
                     (false, Some((steps, so_far, open))) => {
                         folding = Some((steps.push(apart(heading)), so_far + ROW_TALL, open));
                     }
@@ -1364,6 +1375,36 @@ impl App {
                     .iter()
                     .copied()
                     .filter(|at| (braced.at + 1..braced.end).contains(at));
+                let picked = self.selected == Some(step.id);
+                // With nothing in it: beside its place, with its name and
+                // the time it is given.
+                if braced.end == braced.at + 1 {
+                    let goal = match step.action {
+                        Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+                        _ => None,
+                    };
+                    return Some(track::Bracket {
+                        id: step.id,
+                        first: step.id,
+                        last: step.id,
+                        offset: track::brace_at(0),
+                        beside: None,
+                        color: p.primary,
+                        name: step.label.clone(),
+                        lines: goal
+                            .map(|goal| {
+                                (track::Sign::Goal, length::clock(goal), p.on_surface_variant)
+                            })
+                            .into_iter()
+                            .collect(),
+                        strong: picked
+                            || host_id == Some(step.id)
+                            || into.first() == Some(&step.id),
+                        bare: picked,
+                        place: false,
+                        cut: None,
+                    });
+                }
                 let first = inside.next()?;
                 let last = inside.next_back().unwrap_or(first);
                 // The section what is carried would be in takes its
@@ -1493,11 +1534,14 @@ impl App {
                 let first = shown
                     .iter()
                     .copied()
-                    .find(|at| (braced.at + 1..braced.end).contains(at))?;
+                    .find(|at| (braced.at + 1..braced.end).contains(at))
+                    // One with nothing in it: beside its own place.
+                    .unwrap_or(braced.at);
                 let last = shown
                     .iter()
                     .copied()
-                    .rfind(|at| (braced.at + 1..braced.end).contains(at))?;
+                    .rfind(|at| (braced.at + 1..braced.end).contains(at))
+                    .unwrap_or(braced.at);
                 let (origin, top, foot) = {
                     let places = places.borrow();
                     (
@@ -2773,6 +2817,65 @@ impl App {
         .on_exit(Message::Rail(crate::rail::Act::Left(id)))
         .into();
         (rail, stop)
+    }
+
+    /// The place of a section with nothing in it: where its steps will
+    /// be, dashed, with room on its right for its bracket. A press on it
+    /// picks the section; steps carried over it land in it.
+    fn empty_place<'a>(
+        &self,
+        section: StepId,
+        lanes: Lanes<'_>,
+        side: f32,
+        places: &track::Places,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let pick = Message::Click(Clicked::Step(section));
+        let inside = row![
+            look::icon(Icon::Plus, 14.0, p.on_surface_variant),
+            Space::new().width(Fill),
+            look::icon(Icon::Fill, 14.0, Palette::tint(p.primary, 0.7)),
+        ]
+        .align_y(Alignment::Center)
+        .padding([0, 10])
+        .height(PLACE_TALL - 8.0);
+        let slot = button(crate::drawn::dashed(
+            container(inside)
+                .width(Fill)
+                .style(move |_| container::Style {
+                    background: Some(Palette::tint(p.primary, 0.06).into()),
+                    border: iced::Border {
+                        radius: 9.0.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }),
+            Palette::tint(p.primary, 0.6),
+            9.0,
+        ))
+        .padding(0)
+        .width(Fill)
+        .on_press(pick.clone())
+        .style(|_, _| button::Style::default());
+        let mut beside = mouse_area(Space::new().width(side).height(Fill))
+            .on_press(pick)
+            .interaction(mouse::Interaction::Pointer);
+        if self.can_edit() {
+            beside = beside.on_right_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(Some(section)),
+            )));
+        }
+        let place = row![
+            Space::new().width(lanes.curl + RAIL + lanes.drawn),
+            container(slot).padding([4, 0]),
+            track::seen(track::Key::Side(section), places, beside),
+        ]
+        .height(PLACE_TALL);
+        track::seen(
+            track::Key::Whole(section),
+            places,
+            self.draggable(section, place.into()),
+        )
     }
 
     /// What a picked section is set to and what can be done to it, one
