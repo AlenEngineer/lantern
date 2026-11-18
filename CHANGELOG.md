@@ -497,6 +497,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   rename, a copy, delete and the rest of its settings on the left. The
   time row over the plan is gone, and the plan's panel keeps only its
   template, media, Bibles, look, export, copy and delete.
+- While planning, the other plans are under the open one, each folded
+  into one row as a bracket: its steps gathered into a stacked dot, how
+  many and when it was saved, and its name beside its brace. Pressed,
+  it opens, and the one that was open folds in with the rest.
+
 - A right click on a step's row, or on a section's bracket, opens its
   ring with what is done to it on the left: rename it, a copy of it, a
   note, take it away. How it flows stays on the right.
