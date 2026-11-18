@@ -45,6 +45,26 @@ jobs:
       - run: cargo clippy --workspace --exclude lantern-app --all-targets
       - run: cargo test --workspace --exclude lantern-app
 
+  # The app as it is installed, built once here so the machine it runs on
+  # does not have to: the landing script downloads it after the merge.
+  binary:
+    name: release binary (Linux)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - run: cargo build --release -p lantern-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lantern-linux
+          path: target/release/lantern
+          retention-days: 14
+
   msrv:
     name: minimum supported Rust (1.99)
     runs-on: ubuntu-latest
