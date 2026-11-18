@@ -1324,6 +1324,22 @@ impl App {
             Some(Ok(carried)) => (Vec::new(), carried.left),
             _ => (Vec::new(), Vec::new()),
         };
+        // A join is the line between its dots: one that letting go would
+        // cut, or that was just not cut, is coloured as a loop's would be.
+        let refused = !would_cut.is_empty() || alarm.is_some();
+        for stop in stops.iter_mut().filter(|_| refused) {
+            let Some(track::Line::Plain(_)) = stop.line else {
+                continue;
+            };
+            let joins = plan
+                .position(stop.id)
+                .map_or_else(Vec::new, |at| plan.joins_of(at));
+            if alarm.is_some() && joins.iter().any(|id| self.alarm.1.contains(id)) {
+                stop.line = Some(track::Line::Plain(alarm_ink));
+            } else if joins.iter().any(|id| would_cut.contains(id)) {
+                stop.line = Some(track::Line::Plain(p.error));
+            }
+        }
         let at_now = at.filter(|_| running);
         let back = at_now.and_then(|_| self.engine.0.follows_back());
         let mut drawn_loops: Vec<track::Span> = Vec::new();

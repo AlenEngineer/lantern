@@ -868,6 +868,18 @@ impl Plan {
         self.flow.joined || self.spans.iter().any(|span| self.joins_on(span, index))
     }
 
+    /// The spans that have the step at `index` go on by itself, as
+    /// [`goes_on`] reads them: none where only the plan's flow does.
+    ///
+    /// [`goes_on`]: Plan::goes_on
+    pub fn joins_of(&self, index: usize) -> Vec<SpanId> {
+        self.spans
+            .iter()
+            .filter(|span| self.joins_on(span, index))
+            .map(|span| span.id)
+            .collect()
+    }
+
     /// Whether the span `span` has the step at `index` go on by itself:
     /// a join over steps that holds it and the step after it, or one
     /// attached to a section that holds it.
@@ -3979,6 +3991,9 @@ mod tests {
         let join = *plan.spans().last().unwrap();
         assert!(join.is_joined() && !join.is_loop() && !join.is_drawn());
         assert_eq!(join.over, Over::Steps { first: a, last: c });
+        let at = |id| plan.position(id).unwrap();
+        assert_eq!(plan.joins_of(at(b)), [join.id]);
+        assert!(plan.joins_of(at(c)).is_empty(), "C waits");
         // It reads back the same.
         let json = plan.to_json();
         assert!(json.contains("\"joined\": true"), "{json}");
@@ -4026,6 +4041,13 @@ mod tests {
         plan.set_flow(music, joined).unwrap();
         // D, Music's last, goes on into E in Sermon.
         assert_eq!(goers(&plan), ["A", "B", "C", "D"]);
+        assert_eq!(plan.flow_of(music), Some(joined));
+        // Its loop taken away, as Delete on the loop's line does, its join
+        // stays: they are one span.
+        let looped = plan.loop_section(music).unwrap();
+        assert_eq!(plan.joins_of(plan.position(d).unwrap()), [looped]);
+        assert!(plan.unloop(looped));
+        assert!(!plan.unshuffle(looped));
         assert_eq!(plan.flow_of(music), Some(joined));
         // A step put into Music later goes on too.
         let new = plan.insert(plan.position(d).unwrap() + 1, "New", Action::Blank);

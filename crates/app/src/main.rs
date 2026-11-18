@@ -3402,7 +3402,11 @@ impl App {
             Op::RemoveStep if !self.searching() => {
                 if let Some(line) = self.line_picked.take() {
                     self.remember(None);
-                    engine.edit_plan(|plan| plan.remove_span(line));
+                    // A section's join is on the same span, and stays.
+                    engine.edit_plan(|plan| {
+                        plan.unloop(line);
+                        plan.unshuffle(line);
+                    });
                     self.picked.clear();
                     return self.preload();
                 }
