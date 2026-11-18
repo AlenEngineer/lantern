@@ -343,8 +343,9 @@ enum Message {
     SlotSearch(StepId, String),
     /// A step's or section's new name.
     Rename(StepId, String),
-    /// Turn a step's "go on when done" on or off.
-    SetAdvance(StepId, bool),
+    /// Whether a step goes on by itself into the next, joined to it; or
+    /// whether every step of a section or of the plan goes on.
+    SetJoined(lantern_engine::FlowOf, bool),
     /// Rehearse a section, or the plan (`None`), in the preview; or stop.
     Rehearse(Option<StepId>),
     /// The rehearsal goes on to its next step now.
@@ -375,8 +376,6 @@ enum Message {
     PlanTarget(String),
     /// The target is typed.
     TargetDone,
-    /// Whether the plan's steps go on by themselves unless one says.
-    PlanAdvance(bool),
     /// How many times a step, a section, a span or the plan comes.
     SetRepeat(lantern_engine::FlowOf, lantern_engine::Repeat),
     /// Whether a section's steps, a span's or the plan's come in a drawn
@@ -1355,7 +1354,10 @@ impl App {
                         None => Task::none(),
                     },
                     Ui::GoOn(n) => match self.engine.0.plan().steps().get(n) {
-                        Some(step) => self.update(Message::SetAdvance(step.id, true)),
+                        Some(step) => self.update(Message::SetJoined(
+                            lantern_engine::FlowOf::Step(step.id),
+                            true,
+                        )),
                         None => Task::none(),
                     },
                     Ui::PlanLook(colour) => {
@@ -1693,7 +1695,10 @@ impl App {
                 self.grabbed = false;
                 let pull = self.pull.take().expect("checked above");
                 match (pull.moving, pull.would, pull.toggle) {
-                    (false, _, Some(on)) => return self.update(Message::SetAdvance(pull.from, on)),
+                    (false, _, Some(on)) => {
+                        let step = lantern_engine::FlowOf::Step(pull.from);
+                        return self.update(Message::SetJoined(step, on));
+                    }
                     // A line let go where it was pressed: the steps it holds
                     // are picked together, to be carried as one.
                     (false, _, None) if pull.line.is_some() => {
@@ -1733,17 +1738,9 @@ impl App {
                     }
                     (true, Some(rail::Would::Join { first, last }), _) => {
                         self.remember(None);
-                        self.engine.0.edit_plan(|plan| {
-                            let ids: Vec<StepId> = plan.steps()[first..last]
-                                .iter()
-                                .filter(|step| !step.is_section())
-                                .map(|step| step.id)
-                                .collect();
-                            for id in ids {
-                                if let Some(step) = plan.get_mut(id) {
-                                    step.advance = Some(true);
-                                }
-                            }
+                        let _ = self.engine.0.edit_plan(|plan| {
+                            let (a, b) = (plan.steps()[first].id, plan.steps()[last].id);
+                            plan.join_over(a, b)
                         });
                     }
                     (
@@ -1845,8 +1842,8 @@ impl App {
                     .filter(|(drag, at)| *at != drag.home || drag.nests());
                 if let Some((drag, at)) = dropped {
                     // Steps are carried by the rules for what they are in
-                    // a flow with: refused where a loop or a drawn order
-                    // would be cut, unless a key says to cut it.
+                    // a flow with: refused where a loop, a drawn order or
+                    // a join would be cut, unless a key says to cut it.
                     if !drag.is_section() {
                         let plan = self.engine.0.plan();
                         let (place, how) = (self.carry_place(&plan, &drag, at), self.carry_how());
@@ -1859,7 +1856,7 @@ impl App {
                                 self.alarm_pull = None;
                                 self.alarm = (drag.carried.clone(), spans);
                                 self.motion.refuse(
-                                    "It would cut a loop or a drawn order. Ctrl cuts it loose, Alt strips its flows",
+                                    "It would cut a loop, a drawn order or a join. Ctrl cuts it loose, Alt strips its flows",
                                 );
                                 return Task::none();
                             }
@@ -2738,10 +2735,6 @@ impl App {
                 }
             }
             Message::TargetDone => self.target_typed = None,
-            Message::PlanAdvance(on) => {
-                self.remember(None);
-                self.engine.0.edit_plan(|plan| plan.advance = on);
-            }
             Message::SetRepeat(of, repeat) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {
@@ -2784,13 +2777,14 @@ impl App {
                         .update(Message::SetRepeat(of, lantern_engine::Repeat::Until(time)));
                 }
             }
-            Message::SetAdvance(id, on) => {
+            Message::SetJoined(of, on) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {
-                    if let Some(step) = plan.get_mut(id) {
-                        step.advance = Some(on);
+                    if let Some(mut flow) = plan.flow_of(of) {
+                        flow.joined = on;
+                        plan.set_flow(of, flow).ok();
                     }
-                })
+                });
             }
             // A length field takes only what a length is made of.
             Message::Length(_, typed) if !length::typeable(typed.trim()) => {}

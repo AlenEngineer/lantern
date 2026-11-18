@@ -128,7 +128,7 @@ pub enum Command {
     Drag(usize, usize, Half),
     /// `length N TEXT`: type TEXT in plan entry N's length field (`0:03`).
     Length(usize, String),
-    /// `go-on N`: turn on "Go on when done" for plan entry N.
+    /// `go-on N`: join plan entry N to the next, so it goes on when done.
     GoOn(usize),
     /// `loop N M` or `loop N M until 10:30`: draw a loop round plan
     /// entries N to M, to come twice or until the time of day.

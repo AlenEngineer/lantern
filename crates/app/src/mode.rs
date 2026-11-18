@@ -87,7 +87,7 @@ fn does(message: &Message) -> Does {
         | M::Scrubbed => Does::Shows,
         M::Remove(id)
         | M::Rename(id, _)
-        | M::SetAdvance(id, _)
+        | M::SetJoined(FlowOf::Step(id), _)
         | M::SetRepeat(FlowOf::Step(id), _)
         | M::SetShuffle(FlowOf::Step(id), _)
         | M::Rail(
@@ -107,7 +107,6 @@ fn does(message: &Message) -> Does {
         | M::ToggleAdd
         | M::Unstandby(_)
         | M::PlanStarts(_)
-        | M::PlanAdvance(_)
         | M::PlanTarget(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
         | M::Rail(
@@ -128,6 +127,7 @@ fn does(message: &Message) -> Does {
         | M::EditTarget
         | M::SetRepeat(FlowOf::Plan | FlowOf::Span(_), _)
         | M::SetShuffle(FlowOf::Plan | FlowOf::Span(_), _)
+        | M::SetJoined(FlowOf::Plan | FlowOf::Span(_), _)
         | M::NoteFor(_)
         | M::NoteEdit(_)
         | M::NoteGone(_) => Does::EditsPlan,

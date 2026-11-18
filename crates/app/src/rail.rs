@@ -394,6 +394,9 @@ impl App {
                 let step = &plan.steps()[at];
                 let goes = plan.goes_on(at);
                 let again = step.flow.repeat != Repeat::Once;
+                // Joined only to a step after it: the last has none.
+                let joins = crate::plan_edit::goes_on_when(step).is_some()
+                    && (goes || plan.next_step(at).is_some());
                 petals.push(petal(
                     -30.0,
                     46.0,
@@ -405,9 +408,7 @@ impl App {
                     } else {
                         "Go straight on to the next"
                     },
-                    crate::plan_edit::goes_on_when(step)
-                        .is_some()
-                        .then_some(Message::SetAdvance(id, !goes)),
+                    joins.then_some(Message::SetJoined(FlowOf::Step(id), !goes)),
                 ));
                 petals.push(petal(
                     30.0,
@@ -445,7 +446,7 @@ impl App {
                     goes,
                     glyph(Icon::Joined, goes),
                     "Goes straight on",
-                    Some(Message::SetAdvance(id, true)),
+                    Some(Message::SetJoined(FlowOf::Step(id), true)),
                 ));
                 petals.push(petal(
                     30.0,
@@ -454,7 +455,7 @@ impl App {
                     !goes,
                     glyph(Icon::Pause, !goes),
                     "Waits here",
-                    Some(Message::SetAdvance(id, false)),
+                    Some(Message::SetJoined(FlowOf::Step(id), false)),
                 ));
             }
             // A loop's line holds only how often it comes: there, by the
@@ -491,32 +492,24 @@ impl App {
             // A section's dot, or the plan's own row: what holds for all
             // of it. How often it comes again is its loop's line's.
             RingOn::All(of) => {
-                let all_go = match of {
-                    Some(id) => match plan.get(id) {
-                        Some(step) => step.advance == Some(true),
-                        None => return Vec::new(),
-                    },
-                    None => plan.advance,
-                };
                 // A section's is the span attached to it.
-                let flow = plan.flow_of(of).unwrap_or_default();
+                let Some(flow) = plan.flow_of(of) else {
+                    return Vec::new();
+                };
                 let of_flow = FlowOf::from(of);
                 let again = flow.repeat != Repeat::Once;
                 petals.push(petal(
                     -48.0,
                     50.0,
                     PETAL,
-                    all_go,
-                    glyph(Icon::Joined, all_go),
-                    if all_go {
-                        "Every step in it goes straight on. Press to have them wait"
+                    flow.joined,
+                    glyph(Icon::Joined, flow.joined),
+                    if flow.joined {
+                        "Every step in it goes straight on. Press to take that away"
                     } else {
                         "Every step in it goes straight on"
                     },
-                    Some(match of {
-                        Some(id) => Message::SetAdvance(id, !all_go),
-                        None => Message::PlanAdvance(!all_go),
-                    }),
+                    Some(Message::SetJoined(of_flow, !flow.joined)),
                 ));
                 petals.push(petal(
                     0.0,

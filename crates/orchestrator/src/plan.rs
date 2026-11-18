@@ -135,9 +135,9 @@ impl Ending {
 }
 
 /// How a step, a span of steps or the plan moves: how often it comes,
-/// and for a span or the plan, in what order its steps do. Unlike
-/// [`Step::advance`], none of it carries down: it is about the one thing
-/// it is set on.
+/// and for a span or the plan, in what order its steps do and whether
+/// they wait for the operator. None of it carries down: it is about the
+/// one thing it is set on.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Flow {
@@ -150,6 +150,14 @@ pub struct Flow {
     /// How it ends, coming again until a time of day.
     #[serde(skip_serializing_if = "Ending::is_round")]
     pub ends: Ending,
+    /// Its steps go on by themselves, without the operator: a join. Over
+    /// steps, each but the last goes on into the step after it, and the
+    /// last waits unless something else joins it on. Attached to a
+    /// section, every step the section holds goes on, the last too; and
+    /// the plan's, every step. A step's own is never joined: a step goes
+    /// on by being in a join ([`Plan::goes_on`]).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub joined: bool,
 }
 
 impl Repeat {
@@ -176,9 +184,16 @@ impl Repeat {
 }
 
 impl Flow {
-    /// Once and in order: nothing to keep.
+    /// Once, in order and waiting: nothing to keep.
     pub fn is_usual(&self) -> bool {
         *self == Flow::default()
+    }
+
+    /// Whether it changes the order its steps come in: they come again,
+    /// or in a drawn order. A join alone does not: its steps come as
+    /// they would, without waiting.
+    pub fn shapes(&self) -> bool {
+        self.repeat != Repeat::Once || self.shuffle
     }
 }
 
@@ -210,17 +225,19 @@ pub enum Over {
     Section(StepId),
 }
 
-/// A loop or a drawn order laid over a run of the plan's steps. The plan
-/// is one sequence of steps, and its sections only name parts of it: a
-/// span is what has some of them come again, or in an order drawn
-/// afresh. See [`Plan::loop_over`] for the limits spans keep to.
+/// A loop, a drawn order or a join laid over a run of the plan's steps.
+/// The plan is one sequence of steps, and its sections only name parts
+/// of it: a span is what has some of them come again, in an order drawn
+/// afresh, or go on by themselves one into the next. See
+/// [`Plan::loop_over`] for the limits loops and drawn orders keep to; a
+/// join keeps to none, and may lie across any other span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     /// Stable id.
     pub id: SpanId,
     /// The steps it is over.
     pub over: Over,
-    /// How often they come, and in what order.
+    /// How often they come, in what order, and whether they wait.
     pub flow: Flow,
 }
 
@@ -233,6 +250,18 @@ impl Span {
     /// Whether its steps come in an order drawn afresh each time round.
     pub fn is_drawn(&self) -> bool {
         self.flow.shuffle
+    }
+
+    /// Whether its steps go on by themselves: a join.
+    pub fn is_joined(&self) -> bool {
+        self.flow.joined
+    }
+
+    /// A join over steps and nothing else: one that goes along with its
+    /// steps, is cut in two where one waits, and is one with any other
+    /// such join it shares a step with.
+    fn is_bare_join(&self) -> bool {
+        self.flow.joined && !self.flow.shapes() && matches!(self.over, Over::Steps { .. })
     }
 }
 
@@ -293,8 +322,8 @@ pub enum SpanError {
     /// A step, a section or a span it names isn't in the plan.
     #[error("that is no longer in the plan")]
     Missing,
-    /// A loop needs two steps, and a drawn order three.
-    #[error("too few steps: a loop goes round two or more, a drawn order three or more")]
+    /// A loop or a join needs two steps, and a drawn order three.
+    #[error("too few steps: a loop or a join is over two or more, a drawn order three or more")]
     TooFew,
     /// A drawn order stays in one section: no heading, nor where a
     /// section ends, comes among its steps.
@@ -368,20 +397,19 @@ pub struct Place {
     pub section: Option<StepId>,
 }
 
-/// What a carry does to the loops and drawn orders it meets: which key
-/// is held while carrying. See [`Plan::carry`].
+/// What a carry does to the loops, drawn orders and joins it meets:
+/// which key is held while carrying. See [`Plan::carry`].
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Carry {
-    /// No key: the steps go only where no loop or drawn order is
-    /// crossed.
+    /// No key: the steps go only where no span is crossed.
     #[default]
     Whole,
-    /// Ctrl: the steps leave every loop and drawn order they cross, and
-    /// take along the ones wholly among them.
+    /// Ctrl: the steps leave every span they cross, and take along the
+    /// ones wholly among them.
     CutLoose,
-    /// Alt: as [`CutLoose`](Carry::CutLoose), and the loops and drawn
-    /// orders wholly among them are taken away and each of them waits
-    /// for the operator.
+    /// Alt: as [`CutLoose`](Carry::CutLoose), and the spans wholly among
+    /// them are taken away: they come once, in order, and wait for the
+    /// operator unless they land inside a join.
     Stripped,
 }
 
@@ -390,10 +418,10 @@ pub enum Carry {
 pub struct Carried {
     /// The steps carried, in their new order.
     pub steps: Vec<StepId>,
-    /// The loops and drawn orders they were cut loose from.
+    /// The loops, drawn orders and joins they were cut loose from.
     pub left: Vec<SpanId>,
-    /// The loops and drawn orders no longer in the plan: taken away, or
-    /// left with too few steps.
+    /// The spans no longer in the plan: taken away, or left with too few
+    /// steps.
     pub gone: Vec<SpanId>,
 }
 
@@ -410,8 +438,9 @@ pub enum CarryError {
     /// The section asked for can't be landed in there.
     #[error("they can't land in that section there")]
     Nowhere,
-    /// Carried whole, they would cross these loops and drawn orders.
-    #[error("they would leave a loop or drawn order behind")]
+    /// Carried whole, they would cross these loops, drawn orders and
+    /// joins.
+    #[error("they would leave a loop, a drawn order or a join behind")]
     Crosses(Vec<SpanId>),
 }
 
@@ -467,13 +496,6 @@ pub struct Step {
     /// How long the operator says the step takes, over any guess.
     #[serde(default, with = "seconds", skip_serializing_if = "Option::is_none")]
     pub estimate: Option<Duration>,
-    /// Go on to the next step by itself when done: a video when it ends,
-    /// anything else after its length. `Some(false)` waits for the
-    /// operator; unset, it does as the section it is in, or the plan,
-    /// says. On a section, it is what its steps do unless they say.
-    /// See [`Plan::goes_on`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub advance: Option<bool>,
     /// How many times the step comes, by itself. A section's heading
     /// has none: what a section holds comes again, or in a drawn order,
     /// by a [`Span`] attached to it. Set either with [`Plan::set_flow`].
@@ -588,9 +610,9 @@ fn bounds(steps: &[Step]) -> Vec<Bound> {
 ///
 /// It is one flow: the steps come one after another, each going on by
 /// itself or waiting ([`Plan::goes_on`]). Sections name parts of it and
-/// say nothing of how it moves. What comes again, or in a drawn order, is
-/// a [`Span`] laid over some of the steps, or the plan's own
-/// [`flow`](Plan::flow) for all of it.
+/// say nothing of how it moves. What comes again, in a drawn order, or
+/// goes on by itself, is a [`Span`] laid over some of the steps, or the
+/// plan's own [`flow`](Plan::flow) for all of it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     /// E.g. "Sunday service, March 3".
@@ -598,7 +620,7 @@ pub struct Plan {
     steps: Vec<Step>,
     #[serde(default)]
     next_id: u64,
-    /// The loops and drawn orders laid over the steps.
+    /// The loops, drawn orders and joins laid over the steps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     spans: Vec<Span>,
     #[serde(default, skip_serializing_if = "is_none_yet")]
@@ -635,11 +657,8 @@ pub struct Plan {
     /// to move a car. Shown when wanted, without moving the plan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub standby: Vec<Resource>,
-    /// Whether steps go on by themselves unless a section or a step says
-    /// otherwise. See [`Plan::goes_on`].
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub advance: bool,
-    /// How many times the plan comes, and in what order its steps do.
+    /// How many times the plan comes, in what order its steps do, and
+    /// whether every one of them goes on by itself.
     #[serde(default, skip_serializing_if = "Flow::is_usual")]
     pub flow: Flow,
 }
@@ -669,7 +688,6 @@ impl Plan {
             starts: None,
             target: None,
             standby: Vec::new(),
-            advance: false,
             flow: Flow::default(),
         }
     }
@@ -841,38 +859,65 @@ impl Plan {
         found
     }
 
-    /// Whether the step at `index` goes on by itself when done: what it
-    /// says itself, or else the nearest section it is in that says, or
-    /// else the plan.
+    /// Whether the step at `index` goes on by itself when done, without
+    /// the operator, to whatever comes after it: a video when it ends,
+    /// anything else after its length. It does where a join over steps
+    /// holds it and the step after it, where a section it is in has its
+    /// steps join, and where the plan's own flow does.
     pub fn goes_on(&self, index: usize) -> bool {
-        let own = self.steps.get(index).and_then(|step| step.advance);
-        own.or_else(|| {
-            self.within(index)
-                .into_iter()
-                .rev()
-                .find_map(|id| self.get(id).and_then(|section| section.advance))
-        })
-        .unwrap_or(self.advance)
+        self.flow.joined || self.spans.iter().any(|span| self.joins_on(span, index))
+    }
+
+    /// Whether the span `span` has the step at `index` go on by itself:
+    /// a join over steps that holds it and the step after it, or one
+    /// attached to a section that holds it.
+    fn joins_on(&self, span: &Span, index: usize) -> bool {
+        let Some((first, last)) = self
+            .reach(span.over)
+            .ok()
+            .flatten()
+            .filter(|_| span.flow.joined)
+        else {
+            return false;
+        };
+        match span.over {
+            Over::Section(_) => (first..=last).contains(&index),
+            Over::Steps { .. } => {
+                first <= index && self.next_step(index).is_some_and(|next| next <= last)
+            }
+        }
     }
 
     /// What the section `id` holds, as a plan of its own: its steps and
     /// the sections in it, with the flow of the span attached to it as
-    /// the plan's and the way its steps go on as it stood in this plan.
-    /// The spans wholly in it come along. For running a part of the plan
-    /// by itself. `None` if `id` isn't a section.
+    /// the plan's and its steps going on as they did in this plan. The
+    /// spans wholly in it come along. For running a part of the plan by
+    /// itself. `None` if `id` isn't a section.
     pub fn part(&self, id: StepId) -> Option<Plan> {
         let at = self.position(id)?;
         let depth = self.steps[at].depth()?;
+        let end = self.group_end(at);
         let mut part = self.clone();
-        part.advance = self.goes_on(at);
         part.flow = self.flow_of(id).unwrap_or_default();
-        part.steps = self.steps[at + 1..self.group_end(at)].to_vec();
+        part.steps = self.steps[at + 1..end].to_vec();
         for step in &mut part.steps {
             if let Action::Section { depth: inner, .. } = &mut step.action {
                 *inner = inner.saturating_sub(depth + 1);
             }
         }
         part.settle();
+        let steps: Vec<usize> = (at + 1..end)
+            .filter(|row| !self.steps[*row].is_section())
+            .collect();
+        let goes: Vec<StepId> = steps
+            .iter()
+            .filter(|row| self.goes_on(**row))
+            .map(|row| self.steps[*row].id)
+            .collect();
+        match !steps.is_empty() && goes.len() == steps.len() {
+            true => part.flow.joined = true,
+            false => part.join_runs(&goes),
+        }
         Some(part)
     }
 
@@ -965,10 +1010,12 @@ impl Plan {
     /// Keeps every section and span where it can be. No section is more
     /// than one level further in than the section that holds it, and the
     /// plan's own are at the plan's level. A span that comes once, in
-    /// the plan's order, is nothing and is gone, as is one whose steps
-    /// or section are gone. A drawn order a heading has come into is the
-    /// plan's order again. Of two spans left half over each other, the
-    /// newer goes. Moving or removing steps can leave any of these.
+    /// the plan's order and waiting, is nothing and is gone, as is one
+    /// whose steps or section are gone, and a join over steps left with
+    /// one step. A drawn order a heading has come into is the plan's
+    /// order again. Of two loops or drawn orders left half over each
+    /// other, the newer goes. Moving or removing steps can leave any of
+    /// these.
     fn settle(&mut self) {
         // Each section's depth, outermost first: the sections still open
         // where it is are those around it.
@@ -1035,7 +1082,13 @@ impl Plan {
             if reach.is_some_and(|reach| self.heading_among(reach)) {
                 span.flow.shuffle = false;
             }
-            if !span.flow.is_usual() && kept.iter().all(|(_, other)| !half_over(reach, *other)) {
+            let fits = !span.flow.shapes()
+                || kept
+                    .iter()
+                    .filter(|(other, _)| other.flow.shapes())
+                    .all(|(_, other)| !half_over(reach, *other));
+            let alone = span.is_bare_join() && reach.is_none_or(|(first, last)| first == last);
+            if !span.flow.is_usual() && fits && !alone {
                 kept.push((span, reach));
             }
         }
@@ -1124,13 +1177,20 @@ impl Plan {
     }
 
     /// Whether a span over `over` that moves as `flow` says can be in
-    /// the plan, beside every span there but `but`.
+    /// the plan, beside every span there but `but`. A join alone may lie
+    /// across anything.
     fn fits(&self, over: Over, flow: Flow, but: Option<SpanId>) -> Result<(), SpanError> {
         let reach = self.reach(over)?;
         if flow.shuffle && reach.is_some_and(|reach| self.heading_among(reach)) {
             return Err(SpanError::AcrossHeading);
         }
-        let others = self.spans.iter().filter(|span| Some(span.id) != but);
+        if !flow.shapes() {
+            return Ok(());
+        }
+        let others = self
+            .spans
+            .iter()
+            .filter(|span| Some(span.id) != but && span.flow.shapes());
         for other in others {
             if half_over(reach, self.reach(other.over).ok().flatten()) {
                 return Err(SpanError::HalfOver(other.id));
@@ -1480,8 +1540,9 @@ impl Plan {
     /// The span over `over`, made if there is none, with its flow
     /// changed by `set`. A span over the very same steps is the one
     /// changed, and it is attached to the section when a section is what
-    /// was asked for. An error with fewer than `least` steps from one
-    /// step to another, or where [`fits`] says it can't be.
+    /// was asked for; a join over steps is left as it is, beside it. An
+    /// error with fewer than `least` steps from one step to another, or
+    /// where [`fits`] says it can't be.
     ///
     /// [`fits`]: Plan::fits
     fn lay(
@@ -1512,17 +1573,17 @@ impl Plan {
         };
         let reach = self.reach(over)?;
         let ranged = matches!(over, Over::Steps { .. });
-        let same = self
-            .spans
-            .iter()
-            .position(|span| span.over == over)
+        let others = || self.spans.iter().filter(|span| !span.is_bare_join());
+        let same = others()
+            .find(|span| span.over == over)
             .or_else(|| {
-                self.spans.iter().position(|span| {
+                others().find(|span| {
                     (ranged || matches!(span.over, Over::Steps { .. }))
                         && reach.is_some()
                         && self.reach(span.over) == Ok(reach)
                 })
-            });
+            })
+            .and_then(|span| self.spans.iter().position(|other| other.id == span.id));
         let mut flow = same.map(|at| self.spans[at].flow).unwrap_or_default();
         set(&mut flow);
         self.fits(over, flow, same.map(|at| self.spans[at].id))?;
@@ -1548,20 +1609,27 @@ impl Plan {
 
     /// How `of` moves: the plan, a step by itself, or a span. A
     /// section's heading says how the span attached to the section does,
-    /// which with no such span is once, in the plan's order. `None` if
-    /// there is no such step or span.
+    /// which with no such span is once, in the plan's order, waiting. A
+    /// step by itself is joined where it goes on into the next
+    /// ([`goes_on`]). `None` if there is no such step or span.
+    ///
+    /// [`goes_on`]: Plan::goes_on
     pub fn flow_of(&self, of: impl Into<FlowOf>) -> Option<Flow> {
         match of.into() {
             FlowOf::Plan => Some(self.flow),
             FlowOf::Span(id) => self.span(id).map(|span| span.flow),
             FlowOf::Step(id) => {
-                let step = self.get(id)?;
+                let at = self.position(id)?;
+                let step = &self.steps[at];
                 Some(match step.is_section() {
                     true => self
                         .section_span(id)
                         .map(|span| span.flow)
                         .unwrap_or_default(),
-                    false => step.flow,
+                    false => Flow {
+                        joined: self.goes_on(at),
+                        ..step.flow
+                    },
                 })
             }
         }
@@ -1570,10 +1638,13 @@ impl Plan {
     /// Has `of` move as `flow` says: the plan, a step by itself, or a
     /// span. For a section's heading it is the span attached to the
     /// section, made if there is none. A span that would come once, in
-    /// the plan's order, is taken away. An error where a span can't be
-    /// so (see [`loop_over`]), with nothing changed.
+    /// the plan's order and waiting, is taken away. A step by itself is
+    /// joined to the step after it, or parted from it, as [`join_on`]
+    /// does. An error where a span can't be so (see [`loop_over`]), or a
+    /// step can't be joined, with nothing changed.
     ///
     /// [`loop_over`]: Plan::loop_over
+    /// [`join_on`]: Plan::join_on
     pub fn set_flow(&mut self, of: impl Into<FlowOf>, flow: Flow) -> Result<(), SpanError> {
         let (over, id) = match of.into() {
             FlowOf::Plan => {
@@ -1582,9 +1653,15 @@ impl Plan {
             }
             FlowOf::Span(id) => (self.span(id).ok_or(SpanError::Missing)?.over, Some(id)),
             FlowOf::Step(id) => {
-                let step = self.get_mut(id).ok_or(SpanError::Missing)?;
-                if !step.is_section() {
-                    step.flow = flow;
+                let at = self.position(id).ok_or(SpanError::Missing)?;
+                if !self.steps[at].is_section() {
+                    let mut next = self.clone();
+                    next.steps[at].flow = Flow {
+                        joined: false,
+                        ..flow
+                    };
+                    next.join_on(id, flow.joined)?;
+                    *self = next;
                     return Ok(());
                 }
                 let span = self.section_span(id).map(|span| span.id);
@@ -1617,6 +1694,121 @@ impl Plan {
         }
         self.settle();
         Ok(())
+    }
+
+    /// Joins the steps from `a` to `b`, whichever comes first: each goes
+    /// on by itself into the next, and the last as it did. A join may
+    /// cross a section's heading, and lie across any loop or drawn
+    /// order; one over steps that it shares a step with becomes one with
+    /// it. An error for fewer than two steps.
+    pub fn join_over(&mut self, a: StepId, b: StepId) -> Result<(), SpanError> {
+        let a = self.position(a).ok_or(SpanError::Missing)?;
+        let b = self.position(b).ok_or(SpanError::Missing)?;
+        let step = |at: &usize| !self.steps[*at].is_section();
+        let mut steps = (a.min(b)..=a.max(b)).filter(step);
+        let first = steps.next().ok_or(SpanError::TooFew)?;
+        let last = steps.next_back().ok_or(SpanError::TooFew)?;
+        self.lay_join(first, last);
+        self.settle();
+        Ok(())
+    }
+
+    /// Has the step `id` go on by itself into the step after it (`on`),
+    /// joined to it, or wait for the operator: then every join that has
+    /// it go on is parted there. A join over steps is cut in two; a
+    /// section's, or the plan's, gives way to joins over steps, so every
+    /// other step goes on as it did, but for the plan's last, which has
+    /// no step after it to be joined to. An error where there is no such
+    /// step, or nothing after it to join it to, with nothing changed.
+    pub fn join_on(&mut self, id: StepId, on: bool) -> Result<(), SpanError> {
+        let at = self
+            .position(id)
+            .filter(|at| !self.steps[*at].is_section())
+            .ok_or(SpanError::Missing)?;
+        if self.goes_on(at) == on {
+            return Ok(());
+        }
+        if on {
+            let next = self.next_step(at).ok_or(SpanError::TooFew)?;
+            self.lay_join(at, next);
+            self.settle();
+            return Ok(());
+        }
+        let goes: Vec<StepId> = (0..self.steps.len())
+            .filter(|row| *row != at && !self.steps[*row].is_section() && self.goes_on(*row))
+            .map(|row| self.steps[row].id)
+            .collect();
+        self.flow.joined = false;
+        let parted: Vec<SpanId> = self
+            .spans
+            .iter()
+            .filter(|span| self.joins_on(span, at))
+            .map(|span| span.id)
+            .collect();
+        for span in self
+            .spans
+            .iter_mut()
+            .filter(|span| parted.contains(&span.id))
+        {
+            span.flow.joined = false;
+        }
+        self.settle();
+        self.join_runs(&goes);
+        Ok(())
+    }
+
+    /// Lays a join over the steps at `first` and `last` and all between
+    /// them, made one with every join over steps it shares a step with.
+    /// Returns its id: the oldest of those it was made from. Nothing is
+    /// settled.
+    fn lay_join(&mut self, mut first: usize, mut last: usize) -> SpanId {
+        let mut kept: Option<SpanId> = None;
+        while let Some((at, from, to)) = self.spans.iter().enumerate().find_map(|(at, span)| {
+            let (from, to) = self.reach(span.over).ok().flatten()?;
+            (span.is_bare_join() && from <= last && first <= to).then_some((at, from, to))
+        }) {
+            let met = self.spans.remove(at);
+            (first, last) = (first.min(from), last.max(to));
+            kept = Some(kept.map_or(met.id, |id| id.min(met.id)));
+        }
+        let id = kept.unwrap_or_else(|| {
+            self.next_span += 1;
+            SpanId(self.next_span - 1)
+        });
+        self.spans.push(Span {
+            id,
+            over: Over::Steps {
+                first: self.steps[first].id,
+                last: self.steps[last].id,
+            },
+            flow: Flow {
+                joined: true,
+                ..Flow::default()
+            },
+        });
+        id
+    }
+
+    /// Joins each of the steps `goes` to the step after it, where
+    /// nothing has it go on yet: each run of them, one after another, is
+    /// one join, made one with any it meets. A step with nothing after
+    /// it can't be joined. Then all is settled.
+    fn join_runs(&mut self, goes: &[StepId]) {
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for at in (0..self.steps.len()).filter(|at| !self.steps[*at].is_section()) {
+            let next = self
+                .next_step(at)
+                .filter(|_| goes.contains(&self.steps[at].id) && !self.goes_on(at));
+            match (next, runs.last_mut()) {
+                (Some(next), Some((_, last))) if *last == at => *last = next,
+                (Some(next), _) => runs.push((at, next)),
+                (None, _) => {}
+            }
+        }
+        for (first, last) in runs {
+            self.lay_join(first, last);
+        }
+        self.settle();
     }
 
     /// Copies `ids` (steps; a section with all it holds), putting the
@@ -2022,7 +2214,6 @@ impl Plan {
             notes: None,
             action,
             estimate: None,
-            advance: None,
             flow: Flow::default(),
             sound: None,
             look: None,
@@ -2093,7 +2284,8 @@ impl Plan {
     /// Takes the section `section` away and leaves its steps where they
     /// are, in whatever section was around it; the sections it held go
     /// one level out. A loop or drawn order attached to it is laid over
-    /// those steps instead. False if it isn't a section.
+    /// those steps instead, and they go on by themselves as they did.
+    /// False if it isn't a section.
     pub fn unbracket(&mut self, section: StepId) -> bool {
         let Some(at) = self.position(section) else {
             return false;
@@ -2102,6 +2294,10 @@ impl Plan {
             return false;
         }
         let mut next = self.clone();
+        let goes: Vec<StepId> = (0..self.steps.len())
+            .filter(|row| !self.steps[*row].is_section() && self.goes_on(*row))
+            .map(|row| self.steps[row].id)
+            .collect();
         if let Some(span) = next.section_span(section).map(|span| span.id) {
             let reach = next.reach(Over::Section(section)).ok().flatten();
             match reach {
@@ -2112,6 +2308,7 @@ impl Plan {
                     };
                     if let Some(span) = next.spans.iter_mut().find(|other| other.id == span) {
                         span.over = over;
+                        span.flow.joined = false;
                     }
                 }
                 None => {
@@ -2121,6 +2318,7 @@ impl Plan {
         }
         let lasts = next.lasts();
         next.unhead(at, lasts);
+        next.join_runs(&goes);
         *self = next;
         true
     }
@@ -2308,23 +2506,21 @@ impl Plan {
     /// with all it holds is moved by [`move_group`], which keeps to no
     /// span's rules, and `carry` is for the steps themselves.
     ///
-    /// A loop or drawn order is crossed when some of its steps are
-    /// carried and others are not, unless the carried ones land inside
-    /// it again: moving about inside a loop crosses nothing. One
+    /// A loop, a drawn order or a join is crossed when some of its steps
+    /// are carried and others are not, unless the carried ones land
+    /// inside it again: moving about inside a loop crosses nothing. One
     /// attached to a section is crossed too when all its steps leave
     /// the section. One drawn from step to step wholly among the carried
-    /// steps goes with them. By `how`:
+    /// steps goes with them. Steps that land inside a span are in it:
+    /// between two joined steps, they are joined too. By `how`:
     ///
     /// - [`Carry::Whole`]: refused if any is crossed, naming them all.
     /// - [`Carry::CutLoose`]: the steps leave each one crossed, which
-    ///   keeps its other steps, and is a loop no more with one step left,
-    ///   nor a drawn order with two.
+    ///   keeps its other steps, and is a loop or a join no more with one
+    ///   step left, nor a drawn order with two.
     /// - [`Carry::Stripped`]: as `CutLoose`, and those wholly among them
-    ///   are taken away and each step waits for the operator.
-    ///
-    /// Whether a step goes on by itself is its own, and never stops a
-    /// carry: but for `Stripped`, each goes on as it did where it was,
-    /// whatever the section it lands in says.
+    ///   are taken away: each step comes once, and waits for the
+    ///   operator unless it lands inside a join.
     ///
     /// [`move_group`]: Plan::move_group
     pub fn carry(
@@ -2379,21 +2575,6 @@ impl Plan {
         for id in &crossed {
             next.too_few(*id);
         }
-        for id in &carried {
-            let Some(at) = next.position(*id) else {
-                continue;
-            };
-            let advance = match how {
-                Carry::Stripped => Some(false),
-                Carry::Whole | Carry::CutLoose => {
-                    let was = self.position(*id).map(|was| self.goes_on(was));
-                    was.filter(|was| *was != next.goes_on(at))
-                }
-            };
-            if advance.is_some() {
-                next.steps[at].advance = advance;
-            }
-        }
         if how == Carry::Stripped {
             for id in &among {
                 next.remove_span(*id);
@@ -2414,8 +2595,29 @@ impl Plan {
         })
     }
 
+    /// Of the steps `steps`, carried together and not stripped, the ones
+    /// that go on into the next of them where they land: those that a
+    /// join over steps all among them has go on, for it goes along with
+    /// them; or all of them, where every step of the plan goes on.
+    pub fn joined_along(&self, steps: &[StepId]) -> Vec<StepId> {
+        let brought: Vec<&Span> = self
+            .spans
+            .iter()
+            .filter(|span| matches!(span.over, Over::Steps { .. }))
+            .filter(|span| {
+                let held = self.span_steps(span.id);
+                !held.is_empty() && held.iter().all(|id| steps.contains(id))
+            })
+            .collect();
+        (0..self.steps.len())
+            .filter(|at| steps.contains(&self.steps[*at].id))
+            .filter(|at| self.flow.joined || brought.iter().any(|span| self.joins_on(span, *at)))
+            .map(|at| self.steps[at].id)
+            .collect()
+    }
+
     /// A span from step to step left with too few steps for what it
-    /// does: no loop round one step, and no drawn order of two. One
+    /// does: no loop or join of one step, and no drawn order of two. One
     /// attached to a section keeps what it does.
     fn too_few(&mut self, id: SpanId) {
         let count = self.span_steps(id).len();
@@ -2431,6 +2633,7 @@ impl Plan {
         if count < 2 {
             span.flow.repeat = Repeat::Once;
             span.flow.ends = Ending::default();
+            span.flow.joined = false;
         }
     }
 
@@ -2459,6 +2662,7 @@ impl Plan {
     pub fn from_json(json: &str) -> Result<Self, PlanError> {
         let saved: serde_json::Value = serde_json::from_str(json)?;
         let ended = ends_before_spans(&saved);
+        let advances = advances_before_joins(&saved);
         let mut plan: Plan = serde_json::from_value(saved)?;
         // Hand-edited files may have a stale counter; never reuse an id.
         let max = plan.steps.iter().map(|s| s.id.0 + 1).max().unwrap_or(0);
@@ -2468,7 +2672,91 @@ impl Plan {
         plan.upgrade_before_spans(&ended);
         plan.upgrade_step_notes();
         plan.settle();
+        plan.upgrade_before_joins(&advances);
         Ok(plan)
+    }
+
+    /// Brings a plan saved before there were joins to how it is kept
+    /// now, so that each step goes on by itself where it did. Then a
+    /// step, a section or the plan said whether steps go on by
+    /// themselves ([`Advances`]): a step for itself, a section for the
+    /// steps in it that said nothing, the plan for the rest. Now the
+    /// plan's flow is joined where it said so and every step went on; a
+    /// section's span where it said so and every step it holds went on;
+    /// and any other step that went on is joined to the step after it.
+    fn upgrade_before_joins(&mut self, saved: &Advances) {
+        let said = |id: StepId| {
+            saved
+                .steps
+                .iter()
+                .find(|(of, _)| *of == id)
+                .map(|(_, on)| *on)
+        };
+        let went = |at: usize| {
+            said(self.steps[at].id)
+                .or_else(|| self.within(at).into_iter().rev().find_map(said))
+                .unwrap_or(saved.plan)
+        };
+        let steps: Vec<usize> = (0..self.steps.len())
+            .filter(|at| !self.steps[*at].is_section())
+            .collect();
+        let goes: Vec<StepId> = steps
+            .iter()
+            .filter(|at| went(**at))
+            .map(|at| self.steps[*at].id)
+            .collect();
+        if goes.is_empty() {
+            return;
+        }
+        if saved.plan && goes.len() == steps.len() {
+            self.flow.joined = true;
+            return;
+        }
+        let all_went = |section: StepId| {
+            self.position(section).is_some_and(|at| {
+                (at + 1..self.group_end(at))
+                    .filter(|row| !self.steps[*row].is_section())
+                    .all(went)
+            })
+        };
+        let mut joined: Vec<StepId> = self
+            .steps
+            .iter()
+            .filter(|step| step.is_section() && said(step.id) == Some(true) && all_went(step.id))
+            .map(|step| step.id)
+            .collect();
+        // The plan's last step has no step after it to be joined to, so
+        // where it went on, a section round it whose steps all went on
+        // joins them: a loop at the end of a service still goes round
+        // by itself.
+        if let Some(&last) = steps.last()
+            && went(last)
+            && !joined.iter().any(|id| self.within(last).contains(id))
+            && let Some(around) = self.within(last).into_iter().rev().find(|id| all_went(*id))
+        {
+            joined.push(around);
+        }
+        for section in joined {
+            match self
+                .spans
+                .iter_mut()
+                .find(|span| span.over == Over::Section(section))
+            {
+                Some(span) => span.flow.joined = true,
+                None => {
+                    self.spans.push(Span {
+                        id: SpanId(self.next_span),
+                        over: Over::Section(section),
+                        flow: Flow {
+                            joined: true,
+                            ..Flow::default()
+                        },
+                    });
+                    self.next_span += 1;
+                }
+            }
+        }
+        self.join_runs(&goes);
     }
 
     /// Writes the plan to a file.
@@ -2497,6 +2785,36 @@ fn ends_before_spans(saved: &serde_json::Value) -> Vec<(StepId, StepId)> {
             Some((StepId(id), StepId(last)))
         })
         .collect()
+}
+
+/// In a plan saved before there were joins, whether steps go on by
+/// themselves (`"advance"`), as the plan and each step or section that
+/// said so had it. Nothing in a plan saved since.
+#[derive(Debug, Default)]
+struct Advances {
+    /// What the plan said, for every step that nothing else said of.
+    plan: bool,
+    /// Each step or section that said, with what it said.
+    steps: Vec<(StepId, bool)>,
+}
+
+fn advances_before_joins(saved: &serde_json::Value) -> Advances {
+    let steps = saved.get("steps").and_then(|steps| steps.as_array());
+    Advances {
+        plan: saved
+            .get("advance")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        steps: steps
+            .into_iter()
+            .flatten()
+            .filter_map(|step| {
+                let id = step.get("id")?.as_u64()?;
+                let on = step.get("advance")?.as_bool()?;
+                Some((StepId(id), on))
+            })
+            .collect(),
+    }
 }
 
 /// Lengths as whole seconds in JSON, which people can read and edit.
@@ -2613,7 +2931,7 @@ mod tests {
         template.section("Alabanza", Some(Duration::from_secs(15 * 60)));
         let slot = template.live("Himnos", Some(Query::new("!h")));
         let welcome = template.show(resource("Bienvenida"));
-        template.get_mut(welcome).unwrap().advance = Some(true);
+        template.join_over(slot, welcome).unwrap();
         if let Action::Live { shown, .. } = &mut template.get_mut(slot).unwrap().action {
             shown.push(resource("Himno 436"));
         }
@@ -2624,9 +2942,8 @@ mod tests {
         assert_eq!(sunday.title, "Domingo 2026-11-15");
         assert!(!sunday.template);
         assert_eq!(labels(&sunday), labels(&template));
-        assert_eq!(
-            sunday.get(welcome).unwrap().advance,
-            Some(true),
+        assert!(
+            sunday.goes_on(sunday.position(slot).unwrap()),
             "settings come along"
         );
         match &sunday.get(slot).unwrap().action {
@@ -3249,7 +3566,11 @@ mod tests {
     #[test]
     fn a_section_is_a_plan_of_its_own() {
         let (mut plan, [music, praise, _, sermon]) = nested();
-        plan.get_mut(music).unwrap().advance = Some(true);
+        let joined = Flow {
+            joined: true,
+            ..Flow::default()
+        };
+        plan.set_flow(music, joined).unwrap();
         plan.loop_section(music).unwrap();
         let (a, b) = (plan.steps()[2].id, plan.steps()[3].id);
         let inner = plan.loop_over(a, b).unwrap();
@@ -3257,8 +3578,8 @@ mod tests {
         assert_eq!(labels(&part), ["Praise", "A", "B", "Reading", "C"]);
         // The sections in it are its own sections now.
         assert_eq!(part.get(praise).and_then(Step::depth), Some(0));
-        // It moves as Music did.
-        assert!(part.advance);
+        // It moves as Music did: round twice, every step going on.
+        assert!(part.flow.joined);
         assert_eq!(part.flow.repeat, Repeat::Times(2));
         assert!(part.goes_on(1));
         // The loop in it came along; Music's own is the part's flow.
@@ -3273,6 +3594,16 @@ mod tests {
         assert_eq!(part.steps()[1].id, plan.steps()[2].id);
         assert_eq!(labels(&plan.part(sermon).unwrap()), ["D"]);
         assert!(plan.part(part.steps()[1].id).is_none(), "a step isn't one");
+        // A join from before it on into it: what of it is inside goes on.
+        let mut plan = Plan::new("Sabbath");
+        let p = plan.push("P", Action::Blank);
+        let music = plan.section("Music", None);
+        plan.push("A", Action::Blank);
+        let b = plan.push("B", Action::Blank);
+        plan.join_over(p, b).unwrap();
+        let part = plan.part(music).unwrap();
+        assert!(!part.flow.joined);
+        assert_eq!(going(&part), [("A", true), ("B", false)]);
     }
 
     #[test]
@@ -3344,12 +3675,20 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_saved_before_brackets_loads_and_saves_unchanged() {
-        // As it is saved, whatever line endings the checkout gave the
-        // file: a plan is always written with plain ones.
-        let saved = include_str!("../fixtures/plan_before_brackets.json").replace("\r\n", "\n");
-        let plan = Plan::from_json(&saved).unwrap();
-        assert_eq!(plan.to_json(), saved.trim_end());
+    fn a_plan_saved_before_brackets_loads_and_saves_unchanged_but_its_join() {
+        // As it is saved, but that Music's steps going on by themselves
+        // is its span's to say now.
+        let saved = include_str!("../fixtures/plan_before_brackets.json");
+        let plan = Plan::from_json(saved).unwrap();
+        let mut expected: serde_json::Value = serde_json::from_str(saved).unwrap();
+        expected["steps"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("advance");
+        expected["spans"][0]["flow"]["joined"] = true.into();
+        let written: serde_json::Value = serde_json::from_str(&plan.to_json()).unwrap();
+        assert_eq!(written, expected);
+        assert_eq!(Plan::from_json(&plan.to_json()).unwrap(), plan);
         let id = |label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
         // Each section runs to the next no further in, as it did.
         assert_eq!(
@@ -3384,7 +3723,11 @@ mod tests {
         assert_eq!(plan.level(pos(&plan, d)), 1);
         assert_eq!(plan.level(pos(&plan, c)), 2);
         // What goes on by itself in it is its own to say.
-        plan.get_mut(inner).unwrap().advance = Some(true);
+        let joined = Flow {
+            joined: true,
+            ..Flow::default()
+        };
+        plan.set_flow(inner, joined).unwrap();
         assert!(plan.goes_on(pos(&plan, b)) && plan.goes_on(pos(&plan, c)));
         assert!(!plan.goes_on(pos(&plan, d)) && !plan.goes_on(pos(&plan, a)));
         // Put at its end, a step is not in it; at Music's end it is
@@ -3590,7 +3933,6 @@ mod tests {
         let sermon = plan.steps()[5].id;
         let outer = plan.loop_over(a, d).unwrap();
         let inner = plan.loop_over(b, c).unwrap();
-        plan.get_mut(b).unwrap().advance = Some(true);
         let end = Place {
             index: plan.len() - 2,
             section: Some(sermon),
@@ -3602,41 +3944,341 @@ mod tests {
         assert_eq!(carried.left, [outer]);
         assert_eq!(over(&loose, outer), ["A", "D"]);
         assert_eq!(over(&loose, inner), ["B", "C"]);
-        // Stripped, it is taken away and each waits.
+        // Stripped, it is taken away.
         let carried = plan.carry(&[b, c], end, Carry::Stripped).unwrap();
         assert_eq!(carried.left, [outer]);
         assert_eq!(carried.gone, [inner]);
         assert_eq!(plan.span(inner), None);
         assert_eq!(over(&plan, outer), ["A", "D"]);
-        assert_eq!(plan.get(b).unwrap().advance, Some(false));
-        assert_eq!(plan.get(c).unwrap().advance, Some(false));
+    }
+
+    /// Whether each step goes on by itself, in the plan's order, by label.
+    fn going(plan: &Plan) -> Vec<(&str, bool)> {
+        (0..plan.len())
+            .filter(|at| !plan.steps()[*at].is_section())
+            .map(|at| (plan.steps()[at].label.as_str(), plan.goes_on(at)))
+            .collect()
+    }
+
+    /// The labels of the steps that go on by themselves.
+    fn goers(plan: &Plan) -> Vec<&str> {
+        going(plan)
+            .into_iter()
+            .filter(|(_, goes)| *goes)
+            .map(|(label, _)| label)
+            .collect()
     }
 
     #[test]
-    fn joined_steps_keep_their_join_cut_loose_and_lose_it_stripped() {
-        let (mut plan, music, [a, b, _, _, _]) = hymns();
+    fn a_join_has_each_of_its_steps_but_the_last_go_on_into_the_next() {
+        let (mut plan, _, [a, b, c, d, e]) = hymns();
+        assert!(goers(&plan).is_empty(), "every step waits at first");
+        // Pulled down from A to C: A and B go on, C waits as it did.
+        plan.join_over(a, c).unwrap();
+        assert_eq!(goers(&plan), ["A", "B"]);
+        let join = *plan.spans().last().unwrap();
+        assert!(join.is_joined() && !join.is_loop() && !join.is_drawn());
+        assert_eq!(join.over, Over::Steps { first: a, last: c });
+        // It reads back the same.
+        let json = plan.to_json();
+        assert!(json.contains("\"joined\": true"), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        // A click on C's dot joins it to the next: one join, grown.
+        plan.join_on(c, true).unwrap();
+        assert_eq!(goers(&plan), ["A", "B", "C"]);
+        assert_eq!(plan.spans().len(), 1, "one join");
+        assert_eq!(over(&plan, join.id), ["A", "B", "C", "D"]);
+        // Across Sermon's heading too.
+        plan.join_on(d, true).unwrap();
+        assert_eq!(goers(&plan), ["A", "B", "C", "D"]);
+        assert_eq!(
+            plan.join_on(e, true),
+            Err(SpanError::TooFew),
+            "nothing after E"
+        );
+        // A click on B's dot parts it from C: the join is cut in two.
+        plan.join_on(b, false).unwrap();
+        assert_eq!(goers(&plan), ["A", "C", "D"]);
+        assert_eq!(plan.spans().len(), 2);
+        // A step by itself says the same through its flow.
+        assert!(plan.flow_of(a).is_some_and(|flow| flow.joined));
+        assert!(plan.flow_of(b).is_some_and(|flow| !flow.joined));
+        let mut again = plan.flow_of(b).unwrap();
+        again.repeat = Repeat::Times(2);
+        plan.set_flow(b, again).unwrap();
+        assert_eq!(goers(&plan), ["A", "C", "D"], "a repeat leaves joins be");
+        again.joined = true;
+        plan.set_flow(b, again).unwrap();
+        assert_eq!(goers(&plan), ["A", "B", "C", "D"]);
+        assert_eq!(plan.get(b).unwrap().flow.repeat, Repeat::Times(2));
+        // Too few, or gone.
+        assert_eq!(plan.join_over(a, a), Err(SpanError::TooFew));
+        assert_eq!(plan.join_over(a, StepId(99)), Err(SpanError::Missing));
+    }
+
+    #[test]
+    fn a_sections_join_has_every_step_it_holds_go_on_the_last_too() {
+        let (mut plan, music, [_, b, _, d, _]) = hymns();
+        let joined = Flow {
+            joined: true,
+            ..Flow::default()
+        };
+        plan.set_flow(music, joined).unwrap();
+        // D, Music's last, goes on into E in Sermon.
+        assert_eq!(goers(&plan), ["A", "B", "C", "D"]);
+        assert_eq!(plan.flow_of(music), Some(joined));
+        // A step put into Music later goes on too.
+        let new = plan.insert(plan.position(d).unwrap() + 1, "New", Action::Blank);
+        assert_eq!(plan.within(plan.position(new).unwrap()), [music]);
+        assert!(plan.goes_on(plan.position(new).unwrap()));
+        // B waits: Music's join gives way to joins over its other steps,
+        // which go on as they did.
+        plan.join_on(b, false).unwrap();
+        assert_eq!(goers(&plan), ["A", "C", "D", "New"]);
+        assert_eq!(plan.flow_of(music), Some(Flow::default()));
+        // Without its heading, its steps go on as they did.
+        let (mut plan, music, _) = hymns();
+        plan.set_flow(music, joined).unwrap();
+        assert!(plan.unbracket(music));
+        assert_eq!(goers(&plan), ["A", "B", "C", "D"]);
+        // The plan's own: every step, the last too.
+        let (mut plan, ..) = hymns();
+        plan.flow = joined;
+        assert_eq!(goers(&plan), ["A", "B", "C", "D", "E"]);
+    }
+
+    #[test]
+    fn steps_carried_out_of_a_join_are_refused_cut_loose_or_stripped() {
+        let (mut plan, _, [a, b, c, d, _]) = hymns();
         let sermon = plan.steps()[5].id;
-        // A goes on to B by itself: Music says so for all its steps.
-        plan.get_mut(music).unwrap().advance = Some(true);
+        plan.join_over(a, c).unwrap();
+        let join = plan.spans()[0].id;
         let end = Place {
-            index: plan.len() - 2,
+            index: plan.len() - 1,
             section: Some(sermon),
         };
+        // Out of its middle: refused, as from a loop, nothing changed.
+        let before = plan.clone();
+        assert_eq!(
+            plan.carry(&[b], end, Carry::Whole),
+            Err(CarryError::Crosses(vec![join]))
+        );
+        assert_eq!(plan, before);
+        // Its last step too: what goes on into it would change.
+        assert_eq!(
+            plan.would_carry(&[c], end, Carry::Whole),
+            Err(CarryError::Crosses(vec![join]))
+        );
+        // Ctrl: B is cut loose, and A goes on into C.
         let mut loose = plan.clone();
-        loose.carry(&[a, b], end, Carry::CutLoose).unwrap();
-        let at = loose.position(a).unwrap();
-        assert!(loose.goes_on(at), "the join goes along though Sermon waits");
-        assert_eq!(loose.get(a).unwrap().advance, Some(true));
-        plan.carry(&[a, b], end, Carry::Stripped).unwrap();
-        assert!(!plan.goes_on(plan.position(a).unwrap()));
-        // Going on by itself never stops a carry.
-        let (mut plan, _, [a, _, _, d, _]) = hymns();
-        plan.get_mut(a).unwrap().advance = Some(true);
+        let carried = loose.carry(&[b], end, Carry::CutLoose).unwrap();
+        assert_eq!(carried.left, [join]);
+        assert_eq!(over(&loose, join), ["A", "C"]);
+        assert_eq!(goers(&loose), ["A"]);
+        // A join left with one step is no more.
+        let carried = loose.carry(&[c], end, Carry::CutLoose).unwrap();
+        assert_eq!(carried.gone, [join]);
+        assert!(goers(&loose).is_empty());
+        // All of it carried: the join goes along, though they land
+        // where every step waits.
+        let mut whole = plan.clone();
+        whole.carry(&[a, b, c], end, Carry::Whole).unwrap();
+        assert_eq!(goers(&whole), ["A", "B"]);
+        assert_eq!(holds(&whole, sermon), ["E", "A", "B", "C"]);
+        // Alt strips it: they come along and wait.
+        let carried = plan.carry(&[a, b, c], end, Carry::Stripped).unwrap();
+        assert_eq!(carried.gone, [join]);
+        assert!(goers(&plan).is_empty());
+        let _ = d;
+    }
+
+    #[test]
+    fn steps_carried_in_between_two_joined_steps_are_joined() {
+        let (mut plan, music, [a, b, c, d, e]) = hymns();
+        plan.join_over(a, c).unwrap();
+        // E, from Sermon, to between A and B: it goes on into B.
         let to = Place {
-            index: plan.position(d).unwrap() - 1,
-            section: plan.within(1).first().copied(),
+            index: plan.position(b).unwrap(),
+            section: Some(music),
         };
-        assert!(plan.carry(&[a], to, Carry::Whole).is_ok());
+        plan.carry(&[e], to, Carry::Whole).unwrap();
+        assert_eq!(goers(&plan), ["A", "E", "B"]);
+        // Moving about inside a join crosses nothing.
+        let to = Place {
+            index: plan.position(c).unwrap() - 1,
+            section: Some(music),
+        };
+        assert!(plan.carry(&[a], to, Carry::Whole).unwrap().left.is_empty());
+        assert_eq!(goers(&plan), ["E", "B", "A"]);
+        // Just after its last, a new step is not joined.
+        let to = Place {
+            index: plan.position(d).unwrap(),
+            section: Some(music),
+        };
+        let new = plan.insert_at(to, "New", Action::Blank).unwrap();
+        assert_eq!(plan.position(new), Some(plan.position(c).unwrap() + 1));
+        assert_eq!(goers(&plan), ["E", "B", "A"]);
+    }
+
+    #[test]
+    fn a_join_and_a_loop_over_the_same_steps_are_two_spans() {
+        let (mut plan, _, [a, b, c, d, _]) = hymns();
+        plan.join_over(a, c).unwrap();
+        let join = plan.spans()[0].id;
+        let looped = plan.loop_over(a, c).unwrap();
+        // One comes again, the other goes on: neither is the other.
+        assert!(
+            plan.span(looped)
+                .is_some_and(|span| span.is_loop() && !span.is_joined())
+        );
+        assert!(
+            plan.span(join)
+                .is_some_and(|span| span.is_joined() && !span.is_loop())
+        );
+        assert_eq!(over(&plan, looped), over(&plan, join));
+        assert_eq!(goers(&plan), ["A", "B"], "C waits, as the join's last");
+        // Its round is as before: the join changes nothing of the order.
+        let mut session = crate::Session::new(plan.clone());
+        let walk: Vec<String> = (0..8)
+            .map(|_| {
+                session
+                    .next()
+                    .map_or("-", |step| step.label.as_str())
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(walk, ["A", "B", "C", "A", "B", "C", "D", "E"]);
+        // Taking the loop away leaves the join, and the join the loop.
+        let mut unlooped = plan.clone();
+        assert!(unlooped.unloop(looped));
+        assert_eq!(goers(&unlooped), ["A", "B"]);
+        let mut unjoined = plan.clone();
+        unjoined.join_on(a, false).unwrap();
+        unjoined.join_on(b, false).unwrap();
+        assert!(unjoined.span(looped).is_some_and(|span| span.is_loop()));
+        assert!(goers(&unjoined).is_empty());
+        // Carried out, both are crossed; carried whole and stripped,
+        // both are taken away.
+        let sermon = plan.steps()[5].id;
+        let end = Place {
+            index: plan.len() - 1,
+            section: Some(sermon),
+        };
+        assert_eq!(
+            plan.would_carry(&[b], end, Carry::Whole),
+            Err(CarryError::Crosses(vec![join, looped]))
+        );
+        let carried = plan.carry(&[a, b, c], end, Carry::Stripped).unwrap();
+        assert_eq!(carried.gone, [join, looped]);
+        assert!(plan.spans().is_empty());
+        let _ = d;
+    }
+
+    #[test]
+    fn a_join_lies_across_a_loop_and_leaves_the_plans_round_and_time_alone() {
+        // B to D twice, and A joined into B and on to C: half over the
+        // loop, which a loop or a drawn order could not be.
+        let mut plan = Plan::new("Sabbath");
+        let ids = ["A", "B", "C", "D", "E"].map(|name| plan.show(resource(name)));
+        let [a, b, c, d, _] = ids;
+        let looped = plan.loop_over(b, d).unwrap();
+        let length = |plan: &Plan| crate::timing::schedule(plan, &|_| None).total;
+        let alone = plan.clone();
+        plan.join_over(a, c).unwrap();
+        assert_eq!(plan.loop_over(a, c), Err(SpanError::HalfOver(looped)));
+        assert_eq!(goers(&plan), ["A", "B"]);
+        let walk = |plan: Plan| -> Vec<String> {
+            let mut session = crate::Session::new(plan);
+            (0..9)
+                .map(|_| {
+                    session
+                        .next()
+                        .map_or("-", |step| step.label.as_str())
+                        .to_string()
+                })
+                .collect()
+        };
+        assert_eq!(walk(plan.clone()), walk(alone.clone()));
+        assert_eq!(
+            walk(plan.clone()),
+            ["A", "B", "C", "D", "B", "C", "D", "E", "-"]
+        );
+        assert_eq!(length(&plan), length(&alone));
+        // Nor does one across a section's end change its time.
+        let (mut plan, music, [_, _, c, _, e]) = hymns();
+        if let Action::Section { budget, .. } = &mut plan.get_mut(music).unwrap().action {
+            *budget = Some(Duration::from_secs(600));
+        }
+        let alone = plan.clone();
+        plan.join_over(c, e).unwrap();
+        assert_eq!(length(&plan), length(&alone));
+        assert!(length(&alone) > Duration::from_secs(600));
+    }
+
+    #[test]
+    fn a_plan_saved_before_joins_goes_on_where_it_did() {
+        // Saved by the plan as it was: the plan said steps go on, and
+        // Before (round till 10:30) said so too. In Music, Song said it
+        // waits; Word said its steps wait, but Video said it goes on;
+        // and Farewell, the last, comes again forever and said so too.
+        let plan = Plan::from_json(include_str!("../fixtures/plan_before_joins.json")).unwrap();
+        assert_eq!(
+            going(&plan),
+            [
+                ("Countdown", true),
+                ("Notices", true),
+                ("Welcome", true),
+                ("Song", false),
+                ("Hymn", true),
+                ("Video", true),
+                ("Sermon", false),
+                ("Prayer", false),
+                ("Thanks", true),
+                ("Goodbye", true),
+            ]
+        );
+        let id = |label: &str| plan.steps().iter().find(|s| s.label == label).unwrap().id;
+        // Before and Farewell said it themselves, and each join is theirs;
+        // the plan doesn't join its steps, for Song waits.
+        assert!(!plan.flow.joined);
+        let joins_of = |section: &str| plan.flow_of(id(section)).is_some_and(|flow| flow.joined);
+        assert!(joins_of("Before") && joins_of("Farewell"));
+        assert!(!joins_of("Music") && !joins_of("Word"));
+        // Farewell still goes round by itself: its last goes on.
+        assert_eq!(
+            plan.flow_of(id("Farewell")).map(|flow| flow.repeat),
+            Some(Repeat::Forever)
+        );
+        // Saved again, it says so with spans, and reads back the same.
+        let json = plan.to_json();
+        assert!(!json.contains("advance"), "{json}");
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+        // A plan where every step went on, as the plan said: its own.
+        let all = r#"{"title": "Before", "advance": true, "steps": [
+            {"id": 0, "label": "A", "action": {"type": "blank"}},
+            {"id": 1, "label": "B", "action": {"type": "blank"}}]}"#;
+        let plan = Plan::from_json(all).unwrap();
+        assert!(plan.flow.joined && plan.spans().is_empty());
+        assert_eq!(goers(&plan), ["A", "B"]);
+        // The plan's last step has no step after it to be joined to:
+        // where it went on, as the plan said, the section round it joins
+        // its steps, so its loop still goes round by itself.
+        let last = r#"{"title": "Sabbath", "advance": true, "steps": [
+            {"id": 0, "label": "A", "action": {"type": "blank"}, "advance": false},
+            {"id": 1, "label": "Farewell", "action": {"type": "section"}},
+            {"id": 2, "label": "B", "action": {"type": "blank"}},
+            {"id": 3, "label": "C", "action": {"type": "blank"}}],
+            "spans": [{"id": 0, "over": {"section": 1}, "flow": {"repeat": "forever"}}]}"#;
+        let plan = Plan::from_json(last).unwrap();
+        assert_eq!(goers(&plan), ["B", "C"]);
+        assert_eq!(
+            plan.flow_of(StepId(1)),
+            Some(Flow {
+                repeat: Repeat::Forever,
+                joined: true,
+                ..Flow::default()
+            })
+        );
     }
 
     #[test]

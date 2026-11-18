@@ -312,10 +312,14 @@ pub fn lands(
 
 /// The schedule of `plan`. `loaded` is a step's media length, once loaded.
 pub fn schedule(plan: &Plan, loaded: &dyn Fn(&Step) -> Option<Duration>) -> Schedule {
+    // A join takes no time of its own, and may lie across the rest.
     let spans = plan
         .span_ranges()
         .into_iter()
-        .filter_map(|(id, first, last)| Some((first, last, plan.span(id)?.flow.repeat)))
+        .filter_map(|(id, first, last)| {
+            let flow = plan.span(id)?.flow;
+            flow.shapes().then_some((first, last, flow.repeat))
+        })
         .collect();
     let mut told = Told {
         plan,

@@ -156,12 +156,14 @@ impl Session {
             return Some((at, rounds));
         }
         rounds.push((own, None));
-        // Then the spans it is in, innermost first, and the plan.
+        // Then the loops and drawn orders it is in, innermost first, and
+        // the plan. A join changes nothing of where it goes.
         let groups = self
             .plan
             .spans_at(at)
             .into_iter()
             .rev()
+            .filter(|id| self.plan.span(*id).is_some_and(|span| span.flow.shapes()))
             .map(Some)
             .chain([None]);
         // What follows in the plan's own order, inside a span that
@@ -948,19 +950,33 @@ mod tests {
     }
 
     #[test]
-    fn going_on_carries_down_and_a_step_can_say_otherwise() {
-        let (mut session, music, _) = two_sections();
-        session.edit(|plan| {
-            plan.get_mut(music).unwrap().advance = Some(true);
-            let b = plan.steps()[2].id;
-            plan.get_mut(b).unwrap().advance = Some(false);
-        });
-        let plan = session.plan();
-        assert!(plan.goes_on(1), "A does as Music says");
-        assert!(!plan.goes_on(2), "B says it waits");
-        assert!(!plan.goes_on(4), "C is in Sermon, which says nothing");
-        let mut plan = plan.clone();
-        plan.advance = true;
-        assert!(plan.goes_on(4), "then the plan says");
+    fn a_join_across_a_loop_leaves_where_going_on_goes() {
+        use crate::timing::TimeOfDay;
+        let at = |text: &str| TimeOfDay::parse(text).unwrap().since_midnight();
+        // B to D until 10:30, ending with the step that is on; and A
+        // joined into B and on to C, half over the loop.
+        let walked = |joined: bool| {
+            let mut plan = Plan::new("Sabbath");
+            let ids = ["A", "B", "C", "D", "E"].map(|name| plan.show(resource(name)));
+            let looped = plan.loop_over(ids[1], ids[3]).unwrap();
+            let until = Flow {
+                repeat: Repeat::Until(TimeOfDay::parse("10:30").unwrap()),
+                ends: Ending::Step,
+                ..Flow::default()
+            };
+            plan.set_flow(looped, until).unwrap();
+            if joined {
+                plan.join_over(ids[0], ids[2]).unwrap();
+                assert_eq!(plan.spans().len(), 2, "a span of its own");
+            }
+            let mut session = Session::new(plan);
+            session.tell_time(at("10:00"));
+            let before = walk(&mut session, 6);
+            // The time comes while C is on: the loop is over with it.
+            session.tell_time(at("10:31"));
+            format!("{before} {}", walk(&mut session, 2))
+        };
+        assert_eq!(walked(true), "A B C D B C E -");
+        assert_eq!(walked(true), walked(false));
     }
 }
