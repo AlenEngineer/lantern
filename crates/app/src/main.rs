@@ -237,6 +237,10 @@ pub(crate) enum FadeEnd {
 
 #[derive(Debug, Clone)]
 enum Message {
+    /// The plan's bracket pressed: the plan is picked, as a section is.
+    PickPlan,
+    /// The plan's bracket pressed twice: folded into one row, or opened.
+    FoldPlan,
     /// The stage as it was when the feed started. Always the feed's first message.
     Feed(StageState),
     Stage(StageEvent),
@@ -797,6 +801,10 @@ struct App {
     pub(crate) shelf_many: Vec<ResourceId>,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
+    /// The open plan's bracket is picked: keys act on the plan.
+    pub(crate) plan_picked: bool,
+    /// The open plan is folded into one row, as the others are.
+    pub(crate) plan_folded: bool,
     /// Sections over in this service that the operator opened again.
     pub(crate) opened: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
@@ -952,6 +960,8 @@ impl App {
             kept: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
+            plan_picked: false,
+            plan_folded: false,
             opened: std::collections::HashSet::new(),
             parts: HashMap::new(),
             shelf: Vec::new(),
@@ -1130,6 +1140,10 @@ impl App {
             }
             None => self.handle(message),
         };
+        // Whatever else is picked, the plan is not.
+        if self.selected.is_some() || !self.picked.is_empty() || self.line_picked.is_some() {
+            self.plan_picked = false;
+        }
         // An edit that put a section over its time shows it tipping.
         if self.edits != edits
             && let Some(before) = self.undo.last()
@@ -2319,6 +2333,17 @@ impl App {
                         .edit_plan(|plan| plan.set_note_text(id, words));
                 }
             }
+            Message::PickPlan => {
+                self.selected = None;
+                self.picked.clear();
+                self.line_picked = None;
+                self.editing = None;
+                self.plan_picked = true;
+            }
+            Message::FoldPlan => {
+                self.plan_folded = !self.plan_folded;
+                self.plan_picked = true;
+            }
             Message::PlanGoal(by) => {
                 self.remember(None);
                 self.engine
@@ -3481,6 +3506,7 @@ impl App {
                 self.ring = None;
                 self.repeat_until.clear();
             }
+            Op::ClearSearch if self.plan_picked => self.plan_picked = false,
             Op::ClearSearch => {
                 // Esc also lets go of a name being typed, and of Add step.
                 if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
@@ -3561,6 +3587,11 @@ impl App {
                     operation::move_cursor_to_end(SEARCH_BOX),
                 ]);
             }
+            // The plan's name is typed in its card, under its ring.
+            Op::Rename if self.plan_picked && !self.searching() => {
+                let ring = self.update(Message::Rail(rail::Act::Ring(rail::RingOn::All(None))));
+                return Task::batch([ring, self.update(Message::EditPlanName)]);
+            }
             Op::Rename => {
                 let in_plan = !matches!(self.plans.mode, plans::Mode::Browsing(_));
                 if let Some(step) = self.selected.filter(|_| in_plan && !self.searching()) {
@@ -3569,6 +3600,9 @@ impl App {
             }
             // A copy of what is selected, right after it: the steps picked
             // together, or the selected step or section; and selected.
+            Op::Duplicate if self.plan_picked && !self.searching() => {
+                return self.update(Message::DuplicatePlan);
+            }
             Op::Duplicate if !self.searching() => {
                 let ids: Vec<StepId> = match self.picked.len() > 1 {
                     true => self.picked.clone(),
@@ -3595,6 +3629,10 @@ impl App {
             // steps picked together; the selected step; a bracket (its
             // steps stay, and with Shift they go too). One undo brings it
             // all back.
+            // The plan picked: deleted as from its ring, pressed twice.
+            Op::RemoveStep if self.plan_picked && !self.searching() => {
+                return self.update(Message::DeletePlan);
+            }
             Op::RemoveStep if !self.searching() => {
                 if let Some(line) = self.line_picked.take() {
                     self.remember(None);
@@ -3929,6 +3967,8 @@ impl App {
         if replaced {
             self.folded.clear();
             self.opened.clear();
+            self.plan_folded = false;
+            self.plan_picked = false;
         }
         let preload = self.preload_if(replaced);
         if replaced && self.plans.is_blank(&self.engine.0.plan()) {

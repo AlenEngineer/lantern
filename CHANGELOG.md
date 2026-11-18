@@ -549,6 +549,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The old heading row is gone. A section that holds only folded
   sections is a bracket round their rows too, and a loop over it runs
   beside the folded rows instead of disappearing.
+- The plan's bracket does what a section's does: pressed, the plan is
+  picked (F2 renames it, Ctrl+D copies it, Delete twice deletes it, Esc
+  lets go); pressed twice, the plan folds into one row like the others
+  under it, and opens again the same way; a right click opens its ring.
 - The plan's card is its ring too: its head or its brace pressed, or
   a right click, opens the ring with the card under it (its name,
   goal, start, what it takes, how it moves). The ring opens like
