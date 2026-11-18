@@ -521,6 +521,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.
+- In a service, the road moves as the service goes on: the ring of
+  what went on opens and what was on fades to played, rows grow and
+  shrink to their new heights instead of jumping, the tube to what is
+  next fills smoothly, and a loop going round sends a light back up its
+  bracket. With motion off, all of it is where it ends up at once.
 - In a service, the road lays out a loop's round under way and the
   next, no more: the rounds after are one row, "again ×3", "again
   until 10:30" or "again, for ever". A loop for ever no longer fills

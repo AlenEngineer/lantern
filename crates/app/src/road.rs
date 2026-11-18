@@ -3,8 +3,15 @@
 //! a loop's next round is rows of its own, a drawn order stands as it
 //! was drawn. A folded section is one thing on it, whichever of its
 //! steps is on.
+//!
+//! As the service goes on, the road moves: the ring of what went on
+//! opens and what was on fades to played, rows grow and shrink to their
+//! new heights rather than jump ([`crate::settle`]), the tube fills
+//! smoothly between the moments it is measured, and a loop going round
+//! sends a light back up its bracket.
 
-use std::time::Duration;
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
@@ -13,7 +20,9 @@ use lantern_engine::timing::{Phase, Timing};
 use lantern_engine::{Action, Coming, FlowOf, Plan, Step, StepId};
 
 use crate::look::{self, BODY, BOLD, META, Tone};
+use crate::motion::{Glide, blend, ease};
 use crate::plan_pane::{RAIL, RAIL_DOT, RAIL_TOP};
+use crate::settle::{Heights, settle};
 use crate::track::{self, Key, Places};
 use crate::{App, Message};
 
@@ -27,7 +36,7 @@ pub(crate) enum Place {
 }
 
 /// One row of the road.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum What {
     Step(StepId),
     /// A folded section, as one row; `holds` the step of it that is on.
@@ -54,6 +63,53 @@ pub(crate) struct Thing {
     pub(crate) after: Option<Duration>,
     /// Whether it goes on by itself to the thing after it.
     pub(crate) joined: bool,
+}
+
+/// Which thing a row stands for, wherever it is on the road and
+/// whichever of a folded section's steps is on.
+pub(crate) type Who = (What, u16);
+
+impl Thing {
+    pub(crate) fn who(&self) -> Who {
+        let what = match self.what {
+            What::Folded { section, .. } => What::Folded {
+                section,
+                holds: None,
+            },
+            what => what,
+        };
+        (what, self.round)
+    }
+}
+
+/// The road's rows as the service goes on: how tall each is shown, the
+/// rows as last laid out, and as they were before it last went on.
+#[derive(Default)]
+pub(crate) struct Rows {
+    heights: Heights<Who>,
+    laid: RefCell<Vec<Who>>,
+    was: Vec<Who>,
+}
+
+impl Rows {
+    /// The service went on: the rows there were, it went on from.
+    pub(crate) fn went_on(&mut self) {
+        self.was = self.laid.borrow().clone();
+    }
+}
+
+/// The rows of `was` gone from `now`, each with the row of `now` it
+/// stays before as it closes up (`now.len()` for after the last).
+fn leaving(was: &[Who], now: &[Who]) -> Vec<(usize, Who)> {
+    let mut before = 0;
+    let mut gone = Vec::new();
+    for who in was {
+        match now.iter().position(|kept| kept == who) {
+            Some(at) => before = at + 1,
+            None => gone.push((before, *who)),
+        }
+    }
+    gone
 }
 
 /// A section's bracket beside a run of things next to each other that
@@ -241,8 +297,17 @@ pub(crate) fn lay(
 enum Mark {
     Solid(Color),
     Hollow(Color),
-    On(Color),
-    Stack { color: Color, solid: bool },
+    /// What is on, its ring `open` of the way out; a glow going out of it
+    /// (`glow` of the way gone) as the service goes round what it is in.
+    On {
+        color: Color,
+        open: f32,
+        glow: Option<f32>,
+    },
+    Stack {
+        color: Color,
+        solid: bool,
+    },
 }
 
 /// What runs from one row's dot to the next one's.
@@ -260,13 +325,29 @@ enum Link {
     Waits(Color),
 }
 
+/// A section's bracket as drawn: its colour, its name and what it says
+/// under it, and how far a light has run back up it as the service went
+/// round it.
+#[derive(Debug, Clone, PartialEq)]
+struct Bracket {
+    brace: Brace,
+    color: Color,
+    name: String,
+    sub: Option<String>,
+    pulse: Option<f32>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct Drawn {
     marks: Vec<Mark>,
     /// From each row to the one after it.
     links: Vec<Option<Link>>,
-    braces: Vec<(Brace, Color, String, Option<String>)>,
+    brackets: Vec<Bracket>,
     places: Places,
+    /// What is on, whose tube fills.
+    on: Option<Who>,
+    /// Nothing moves.
+    still: bool,
 }
 
 impl App {
@@ -411,9 +492,57 @@ impl App {
         let wide = track::side_room(lanes, false);
         let places = self.places.clone();
         let section_of = |id: StepId| timing.sections.iter().find(|s| s.id == id);
-        let mut list = column![].spacing(2);
+        let motion = &self.motion;
+        let rows = &self.road_rows;
+        let whos: Vec<Who> = road.things.iter().map(Thing::who).collect();
+        // Just gone on: what comes in grows, and what went closes up.
+        let stepping = motion.stepped().is_some();
+        let gone = match stepping {
+            true => leaving(&rows.was, &whos),
+            false => Vec::new(),
+        };
+        rows.heights
+            .borrow_mut()
+            .retain(|who, _| whos.contains(who) || gone.iter().any(|(_, left)| left == who));
+        rows.laid.replace(whos.clone());
+        let closing = |list: iced::widget::Column<'a, Message>, before: usize| {
+            gone.iter()
+                .filter(|(at, _)| *at == before)
+                .fold(list, |list, (_, who)| {
+                    list.push(settle(
+                        *who,
+                        &rows.heights,
+                        false,
+                        motion.still,
+                        Space::new(),
+                    ))
+                })
+        };
+        // As the service goes round a section, a light runs back up the
+        // bracket of the round under way; round anything else, the dot of
+        // what is on glows.
+        let round = motion.going_round();
+        let on_at = road
+            .things
+            .iter()
+            .position(|thing| thing.place == Place::On);
+        let rounded = |brace: &Brace| {
+            let (of, t) = round?;
+            let goes_round = of == FlowOf::Step(brace.section)
+                || plan
+                    .section_span(brace.section)
+                    .is_some_and(|span| of == FlowOf::Span(span.id));
+            let under_way = on_at.is_some_and(|on| (brace.first..=brace.last).contains(&on));
+            (goes_round && under_way).then_some(t)
+        };
+        let glow = round
+            .filter(|_| !road.braces.iter().any(|brace| rounded(brace).is_some()))
+            .map(|(_, t)| t);
+        let opened = motion.stepped().map_or(1.0, ease);
+        let mut list = column![];
         let mut marks = Vec::new();
         for (n, thing) in road.things.iter().enumerate() {
+            list = closing(list, n);
             let place = match thing.place {
                 Place::Played => crate::plan_pane::Place::Done,
                 Place::On => crate::plan_pane::Place::Current,
@@ -480,8 +609,20 @@ impl App {
                     color: p.primary,
                     solid: false,
                 },
-                (_, Place::Played) => Mark::Solid(p.outline),
-                (_, Place::On) => Mark::On(p.tertiary),
+                // What was on fades to played, its ring closing.
+                (What::Step(id), Place::Played) => match motion.going_off(id).map(ease) {
+                    Some(t) => Mark::On {
+                        color: blend(p.tertiary, p.outline, t),
+                        open: 1.0 - t,
+                        glow: None,
+                    },
+                    None => Mark::Solid(p.outline),
+                },
+                (_, Place::On) => Mark::On {
+                    color: p.tertiary,
+                    open: opened,
+                    glow,
+                },
                 (_, Place::Next) => Mark::Hollow(p.tertiary),
                 (_, Place::Coming) if thing.joined => Mark::Solid(p.primary),
                 (_, Place::Coming) => Mark::Hollow(p.on_surface_variant),
@@ -502,11 +643,24 @@ impl App {
                     .interaction(mouse::Interaction::Pointer);
             }
             let side = track::seen(Key::RoadSide(n), &places, room);
-            list = list.push(
+            // The room between rows is part of each, so one closing up
+            // takes its room with it.
+            let whole =
                 container(row![dot, container(content).width(Fill), side].height(Length::Shrink))
-                    .padding(iced::Padding::default().bottom(2.0)),
-            );
+                    .padding(iced::Padding::default().bottom(4.0));
+            // Two rows for one thing would pull its height two ways.
+            list = match whos.iter().position(|who| *who == whos[n]) == Some(n) {
+                true => list.push(settle(
+                    whos[n],
+                    &rows.heights,
+                    stepping,
+                    motion.still,
+                    whole,
+                )),
+                false => list.push(whole),
+            };
         }
+        let list = closing(list, road.things.len());
         // From each thing to the next.
         let links = (0..road.things.len())
             .map(|n| {
@@ -535,7 +689,7 @@ impl App {
                 })
             })
             .collect();
-        let braces = road
+        let brackets = road
             .braces
             .iter()
             .filter_map(|brace| {
@@ -576,14 +730,22 @@ impl App {
                         None => format!("Σ {}", crate::length::clock(self.planned(plan, step.id))),
                     }),
                 };
-                Some((*brace, color, step.label.clone(), sub))
+                Some(Bracket {
+                    brace: *brace,
+                    color,
+                    name: step.label.clone(),
+                    sub,
+                    pulse: rounded(brace),
+                })
             })
             .collect();
         let drawn = Drawn {
             marks,
             links,
-            braces,
+            brackets,
             places: places.clone(),
+            on: on_at.map(|on| whos[on]),
+            still: motion.still,
         };
         stack![list, iced::widget::canvas(drawn).width(Fill).height(Fill)]
             .width(Fill)
@@ -733,18 +895,88 @@ const DOT: f32 = 5.0;
 const RING: f32 = 4.0;
 const TUBE: f32 = 8.0;
 const CURVE: f32 = 7.0;
+/// How long the tube takes to fill to where it was last measured: as
+/// long as it is till the next measure, so between them it fills evenly.
+const GLIDE: Duration = Duration::from_millis(500);
+/// How much of the tube it fills before it is drawn again, as it fills
+/// evenly: less than a pixel.
+const FILL_STEP: f32 = 0.004;
+
+/// The tube of what is on, as it is shown filling.
+#[derive(Debug, Default)]
+struct Tube(Option<(Who, Glide)>);
+
+impl Tube {
+    /// What is on now is `on`, and its tube should be `full`. The tube
+    /// of something that has just gone on fills from empty; one that is
+    /// measured again goes on from where it is shown.
+    fn towards(&mut self, on: Option<(Who, f32)>, now: Instant, still: bool) {
+        self.0 = on.map(|(who, full)| {
+            let glide = match self.0 {
+                _ if still => Glide::at(full, now),
+                Some((was, glide)) if was == who && glide.to == full => glide,
+                Some((was, glide)) if was == who => glide.towards(full, now, GLIDE, false),
+                Some(_) => Glide::new(0.0, full, now, GLIDE, true),
+                // As it first shows, it is as full as it is.
+                None => Glide::at(full, now),
+            };
+            (who, glide)
+        });
+    }
+
+    /// When to draw it again: at once while it settles, else once it has
+    /// filled enough to be seen to.
+    fn next_look(&self, now: Instant) -> Option<Instant> {
+        self.0
+            .and_then(|(_, glide)| glide.when_moved(FILL_STEP, now))
+    }
+
+    fn shown(&self, on: Option<Who>, full: f32, now: Instant) -> f32 {
+        match self.0 {
+            Some((who, glide)) if Some(who) == on => glide.shown(now),
+            _ => full,
+        }
+        .clamp(0.0, 1.0)
+    }
+}
+
+impl Drawn {
+    /// What is on, and how full its tube should be.
+    fn filling(&self) -> Option<(Who, f32)> {
+        let full = self.links.iter().flatten().find_map(|link| match link {
+            Link::Tube { full, .. } => Some(*full),
+            _ => None,
+        })?;
+        Some((self.on?, full))
+    }
+}
 
 impl canvas::Program<Message> for Drawn {
-    type State = ();
+    type State = Tube;
+
+    fn update(
+        &self,
+        tube: &mut Tube,
+        event: &canvas::Event,
+        _: Rectangle,
+        _: mouse::Cursor,
+    ) -> Option<canvas::Action<Message>> {
+        let canvas::Event::Window(iced::window::Event::RedrawRequested(now)) = event else {
+            return None;
+        };
+        tube.towards(self.filling(), *now, self.still);
+        tube.next_look(*now).map(canvas::Action::request_redraw_at)
+    }
 
     fn draw(
         &self,
-        _: &(),
+        tube: &Tube,
         renderer: &Renderer,
         _: &Theme,
         bounds: Rectangle,
         _: mouse::Cursor,
     ) -> Vec<Geometry> {
+        let now = Instant::now();
         let places = self.places.borrow().clone();
         let at = |key: Key| {
             places.get(&key).map(|place| Rectangle {
@@ -758,7 +990,7 @@ impl canvas::Program<Message> for Drawn {
                 .map(|rail| Point::new(rail.center_x(), rail.y + RAIL_TOP + RAIL_DOT / 2.0))
         };
         let reach = |mark: Mark| match mark {
-            Mark::On(_) => DOT + RING,
+            Mark::On { open, .. } => DOT + RING * open,
             _ => DOT,
         };
         let mut frame = Frame::new(renderer, bounds.size());
@@ -778,6 +1010,7 @@ impl canvas::Program<Message> for Drawn {
                     Stroke::default().with_width(2.0).with_color(color),
                 ),
                 Link::Tube { full, color, waits } => {
+                    let full = tube.shown(self.on, full, now);
                     let shape = Path::rounded_rectangle(
                         Point::new(from.x - TUBE / 2.0, top),
                         iced::Size::new(TUBE, foot - top),
@@ -800,7 +1033,7 @@ impl canvas::Program<Message> for Drawn {
                             Color { a: 0.85, ..color },
                         );
                     }
-                    if waits && full >= 1.0 {
+                    if waits && full > 0.999 {
                         pause(
                             &mut frame,
                             Point::new(from.x + 12.0, (top + foot) / 2.0),
@@ -821,12 +1054,22 @@ impl canvas::Program<Message> for Drawn {
                     &Path::circle(at, DOT - 1.0),
                     Stroke::default().with_width(2.0).with_color(color),
                 ),
-                Mark::On(color) => {
+                Mark::On { color, open, glow } => {
+                    if let Some(gone) = glow {
+                        frame.stroke(
+                            &Path::circle(at, DOT + 1.5 + 9.0 * gone),
+                            Stroke::default().with_width(2.5).with_color(Color {
+                                a: 0.6 * (1.0 - gone),
+                                ..color
+                            }),
+                        );
+                    }
                     frame.stroke(
-                        &Path::circle(at, DOT + RING - 0.75),
-                        Stroke::default()
-                            .with_width(1.5)
-                            .with_color(Color { a: 0.55, ..color }),
+                        &Path::circle(at, DOT + (RING - 0.75) * open),
+                        Stroke::default().with_width(1.5).with_color(Color {
+                            a: 0.55 * open,
+                            ..color
+                        }),
                     );
                     frame.fill(&Path::circle(at, DOT), color);
                 }
@@ -848,7 +1091,14 @@ impl canvas::Program<Message> for Drawn {
                 }
             }
         }
-        for (brace, color, name, sub) in &self.braces {
+        for Bracket {
+            brace,
+            color,
+            name,
+            sub,
+            pulse,
+        } in &self.brackets
+        {
             let (Some(first), Some(last)) = (
                 at(Key::RoadSide(brace.first)),
                 at(Key::RoadSide(brace.last)),
@@ -881,6 +1131,26 @@ impl canvas::Program<Message> for Drawn {
                 path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
             });
             frame.stroke(&shape, Stroke::default().with_width(1.6).with_color(*color));
+            // Gone round: a light runs back up it, to where the round
+            // begins, and its words say the new round brightly.
+            let color = match *pulse {
+                Some(t) => {
+                    let at = Point::new(x + round, foot - (foot - top) * t);
+                    let fade = 1.0 - t * t;
+                    let light = blend(*color, Color::WHITE, 0.7);
+                    for (size, alpha) in [(9.0, 0.18), (5.5, 0.35), (3.5, 1.0)] {
+                        frame.fill(
+                            &Path::circle(at, size),
+                            Color {
+                                a: light.a * alpha * fade,
+                                ..light
+                            },
+                        );
+                    }
+                    blend(Color::WHITE, *color, t)
+                }
+                None => *color,
+            };
             // Only the innermost write beside their brace, as on the
             // plan's rail: there is room for one.
             if brace.lane > 0 {
@@ -892,7 +1162,7 @@ impl canvas::Program<Message> for Drawn {
             frame.fill_text(canvas::Text {
                 content: name.clone(),
                 position: Point::new(left, y),
-                color: *color,
+                color,
                 size: 11.5.into(),
                 font: BOLD,
                 align_y: iced::alignment::Vertical::Center,
@@ -903,7 +1173,7 @@ impl canvas::Program<Message> for Drawn {
                 frame.fill_text(canvas::Text {
                     content: sub.clone(),
                     position: Point::new(left, y),
-                    color: Color { a: 0.85, ..*color },
+                    color: Color { a: 0.85, ..color },
                     size: 10.5.into(),
                     align_y: iced::alignment::Vertical::Center,
                     ..canvas::Text::default()
@@ -1091,6 +1361,58 @@ mod tests {
         assert_eq!(through(&mixed, &[true, true, false], 2, 0.0), 0.75);
         // Skipped through to the last: nearly full, full at its end.
         assert_eq!(through(&untimed, &[true, true, true, false], 3, 1.0), 1.0);
+    }
+
+    #[test]
+    fn rows_gone_as_a_loop_goes_round_close_up_where_they_were() {
+        let (mut plan, [_, alabanza, ..], [a, b, ..]) = plan();
+        plan.loop_section(alabanza).unwrap();
+        let mut session = Session::new(plan);
+        session.next();
+        session.next();
+        let whos = |road: &Road| road.things.iter().map(Thing::who).collect::<Vec<_>>();
+        let was = whos(&road_of(&session, &[a], &|_| false));
+        session.next();
+        let now = whos(&road_of(&session, &[], &|_| false));
+        // From "-A *B >A'1 B'1 C D" to "*A >B'1 C D": the round played
+        // and the next one's first row close up under the top one.
+        let road = road_of(&session, &[], &|_| false);
+        assert_eq!(names(session.plan(), &road), "*A >B'1 C D");
+        assert_eq!(
+            leaving(&was, &now),
+            vec![(1, (What::Step(b), 0)), (1, (What::Step(a), 1))]
+        );
+        assert_eq!(leaving(&now, &now), vec![]);
+        // What is after all that stays closes up at the end.
+        assert_eq!(leaving(&was, &[]).len(), was.len());
+        assert!(leaving(&was, &was[..1]).iter().all(|(at, _)| *at == 1));
+    }
+
+    #[test]
+    fn the_tube_fills_evenly_between_measures_and_from_empty_for_a_new_step() {
+        let (_, _, [a, b, ..]) = plan();
+        let start = Instant::now();
+        let (on_a, on_b) = ((What::Step(a), 0), (What::Step(b), 0));
+        let mut tube = Tube::default();
+        // As it first shows, it is as full as it is.
+        tube.towards(Some((on_a, 0.4)), start, false);
+        assert_eq!(tube.shown(Some(on_a), 0.4, start), 0.4);
+        assert_eq!(tube.next_look(start), None);
+        // Measured again, it fills there evenly over the time till the
+        // next measure.
+        tube.towards(Some((on_a, 0.5)), start, false);
+        let half = tube.shown(Some(on_a), 0.5, start + GLIDE / 2);
+        assert!((half - 0.45).abs() < 1e-4, "{half}");
+        assert!(tube.next_look(start).is_some_and(|at| at > start));
+        // Something new on: its tube fills from empty.
+        tube.towards(Some((on_b, 0.2)), start, false);
+        assert_eq!(tube.shown(Some(on_b), 0.2, start), 0.0);
+        assert_eq!(tube.next_look(start), Some(start), "every frame");
+        assert_eq!(tube.shown(Some(on_b), 0.2, start + GLIDE), 0.2);
+        // With nothing moving, it is where it is going at once.
+        tube.towards(Some((on_a, 0.9)), start, true);
+        assert_eq!(tube.shown(Some(on_a), 0.9, start), 0.9);
+        assert_eq!(tube.next_look(start), None);
     }
 
     #[test]

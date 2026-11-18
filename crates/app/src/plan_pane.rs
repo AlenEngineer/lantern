@@ -2215,8 +2215,17 @@ impl App {
             (Place::Current, Some(scene)) if shown => progress(&scene.media, &scene.resource),
             _ => None,
         };
+        // Just gone off, it fades from lit to played.
+        let going_off = self
+            .motion
+            .going_off(step.id)
+            .filter(|_| place == Place::Done)
+            .map(crate::motion::ease);
         let label_color = match (place, tone) {
-            (Place::Done, _) => p.outline,
+            (Place::Done, _) => match going_off {
+                Some(t) => crate::motion::blend(Tone::Live.text(p), p.outline, t),
+                None => p.outline,
+            },
             (_, Tone::Plain) => p.on_surface,
             (_, tone) => tone.text(p),
         };
@@ -2382,6 +2391,10 @@ impl App {
                 a: crate::motion::between((fill.a * 1.9).min(1.0), fill.a, ring),
                 ..fill
             },
+            None => fill,
+        };
+        let fill = match going_off {
+            Some(t) => crate::motion::blend(look::row_fill(p, Tone::Live), fill, t),
             None => fill,
         };
         // Just added, replaced or dropped here: it flashes once, so the

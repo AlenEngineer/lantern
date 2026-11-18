@@ -45,6 +45,7 @@ mod road;
 mod script;
 mod search;
 mod settings;
+mod settle;
 mod shelf;
 mod side;
 mod stage;
@@ -584,6 +585,8 @@ struct App {
     /// Where the plan's dots and brackets were when last drawn: what is
     /// laid over the list beside one of them is put there.
     pub(crate) places: track::Places,
+    /// Run's rail's rows, as they move while the service goes on.
+    pub(crate) road_rows: road::Rows,
     /// The steps picked together, with the selected one: Ctrl and a
     /// click adds or drops one, Shift and a click takes all from the
     /// selected step to there. Empty when only one is selected.
@@ -870,6 +873,7 @@ impl App {
             lengths,
             usage,
             places: track::Places::default(),
+            road_rows: road::Rows::default(),
             picked: Vec::new(),
             note_open: None,
             note_text: iced::widget::text_editor::Content::new(),
@@ -1157,10 +1161,12 @@ impl App {
                 self.motion.tipped_over(tipped);
             }
         }
-        if let Some(of) = round
-            && self.engine.0.current_step().map(|step| step.id) != was_at
-        {
-            self.motion.went_round(of);
+        if self.engine.0.current_step().map(|step| step.id) != was_at {
+            if let Some(of) = round {
+                self.motion.went_round(of);
+            }
+            self.motion.went_on(was_at);
+            self.road_rows.went_on();
         }
         // Whatever put it there: something new on the projector rings.
         self.motion

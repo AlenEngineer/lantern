@@ -49,6 +49,9 @@ pub const TIPPED: Duration = Duration::from_millis(600);
 pub const ROUND: Duration = Duration::from_millis(700);
 /// Rows taken away closing up, or put back growing in.
 pub const ROWS: Duration = Duration::from_millis(220);
+/// A service going on: the ring of what went on opening, what was on
+/// fading to played.
+pub const STEP: Duration = Duration::from_millis(500);
 /// Save, a tick for a moment after it is pressed.
 pub const SAVED: Duration = Duration::from_millis(1200);
 /// An empty plan's + breathing, all its breaths.
@@ -129,6 +132,8 @@ pub struct Motion {
     came: Option<(Vec<StepId>, Run)>,
     /// What the service just went round, its light running back.
     round: Option<(FlowOf, Run)>,
+    /// The service just went on, from the step named.
+    stepped: Option<(Option<StepId>, Run)>,
     /// Sections an edit just put over their time.
     tipped: Option<(Vec<StepId>, Run)>,
     /// What a fill just proposed, dropping in one after another.
@@ -167,6 +172,7 @@ impl Motion {
             gone: None,
             came: None,
             round: None,
+            stepped: None,
             tipped: None,
             proposed: None,
             accepted: None,
@@ -271,8 +277,31 @@ impl Motion {
 
     /// How far the light has run back along `of`'s line.
     pub fn round_pulse(&self, of: FlowOf) -> Option<f32> {
+        self.going_round()
+            .filter(|(on, _)| *on == of)
+            .map(|(_, t)| t)
+    }
+
+    /// What the service is going round, and how far the light has run.
+    pub fn going_round(&self) -> Option<(FlowOf, f32)> {
         let (on, run) = self.round.as_ref()?;
-        (*on == of).then_some(())?;
+        Some((*on, self.along(Some(run))?))
+    }
+
+    /// The service went on from `off`.
+    pub fn went_on(&mut self, off: Option<StepId>) {
+        self.stepped = Some((off, self.run(STEP, Instant::now())));
+    }
+
+    /// How far the ring of what just went on has opened.
+    pub fn stepped(&self) -> Option<f32> {
+        self.along(self.stepped.as_ref().map(|(_, run)| run))
+    }
+
+    /// How far `step`, just gone off, has faded to played.
+    pub fn going_off(&self, step: StepId) -> Option<f32> {
+        let (off, run) = self.stepped.as_ref()?;
+        (*off == Some(step)).then_some(())?;
         self.along(Some(run))
     }
 
@@ -497,12 +526,13 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 18] = [
+        let runs: [Option<&Run>; 19] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
             self.tipped.as_ref().map(|(_, run)| run),
             self.round.as_ref().map(|(_, run)| run),
+            self.stepped.as_ref().map(|(_, run)| run),
             self.gone.as_ref().map(|(_, _, run)| run),
             self.came.as_ref().map(|(_, run)| run),
             self.saved.as_ref(),
@@ -553,6 +583,83 @@ pub fn between(from: f32, to: f32, t: f32) -> f32 {
     from + (to - from) * t
 }
 
+/// Fast at first, slowing to a stop.
+pub fn ease(far: f32) -> f32 {
+    1.0 - (1.0 - far.clamp(0.0, 1.0)).powi(3)
+}
+
+/// A number on its way from where it was to where it should be: evenly,
+/// or fast at first and settling.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Glide {
+    from: f32,
+    pub to: f32,
+    since: Instant,
+    length: Duration,
+    eased: bool,
+}
+
+impl Glide {
+    /// Already where it should be.
+    pub fn at(to: f32, now: Instant) -> Glide {
+        Glide {
+            from: to,
+            to,
+            since: now,
+            length: Duration::ZERO,
+            eased: false,
+        }
+    }
+
+    /// From `from` to `to` over `length`, set off at `now`.
+    pub fn new(from: f32, to: f32, now: Instant, length: Duration, eased: bool) -> Glide {
+        Glide {
+            from,
+            to,
+            since: now,
+            length,
+            eased,
+        }
+    }
+
+    /// From where it is at `now` on to `to` instead.
+    pub fn towards(self, to: f32, now: Instant, length: Duration, eased: bool) -> Glide {
+        Glide::new(self.shown(now), to, now, length, eased)
+    }
+
+    /// How far along its way it is, 0 to 1.
+    fn far(&self, now: Instant) -> f32 {
+        match self.length.is_zero() {
+            true => 1.0,
+            false => (now.saturating_duration_since(self.since).as_secs_f32()
+                / self.length.as_secs_f32())
+            .clamp(0.0, 1.0),
+        }
+    }
+
+    /// Where it is shown at `now`.
+    pub fn shown(&self, now: Instant) -> f32 {
+        let far = self.far(now);
+        between(self.from, self.to, if self.eased { ease(far) } else { far })
+    }
+
+    pub fn moving(&self, now: Instant) -> bool {
+        self.far(now) < 1.0
+    }
+
+    /// When it will have gone `least` further than where it is at `now`:
+    /// at once while eased, as it goes fast at first. `None` once there.
+    pub fn when_moved(&self, least: f32, now: Instant) -> Option<Instant> {
+        self.moving(now).then_some(())?;
+        if self.eased {
+            return Some(now);
+        }
+        let speed = (self.to - self.from).abs() / self.length.as_secs_f32();
+        let wait = Duration::try_from_secs_f32(least / speed).unwrap_or(self.length);
+        Some((now + wait).min(self.since + self.length))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,6 +686,60 @@ mod tests {
             .map(|since| motion.run(RING, since));
         assert!(motion.ring().is_none());
         assert!(!motion.moving());
+    }
+
+    #[test]
+    fn a_glide_goes_its_way_and_stays_there() {
+        let start = Instant::now();
+        let second = Duration::from_secs(1);
+        let even = Glide::new(0.2, 0.6, start, second, false);
+        assert_eq!(even.shown(start), 0.2);
+        let half = even.shown(start + second / 2);
+        assert!((half - 0.4).abs() < 1e-5, "evenly: {half}");
+        assert_eq!(even.shown(start + second * 3), 0.6, "no further");
+        assert!(even.moving(start) && !even.moving(start + second));
+        // Turned on its way, it goes on from where it is, not from
+        // where it began.
+        let turned = even.towards(0.0, start + second / 2, second, true);
+        assert!((turned.shown(start + second / 2) - 0.4).abs() < 1e-5);
+        let soon = turned.shown(start + second);
+        assert!(soon < 0.2, "fast at first: {soon}");
+        assert_eq!(turned.shown(start + second * 2), 0.0);
+        // Evenly, it is looked at again once it has gone far enough to
+        // be seen to, and no later than its end.
+        let next = even.when_moved(0.04, start).unwrap() - start;
+        assert!(next.abs_diff(Duration::from_millis(100)) < Duration::from_millis(1));
+        assert_eq!(
+            even.when_moved(1.0, start),
+            Some(start + second),
+            "not past its end"
+        );
+        assert_eq!(
+            turned.when_moved(0.04, start + second),
+            Some(start + second)
+        );
+        assert_eq!(even.when_moved(0.04, start + second), None);
+        let level = Glide::new(0.3, 0.3, start, second, false);
+        assert_eq!(level.when_moved(0.04, start), Some(start + second));
+        // Already there, it does not move.
+        assert!(!Glide::at(0.5, start).moving(start));
+        assert_eq!(Glide::at(0.5, start).when_moved(0.04, start), None);
+        assert_eq!(ease(-1.0), 0.0);
+        assert_eq!(ease(2.0), 1.0);
+    }
+
+    #[test]
+    fn going_on_rings_what_went_on_and_fades_what_was_on() {
+        let mut motion = Motion::new();
+        let mut plan = lantern_engine::Plan::new("Sábado");
+        let a = plan.push("A", lantern_engine::Action::Blank);
+        let b = plan.push("B", lantern_engine::Action::Blank);
+        motion.went_on(Some(a));
+        assert!(motion.stepped().is_some() && motion.moving());
+        assert!(motion.going_off(a).is_some());
+        assert!(motion.going_off(b).is_none());
+        motion.still = true;
+        assert!(motion.stepped().is_none() && motion.going_off(a).is_none());
     }
 
     #[test]
