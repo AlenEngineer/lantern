@@ -43,7 +43,17 @@ pub struct Palette {
     pub outline: Color,
     #[serde(deserialize_with = "hex")]
     pub outline_variant: Color,
+    /// How far [`Palette::dimmed`] it is, for the colours it has no role
+    /// for.
+    #[serde(skip)]
+    pub dim: f32,
 }
+
+/// The colours sections are told apart by, on a dark ground, in the
+/// order sections take them.
+const SECTIONS: [u32; 6] = [0xD7BCF7, 0xFFB1C8, 0x7FD8C9, 0xF4C27A, 0x8EC5FF, 0xA6DC8F];
+/// The same, dark enough to read on a light ground.
+const SECTIONS_LIGHT: [u32; 6] = [0x6F4FA8, 0xA83D64, 0x1F7A6D, 0x8F5E0E, 0x2D67A8, 0x447A2F];
 
 impl Default for Palette {
     /// Material's baseline dark scheme.
@@ -62,6 +72,7 @@ impl Default for Palette {
             surface_container_highest: rgb(0x36343B),
             outline: rgb(0x938F99),
             outline_variant: rgb(0x49454F),
+            dim: 0.0,
         }
     }
 }
@@ -94,8 +105,22 @@ impl Palette {
             on_surface_variant: dim(self.on_surface_variant),
             outline: dim(self.outline),
             outline_variant: dim(self.outline_variant),
+            dim: far,
             ..self
         }
+    }
+
+    /// The colour of a section that has `slot`: one that reads on this
+    /// palette's ground, light or dark.
+    pub fn section(self, slot: u8) -> Color {
+        let ground = self.surface;
+        let light = 0.2126 * ground.r + 0.7152 * ground.g + 0.0722 * ground.b > 0.5;
+        let colours = match light {
+            true => SECTIONS_LIGHT,
+            false => SECTIONS,
+        };
+        let colour = rgb(colours[usize::from(slot) % colours.len()]);
+        crate::motion::blend(colour, self.surface, 0.68 * self.dim)
     }
 }
 
@@ -156,6 +181,16 @@ mod tests {
         assert_eq!(palette.primary, Color::from_rgb8(0xff, 0xb2, 0xbf));
         assert_eq!(palette.surface, Color::from_rgb8(0x19, 0x11, 0x12));
         assert_eq!(palette.error, Palette::default().error);
+    }
+
+    #[test]
+    fn there_is_a_colour_for_every_slot_a_section_can_have() {
+        assert_eq!(SECTIONS.len(), usize::from(lantern_engine::COLORS));
+        let dark = Palette::default();
+        assert_eq!(dark.section(0), rgb(0xD7BCF7));
+        let light = Palette::parse(r##"{"surface": "#fdf7ff"}"##).unwrap();
+        assert_eq!(light.section(0), rgb(0x6F4FA8));
+        assert_ne!(dark.dimmed(1.0).section(0), dark.section(0));
     }
 
     #[test]

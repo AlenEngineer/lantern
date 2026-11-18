@@ -641,13 +641,19 @@ impl App {
                 .unwrap_or_default();
             let expected = so_far + timing.end.map_or(Duration::ZERO, ends_in);
             self.engine.0.edit_plan(|plan| {
-                let plan = plan
+                let colors = plan.section_colors();
+                let whole = plan
                     .target
                     .map(|target| (plan.title.as_str(), target, so_far, expected));
-                crate::plan_pane::goal_of(timing, plan)
+                crate::plan_pane::goal_of(timing, whole).map(|goal| {
+                    let hue = goal
+                        .section
+                        .map(|id| crate::plan_pane::section_hue(p, &colors, id));
+                    (goal, hue)
+                })
             })
         });
-        let goal_chip = |goal: crate::plan_pane::Goal| {
+        let goal_chip = |(goal, hue): (crate::plan_pane::Goal, Option<iced::Color>)| {
             let against = format!(
                 "{} / {}",
                 length::clock(goal.so_far),
@@ -667,9 +673,22 @@ impl App {
                             .background(crate::palette::Palette::tint(ink, 0.25))
                     }),
             ];
+            // A section's colour beside its name, as on its rows.
+            let mark = hue.map(|hue| {
+                container(Space::new().width(3).height(12)).style(move |_| container::Style {
+                    background: Some(crate::palette::Palette::tint(hue, 0.8).into()),
+                    border: iced::Border {
+                        radius: 1.5.into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                })
+            });
             container(
                 column![
                     row![
+                        mark,
+                        hue.map(|_| Space::new().width(6)),
                         text(goal.name.clone())
                             .size(META)
                             .font(BOLD)

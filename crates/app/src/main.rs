@@ -406,6 +406,8 @@ enum Message {
     /// Whether a section's steps, a span's or the plan's come in a drawn
     /// order.
     SetShuffle(lantern_engine::FlowOf, bool),
+    /// Gives a section the colour it is told apart by.
+    SectionColor(StepId, u8),
     /// The time of day a repeat ends at, as typed in the ring that is
     /// open: it holds as soon as it reads as one.
     RepeatUntil(String),
@@ -1691,10 +1693,16 @@ impl App {
                 self.ring = Some(rail::Ring {
                     on,
                     at: pointer_at(),
+                    colors: false,
                 });
                 self.repeat_until.clear();
                 self.motion.picked_up();
                 self.motion.ring_opens();
+            }
+            Message::Rail(rail::Act::Colors) => {
+                if let Some(ring) = &mut self.ring {
+                    ring.colors = !ring.colors;
+                }
             }
             Message::Rail(rail::Act::RingClose) => {
                 self.ring = None;
@@ -2923,6 +2931,15 @@ impl App {
                 if drawn.is_err() {
                     self.motion
                         .refuse("a drawn order takes three steps or more, in one section");
+                }
+            }
+            Message::SectionColor(id, slot) => {
+                self.remember(None);
+                self.engine
+                    .0
+                    .edit_plan(|plan| plan.set_section_color(id, slot));
+                if let Some(ring) = &mut self.ring {
+                    ring.colors = false;
                 }
             }
             Message::RepeatUntil(typed) => {

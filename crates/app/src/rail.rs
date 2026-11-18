@@ -39,6 +39,8 @@ pub enum Act {
     /// A right click: the ring of what can be done to that thing.
     Ring(RingOn),
     RingClose,
+    /// A section's ring: its colours fan out round its swatch, or fold.
+    Colors,
     /// From the ring: what a key does to what is selected, done to the
     /// step or section the ring is open on.
     Do(StepId, crate::keys::Op),
@@ -90,7 +92,17 @@ pub enum RingOn {
 pub struct Ring {
     pub on: RingOn,
     pub at: Point,
+    /// A section's colours are fanned out to pick from.
+    pub colors: bool,
 }
+
+/// Where a section's swatch sits on its ring, out past the inner row,
+/// how big it is, and how far round it its colours fan out.
+const SWATCH_ANGLE: f32 = -69.0;
+const SWATCH_FAR: f32 = 88.0;
+const SWATCH: f32 = 26.0;
+const FAN_FAR: f32 = 40.0;
+const FAN: f32 = 22.0;
 
 /// How big a ring's buttons are, and the ones of its outer row.
 const PETAL: f32 = 34.0;
@@ -379,7 +391,12 @@ impl App {
         ];
         // Kept on the window: near its top or foot the ring moves in.
         let tall = self.dashboard_size.height;
-        let middle = Point::new(ring.at.x, ring.at.y.clamp(120.0, (tall - 120.0).max(120.0)));
+        // A section's colours fan out above it: further in from the top.
+        let top = match ring.on {
+            RingOn::All(Some(_)) => 150.0,
+            _ => 120.0,
+        };
+        let middle = Point::new(ring.at.x, ring.at.y.clamp(top, (tall - 120.0).max(top)));
         let mut petals: Vec<Petal> = Vec::new();
         let ink = |lit: bool| if lit { p.on_primary } else { p.on_surface };
         let glyph = |icon: Icon, lit: bool| -> Element<'static, Message> {
@@ -629,6 +646,53 @@ impl App {
                 Some(Message::Fill(crate::fill_panel::FillEdit::Open(id))),
             ));
         }
+        // A section's colour: its swatch, out past the inner row. Pressed,
+        // the colours fan out round it, and one pressed is the section's.
+        if let RingOn::All(Some(id)) = ring.on {
+            let slot = plan
+                .section_colors()
+                .into_iter()
+                .find(|(section, _)| *section == id)
+                .map_or(0, |(_, slot)| slot);
+            let mut swatch = petal(
+                SWATCH_ANGLE,
+                SWATCH_FAR,
+                SWATCH,
+                ring.colors,
+                Space::new().into(),
+                "Its colour",
+                Some(Message::Rail(Act::Colors)),
+            );
+            swatch.fill = Some(p.section(slot));
+            petals.push(swatch);
+            if ring.colors {
+                let (sin, cos) = SWATCH_ANGLE.to_radians().sin_cos();
+                let swatch = Point::new(SWATCH_FAR * cos, SWATCH_FAR * sin);
+                for n in 0..lantern_engine::COLORS {
+                    // Round the far side of the swatch, from the middle.
+                    let turn = (SWATCH_ANGLE + 34.0 * (f32::from(n) - 2.5)).to_radians();
+                    let at = Point::new(
+                        swatch.x + FAN_FAR * turn.cos(),
+                        swatch.y + FAN_FAR * turn.sin(),
+                    );
+                    let face: Element<'static, Message> = match n == slot {
+                        true => look::icon(Icon::Check, 12.0, p.surface).into(),
+                        false => Space::new().into(),
+                    };
+                    let mut color = petal(
+                        at.y.atan2(at.x).to_degrees(),
+                        at.x.hypot(at.y),
+                        FAN,
+                        false,
+                        face,
+                        "This colour",
+                        Some(Message::SectionColor(id, n)),
+                    );
+                    color.fill = Some(p.section(n));
+                    petals.push(color);
+                }
+            }
+        }
         // A step's ring and a section's have, on the left, what is done
         // to it: renamed, copied, taken away. Its note is between.
         if let RingOn::Dot(id) | RingOn::All(Some(id)) = ring.on {
@@ -792,15 +856,31 @@ impl App {
                 face,
                 about,
                 message,
+                fill,
             } = petal;
             let (sin, cos) = angle.to_radians().sin_cos();
             let far = far * out * pop.max(0.0);
             // It grows as it comes: a bubble, not a button sliding out.
             let size = size * (0.4 + 0.6 * pop).max(0.0);
             let shown = pop.clamp(0.0, 1.0);
-            let ground = match lit {
-                true => p.primary,
-                false => crate::motion::blend(p.surface_container_highest, p.on_surface, 0.1),
+            let ground = match (fill, lit) {
+                (Some(fill), _) => fill,
+                (None, true) => p.primary,
+                (None, false) => {
+                    crate::motion::blend(p.surface_container_highest, p.on_surface, 0.1)
+                }
+            };
+            // A colour's own button is ringed while its choices are open.
+            let edge = match (fill, lit) {
+                (Some(_), true) => iced::Border {
+                    color: p.on_surface.scale_alpha(out * shown),
+                    width: 2.0,
+                    radius: (size / 2.0).into(),
+                },
+                _ => iced::Border {
+                    radius: (size / 2.0).into(),
+                    ..iced::Border::default()
+                },
             };
             let round = button(container(face).center_x(size).center_y(size))
                 .width(size)
@@ -818,10 +898,7 @@ impl App {
                         .scale_alpha(out * shown)
                         .into(),
                     ),
-                    border: iced::Border {
-                        radius: (size / 2.0).into(),
-                        ..iced::Border::default()
-                    },
+                    border: edge,
                     shadow: iced::Shadow {
                         color: iced::Color::BLACK.scale_alpha(0.45 * out * shown),
                         offset: iced::Vector::new(0.0, 2.0),
@@ -851,6 +928,8 @@ struct Petal {
     face: Element<'static, Message>,
     about: String,
     message: Option<Message>,
+    /// Its ground, where it is a colour.
+    fill: Option<iced::Color>,
 }
 
 fn petal(
@@ -870,6 +949,7 @@ fn petal(
         face,
         about: about.to_string(),
         message,
+        fill: None,
     }
 }
 

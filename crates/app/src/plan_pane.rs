@@ -122,21 +122,26 @@ struct Side<'a> {
     braced: &'a [Braced],
     lanes: u8,
     wide: bool,
+    /// There is room for the brackets' names: without it they fold
+    /// away, and only their colours tell them apart.
+    named: bool,
     /// The lane of the plan's own bracket, round all of its steps,
     /// where there is one: the outermost.
     plan: Option<u8>,
+    /// Each section's colour.
+    colors: &'a [(StepId, u8)],
 }
 
 impl Side<'_> {
     /// How wide all of it is.
     fn room(&self) -> f32 {
-        track::side_room(self.lanes, self.wide)
+        track::side_room(self.lanes, self.wide, self.named)
     }
 
     /// How wide the plan's part of it is, from its brace to the right.
     fn plans_room(&self) -> Option<f32> {
         let lane = self.plan?;
-        Some(self.room() - track::brace_at(lane))
+        Some(self.room() - track::brace_at(lane, self.named))
     }
 }
 
@@ -844,13 +849,16 @@ impl App {
             .and_then(|_| own_of(0, plan.len()));
         // That room is given only while the steps keep enough of theirs
         // for their names: without it, such a section is its brace alone,
-        // its name in its card.
-        let roomy = self
-            .places
-            .borrow()
-            .get(&track::Key::Canvas)
-            .is_none_or(|canvas| canvas.width - track::side_room(side_lanes, true) >= NAMES_ROOM);
-        let side_wide = roomy
+        // its name in its card. Where even the innermost's names leave
+        // them too little, every name folds away.
+        let canvas = self.places.borrow().get(&track::Key::Canvas).copied();
+        let leaves = |wide: bool, named: bool| {
+            canvas.is_none_or(|canvas| {
+                canvas.width - track::side_room(side_lanes, wide, named) >= NAMES_ROOM
+            })
+        };
+        let named = leaves(false, true);
+        let side_wide = leaves(true, true)
             && (braced
                 .iter()
                 .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none())
@@ -859,12 +867,16 @@ impl App {
         let plan_ringed = self
             .ring
             .is_some_and(|ring| ring.on == crate::rail::RingOn::All(None));
+        let colors = plan.section_colors();
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
             wide: side_wide,
+            named,
             plan: plan_lane,
+            colors: &colors,
         };
+        let hue = |id: StepId| section_hue(p, &colors, id);
         let mut stops: Vec<track::Stop> = Vec::new();
         // The row the place for what is carried was put before, where
         // there is one.
@@ -1024,7 +1036,10 @@ impl App {
                     stops.push(track::Stop {
                         id: step.id,
                         dot: track::Dot::Stack {
-                            color: ink,
+                            color: match over {
+                                true => Palette::tint(hue(step.id), 0.45),
+                                false => hue(step.id),
+                            },
                             solid: over,
                         },
                         line: goes.then_some(track::Line::Plain(ink)),
@@ -1034,7 +1049,7 @@ impl App {
                 } else if plan.group_end(index) == index + 1 {
                     whole.push(step.id);
                     placed.push(index);
-                    put!(self.empty_place(step.id, lanes, side, &places));
+                    put!(self.empty_place(plan, step.id, lanes, side, &places));
                 }
                 if selected && adds {
                     put!(insertion_mark(p, INDENT));
@@ -1612,16 +1627,16 @@ impl App {
                         id: Some(step.id),
                         first: step.id,
                         last: step.id,
-                        offset: track::brace_at(0),
+                        offset: track::brace_at(0, named),
                         beside: None,
                         color: match self.over(timing, step.id) {
-                            true => p.outline,
-                            false => p.primary,
+                            true => Palette::tint(hue(step.id), 0.45),
+                            false => hue(step.id),
                         },
                         name: step.label.clone(),
                         lines,
                         strong: picked,
-                        bare: false,
+                        bare: !named,
                         place: false,
                         marks: crate::notes::numbers_on(
                             plan,
@@ -1650,9 +1665,9 @@ impl App {
                         id: Some(step.id),
                         first: step.id,
                         last,
-                        offset: track::brace_at(0),
+                        offset: track::brace_at(0, named),
                         beside: None,
-                        color: p.primary,
+                        color: hue(step.id),
                         name: step.label.clone(),
                         lines: goal
                             .map(|goal| {
@@ -1663,7 +1678,7 @@ impl App {
                         strong: picked
                             || host_id == Some(step.id)
                             || into.first() == Some(&step.id),
-                        bare: false,
+                        bare: !named,
                         place: false,
                         marks: crate::notes::numbers_on(
                             plan,
@@ -1763,14 +1778,13 @@ impl App {
                     id: Some(step.id),
                     first: first_key,
                     last: last_key,
-                    offset: track::brace_at(braced.lane),
+                    offset: track::brace_at(braced.lane, named),
                     // One that holds others writes beside its own steps.
                     beside,
-                    color: match on {
-                        _ if foot_refused == Some(step.id) => p.error,
-                        _ if past => p.outline,
-                        true => p.tertiary,
-                        false => p.primary,
+                    color: match foot_refused == Some(step.id) {
+                        true => p.error,
+                        false if past => Palette::tint(hue(step.id), 0.45),
+                        false => hue(step.id),
                     },
                     name: step.label.clone(),
                     lines,
@@ -1779,7 +1793,7 @@ impl App {
                         || host_id == Some(step.id)
                         || into.first() == Some(&step.id)
                         || footed == Some(step.id),
-                    bare: (braced.lane > 0 && beside.is_none() && !side.wide),
+                    bare: !named || (braced.lane > 0 && beside.is_none() && !side.wide),
                     place: false,
                     marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
                         .into_iter()
@@ -1812,9 +1826,9 @@ impl App {
                 id: Some(section),
                 first: section,
                 last,
-                offset: track::brace_at(carried_lane),
+                offset: track::brace_at(carried_lane, named),
                 beside: None,
-                color: p.primary,
+                color: hue(section),
                 name: step.label.clone(),
                 lines: budget
                     .map(|budget| {
@@ -1827,7 +1841,7 @@ impl App {
                     .into_iter()
                     .collect(),
                 strong: false,
-                bare: false,
+                bare: !named,
                 place: true,
                 marks: Vec::new(),
                 bulge: 0.0,
@@ -1842,7 +1856,7 @@ impl App {
                 id: None,
                 first: id_at(*first),
                 last: id_at(*last),
-                offset: track::brace_at(lane),
+                offset: track::brace_at(lane, named),
                 beside,
                 color: p.primary,
                 name: plan.title.clone(),
@@ -1935,6 +1949,11 @@ impl App {
                 .map(shown_as)
                 .filter(|next| *next != shown_as(stop.id));
         }
+        // Each step's row is tied to the section it is most nearly in.
+        let ties = shown
+            .iter()
+            .filter_map(|at| Some((plan.steps()[*at].id, hue(*plan.within(*at).last()?))))
+            .collect();
         let picture = track::Picture {
             stops,
             loops: drawn_loops,
@@ -1943,6 +1962,7 @@ impl App {
             hot: can,
             brackets,
             threads,
+            ties,
             select: (tree && can).then_some(p.primary),
             rows: whole,
             filling: self.filling.is_some(),
@@ -3088,6 +3108,7 @@ impl App {
     /// picks the section; steps carried over it land in it.
     fn empty_place<'a>(
         &self,
+        plan: &Plan,
         section: StepId,
         lanes: Lanes<'_>,
         side: Side<'_>,
@@ -3134,7 +3155,7 @@ impl App {
                 crate::rail::RingOn::All(Some(section)),
             )));
         }
-        let beside = self.with_plans_part(beside.into(), plans);
+        let beside = self.with_plans_part(self.named_under(plan, section, side, beside), plans);
         let place = row![
             Space::new().width(lanes.curl + RAIL + lanes.drawn),
             container(slot).padding([4, 0]),
@@ -3231,7 +3252,7 @@ impl App {
         if !over {
             beside = beside.on_press(Message::Click(Clicked::Step(id)));
         }
-        let beside = self.with_plans_part(beside.into(), plans);
+        let beside = self.with_plans_part(self.named_under(plan, id, side, beside), plans);
         let place = row![
             Space::new().width(lanes.curl),
             track::seen(track::Key::Row(id), places, dot),
@@ -3394,6 +3415,39 @@ impl App {
         card.into()
     }
 
+    /// `content`, a part of the room beside the steps that is `section`'s
+    /// bracket's: where the brackets' names have folded away, its name
+    /// and what it takes come up under the pointer.
+    fn named_under<'a>(
+        &self,
+        plan: &Plan,
+        section: StepId,
+        side: Side<'_>,
+        content: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        let content = content.into();
+        let Some(step) = plan.get(section).filter(|_| !side.named) else {
+            return content;
+        };
+        let p = self.palette;
+        let card = column![
+            text(step.label.clone())
+                .size(META)
+                .font(BOLD)
+                .color(section_hue(p, side.colors, section)),
+            text(format!("Σ {}", length::clock(self.planned(plan, section))))
+                .size(META)
+                .color(p.on_surface),
+        ]
+        .spacing(2);
+        tooltip(
+            content,
+            container(card).padding([4, 8]).style(look::tip(p)),
+            tooltip::Position::Left,
+        )
+        .into()
+    }
+
     /// The plan's bracket's part of the room right of a row, `wide`: as
     /// a section's, a press there picks the plan, twice folds or opens
     /// it, and a right click opens its ring.
@@ -3465,6 +3519,7 @@ impl App {
                     crate::rail::RingOn::All(Some(section)),
                 )));
             }
+            let area = self.named_under(plan, section, side, area);
             // Beside the first and the last of its steps, the head and the
             // foot of its bracket: held and pulled, the head takes in what
             // comes before or lets go of its first rows, the foot takes in
@@ -3506,7 +3561,11 @@ impl App {
         // and the room right of those, which is the outermost's.
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
         if side.lanes > 0 {
-            parts.push(part(track::BRACE + track::LABEL, covering(None)));
+            let wide = match side.named {
+                true => track::BRACE + track::LABEL,
+                false => track::BRACE,
+            };
+            parts.push(part(wide, covering(None)));
         }
         for lane in 1..side.lanes {
             parts.push(part(track::BRACE, covering(Some(lane))));
@@ -3950,9 +4009,22 @@ pub(crate) fn section_status(section: &SectionTiming) -> (String, Tone) {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Goal {
     pub(crate) name: String,
+    /// The section it is, where it is one and not the plan's.
+    pub(crate) section: Option<StepId>,
     pub(crate) so_far: Duration,
     pub(crate) goal: Duration,
     pub(crate) tone: Tone,
+}
+
+/// The colour of the section `id`, by what [`Plan::section_colors`]
+/// gave it.
+pub(crate) fn section_hue(p: Palette, colors: &[(StepId, u8)], id: StepId) -> iced::Color {
+    p.section(
+        colors
+            .iter()
+            .find(|(section, _)| *section == id)
+            .map_or(0, |(_, slot)| *slot),
+    )
 }
 
 /// The goal of where the service is. `plan` is the plan's name, its
@@ -3972,6 +4044,7 @@ pub(crate) fn goal_of(
                 let goal = section.budget.filter(|goal| !goal.is_zero())?;
                 Some(Goal {
                     name: section.title.clone(),
+                    section: Some(section.id),
                     so_far: elapsed,
                     goal,
                     tone: pace_tone(Pace::of(expected, goal)),
@@ -3983,6 +4056,7 @@ pub(crate) fn goal_of(
         let (name, goal, so_far, expected) = plan.filter(|(_, goal, ..)| !goal.is_zero())?;
         Some(Goal {
             name: name.to_string(),
+            section: None,
             so_far,
             goal,
             tone: pace_tone(Pace::of(expected, goal)),
@@ -4213,28 +4287,7 @@ impl<Message> iced::widget::canvas::Program<Message> for Marked {
                 }
             }
             Shape::Brace => {
-                let (x, top, foot) = (3.0, 6.0, bounds.height - 6.0);
-                let middle = (top + foot) / 2.0;
-                let round = 7.0_f32.min((foot - top) / 4.0);
-                let brace = Path::new(|path| {
-                    use iced::Point;
-                    path.move_to(Point::new(x, top));
-                    path.quadratic_curve_to(
-                        Point::new(x + round, top),
-                        Point::new(x + round, top + round),
-                    );
-                    path.line_to(Point::new(x + round, middle - round));
-                    path.quadratic_curve_to(
-                        Point::new(x + round, middle),
-                        Point::new(x + round + 6.0, middle),
-                    );
-                    path.quadratic_curve_to(
-                        Point::new(x + round, middle),
-                        Point::new(x + round, middle + round),
-                    );
-                    path.line_to(Point::new(x + round, foot - round));
-                    path.quadratic_curve_to(Point::new(x + round, foot), Point::new(x, foot));
-                });
+                let brace = track::square(3.0, 6.0, bounds.height - 6.0, 0.0);
                 frame.stroke(&brace, Stroke::default().with_width(1.6).with_color(ink));
             }
         }

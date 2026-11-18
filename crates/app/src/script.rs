@@ -543,6 +543,7 @@ impl Script {
                     depth: 0,
                     last: None,
                     done_by: None,
+                    color: None,
                 };
                 engine.add(None, title.clone(), action);
             }
