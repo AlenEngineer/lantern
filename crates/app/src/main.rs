@@ -1671,6 +1671,14 @@ impl App {
                 self.ring = None;
                 self.repeat_until.clear();
             }
+            Message::Rail(rail::Act::Do(id, op)) => {
+                self.ring = None;
+                self.repeat_until.clear();
+                self.selected = Some(id);
+                self.picked.clear();
+                self.line_picked = None;
+                return self.op(op);
+            }
             Message::Rail(rail::Act::Ends(of, ending)) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| {

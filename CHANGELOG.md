@@ -484,6 +484,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A right click on a step's row, or on a section's bracket, opens its
+  ring with what is done to it on the left: rename it, a copy of it, a
+  note, take it away. How it flows stays on the right.
+
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.
 - The session can say the road ahead: every step still to come, in the

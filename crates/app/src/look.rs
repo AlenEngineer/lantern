@@ -517,6 +517,8 @@ pub enum Icon {
     Target,
     /// A cross: close, take away.
     Close,
+    /// Two sheets: a copy of it.
+    Copy,
     /// A triangle with a mark in it: this can't be.
     Warning,
 }
@@ -565,6 +567,9 @@ impl Icon {
             ),
             Icon::Close => mdi!(
                 "M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"
+            ),
+            Icon::Copy => mdi!(
+                "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"
             ),
             Icon::Warning => mdi!("M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16"),
             Icon::Contrast => mdi!(
