@@ -1762,8 +1762,9 @@ impl App {
                         return self.preload();
                     }
                     self.remember(None);
+                    let among = drag.among(&self.engine.0.plan());
                     self.engine.0.edit_plan(|plan| match drag.is_section() {
-                        true => plan.move_group(&drag.carried, at, drag.level),
+                        true => drag::place_section(plan, &drag.carried, at, drag.level, among),
                         false => plan.move_steps(&drag.carried, at),
                     });
                     if let Some(first) = drag.carried.first() {

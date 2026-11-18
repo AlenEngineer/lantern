@@ -658,8 +658,8 @@ impl App {
             .and_then(|drag| Some((drag, drag.landing?)))
             .and_then(|(drag, at)| {
                 let mut after = plan.clone();
-                after
-                    .move_group(&drag.carried, at, drag.level)
+                let among = drag.among(plan);
+                crate::drag::place_section(&mut after, &drag.carried, at, drag.level, among)
                     .then_some((drag, after))
             });
         let mut carried_lane = 0;
