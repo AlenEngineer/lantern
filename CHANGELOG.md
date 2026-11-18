@@ -484,6 +484,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A double-click on a folded section's bracket opens it again, as a
+  double-click folded it.
 - In a service, a section that is over can be opened again: press its
   folded row to see what was played, and double-click its bracket to
   fold it back. Double-clicking a bracket in a service no longer takes
