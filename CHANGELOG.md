@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A box pulled over the plan from where there is nothing picks every step
+  it is over, as on a desktop. A press on nothing lets go of whatever was
+  picked, and closes its card.
 - Templates: ☆ makes a saved plan a template; clicking it in the list
   starts a new plan with its order of service, dated today.
 - Ctrl+Z takes back the last edit of the plan: a removed, added, moved or

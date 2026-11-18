@@ -306,6 +306,9 @@ enum Message {
     Mods(iced::keyboard::Modifiers),
     /// The steps picked together become a section.
     BracketPicked,
+    /// A box pulled over the plan picked these steps; none, for a press
+    /// where there is nothing, which lets go of whatever was picked.
+    Marquee(Vec<StepId>),
     Remove(StepId),
     /// Takes this off the plan's standby shelf.
     Unstandby(ResourceId),
@@ -1953,6 +1956,14 @@ impl App {
                 }
             }
             Message::Mods(mods) => self.mods = mods,
+            Message::Marquee(steps) => {
+                self.editing = None;
+                self.selected = steps.first().copied();
+                self.picked = match steps.len() {
+                    0 | 1 => Vec::new(),
+                    _ => steps,
+                };
+            }
             Message::BracketPicked => {
                 let plan = self.engine.0.plan();
                 let mut picked: Vec<usize> = self
