@@ -3120,47 +3120,52 @@ impl App {
                     crate::rail::RingOn::All(Some(section)),
                 )));
             }
-            // Beside the last of its steps, the foot of its bracket: held
-            // and pulled down it takes in what comes after; up, it lets go.
-            let last = side
+            // Beside the first and the last of its steps, the head and the
+            // foot of its bracket: held and pulled, the head takes in what
+            // comes before or lets go of its first rows, the foot takes in
+            // what comes after or lets go of its last.
+            let (first, last) = side
                 .braced
                 .iter()
                 .find(|braced| plan.steps()[braced.at].id == section)
-                .and_then(|braced| {
-                    (braced.at + 1..braced.end)
-                        .rev()
-                        .find(|row| !plan.steps()[*row].is_section())
-                });
-            let area: Element<'a, Message> = match last == Some(index)
-                && self.can_edit()
-                && self.mode == crate::mode::Mode::Plan
-            {
-                true => {
-                    // A small grip shows where it is.
-                    let p = self.palette;
-                    let grip =
-                        container(container(Space::new().width(14).height(3)).style(move |_| {
-                            container::Style {
-                                background: Some(Palette::tint(p.primary, 0.55).into()),
-                                border: iced::Border {
-                                    radius: 1.5.into(),
-                                    ..iced::Border::default()
-                                },
-                                ..container::Style::default()
-                            }
-                        }))
-                        .padding(iced::Padding::default().left(2.0))
-                        .center_y(FOOT);
-                    column![
-                        area,
-                        mouse_area(container(grip).width(wide).height(FOOT))
-                            .on_press(Message::PressFoot(section))
-                            .interaction(mouse::Interaction::ResizingVertically)
-                    ]
-                    .into()
-                }
-                false => area.into(),
+                .map(|braced| {
+                    let mut steps =
+                        (braced.at + 1..braced.end).filter(|row| !plan.steps()[*row].is_section());
+                    let first = steps.next();
+                    (first, steps.next_back().or(first))
+                })
+                .unwrap_or((None, None));
+            let pulls = self.can_edit() && self.mode == crate::mode::Mode::Plan;
+            let p = self.palette;
+            // A small grip shows where each is.
+            let grip = || {
+                container(container(Space::new().width(14).height(3)).style(move |_| {
+                    container::Style {
+                        background: Some(Palette::tint(p.primary, 0.55).into()),
+                        border: iced::Border {
+                            radius: 1.5.into(),
+                            ..iced::Border::default()
+                        },
+                        ..container::Style::default()
+                    }
+                }))
+                .padding(iced::Padding::default().left(2.0))
+                .center_y(FOOT)
             };
+            let handle = |pressed: Message| {
+                mouse_area(container(grip()).width(wide).height(FOOT))
+                    .on_press(pressed)
+                    .interaction(mouse::Interaction::ResizingVertically)
+            };
+            let mut parts = column![];
+            if pulls && first == Some(index) {
+                parts = parts.push(handle(Message::PressHead(section)));
+            }
+            parts = parts.push(area);
+            if pulls && last == Some(index) {
+                parts = parts.push(handle(Message::PressFoot(section)));
+            }
+            let area: Element<'a, Message> = parts.into();
             // What is under the pointer here is this row's step, as on
             // the rest of the row: where something carried would land
             // goes by rows, and must not flip to the section's start as

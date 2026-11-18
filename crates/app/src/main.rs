@@ -312,6 +312,9 @@ enum Message {
     /// The foot of a section's bracket was pressed: pulled, it ends the
     /// section somewhere else.
     PressFoot(StepId),
+    /// The head of a section's bracket was pressed: pulled, it starts the
+    /// section somewhere else.
+    PressHead(StepId),
     /// A box pulled over the plan picked these steps; none, for a press
     /// where there is nothing, which lets go of whatever was picked.
     Marquee(Vec<StepId>),
@@ -566,6 +569,11 @@ struct App {
     /// The foot of a section's bracket held: the section, and the row it
     /// would end at if let go now.
     pub(crate) foot: Option<(StepId, Option<StepId>)>,
+    /// The head of a section's bracket held: the section, the plan as it
+    /// was when it was taken hold of (it is changed as it is pulled, and
+    /// put back where it can't start), and whether it can't start where
+    /// it is now.
+    pub(crate) head: Option<(StepId, Plan, bool)>,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -817,6 +825,7 @@ impl App {
             alarm_pull: None,
             grabbed: false,
             foot: None,
+            head: None,
             attached: None,
             left: None,
             config,
@@ -1384,6 +1393,16 @@ impl App {
             }
             Message::Hover(row) => {
                 self.hovered = row;
+                // A bracket's head pulled over a row: the section starts
+                // there, or where it was if it can't.
+                if let Some((section, was, refused)) = &mut self.head
+                    && let Some((over, _)) = row
+                {
+                    let pulled = pull_head(was, *section, over);
+                    *refused = pulled.is_none();
+                    let to = pulled.unwrap_or_else(|| was.clone());
+                    self.engine.0.edit_plan(|plan| *plan = to);
+                }
                 // A bracket's foot pulled over a row: where it would end.
                 if let Some((section, last)) = &mut self.foot
                     && let Some((over, _)) = row
@@ -1570,6 +1589,23 @@ impl App {
             // A dot let go: where it was pressed it is a click, and the
             // step goes on or waits. Pulled to another step's, a loop is
             // drawn back up to it, or the steps down to it are joined.
+            // A bracket's head let go: the section starts where it was
+            // pulled to, as it is shown already.
+            Message::Pointer(_, false) if self.head.is_some() => {
+                self.grabbed = false;
+                if let Some((section, was, refused)) = self.head.take() {
+                    if refused {
+                        self.motion.refuse("It can't start there");
+                    }
+                    // Nothing changed: no step to undo.
+                    if self.engine.0.plan() == was {
+                        self.undo.pop();
+                    } else {
+                        self.motion.changed(section);
+                    }
+                    return self.preload();
+                }
+            }
             // A bracket's foot let go: the section ends where it was
             // pulled to.
             Message::Pointer(_, false) if self.foot.is_some() => {
@@ -1684,7 +1720,8 @@ impl App {
                 // Not from the rail: a dot pressed there is its own thing.
                 // A bracket pressed just now carries its section: that
                 // stays, whichever of the two is heard first.
-                if !std::mem::take(&mut self.grabbed) && self.foot.is_none() {
+                if !std::mem::take(&mut self.grabbed) && self.foot.is_none() && self.head.is_none()
+                {
                     self.drag = self
                         .hovered
                         .filter(|_| self.rail_over.is_none() && self.pull.is_none())
@@ -2020,6 +2057,12 @@ impl App {
                 }
             }
             Message::Mods(mods) => self.mods = mods,
+            Message::PressHead(section) => {
+                self.drag = None;
+                self.grabbed = false;
+                self.remember(None);
+                self.head = Some((section, self.engine.0.plan(), false));
+            }
             Message::PressFoot(section) => {
                 self.drag = None;
                 self.grabbed = false;
@@ -4084,6 +4127,7 @@ impl App {
         if self.drag.is_some()
             || self.pull.is_some()
             || self.foot.is_some()
+            || self.head.is_some()
             || self.resizing.is_some()
             || self.carried.is_some()
             || self.balk.is_some()
@@ -4577,9 +4621,84 @@ fn foot_end(plan: &Plan, section: StepId, over: StepId) -> Option<StepId> {
     Some(whole.unwrap_or(over))
 }
 
+/// `plan` with the section `section` starting at the row `over` and
+/// ending where it ends: pulled up, it takes in the rows between, a
+/// section whole where `over` is in one that is not round it; pulled
+/// down, it lets go of its rows before `over`, which stay in the section
+/// round it. `None` where it can't start there, or `over` is after its
+/// last row.
+fn pull_head(plan: &Plan, section: StepId, over: StepId) -> Option<Plan> {
+    let mut plan = plan.clone();
+    let at = plan.position(section)?;
+    let last = plan.last_of(section)?;
+    let row = plan.position(over)?;
+    if row == at || row > plan.position(last)? {
+        return None;
+    }
+    let depth = plan.get(section)?.depth()?;
+    let round = plan.within(at);
+    // Above it, in a section that is not round it: before all of that one.
+    let before = match row < at {
+        true => plan
+            .within(row)
+            .into_iter()
+            .find(|id| !round.contains(id))
+            .unwrap_or(over),
+        false => over,
+    };
+    // What ends right before it is ended where it ends now: pulled down,
+    // the rows it lets go of stay out of that; pulled up, a section it
+    // takes in keeps to its own rows.
+    if let Some(above) = at.checked_sub(1) {
+        for id in plan.within(above) {
+            if !round.contains(&id) {
+                let ends = plan.last_of(id);
+                plan.reach_section(id, ends).ok()?;
+            }
+        }
+    }
+    // Where it goes, among the rows other than its heading.
+    let to = plan.position(before)? - usize::from(plan.position(before)? > at);
+    if !plan.move_group(&[section], to, depth) {
+        return None;
+    }
+    plan.reach_section(section, Some(last)).ok()?;
+    Some(plan)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{reference, typed_into};
+
+    #[test]
+    fn a_brackets_head_pulled_up_takes_in_and_down_lets_go() {
+        use super::pull_head;
+        use lantern_engine::{Action, Plan};
+        let mut plan = Plan::new("Sabbath");
+        let a = plan.push("A", Action::Blank);
+        let music = plan.section("Music", None);
+        let b = plan.push("B", Action::Blank);
+        let school = plan.section("School", None);
+        let c = plan.push("C", Action::Blank);
+        let d = plan.push("D", Action::Blank);
+        let holds =
+            |plan: &Plan, id: lantern_engine::StepId| plan.within(plan.position(id).unwrap());
+        // School's head up over B: Music is taken in whole.
+        let up = pull_head(&plan, school, b).unwrap();
+        assert_eq!(holds(&up, b), vec![school, music]);
+        assert_eq!(holds(&up, c), vec![school]);
+        // Up over A, a step at the plan's own level: it is taken in.
+        let up = pull_head(&plan, school, a).unwrap();
+        assert!(holds(&up, a).contains(&school));
+        // Down over D: C is let go, and stays out of School and of Music.
+        let down = pull_head(&plan, school, d).unwrap();
+        assert!(!holds(&down, c).contains(&school));
+        assert!(!holds(&down, c).contains(&music));
+        assert_eq!(holds(&down, d), vec![school]);
+        // Not below its last row, nor on its own heading.
+        assert!(pull_head(&plan, music, d).is_none());
+        let _ = &mut plan;
+    }
 
     #[test]
     fn a_brackets_foot_pulled_down_takes_in_a_section_whole() {
