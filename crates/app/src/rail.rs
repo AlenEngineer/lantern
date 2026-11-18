@@ -578,14 +578,22 @@ impl App {
                 ));
             }
         }
-        // A section's ring has its card under it: its name, its times,
-        // what it takes. Its fill is a button of the ring, while planning.
-        if let RingOn::All(Some(id)) = ring.on
-            && let Some(step) = plan.get(id)
-        {
-            let timing = self.timing();
-            let section = timing.sections.iter().find(|section| section.id == id);
-            let card = container(self.section_card(p, &plan, step, section))
+        // A section's ring, and the plan's, have their card under it:
+        // its name, its times, what it takes. A section's fill is a
+        // button of the ring, while planning.
+        let timing = self.timing();
+        let card = match ring.on {
+            RingOn::All(Some(id)) => plan.get(id).map(|step| {
+                let section = timing.sections.iter().find(|section| section.id == id);
+                self.section_card(p, &plan, step, section)
+            }),
+            RingOn::All(None) => Some(self.plan_bracket_card(p, &plan)),
+            _ => None,
+        };
+        // The card comes last, rising into place as the buttons settle.
+        let rise = crate::motion::bubble(self.motion.ring_open(), 1, 2);
+        if let Some(card) = card.filter(|_| rise > 0.05) {
+            let card = container(card)
                 .padding([8, 12])
                 .width(CARD_WIDE)
                 .style(move |_| container::Style {
@@ -604,20 +612,22 @@ impl App {
             layers.push(
                 pin(card)
                     .x((middle.x - CARD_WIDE / 2.0).max(8.0))
-                    .y(middle.y + 48.0 + PETAL / 2.0 + 6.0)
+                    .y(middle.y + 48.0 + PETAL / 2.0 + 6.0 + 16.0 * (1.0 - rise))
                     .into(),
             );
-            if self.mode == crate::mode::Mode::Plan {
-                petals.push(petal(
-                    100.0,
-                    48.0,
-                    PETAL,
-                    false,
-                    glyph(Icon::Fill, false),
-                    "Fill it from the library",
-                    Some(Message::Fill(crate::fill_panel::FillEdit::Open(id))),
-                ));
-            }
+        }
+        if let RingOn::All(Some(id)) = ring.on
+            && self.mode == crate::mode::Mode::Plan
+        {
+            petals.push(petal(
+                100.0,
+                48.0,
+                PETAL,
+                false,
+                glyph(Icon::Fill, false),
+                "Fill it from the library",
+                Some(Message::Fill(crate::fill_panel::FillEdit::Open(id))),
+            ));
         }
         // A step's ring and a section's have, on the left, what is done
         // to it: renamed, copied, taken away. Its note is between.
@@ -769,7 +779,11 @@ impl App {
                 .into(),
             );
         }
-        for petal in petals {
+        // They pop out one after another, like bubbles.
+        let open = self.motion.ring_open();
+        let count = petals.len();
+        for (n, petal) in petals.into_iter().enumerate() {
+            let pop = crate::motion::bubble(open, n, count);
             let Petal {
                 angle,
                 far,
@@ -780,7 +794,10 @@ impl App {
                 message,
             } = petal;
             let (sin, cos) = angle.to_radians().sin_cos();
-            let far = far * out;
+            let far = far * out * pop.max(0.0);
+            // It grows as it comes: a bubble, not a button sliding out.
+            let size = size * (0.4 + 0.6 * pop).max(0.0);
+            let shown = pop.clamp(0.0, 1.0);
             let ground = match lit {
                 true => p.primary,
                 false => crate::motion::blend(p.surface_container_highest, p.on_surface, 0.1),
@@ -798,7 +815,7 @@ impl App {
                             }
                             _ => ground,
                         }
-                        .scale_alpha(out)
+                        .scale_alpha(out * shown)
                         .into(),
                     ),
                     border: iced::Border {
@@ -806,7 +823,7 @@ impl App {
                         ..iced::Border::default()
                     },
                     shadow: iced::Shadow {
-                        color: iced::Color::BLACK.scale_alpha(0.45 * out),
+                        color: iced::Color::BLACK.scale_alpha(0.45 * out * shown),
                         offset: iced::Vector::new(0.0, 2.0),
                         blur_radius: 8.0,
                     },
