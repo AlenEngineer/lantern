@@ -423,6 +423,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The place that opens for what is carried is in its shape. For steps, a
+  dashed place for each, with its dot's place on the line; the section
+  they would be in takes them in, and a loop or a drawn order they bring
+  whole is drawn beside them. For a section, one place with a dashed
+  bracket and its name. The card at the pointer has a bracket for a
+  section, and a loop's or an order's mark for steps that bring one.
 - A loop is worked on along its own line, as a drawn order is: pressed
   and pulled along, that part of it is rubbed out, and what is left
   either side still comes again; pressed twice, all of it goes. A loop
