@@ -428,6 +428,20 @@ impl App {
         let current = self.engine.0.current_step().map(|step| step.id);
         let next = self.engine.0.up_next().map(|step| step.id);
         let at = current.and_then(|id| plan.position(id));
+        // The last of the steps picked together has what can be done to
+        // them at its end.
+        let picked_end = self
+            .picked
+            .iter()
+            .filter_map(|id| plan.position(*id))
+            .max()
+            .map(|last| (last..plan.group_end(last)).last().unwrap_or(last))
+            .filter(|_| {
+                self.picked.len() > 1
+                    && self.can_edit()
+                    && self.drag.as_ref().is_none_or(|drag| !drag.moving)
+            })
+            .map(|last| plan.steps()[last].id);
         // What a shuffle has given already this round, wherever it stands.
         let drawn = self.engine.0.drawn_before();
         // While a drag moves, its rows leave the list and a gap opens where
@@ -704,8 +718,10 @@ impl App {
         // the longest run of those; one with none needs room right of
         // its brace.
         let own_of = |outer: &Braced| {
+            // What is carried is not where it was.
             let own = |at: &usize| {
                 !plan.steps()[*at].is_section()
+                    && !carried.contains(&plan.steps()[*at].id)
                     && !braced.iter().any(|inner| {
                         inner.at > outer.at
                             && inner.end <= outer.end
@@ -1098,8 +1114,10 @@ impl App {
             };
             let issue = issues.iter().find(|i| i.step == step.id);
             let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id));
-            let mut row =
-                column![self.draggable(step.id, self.step_row(step, place, issue, &noted))];
+            let mut row = column![self.draggable(
+                step.id,
+                self.step_row(step, place, issue, &noted, picked_end == Some(step.id))
+            )];
             // In a service, what is noted of the step that is on is said
             // under it: its own notes, its loops', and its sections' with
             // the first of their steps to come.
@@ -1526,10 +1544,16 @@ impl App {
                         Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
                         _ => None,
                     };
+                    // What is carried would go into it: its bracket takes in
+                    // the place opened for it, under its own.
+                    let last = match (gap_at, place_keys) {
+                        (Some(_), Some((_, to))) if into.first() == Some(&step.id) => to,
+                        _ => step.id,
+                    };
                     return Some(track::Bracket {
                         id: step.id,
                         first: step.id,
-                        last: step.id,
+                        last,
                         offset: track::brace_at(0),
                         beside: None,
                         color: p.primary,
@@ -1855,7 +1879,8 @@ impl App {
             // A bracket's mark goes by the last of what is in it.
             .map(|last| (last..plan.group_end(last)).last().unwrap_or(last))
             .filter(|_| self.picked.len() > 1 && tree && can && moving.is_none());
-        if let Some(last) = last_picked
+        // A step has them at its end; a section's place has them over it.
+        if let Some(last) = last_picked.filter(|last| plan.steps()[*last].is_section())
             && let Some((origin, row)) = {
                 let places = places.borrow();
                 places
@@ -1864,40 +1889,47 @@ impl App {
                     .zip(places.get(&track::Key::Side(id_at(last))).copied())
             }
         {
-            let make = hinted(
-                p,
-                button(text("{ + }").size(META).font(BOLD).color(p.primary))
-                    .padding([4, 10])
-                    .on_press(Message::BracketPicked)
-                    .style(look::pill(p, Tone::Selected)),
-                "Make a section of them".to_string(),
-                tooltip::Position::Top,
-            );
-            // And a note on all of them.
-            let note = hinted(
-                p,
-                button(look::icon(Icon::Note, 13.0, crate::notes::INK))
-                    .padding([5, 8])
-                    .on_press(Message::NoteFor(
-                        self.picked
-                            .iter()
-                            .map(|id| lantern_engine::NoteOn::Step(*id))
-                            .collect(),
-                    ))
-                    .style(look::pill(p, Tone::Selected)),
-                "A note on them".to_string(),
-                tooltip::Position::Top,
-            );
             layers = layers.push(
-                iced::widget::pin(row![make, note].spacing(4))
-                    // Just left of the brackets, level with that row.
-                    .x((row.x - origin.x - 100.0).max(0.0))
-                    .y((row.y - origin.y + 5.0).max(0.0)),
+                iced::widget::pin(self.picked_actions())
+                    // Beside the place, level with it.
+                    .x((row.x - origin.x - 70.0).max(0.0))
+                    .y((row.y - origin.y + 7.0).max(0.0)),
             );
         }
         mouse_area(scrolling(layers).id(ROWS))
             .on_exit(Message::LeftPlan)
             .into()
+    }
+
+    /// What can be done to steps picked together: make a section of them,
+    /// or a note on them.
+    fn picked_actions(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let make = hinted(
+            p,
+            button(text("{ + }").size(META).font(BOLD).color(p.primary))
+                .padding([3, 6])
+                .on_press(Message::BracketPicked)
+                .style(look::pill(p, Tone::Selected)),
+            "Make a section of them".to_string(),
+            tooltip::Position::Top,
+        );
+        // And a note on all of them.
+        let note = hinted(
+            p,
+            button(look::icon(Icon::Note, 13.0, crate::notes::INK))
+                .padding([4, 6])
+                .on_press(Message::NoteFor(
+                    self.picked
+                        .iter()
+                        .map(|id| lantern_engine::NoteOn::Step(*id))
+                        .collect(),
+                ))
+                .style(look::pill(p, Tone::Selected)),
+            "A note on them".to_string(),
+            tooltip::Position::Top,
+        );
+        row![make, note].spacing(3).into()
     }
 
     /// What is inside a step, a line each under its row: the videos,
@@ -2193,6 +2225,7 @@ impl App {
         place: Place,
         issue: Option<&Issue>,
         noted: &[(lantern_engine::NoteId, usize)],
+        picked_end: bool,
     ) -> Element<'_, Message> {
         let p = self.palette;
         // The current step is on stage unless something off the plan was
@@ -2277,6 +2310,8 @@ impl App {
         let on_now = place == Place::Current && self.mode == crate::mode::Mode::Run;
         let end: Element<'_, Message> = if self.editing(step.id, Part::Length) {
             self.step_length_field(step)
+        } else if picked_end {
+            self.picked_actions()
         } else if on_now && said.is_some() {
             Space::new().into()
         } else if selected && has_length {
