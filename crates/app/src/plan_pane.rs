@@ -704,8 +704,10 @@ impl App {
         // the longest run of those; one with none needs room right of
         // its brace.
         let own_of = |outer: &Braced| {
+            // What is carried is not where it was.
             let own = |at: &usize| {
                 !plan.steps()[*at].is_section()
+                    && !carried.contains(&plan.steps()[*at].id)
                     && !braced.iter().any(|inner| {
                         inner.at > outer.at
                             && inner.end <= outer.end
@@ -1526,10 +1528,16 @@ impl App {
                         Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
                         _ => None,
                     };
+                    // What is carried would go into it: its bracket takes in
+                    // the place opened for it, under its own.
+                    let last = match (gap_at, place_keys) {
+                        (Some(_), Some((_, to))) if into.first() == Some(&step.id) => to,
+                        _ => step.id,
+                    };
                     return Some(track::Bracket {
                         id: step.id,
                         first: step.id,
-                        last: step.id,
+                        last,
                         offset: track::brace_at(0),
                         beside: None,
                         color: p.primary,
