@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A length can be typed in hours: `3h`, `3h15` (or `3h 15m`), `45m`, or
+  as a clock with hours, `1:02:03`. A number alone is still minutes and
+  `4:30` still four and a half.
 - A box pulled over the plan from where there is nothing picks every step
   it is over, as on a desktop. A press on nothing lets go of whatever was
   picked, and closes its card.
