@@ -46,6 +46,8 @@ pub enum Key {
     Canvas,
     /// All of a row: a press outside every row is on nothing.
     Whole(StepId),
+    /// What a fill proposes, with its buttons: not nothing either.
+    Fill,
 }
 
 /// Where each of them is, as last laid out.
@@ -329,6 +331,8 @@ pub struct Picture {
     /// Every row in sight, headings too: a press on one is not a press
     /// on nothing.
     pub rows: Vec<StepId>,
+    /// A fill is open: a press on what it proposes is not on nothing.
+    pub filling: bool,
     /// The sections, each a bracket beside the steps it holds.
     pub brackets: Vec<Bracket>,
     /// The open note's threads: from its card to each thing it is on.
@@ -743,7 +747,8 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                     places
                         .get(&Key::Whole(*id))
                         .is_some_and(|row| row.contains(at))
-                });
+                }) || (self.picture.filling
+                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)));
                 if !on_a_row {
                     state.band = Some((at, at, false));
                     state.banded.clear();

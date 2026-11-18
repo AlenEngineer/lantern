@@ -916,7 +916,7 @@ impl App {
             if fill_at == Some(index)
                 && let Some(proposed) = self.fill_rows(fill_indent)
             {
-                put!(proposed);
+                put!(track::seen(track::Key::Fill, &places, proposed));
             }
             // Every step is on the one line, as far in as any other: the
             // brackets say what is in what.
@@ -1222,6 +1222,18 @@ impl App {
                 Some(grown) => container(row).max_height(tall * grown).clip(true).into(),
                 None => row,
             };
+            // Put in by a fill just now: its proposal's dashed outline fades.
+            let row: Element<'_, Message> = match self.motion.solidifying(step.id) {
+                Some(t) => crate::drawn::dashed(
+                    container(row),
+                    iced::Color {
+                        a: 0.6 * (1.0 - t),
+                        ..p.primary
+                    },
+                    12.0,
+                ),
+                None => row,
+            };
             // Its own cut, if any, is closed before it: after that.
             let item = stop;
             match folding.take() {
@@ -1247,7 +1259,7 @@ impl App {
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
         {
-            put!(proposed);
+            put!(track::seen(track::Key::Fill, &places, proposed));
         }
         if landing == Some(rest) {
             put!(gap(
@@ -1999,6 +2011,7 @@ impl App {
             threads,
             select: (tree && can).then_some(p.primary),
             rows: whole,
+            filling: self.filling.is_some(),
         };
         // Leaving the list means letting go would move nothing.
         let mut layers = stack![rows, track::over(picture, &places, Message::Marquee)].width(Fill);

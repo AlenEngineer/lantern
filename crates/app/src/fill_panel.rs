@@ -83,6 +83,9 @@ pub enum FillEdit {
 
 const STEP: Duration = Duration::from_secs(30);
 
+/// How tall a proposed row is, to drop it in from nothing.
+const PICK_TALL: f32 = 48.0;
+
 impl App {
     /// Whether a fill is waiting on files that are still being measured.
     pub(crate) fn fill_measuring(&self) -> bool {
@@ -100,10 +103,37 @@ impl App {
     }
 
     pub(crate) fn fill_edit(&mut self, edit: FillEdit) {
+        // What a draw newly proposes drops in, one after another.
+        let ids = |fill: Option<&Filling>| -> Vec<ResourceId> {
+            fill.map(|fill| fill.picks.iter().map(|pick| pick.id.clone()).collect())
+                .unwrap_or_default()
+        };
+        let before = ids(self.filling.as_ref());
+        // More of the library measured changes the draw a little: that
+        // settles in place, unless it is the first there is to see.
+        let measured = matches!(edit, FillEdit::Measured) && !before.is_empty();
+        self.fill_edit_now(edit);
+        if measured {
+            return;
+        }
+        let new: Vec<ResourceId> = ids(self.filling.as_ref())
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect();
+        if !new.is_empty() {
+            self.motion.proposed(new);
+        }
+    }
+
+    fn fill_edit_now(&mut self, edit: FillEdit) {
         match edit {
             FillEdit::Open(section) => {
-                // A fill has the side to itself.
+                // A fill has the side to itself, and the section's card
+                // closes off what it proposes.
                 self.plan_panel = false;
+                if self.selected == Some(section) {
+                    self.selected = None;
+                }
                 self.plan_typed = None;
                 let (planned, budget) = self.section_room(section);
                 let any_used = self
@@ -307,7 +337,7 @@ impl App {
         let each = fill.chosen.each_still;
         let added = self.engine.0.edit_plan(|plan| {
             let at = plan.position(fill.section)?;
-            let mut last = None;
+            let mut all = Vec::new();
             for (end, pick) in (plan.group_end(at)..).zip(&fill.picks) {
                 let action = Action::Show {
                     resource: (**pick).clone(),
@@ -329,12 +359,12 @@ impl App {
                         step.estimate = each;
                     }
                 }
-                last = Some(id);
+                all.push(id);
             }
-            last
+            Some(all)
         });
-        if let Some(step) = added {
-            self.motion.changed(step);
+        if let Some(steps) = added {
+            self.motion.accepted(steps);
         }
     }
 
@@ -689,56 +719,62 @@ impl App {
             }
             .map(length::clock)
             .unwrap_or_default();
-            rows = rows.push(drawn::dashed(
-                container(
-                    row![
-                        drawn::dashed_dot(10.0, p.primary),
-                        container(
-                            text(pick.title.clone())
-                                .size(BODY)
-                                .color(p.primary)
-                                .wrapping(text::Wrapping::None)
-                        )
-                        .width(Fill)
-                        .clip(true),
-                        meter(level, colour, p.outline_variant),
-                        text(since).size(META).color(colour),
-                        text(long).size(META).color(p.on_surface_variant),
-                        hinted(
-                            p,
-                            button(
-                                text(if kept { "●" } else { "○" })
-                                    .size(META)
+            // Newly drawn, it drops in after the one before it.
+            let dropped = self.motion.dropping(&pick.id).unwrap_or(1.0);
+            rows = rows.push(
+                container(drawn::dashed(
+                    container(
+                        row![
+                            drawn::dashed_dot(10.0, p.primary),
+                            container(
+                                text(pick.title.clone())
+                                    .size(BODY)
                                     .color(p.primary)
+                                    .wrapping(text::Wrapping::None)
                             )
-                            .padding([2, 6])
-                            .on_press(edit(FillEdit::Keep(pick.id.clone())))
-                            .style(look::row(
+                            .width(Fill)
+                            .clip(true),
+                            meter(level, colour, p.outline_variant),
+                            text(since).size(META).color(colour),
+                            text(long).size(META).color(p.on_surface_variant),
+                            hinted(
                                 p,
-                                if kept { Tone::Selected } else { Tone::Plain }
-                            )),
-                            if kept {
-                                "Stays when you draw again. Click to let it go".to_string()
-                            } else {
-                                "Keep it when you draw again".to_string()
-                            },
-                            tooltip::Position::Top,
-                        ),
-                        button(text("✕").size(META).color(p.on_surface_variant))
-                            .padding([2, 6])
-                            .on_press(edit(FillEdit::Out(pick.id.clone())))
-                            .style(look::row(p, Tone::Plain)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .padding([6, 8]),
-                iced::Color {
-                    a: 0.45,
-                    ..p.primary
-                },
-                12.0,
-            ));
+                                button(
+                                    text(if kept { "●" } else { "○" })
+                                        .size(META)
+                                        .color(p.primary)
+                                )
+                                .padding([2, 6])
+                                .on_press(edit(FillEdit::Keep(pick.id.clone())))
+                                .style(look::row(
+                                    p,
+                                    if kept { Tone::Selected } else { Tone::Plain }
+                                )),
+                                if kept {
+                                    "Stays when you draw again. Click to let it go".to_string()
+                                } else {
+                                    "Keep it when you draw again".to_string()
+                                },
+                                tooltip::Position::Top,
+                            ),
+                            button(text("✕").size(META).color(p.on_surface_variant))
+                                .padding([2, 6])
+                                .on_press(edit(FillEdit::Out(pick.id.clone())))
+                                .style(look::row(p, Tone::Plain)),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([6, 8]),
+                    iced::Color {
+                        a: 0.45 * dropped,
+                        ..p.primary
+                    },
+                    12.0,
+                ))
+                .max_height(PICK_TALL * dropped)
+                .clip(true),
+            );
         }
         let some = !fill.picks.is_empty();
         rows = rows.push(

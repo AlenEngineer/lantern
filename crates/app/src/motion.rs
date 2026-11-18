@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use iced::animation::{Animation, Easing};
-use lantern_engine::{FlowOf, SceneId, StepId};
+use lantern_engine::{FlowOf, ResourceId, SceneId, StepId};
 
 use crate::mode::Mode;
 
@@ -37,6 +37,12 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// Each thing a fill proposes dropping in, one after another.
+pub const DROP: Duration = Duration::from_millis(120);
+/// All a fill proposes dropping in, at most.
+pub const DROPS: Duration = Duration::from_millis(600);
+/// What a fill put in, its dashed outline fading to a plain row.
+pub const SOLID: Duration = Duration::from_millis(500);
 /// A section put over its time: its sum turning red, its bracket bulging.
 pub const TIPPED: Duration = Duration::from_millis(600);
 /// A light running back along a loop's line as the service goes round.
@@ -127,6 +133,10 @@ pub struct Motion {
     round: Option<(FlowOf, Run)>,
     /// Sections an edit just put over their time.
     tipped: Option<(Vec<StepId>, Run)>,
+    /// What a fill just proposed, dropping in one after another.
+    proposed: Option<(Vec<ResourceId>, Run)>,
+    /// Steps a fill just put in, their dashed outlines fading.
+    accepted: Option<(Vec<StepId>, Run)>,
 }
 
 impl Motion {
@@ -158,6 +168,8 @@ impl Motion {
             came: None,
             round: None,
             tipped: None,
+            proposed: None,
+            accepted: None,
         }
     }
 
@@ -190,6 +202,38 @@ impl Motion {
     pub fn tick(&self) -> Option<f32> {
         let t = self.along(self.saved.as_ref())?;
         Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// A fill just proposed `new`.
+    pub fn proposed(&mut self, new: Vec<ResourceId>) {
+        // However many, all are in within a moment.
+        let length = (DROP * new.len() as u32).min(DROPS);
+        self.proposed = Some((
+            new,
+            Run::new(Instant::now(), self.length(length), Easing::Linear),
+        ));
+    }
+
+    /// How far a proposal has dropped in, 0 to 1: each starts after the
+    /// one before it. `None` once all are in, or for one not new.
+    pub fn dropping(&self, id: &ResourceId) -> Option<f32> {
+        let (new, run) = self.proposed.as_ref()?;
+        let at = new.iter().position(|one| one == id)?;
+        let t = self.along(Some(run))? * new.len() as f32;
+        let own = (t - at as f32).clamp(0.0, 1.0);
+        Some(1.0 - (1.0 - own).powi(3))
+    }
+
+    /// A fill just put `steps` into the plan.
+    pub fn accepted(&mut self, steps: Vec<StepId>) {
+        self.accepted = Some((steps, self.run(SOLID, Instant::now())));
+    }
+
+    /// How far a step a fill just put in has gone from dashed to solid.
+    pub fn solidifying(&self, step: StepId) -> Option<f32> {
+        let (steps, run) = self.accepted.as_ref()?;
+        steps.contains(&step).then_some(())?;
+        self.along(Some(run))
     }
 
     /// An edit just put `sections` over their time.
@@ -451,7 +495,9 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 16] = [
+        let runs: [Option<&Run>; 18] = [
+            self.proposed.as_ref().map(|(_, run)| run),
+            self.accepted.as_ref().map(|(_, run)| run),
             self.tipped.as_ref().map(|(_, run)| run),
             self.round.as_ref().map(|(_, run)| run),
             self.gone.as_ref().map(|(_, _, run)| run),
