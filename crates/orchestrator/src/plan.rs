@@ -89,15 +89,16 @@ pub enum Action {
 /// How many colours sections are told apart by.
 pub const COLORS: u8 = 6;
 
-/// The colour a section takes that has none of its own: the next after
-/// `before`'s, the section before it, that none of `near` has, going
-/// round. The first when there is none before it, or all are taken.
-pub fn next_color(before: Option<u8>, near: &[u8]) -> u8 {
-    let from = before.map_or(0, |before| before + 1);
+/// The colour a section takes that has none of its own: its own by where
+/// it is, `nth` section of the plan, going round; else the next after
+/// that none of `near` has, the sections next to it and round it. So a
+/// colour given to one never moves the others, unless they would match.
+pub fn next_color(nth: usize, near: &[u8]) -> u8 {
+    let from = (nth % usize::from(COLORS)) as u8;
     (0..COLORS)
         .map(|n| (from + n) % COLORS)
-        .find(|slot| Some(*slot) != before && !near.contains(slot))
-        .unwrap_or(from % COLORS)
+        .find(|slot| !near.contains(slot))
+        .unwrap_or(from)
 }
 
 /// The furthest in a section sits: three levels of section in all.
@@ -945,10 +946,10 @@ impl Plan {
         found
     }
 
-    /// Each section's colour, in plan order: its own, else the next after
-    /// the section before it's that neither the sections round it nor
-    /// the section after it, where that has its own, are in
-    /// ([`next_color`]). So a plan that gave none has them all the same.
+    /// Each section's colour, in plan order: its own, else one by where
+    /// it is that neither the section before it, the sections round it,
+    /// nor the section after it, where that has its own, are in
+    /// ([`next_color`]).
     pub fn section_colors(&self) -> Vec<(StepId, u8)> {
         let mut found: Vec<(StepId, u8)> = Vec::new();
         for (at, step) in self.steps.iter().enumerate() {
@@ -964,7 +965,8 @@ impl Plan {
                         .find(|next| next.is_section())
                         .and_then(Step::color),
                 );
-                next_color(found.last().map(|(_, color)| *color), &near)
+                near.extend(found.last().map(|(_, color)| *color));
+                next_color(found.len(), &near)
             });
             found.push((step.id, color % COLORS));
         }
@@ -3011,15 +3013,14 @@ mod tests {
     }
 
     #[test]
-    fn a_section_takes_the_next_colour_its_neighbours_do_not_have() {
-        assert_eq!(next_color(None, &[]), 0);
-        assert_eq!(next_color(Some(0), &[]), 1);
-        assert_eq!(next_color(Some(COLORS - 1), &[]), 0);
-        assert_eq!(next_color(Some(0), &[1, 2]), 3);
-        assert_eq!(next_color(Some(4), &[5, 0]), 1);
-        assert_eq!(next_color(None, &[0]), 1);
-        // All taken: the next anyway.
-        assert_eq!(next_color(Some(0), &[1, 2, 3, 4, 5]), 1);
+    fn a_section_takes_its_own_colour_unless_a_neighbour_has_it() {
+        assert_eq!(next_color(0, &[]), 0);
+        assert_eq!(next_color(1, &[]), 1);
+        assert_eq!(next_color(usize::from(COLORS), &[]), 0);
+        assert_eq!(next_color(1, &[1, 2]), 3);
+        assert_eq!(next_color(5, &[5, 0]), 1);
+        // All taken: its own anyway.
+        assert_eq!(next_color(1, &[0, 1, 2, 3, 4, 5]), 1);
     }
 
     #[test]
@@ -3039,6 +3040,9 @@ mod tests {
         assert!(plan.set_section_color(music, 1));
         assert_eq!(colors(&plan), [1, 3, 2]);
         assert_eq!(plan.get(word).unwrap().color(), None);
+        // Another colour for the first leaves the next its own.
+        assert!(plan.set_section_color(music, 4));
+        assert_eq!(colors(&plan), [4, 1, 2]);
         // A step has none to set.
         let song = plan.steps()[1].id;
         assert!(!plan.set_section_color(song, 0));
