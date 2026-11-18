@@ -37,6 +37,8 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// A search result travelling to its row in the plan.
+pub const FLIGHT: Duration = Duration::from_millis(420);
 /// Each thing a fill proposes dropping in, one after another.
 pub const DROP: Duration = Duration::from_millis(120);
 /// All a fill proposes dropping in, at most.
@@ -137,6 +139,9 @@ pub struct Motion {
     proposed: Option<(Vec<ResourceId>, Run)>,
     /// Steps a fill just put in, their dashed outlines fading.
     accepted: Option<(Vec<StepId>, Run)>,
+    /// A search result just put in the plan, travelling from where it
+    /// was found to its row: the step, its title, and where it set off.
+    flight: Option<(StepId, String, iced::Point, Run)>,
 }
 
 impl Motion {
@@ -170,6 +175,7 @@ impl Motion {
             tipped: None,
             proposed: None,
             accepted: None,
+            flight: None,
         }
     }
 
@@ -202,6 +208,20 @@ impl Motion {
     pub fn tick(&self) -> Option<f32> {
         let t = self.along(self.saved.as_ref())?;
         Some((1.0 - (t - 0.6).max(0.0) / 0.4).clamp(0.0, 1.0))
+    }
+
+    /// A search result titled `title` went into the plan as `step`, from
+    /// `from`.
+    pub fn flies(&mut self, step: StepId, title: String, from: iced::Point) {
+        self.flight = Some((step, title, from, self.run(FLIGHT, Instant::now())));
+        self.rows_came(vec![step]);
+    }
+
+    /// The result on its way to its row: which step, its title, where it
+    /// set off, and how far along it is.
+    pub fn flight(&self) -> Option<(StepId, &str, iced::Point, f32)> {
+        let (step, title, from, run) = self.flight.as_ref()?;
+        Some((*step, title.as_str(), *from, self.along(Some(run))?))
     }
 
     /// A fill just proposed `new`.
@@ -495,7 +515,8 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 18] = [
+        let runs: [Option<&Run>; 19] = [
+            self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
             self.tipped.as_ref().map(|(_, run)| run),

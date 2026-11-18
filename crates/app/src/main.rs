@@ -3223,7 +3223,21 @@ impl App {
                 };
                 if let Some(resource) = resource {
                     self.remember(None);
-                    self.selected = Some(engine.add_resource(self.selected, &resource));
+                    let id = engine.add_resource(self.selected, &resource);
+                    self.selected = Some(id);
+                    // It travels from where it was found, or looked at, to
+                    // its row.
+                    let from = match self.searching() {
+                        true => iced::Point::new(
+                            self.dashboard_size.width * 0.8,
+                            self.dashboard_size.height * 0.2,
+                        ),
+                        false => iced::Point::new(
+                            self.dashboard_size.width * 0.45,
+                            self.dashboard_size.height * 0.3,
+                        ),
+                    };
+                    self.motion.flies(id, resource.title.clone(), from);
                     return self.preload();
                 }
             }

@@ -302,6 +302,35 @@ impl App {
                 });
             layers = layers.push(pin(card).x(carried.at.x + 16.0).y(carried.at.y + 8.0));
         }
+        // A search result just put in the plan travels to its row.
+        if let Some((step, title, from, t)) = self.motion.flight()
+            && let Some(row) = self
+                .places
+                .borrow()
+                .get(&crate::track::Key::Whole(step))
+                .copied()
+        {
+            let to = iced::Point::new(row.x + 30.0, row.y + 4.0);
+            let at = iced::Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+            let card = container(
+                single_line(title.to_string())
+                    .size(BODY)
+                    .font(BOLD)
+                    .color(p.primary.scale_alpha(1.0 - t * t)),
+            )
+            .padding([8, 12])
+            .max_width(260)
+            .style(move |_| container::Style {
+                background: Some(p.surface_container_highest.scale_alpha(1.0 - t * t).into()),
+                border: iced::Border {
+                    color: p.primary.scale_alpha(1.0 - t * t),
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..container::Style::default()
+            });
+            layers = layers.push(pin(card).x(at.x).y(at.y));
+        }
         // A moving drag's card follows the pointer, just off to its side so
         // the rows under the pointer still know it's there.
         if let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) {
