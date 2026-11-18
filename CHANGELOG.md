@@ -530,6 +530,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Carrying a file in from the library, or a section by its bracket, made
+  the rows jump about: with the pointer in the room of a step's brackets,
+  where it would land flipped between that row and the start of the
+  section. It goes by the row everywhere now.
+- A section that holds only sections is a bracket round them, not a
+  heading row.
 - A right click on the line of a section that comes again opens how
   often it does, anywhere along the line: as on the line of a loop round
   some steps.

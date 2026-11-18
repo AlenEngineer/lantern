@@ -586,7 +586,14 @@ impl App {
                 // One with nothing in it yet is a bracket too, beside a
                 // place for what will be put in it.
                 && (plan.group_end(at) == at + 1
-                    || (at + 1..plan.group_end(at)).any(|at| !plan.steps()[at].is_section()))
+                    || (at + 1..plan.group_end(at)).any(|row| {
+                        // Something of it is in sight: a step, or the
+                        // place of a section with nothing in it, that no
+                        // folded section holds.
+                        let is = &plan.steps()[row];
+                        (!is.is_section() || plan.group_end(row) == row + 1)
+                            && !plan.within(row).iter().any(|id| self.folded.contains(id))
+                    }))
         };
         let mut braced: Vec<Braced> = (0..plan.len())
             .filter(|at| bracketed(*at))
@@ -664,6 +671,9 @@ impl App {
         let mut gap_at: Option<usize> = None;
         // Every row in sight: a press on one of them is not on nothing.
         let mut whole: Vec<StepId> = Vec::new();
+        // The sections with nothing in it that have a place in sight:
+        // a bracket round them runs beside those too.
+        let mut placed: Vec<usize> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
         let mut headings: Vec<usize> = Vec::new();
         let mut cuts = 0u32;
@@ -950,6 +960,7 @@ impl App {
                         folding = kept;
                         if plan.group_end(index) == index + 1 {
                             whole.push(step.id);
+                            placed.push(index);
                             let wide = track::side_room(side.lanes, side.wide) + side.more;
                             put!(self.empty_place(step.id, lanes, wide, &places));
                         }
@@ -1367,11 +1378,15 @@ impl App {
             (_, _, Some(section)) => Some((section, section)),
             _ => None,
         };
+        // Every row a bracket can run beside: the steps, and the places
+        // of sections with nothing in them.
+        let mut beside: Vec<usize> = shown.iter().chain(&placed).copied().collect();
+        beside.sort_unstable();
         let mut brackets: Vec<track::Bracket> = braced
             .iter()
             .filter_map(|braced| {
                 let step = &plan.steps()[braced.at];
-                let mut inside = shown
+                let mut inside = beside
                     .iter()
                     .copied()
                     .filter(|at| (braced.at + 1..braced.end).contains(at));
@@ -1531,13 +1546,13 @@ impl App {
             .find(|braced| self.selected == Some(plan.steps()[braced.at].id))
             .and_then(|braced| {
                 let step = &plan.steps()[braced.at];
-                let first = shown
+                let first = beside
                     .iter()
                     .copied()
                     .find(|at| (braced.at + 1..braced.end).contains(at))
                     // One with nothing in it: beside its own place.
                     .unwrap_or(braced.at);
-                let last = shown
+                let last = beside
                     .iter()
                     .copied()
                     .rfind(|at| (braced.at + 1..braced.end).contains(at))
@@ -3001,7 +3016,7 @@ impl App {
                 return part.into();
             };
             let mut area = mouse_area(part)
-                .on_press(Message::Click(Clicked::Step(section)))
+                .on_press(Message::Grab(section))
                 .on_double_click(Message::Fold(section))
                 .interaction(mouse::Interaction::Pointer);
             if self.can_edit() {
@@ -3009,7 +3024,11 @@ impl App {
                     crate::rail::RingOn::All(Some(section)),
                 )));
             }
-            self.draggable(section, area.into())
+            // What is under the pointer here is this row's step, as on
+            // the rest of the row: where something carried would land
+            // goes by rows, and must not flip to the section's start as
+            // the pointer crosses into its bracket's room.
+            self.draggable(plan.steps()[index].id, area.into())
         };
         // The innermost brace and the names beside it: the section this
         // step is most nearly in. Then a brace for each one further out,
