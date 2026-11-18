@@ -26,6 +26,7 @@ use iced::{
 use lantern_engine::StepId;
 
 use crate::drawn::Kept;
+use crate::motion::ease;
 
 /// What says where it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -646,11 +647,6 @@ impl Moves {
         }
         .clamp(0.0, 1.0)
     }
-}
-
-/// Fast at first, slowing to a stop.
-fn ease(far: f32) -> f32 {
-    1.0 - (1.0 - far.clamp(0.0, 1.0)).powi(3)
 }
 
 /// What was drawn last, to be drawn again only when it changes.
