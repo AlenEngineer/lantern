@@ -43,6 +43,10 @@ pub enum Key {
     Whole(StepId),
     /// What a fill proposes, with its buttons: not nothing either.
     Fill,
+    /// Run's rail: the room for the dot of its `n`th row, and right of
+    /// that row for the brackets.
+    Road(usize),
+    RoadSide(usize),
 }
 
 /// Where each of them is, as last laid out.

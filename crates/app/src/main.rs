@@ -41,6 +41,7 @@ mod rail;
 mod ready;
 mod rehearse;
 mod relay;
+mod road;
 mod script;
 mod search;
 mod settings;
@@ -4691,6 +4692,12 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(15)).map(|_| Message::Progress));
         }
+        // In a service the tube to what is next fills as the step that
+        // is on goes, whether or not it goes on by itself.
+        if self.mode == mode::Mode::Run && self.engine.0.current_step().is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(500)).map(|_| Message::Progress));
+        }
         // A step counting down to going on checks often, so it's on time.
         if self.goes_on_in().is_some() {
             subscriptions
@@ -5115,7 +5122,7 @@ fn live_search(stream: SearchStream) -> Task<Message> {
 }
 
 /// How many frames a scene shows: its pages or slides, 1 when not known.
-fn frame_count(scene: &lantern_engine::Scene) -> usize {
+pub(crate) fn frame_count(scene: &lantern_engine::Scene) -> usize {
     match &scene.media {
         Media::Frames {
             count: Some(count), ..
