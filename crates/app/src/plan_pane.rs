@@ -865,14 +865,11 @@ impl App {
                 .iter()
                 .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none())
                 || plan_lane.is_some_and(|lane| lane > 0 && plans_steps.is_none()));
-        // A picked section's card takes the room its name had, and more:
-        // the steps give way to it, so it covers none of them. The plan's
-        // does the same.
+        // The plan's card, picked, takes the room its name had, and more:
+        // the steps give way to it, so it covers none of them. A section's
+        // is under its ring.
         let plan_carded = self.plan_picked && plan_lane.is_some();
-        let carded = plan_carded
-            || braced
-                .iter()
-                .any(|braced| self.selected == Some(plan.steps()[braced.at].id));
+        let carded = plan_carded;
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
@@ -1570,7 +1567,7 @@ impl App {
                         name: step.label.clone(),
                         lines,
                         strong: picked,
-                        bare: picked,
+                        bare: false,
                         place: false,
                         marks: crate::notes::numbers_on(
                             plan,
@@ -1612,7 +1609,7 @@ impl App {
                         strong: picked
                             || host_id == Some(step.id)
                             || into.first() == Some(&step.id),
-                        bare: picked,
+                        bare: false,
                         place: false,
                         marks: crate::notes::numbers_on(
                             plan,
@@ -1732,7 +1729,7 @@ impl App {
                         || host_id == Some(step.id)
                         || into.first() == Some(&step.id)
                         || footed == Some(step.id),
-                    bare: picked || (braced.lane > 0 && beside.is_none() && !side.wide),
+                    bare: (braced.lane > 0 && beside.is_none() && !side.wide),
                     place: false,
                     marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
                         .into_iter()
@@ -1826,45 +1823,9 @@ impl App {
         // The section that is picked says what it is set to, and what
         // can be done to it, in a card over its bracket's name. The plan,
         // picked, says the same of itself in the same place.
-        let plan_card = plan_rows.filter(|_| plan_carded).and_then(|(first, last)| {
-            let (first, last) = plans_steps.unwrap_or((*first, *last));
-            let (origin, top, foot) = {
-                let places = places.borrow();
-                (
-                    *places.get(&track::Key::Canvas)?,
-                    *places.get(&track::Key::Side(id_at(first)))?,
-                    *places.get(&track::Key::Side(id_at(last)))?,
-                )
-            };
-            let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
-            let left = origin.width - side.room() + track::BRACE;
-            let card = container(self.plan_bracket_card(plan))
-                .width(CARD)
-                .padding([8, 6])
-                .style(look::card(p, 0.0, 12.0));
-            Some(
-                iced::widget::pin(card)
-                    .x(left.max(0.0))
-                    .y((middle - 52.0).max(0.0))
-                    .into(),
-            )
-        });
-        let card: Option<Element<'_, Message>> = braced
-            .iter()
-            .find(|braced| self.selected == Some(plan.steps()[braced.at].id))
-            .and_then(|braced| {
-                let step = &plan.steps()[braced.at];
-                let first = beside
-                    .iter()
-                    .copied()
-                    .find(|at| (braced.at + 1..braced.end).contains(at))
-                    // One with nothing in it: beside its own place.
-                    .unwrap_or(braced.at);
-                let last = beside
-                    .iter()
-                    .copied()
-                    .rfind(|at| (braced.at + 1..braced.end).contains(at))
-                    .unwrap_or(braced.at);
+        let plan_card: Option<Element<'_, Message>> =
+            plan_rows.filter(|_| plan_carded).and_then(|(first, last)| {
+                let (first, last) = plans_steps.unwrap_or((*first, *last));
                 let (origin, top, foot) = {
                     let places = places.borrow();
                     (
@@ -1873,14 +1834,10 @@ impl App {
                         *places.get(&track::Key::Side(id_at(last)))?,
                     )
                 };
-                let wide = CARD;
                 let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
-                // Right of the innermost brace, where the names are.
-                let left = origin.width - track::side_room(side.lanes, side.wide) - side.more
-                    + track::BRACE;
-                let section = timing.sections.iter().find(|s| s.id == step.id);
-                let card = container(self.section_card(plan, step, section))
-                    .width(wide)
+                let left = origin.width - side.room() + track::BRACE;
+                let card = container(self.plan_bracket_card(plan))
+                    .width(CARD)
                     .padding([8, 6])
                     .style(look::card(p, 0.0, 12.0));
                 Some(
@@ -1889,8 +1846,8 @@ impl App {
                         .y((middle - 52.0).max(0.0))
                         .into(),
                 )
-            })
-            .or(plan_card);
+            });
+        let card = plan_card;
         // A line that was pulled where none can be stays a moment, where
         // it was, shaking and flashing while why is said.
         if let (Some(aside), Some((pulled_to, first, last))) = (alarm, self.alarm_pull) {
@@ -3286,13 +3243,17 @@ impl App {
     /// under another so it is no wider than its bracket's name was: its
     /// name, the time it is given (pressed, it is set), the time it
     /// takes, and filling it, renaming it and taking it out.
-    fn section_card(
+    /// What a section's ring shows under it: its name (a field while it
+    /// is renamed), the time it is given, the time of day it should be
+    /// over by, what it takes, and when it is expected to end. In `p`,
+    /// the ring's colours, bright over the plan gone dim.
+    pub(crate) fn section_card(
         &self,
+        p: Palette,
         plan: &Plan,
         step: &Step,
         timing: Option<&SectionTiming>,
     ) -> Element<'_, Message> {
-        let p = self.palette;
         let id = step.id;
         let budget = match step.action {
             Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
@@ -3415,57 +3376,11 @@ impl App {
                 None => text(format!("ends {ends}")).size(META).color(quiet).into(),
             })
         });
-        fn act<'a>(
-            p: Palette,
-            mark: Element<'a, Message>,
-            does: Message,
-            says: &str,
-        ) -> Element<'a, Message> {
-            hinted(
-                p,
-                button(mark)
-                    .padding([3, 7])
-                    .on_press(does)
-                    .style(look::row(p, Tone::Plain)),
-                says.to_string(),
-                tooltip::Position::Top,
-            )
-        }
-        let mut acts = row![].spacing(2).align_y(Alignment::Center);
-        if self.mode == crate::mode::Mode::Plan {
-            acts = acts.push(act(
-                p,
-                look::icon(Icon::Fill, 14.0, p.primary).into(),
-                Message::Fill(crate::fill_panel::FillEdit::Open(id)),
-                "Fill it from the library",
-            ));
-        }
-        if self.can_edit() {
-            acts = acts
-                .push(act(
-                    p,
-                    look::icon(Icon::Pencil, 13.0, p.primary).into(),
-                    Message::EditStep(Some((id, Part::Name))),
-                    "Rename",
-                ))
-                .push(act(
-                    p,
-                    look::icon(Icon::Note, 13.0, crate::notes::INK).into(),
-                    Message::NoteFor(vec![lantern_engine::NoteOn::Step(id)]),
-                    "A note on the section",
-                ))
-                .push(act(
-                    p,
-                    text("✕").size(META).color(p.on_surface_variant).into(),
-                    Message::Remove(id),
-                    "Take the section out; its steps stay",
-                ));
-        }
         let mut card = column![name, goal, by, sum].spacing(6);
         if let Some(ends) = ends {
             card = card.push(ends);
         }
-        card.push(acts).into()
+        card.into()
     }
 
     /// The plan's bracket's part of the room right of a row, `wide`: a
