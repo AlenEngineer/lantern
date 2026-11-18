@@ -484,6 +484,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- In a service, the tube to what is next fills as far as what is on is
+  through: a video or song by its time, slides by the slide, a picture
+  by its length. A folded section's tube fills by its steps: each one
+  played its whole share (by its time where it has one of its own,
+  equal shares for the rest), over every round it comes. Skipping on
+  moves it a step at a time.
+
 - A right click on a step's row, or on a section's bracket, opens its
   ring with what is done to it on the left: rename it, a copy of it, a
   note, take it away. How it flows stays on the right.

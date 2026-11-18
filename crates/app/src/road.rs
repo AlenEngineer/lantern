@@ -264,6 +264,67 @@ impl App {
         (up.min(length), length.saturating_sub(up))
     }
 
+    /// How far through the step that is on is: by the stage for what
+    /// plays in time or has slides, else by its length.
+    fn part_done(&self, step: &Step) -> f32 {
+        let shown = self
+            .stage
+            .program
+            .as_ref()
+            .filter(|scene| match &step.action {
+                Action::Show { resource } => scene.resource.id == resource.id,
+                _ => false,
+            });
+        if let Some((_, done)) =
+            shown.and_then(|scene| crate::plan_pane::progress(&scene.media, &scene.resource))
+        {
+            return done;
+        }
+        let (up, left) = self.on_for(step);
+        let whole = (up + left).as_secs_f32();
+        match whole > 0.0 {
+            true => (up.as_secs_f32() / whole).clamp(0.0, 1.0),
+            false => 0.0,
+        }
+    }
+
+    /// How far through its steps `section` is, with `on` the step that
+    /// is on: [`through`], with what has a length of its own timed.
+    fn through_section(&self, plan: &Plan, section: StepId, on: &Step, drawn: &[StepId]) -> f32 {
+        let Some(at) = plan.position(section) else {
+            return 0.0;
+        };
+        let steps: Vec<&Step> = plan.steps()[at + 1..plan.group_end(at)]
+            .iter()
+            .filter(|step| !step.is_section())
+            .collect();
+        let Some(now) = steps.iter().position(|step| step.id == on.id) else {
+            return 0.0;
+        };
+        let shares: Vec<(Option<Duration>, Duration)> = steps
+            .iter()
+            .map(|step| (self.loaded_length(step), self.estimate(step).length))
+            .collect();
+        // Played: before it this round, or drawn before it in a shuffle.
+        let played: Vec<bool> = steps
+            .iter()
+            .enumerate()
+            .map(|(k, step)| k < now || drawn.contains(&step.id))
+            .collect();
+        let round = through(&shares, &played, now, self.part_done(on));
+        // A section that comes round a number of times fills over all of
+        // them.
+        match plan
+            .section_span(section)
+            .map(|span| self.engine.0.rounds(lantern_engine::FlowOf::Span(span.id)))
+        {
+            Some((done, Some(times))) if times > 1 => {
+                ((f32::from(done) + round) / f32::from(times)).clamp(0.0, 1.0)
+            }
+            _ => round,
+        }
+    }
+
     /// Run's rail while the service is watched: the road it takes, each
     /// thing a row, with its dot, the tube to what is next, and the
     /// sections' brackets.
@@ -290,9 +351,9 @@ impl App {
             })
             .map(|(_, step)| step.id)
             .collect();
-        let (up, left) = current
+        let left = current
             .as_ref()
-            .map_or((Duration::ZERO, Duration::ZERO), |step| self.on_for(step));
+            .map_or(Duration::ZERO, |step| self.on_for(step).1);
         let ahead = engine.ahead(|step| self.estimate(step).length, left, 60);
         let road = lay(
             plan,
@@ -402,24 +463,17 @@ impl App {
                 Some(match (thing.place, next.place) {
                     (Place::Played, _) => Link::Plain(p.outline),
                     (Place::On, _) => {
-                        // A folded section fills with all of it; a step
-                        // with itself.
-                        let up = match thing.what {
-                            What::Folded { section, .. } => {
-                                match section_of(section).map(|s| s.phase) {
-                                    Some(Phase::Running { elapsed, .. }) => elapsed,
-                                    _ => up,
-                                }
+                        // A step fills as far as it is through; a folded
+                        // section as far as it is through its steps.
+                        let full = match (thing.what, current.as_ref()) {
+                            (What::Folded { section, .. }, Some(on)) => {
+                                self.through_section(plan, section, on, &drawn)
                             }
-                            What::Step(_) => up,
+                            (_, Some(on)) => self.part_done(on),
+                            (_, None) => 0.0,
                         };
-                        let until = next.after.unwrap_or_default();
-                        let whole = (up + until).as_secs_f32();
                         Link::Tube {
-                            full: match whole > 0.0 {
-                                true => (up.as_secs_f32() / whole).clamp(0.0, 1.0),
-                                false => 1.0,
-                            },
+                            full,
                             color: p.tertiary,
                             waits: !thing.joined,
                         }
@@ -563,6 +617,35 @@ impl App {
         .interaction(mouse::Interaction::Pointer)
         .into()
     }
+}
+
+/// How far through its steps a section is, 0 to 1. Each of `steps` is
+/// its own length where it has one, and how long it is planned to take.
+/// One with its own length takes its part of the section's planned
+/// time; the rest share what is left equally. Each step `played` counts
+/// whole, and the one at `now` as far as `part` of it.
+pub(crate) fn through(
+    steps: &[(Option<Duration>, Duration)],
+    played: &[bool],
+    now: usize,
+    part: f32,
+) -> f32 {
+    let planned: f32 = steps.iter().map(|(_, length)| length.as_secs_f32()).sum();
+    let timed: f32 = steps
+        .iter()
+        .filter_map(|(own, _)| own.map(|own| own.as_secs_f32()))
+        .sum();
+    let untimed = steps.iter().filter(|(own, _)| own.is_none()).count();
+    let share = |k: usize| match (planned > 0.0, steps[k].0) {
+        (false, _) => 1.0 / steps.len() as f32,
+        (true, Some(own)) => own.as_secs_f32() / planned.max(timed),
+        (true, None) => (planned - timed).max(0.0) / untimed as f32 / planned,
+    };
+    let done: f32 = (0..steps.len())
+        .filter(|k| *k != now && played.get(*k).copied().unwrap_or(false))
+        .map(share)
+        .sum();
+    (done + share(now) * part.clamp(0.0, 1.0)).clamp(0.0, 1.0)
 }
 
 /// "2nd", "3rd": which time round, for a step that comes again.
@@ -890,6 +973,26 @@ mod tests {
         session.next();
         let road = road_of(&session, &[], &|id| id == oracion);
         assert_eq!(names(session.plan(), &road), "*A >B [Oración] D");
+    }
+
+    #[test]
+    fn a_section_is_as_far_through_as_its_steps_whatever_their_time() {
+        let min = |n: u64| Duration::from_secs(60 * n);
+        // Four slides or pictures, no time of their own: a quarter each.
+        let untimed = [(None, min(1)); 4];
+        let played = [true, true, false, false];
+        assert_eq!(through(&untimed, &played, 2, 0.0), 0.5);
+        assert_eq!(through(&untimed, &played, 2, 0.5), 0.625);
+        // A one-minute song and a three-minute one: the first is a
+        // quarter of the time.
+        let timed = [(Some(min(1)), min(1)), (Some(min(3)), min(3))];
+        assert_eq!(through(&timed, &[true, false], 1, 0.0), 0.25);
+        // A song of two minutes and two pictures planned at a minute
+        // each: half for the song, a quarter for each picture.
+        let mixed = [(Some(min(2)), min(2)), (None, min(1)), (None, min(1))];
+        assert_eq!(through(&mixed, &[true, true, false], 2, 0.0), 0.75);
+        // Skipped through to the last: nearly full, full at its end.
+        assert_eq!(through(&untimed, &[true, true, true, false], 3, 1.0), 1.0);
     }
 
     #[test]
