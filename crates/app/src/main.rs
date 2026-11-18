@@ -2957,6 +2957,49 @@ impl App {
     }
 
     fn op(&mut self, op: Op) -> Task<Message> {
+        // What a removal or an undo changes, the rows show moving: those
+        // gone close up where they were, those back grow in.
+        let before =
+            matches!(op, Op::RemoveStep | Op::Undo | Op::Redo).then(|| self.engine.0.plan());
+        let task = self.op_now(op);
+        if let Some(before) = before {
+            let after = self.engine.0.plan();
+            self.rows_changed(&before, &after);
+        }
+        task
+    }
+
+    /// The rows that went from `before` to `after` close up where they
+    /// were; those that came grow in.
+    fn rows_changed(&mut self, before: &Plan, after: &Plan) {
+        let kept = |plan: &Plan, id: StepId| plan.get(id).is_some();
+        let gone: Vec<usize> = before
+            .steps()
+            .iter()
+            .enumerate()
+            .filter(|(_, step)| !step.is_section() && !kept(after, step.id))
+            .map(|(at, _)| at)
+            .collect();
+        if let Some(first) = gone.first() {
+            // Before the first row after them that is still there.
+            let anchor = before.steps()[*first..]
+                .iter()
+                .find(|step| !step.is_section() && kept(after, step.id))
+                .map(|step| step.id);
+            self.motion.rows_gone(anchor, gone.len());
+        }
+        let came: Vec<StepId> = after
+            .steps()
+            .iter()
+            .filter(|step| !step.is_section() && !kept(before, step.id))
+            .map(|step| step.id)
+            .collect();
+        if !came.is_empty() {
+            self.motion.rows_came(came);
+        }
+    }
+
+    fn op_now(&mut self, op: Op) -> Task<Message> {
         let engine = self.engine.0.clone();
         // In a rehearsal, Space moves it on as it would the service.
         if op == Op::Next && self.rehearsal.is_some() {

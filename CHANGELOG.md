@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Rows taken away close up where they were, and rows Ctrl+Z (or redo)
+  puts back grow in.
 - Saving turns Save into a tick for a moment. A plan that becomes empty
   has its + breathe three times, then rest.
 - Several files of the library can be picked together: Ctrl+click adds

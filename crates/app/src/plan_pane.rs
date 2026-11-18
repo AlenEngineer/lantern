@@ -1132,6 +1132,10 @@ impl App {
             if hidden && Some(step.id) != current && !selected {
                 continue;
             }
+            // Rows just taken away from before this one close up.
+            if let Some((rows, left)) = self.motion.gone_before(Some(step.id)) {
+                put!(Space::new().height(ROW_TALL * rows as f32 * left));
+            }
             let place = if self
                 .rehearsal
                 .as_ref()
@@ -1213,6 +1217,11 @@ impl App {
             if folding.is_some() && !stays {
                 stop.cut = Some(cuts);
             }
+            // Put back just now: it grows in.
+            let row: Element<'_, Message> = match self.motion.growing(step.id) {
+                Some(grown) => container(row).max_height(tall * grown).clip(true).into(),
+                None => row,
+            };
             // Its own cut, if any, is closed before it: after that.
             let item = stop;
             match folding.take() {
@@ -1228,6 +1237,9 @@ impl App {
             }
             stops.push(item);
             shown.push(index);
+        }
+        if let Some((rows, left)) = self.motion.gone_before(None) {
+            put!(Space::new().height(ROW_TALL * rows as f32 * left));
         }
         if let Some(steps) = folding.take() {
             put_whole!(track::seen(track::Key::Cut(cuts), &places, cut(steps)));
