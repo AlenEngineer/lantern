@@ -202,6 +202,9 @@ pub enum Dot {
     Would(Color),
     /// Where a step that is being carried would land: a dashed ring.
     Place(Color),
+    /// The steps of a folded section, gathered into one: three dots one
+    /// over another, filled where they have played.
+    Stack { color: Color, solid: bool },
 }
 
 impl Dot {
@@ -209,6 +212,7 @@ impl Dot {
     fn reach(self) -> f32 {
         match self {
             Dot::On { .. } => DOT + RING,
+            Dot::Stack { .. } => DOT + 5.0,
             _ => DOT,
         }
     }
@@ -216,7 +220,7 @@ impl Dot {
     fn color(self) -> Color {
         match self {
             Dot::Solid(color) | Dot::Hollow(color) | Dot::Would(color) | Dot::Place(color) => color,
-            Dot::On { color, .. } => color,
+            Dot::On { color, .. } | Dot::Stack { color, .. } => color,
         }
     }
 }
@@ -1304,6 +1308,22 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
             &Path::circle(middle, DOT - 1.0),
             Stroke::default().with_width(2.0).with_color(color),
         ),
+        Dot::Stack { color, solid } => {
+            for (aside, fade) in [(-5.0, 0.35), (0.0, 0.6), (5.0, 1.0)] {
+                let at = Point::new(middle.x + aside, middle.y);
+                let ink = Color {
+                    a: color.a * fade,
+                    ..color
+                };
+                if solid {
+                    frame.fill(&Path::circle(at, DOT - 0.5), ink);
+                }
+                frame.stroke(
+                    &Path::circle(at, DOT - 1.0),
+                    Stroke::default().with_width(1.6).with_color(ink),
+                );
+            }
+        }
         Dot::Place(color) => frame.stroke(
             &Path::circle(middle, DOT - 1.0),
             Stroke {

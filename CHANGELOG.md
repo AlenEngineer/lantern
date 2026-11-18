@@ -460,6 +460,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A folded section, or one that is over in a service, stays a bracket one
+  row tall: its steps gathered into a stacked dot with how many there are,
+  beside it its name and, when over, how long it took against its time
+  (red when over it). The old heading row and the pause marks between
+  folded sections are gone.
 - **Steps that go on by themselves are a join**, part of the plan's one
   flow as a loop or a drawn order is: the line down the dots from one
   step into the next. Carrying keeps to it as to a loop. A step carried
