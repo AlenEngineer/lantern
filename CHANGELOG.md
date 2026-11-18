@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Several files of the library can be picked together: Ctrl+click adds
+  or drops one, Shift+click takes all from the one picked to it. Carried
+  into the plan, they go in together in the library's order, a place
+  opening for each, and stay picked there.
 - A picked section's card sets what the mockup has: the time it is
   given, a minute less or more with − and + (or typed); a time of day it
   should be over by; and the time it takes, with how far that is from its

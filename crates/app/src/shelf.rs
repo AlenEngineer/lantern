@@ -12,7 +12,7 @@ use iced::widget::{
     Space, button, column, container, operation, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Fill, Task};
-use lantern_engine::{Location, Query, Resource};
+use lantern_engine::{Location, Query, Resource, ResourceId};
 
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
 use crate::widgets::{scrolling, single_line};
@@ -37,6 +37,8 @@ fn within(file: &Resource) -> String {
 /// A file of the library held by the pointer, on its way into the plan.
 pub struct Carried {
     pub file: Arc<Resource>,
+    /// The other files picked with it, carried after it in their order.
+    pub more: Vec<Arc<Resource>>,
     /// Where it was picked up, and where the pointer is now.
     from: Option<iced::Point>,
     pub at: iced::Point,
@@ -52,6 +54,7 @@ impl Carried {
     pub fn new(file: Arc<Resource>) -> Carried {
         Carried {
             file,
+            more: Vec::new(),
             from: None,
             at: iced::Point::ORIGIN,
             moving: false,
@@ -399,6 +402,44 @@ impl App {
         }
     }
 
+    /// Files of the library picked together, in the tree's order: a
+    /// press with Ctrl adds one or drops it, with Shift takes all from the
+    /// one picked to it; with neither, they are let go.
+    pub(crate) fn shelf_pick_many(&mut self, id: &ResourceId, ctrl: bool, shift: bool) {
+        if !ctrl && !shift {
+            self.shelf_many.clear();
+            return;
+        }
+        let (rows, _) = self.shelf_rows();
+        let order: Vec<ResourceId> = rows
+            .iter()
+            .filter_map(|row| match row {
+                ShelfRow::File { file, .. } => Some(file.id.clone()),
+                ShelfRow::Folder { .. } => None,
+            })
+            .collect();
+        if shift {
+            let at = |want: &ResourceId| order.iter().position(|id| id == want);
+            if let (Some(from), Some(to)) = (self.shelf_pick.as_ref().and_then(at), at(id)) {
+                self.shelf_many = order[from.min(to)..=from.max(to)].to_vec();
+            }
+        } else {
+            if self.shelf_many.is_empty()
+                && let Some(first) = self.shelf_pick.clone()
+            {
+                self.shelf_many.push(first);
+            }
+            match self.shelf_many.iter().position(|picked| picked == id) {
+                Some(at) => {
+                    self.shelf_many.remove(at);
+                }
+                None => self.shelf_many.push(id.clone()),
+            }
+            self.shelf_many
+                .sort_by_key(|picked| order.iter().position(|id| id == picked));
+        }
+    }
+
     /// Enter on a folder of the library opens or closes it.
     pub(crate) fn shelf_enter(&mut self) -> bool {
         let Some(folder) = self.shelf_folder.clone() else {
@@ -495,7 +536,8 @@ impl App {
             .style(look::row(p, if at { Tone::Selected } else { Tone::Plain }))
         };
         let file_row = |file: &Arc<Resource>, depth: usize, note: String| {
-            let picked = self.shelf_pick.as_ref() == Some(&file.id);
+            let picked =
+                self.shelf_pick.as_ref() == Some(&file.id) || self.shelf_many.contains(&file.id);
             let colour = if picked { p.primary } else { p.on_surface };
             let mut line = row![
                 look::icon(Icon::of(&file.kind), 13.0, colour),
