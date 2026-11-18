@@ -566,6 +566,13 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- In a service the step that is on keeps its whole name: how far it
+  is goes under the name, and its note marks come off its row (its notes
+  are open under it).
+- A step a shuffle has given already this round shows as played, though
+  it stands after the one that is on.
+- A section's card says how late it would end in minutes ("ends 11:35,
+  5 min late"), and fits the pane again with its − and +.
 - A file carried in from the library made the list jump: the place that
   opened for it moved the row it was over from under the pointer, which
   forgot where it would land, closed the place, and so on. It keeps the

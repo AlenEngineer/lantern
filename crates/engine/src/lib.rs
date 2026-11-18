@@ -213,6 +213,12 @@ impl Engine {
         lock(&self.session).round_of(of)
     }
 
+    /// The steps that have come already this round of each shuffled span
+    /// the step that is on is in.
+    pub fn drawn_before(&self) -> Vec<StepId> {
+        lock(&self.session).drawn_before()
+    }
+
     /// What going on from the step that is on goes back round: the step
     /// itself, a span or the plan. `None` when it goes forward.
     pub fn follows_back(&self) -> Option<FlowOf> {
