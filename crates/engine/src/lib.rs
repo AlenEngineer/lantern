@@ -29,7 +29,7 @@ pub use lantern_orchestrator::timing::{
     self, Basis, Estimate, Pace, Phase, Schedule, SectionTiming, TimeOfDay, Timing,
 };
 pub use lantern_orchestrator::{
-    Action, BracketError, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Flow, FlowOf,
+    Action, BracketError, Carried, Carry, CarryError, DEEPEST, Drawn, Ending, Fade, Flow, FlowOf,
     LogEntry, Looped, Note, NoteId, NoteOn, Over, Place, Plan, PlanError, Repeat, Session, Span,
     SpanError, SpanId, Step, StepId, StepSound,
 };
@@ -42,8 +42,8 @@ pub use lantern_searcher::{
 };
 use lantern_showman::Showman;
 pub use lantern_showman::{
-    Look, LookChange, Media, MediaReport, Playback, Rgb, Scene, SceneId, StageEvent, StageFeed,
-    StageState, Timed, fit_frames, fit_stanzas, slide_labels,
+    FadeOut, FadeTime, Look, LookChange, Media, MediaReport, Playback, Rgb, Scene, SceneId,
+    StageEvent, StageFeed, StageState, Timed, fit_frames, fit_stanzas, slide_labels,
 };
 
 /// Errors from the engine.
@@ -67,6 +67,9 @@ pub enum Moved {
     Frame(usize),
     /// Moved to another step of the plan.
     Step(StepId),
+    /// The step that is on started fading out over this long; the plan
+    /// goes on once the stage says it has ([`Engine::faded`]).
+    FadingOut(FadeTime),
     /// Already at the edge; nothing changed.
     Nothing,
 }
@@ -243,9 +246,11 @@ impl Engine {
 
     /// Whether what is on should be cut off now: it is in something
     /// that comes again until a time of day and ends there and then, and
-    /// the time has come. Going on then leaves it.
+    /// the time has come. Going on then leaves it, fading it out first
+    /// where its step fades out; while it fades, it is being cut.
     pub fn cut_now(&self) -> bool {
-        lock(&self.session).cut_now()
+        let session = lock(&self.session);
+        session.cut_now() && lock(&self.stage).state().fading_out.is_none()
     }
 
     /// The time of day, as time since midnight, for a repeat that ends
@@ -300,18 +305,55 @@ impl Engine {
     /// The "next" button: the next frame of what's on stage if there is one,
     /// otherwise the next step of the plan. Under a sound, the frames are
     /// those of the picture it plays over.
+    ///
+    /// A step that fades out ([`Fade::fade_out`]) and still has something
+    /// on stage fades it out first: the plan goes on once the stage says
+    /// it has faded ([`faded`](Self::faded)). Pressed again while it
+    /// fades, it goes on at once.
     pub fn next(&self) -> Moved {
         self.operate(true, |session, stage| {
             if stage.next_frame() {
                 return Moved::Frame(current_frame(stage));
             }
-            match session.next().cloned() {
-                Some(step) => {
-                    perform(stage, &step);
-                    Moved::Step(step.id)
-                }
-                None => Moved::Nothing,
+            if stage.state().fading_out.is_none()
+                && let Some(fade) = session
+                    .current()
+                    .and_then(|step| how_it_fades_out(step, stage.state()))
+            {
+                stage.fade_out(fade);
+                return Moved::FadingOut(fade.over);
             }
+            go_on(session, stage)
+        })
+    }
+
+    /// The stage has faded out what was on, `scene` on program, as it was
+    /// told to: that comes off, and the plan goes on from the step that
+    /// put it there. Where the operator went to another step meanwhile,
+    /// one that leaves the stage as it is, the plan stays there. Ignored,
+    /// returning `false`, when that scene isn't on program or isn't
+    /// fading out any more: something else was put on.
+    pub fn faded(&self, scene: SceneId) -> bool {
+        self.operate(true, |session, stage| {
+            let state = stage.state();
+            let due = state.fading_out.is_some()
+                && stage.program().is_some_and(|program| program.id == scene);
+            if !due {
+                return false;
+            }
+            let from_here = session.current().is_some_and(|step| {
+                [state.program.as_ref(), state.under.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|scene| of_step(step, scene))
+            });
+            match from_here {
+                true => {
+                    go_on(session, stage);
+                }
+                false => take_off(stage),
+            }
+            true
         })
     }
 
@@ -352,7 +394,9 @@ impl Engine {
                 .cloned()
                 .ok_or(EngineError::UnknownStep(id))?;
             match &step.action {
-                Action::Show { resource } => stage.show_at(Arc::new(resource.clone()), frame),
+                Action::Show { resource } => {
+                    stage.show_fading_in(Arc::new(resource.clone()), frame, step.fade.fade_in);
+                }
                 _ => perform(stage, &step),
             }
             Ok(())
@@ -487,7 +531,8 @@ impl Engine {
     /// change which scene is on program, so there is nothing to log.
     ///
     /// When the current step's video ends and the step goes on by itself
-    /// ([`Plan::goes_on`]), the plan moves to its next step.
+    /// ([`Plan::goes_on`]), the plan moves to its next step, with no
+    /// fade: it is over.
     pub fn report(&self, scene: SceneId, report: MediaReport) -> bool {
         let ended = report == MediaReport::Ended;
         let applied = lock(&self.stage).report(scene, report);
@@ -542,11 +587,82 @@ impl Engine {
 /// Makes a step take effect on stage.
 fn perform(stage: &mut Showman, step: &Step) {
     match &step.action {
-        Action::Show { resource } => stage.show(Arc::new(resource.clone())),
+        Action::Show { resource } => {
+            stage.show_fading_in(Arc::new(resource.clone()), 0, step.fade.fade_in);
+        }
         Action::Blank => stage.clear(),
         // Live slots and notes leave the stage as the operator left it, and
         // the session never stops on a section marker.
         Action::Live { .. } | Action::Note | Action::Section { .. } => {}
+    }
+}
+
+/// Moves the session to its next step and performs it. What was fading
+/// out comes off first, so a step that leaves the stage as it is (a
+/// note, a live slot) doesn't bring it back.
+fn go_on(session: &mut Session, stage: &mut Showman) -> Moved {
+    take_off(stage);
+    match session.next().cloned() {
+        Some(step) => {
+            perform(stage, &step);
+            Moved::Step(step.id)
+        }
+        None => Moved::Nothing,
+    }
+}
+
+/// Takes off what was fading out, if anything was: the picture with what
+/// plays over it, or the sound alone, leaving the picture under it.
+fn take_off(stage: &mut Showman) {
+    match stage.state().fading_out.map(|fade| fade.picture) {
+        Some(true) => stage.clear(),
+        Some(false) => {
+            stage.lift_sound();
+        }
+        None => {}
+    }
+}
+
+/// Whether `scene` is what `step` shows, or the sound it plays with that.
+fn of_step(step: &Step, scene: &Scene) -> bool {
+    match &step.action {
+        Action::Show { resource } => {
+            scene.resource.id == resource.id
+                || step
+                    .sound
+                    .as_ref()
+                    .is_some_and(|sound| sound.resource.id == scene.resource.id)
+        }
+        _ => false,
+    }
+}
+
+/// How what `step` has on stage fades out as the plan goes on from it:
+/// its picture with what plays over it, or its sound alone over another
+/// step's picture. `None` where it goes at once: it doesn't fade out,
+/// nothing of it is on stage, or what is on has ended or failed.
+fn how_it_fades_out(step: &Step, stage: &StageState) -> Option<FadeOut> {
+    let over = step.fade.fade_out?;
+    let Action::Show { resource } = &step.action else {
+        return None;
+    };
+    let picture = stage
+        .picture()
+        .is_some_and(|seen| seen.resource.id == resource.id && still_on(seen));
+    let sound = stage
+        .program
+        .as_ref()
+        .is_some_and(|on| on.sounds_only() && of_step(step, on) && still_on(on));
+    (picture || sound).then_some(FadeOut { over, picture })
+}
+
+/// Whether a scene still shows or plays something: not one that has
+/// failed, nor a timeline that has ended.
+fn still_on(scene: &Scene) -> bool {
+    match &scene.media {
+        Media::Timed(timed) => timed.playback != Playback::Ended,
+        Media::Failed { .. } => false,
+        Media::Frames { .. } => true,
     }
 }
 
@@ -572,12 +688,12 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<SceneI
         let due = picture.resource.id == resource.id
             && picture.timed().is_none()
             && picture.frame() >= sound.from;
-        due.then(|| sound.resource.clone())
+        due.then(|| (sound.resource.clone(), step.fade.fade_in))
     });
     match (wanted, *playing) {
         // Over the picture itself: not over a sound the operator put on.
-        (Some(sound), None) if stage.program().is_some_and(|on| !on.sounds_only()) => {
-            stage.show(Arc::new(sound));
+        (Some((sound, fade_in)), None) if stage.program().is_some_and(|on| !on.sounds_only()) => {
+            stage.show_fading_in(Arc::new(sound), 0, fade_in);
             *playing = stage.program().map(|scene| scene.id);
         }
         (None, Some(_)) => {

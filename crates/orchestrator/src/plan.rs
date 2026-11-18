@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lantern_resource::{Query, Resource};
-use lantern_showman::{Look, LookChange};
+use lantern_showman::{FadeTime, Look, LookChange};
 use serde::{Deserialize, Serialize};
 
 use crate::timing::TimeOfDay;
@@ -481,6 +481,61 @@ fn is_first(slide: &usize) -> bool {
     *slide == 0
 }
 
+/// How what a step shows comes up as it goes on stage, and goes off as
+/// the plan goes on from it: at once, or fading. A sound fades how loud
+/// it is; a picture, a video or slides fade to the stage with nothing
+/// on. Only a step that shows something fades.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "SavedFade", into = "SavedFade")]
+pub struct Fade {
+    /// It comes up from nothing over this long.
+    pub fade_in: Option<FadeTime>,
+    /// Going on from it while it is still on, it fades out over this
+    /// long first, and the plan goes on once it has.
+    pub fade_out: Option<FadeTime>,
+}
+
+impl Fade {
+    /// In and out at once: nothing to keep.
+    pub fn is_none(&self) -> bool {
+        *self == Fade::default()
+    }
+}
+
+/// A [`Fade`] as saved: whole seconds, with none left out. Any number of
+/// them loads: none is no fade, and past the longest is the longest.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct SavedFade {
+    #[serde(rename = "in", skip_serializing_if = "is_no_time")]
+    fade_in: u64,
+    #[serde(rename = "out", skip_serializing_if = "is_no_time")]
+    fade_out: u64,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_no_time(seconds: &u64) -> bool {
+    *seconds == 0
+}
+
+impl From<SavedFade> for Fade {
+    fn from(saved: SavedFade) -> Self {
+        Fade {
+            fade_in: FadeTime::from_secs(saved.fade_in),
+            fade_out: FadeTime::from_secs(saved.fade_out),
+        }
+    }
+}
+
+impl From<Fade> for SavedFade {
+    fn from(fade: Fade) -> Self {
+        SavedFade {
+            fade_in: fade.fade_in.map_or(0, FadeTime::secs),
+            fade_out: fade.fade_out.map_or(0, FadeTime::secs),
+        }
+    }
+}
+
 /// One entry of a plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Step {
@@ -505,6 +560,9 @@ pub struct Step {
     /// still (slides, a passage, a picture, pages) plays one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<StepSound>,
+    /// How what it shows comes up and goes off: see [`Fade`].
+    #[serde(default, skip_serializing_if = "Fade::is_none")]
+    pub fade: Fade,
     /// What this step changes of the look it is given, or for a section
     /// what it changes for everything in it. See [`Plan::look_at`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2228,6 +2286,7 @@ impl Plan {
             estimate: None,
             flow: Flow::default(),
             sound: None,
+            fade: Fade::default(),
             look: None,
             filled: false,
         }
@@ -3005,6 +3064,51 @@ mod tests {
         assert!(json.contains("\"estimate\": 240"), "{json}");
         assert_eq!(Plan::from_json(&json).unwrap(), plan);
         assert!(plan.steps()[0].is_section() && !plan.steps()[1].is_section());
+    }
+
+    #[test]
+    fn a_plan_saved_before_fades_loads_and_saves_unchanged() {
+        let saved = include_str!("../fixtures/plan_before_fades.json");
+        let plan = Plan::from_json(saved).unwrap();
+        assert!(plan.steps().iter().all(|step| step.fade.is_none()));
+        let written: serde_json::Value = serde_json::from_str(&plan.to_json()).unwrap();
+        let expected: serde_json::Value = serde_json::from_str(saved).unwrap();
+        assert_eq!(written, expected);
+    }
+
+    #[test]
+    fn fades_save_as_whole_seconds_with_none_left_out() {
+        let mut plan = Plan::new("Sunday");
+        let song = plan.show(resource("Sublime gracia"));
+        let fade = Fade {
+            fade_in: FadeTime::from_secs(2),
+            fade_out: FadeTime::from_secs(5),
+        };
+        plan.get_mut(song).unwrap().fade = fade;
+        let json = plan.to_json();
+        let saved = |json: &str| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(json).unwrap()["steps"][0]["fade"].clone()
+        };
+        assert_eq!(saved(&json), serde_json::json!({"in": 2, "out": 5}));
+        assert_eq!(Plan::from_json(&json).unwrap(), plan);
+
+        plan.get_mut(song).unwrap().fade.fade_in = None;
+        assert_eq!(saved(&plan.to_json()), serde_json::json!({"out": 5}));
+        plan.get_mut(song).unwrap().fade = Fade::default();
+        assert!(!plan.to_json().contains("fade"), "nothing to keep");
+
+        let typed = json
+            .replace("\"in\": 2", "\"in\": 0")
+            .replace("\"out\": 5", "\"out\": 900");
+        let back = Plan::from_json(&typed).unwrap();
+        assert_eq!(
+            back.steps()[0].fade,
+            Fade {
+                fade_in: None,
+                fade_out: Some(FadeTime::LONGEST),
+            },
+            "typed in: no time is no fade, and past the longest is the longest"
+        );
     }
 
     #[test]

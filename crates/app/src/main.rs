@@ -3931,7 +3931,10 @@ impl App {
                 }
             }
             StageEvent::Seek { position } => self.media.seek(*position, engine),
-            StageEvent::Frame { .. } | StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
+            StageEvent::Frame { .. }
+            | StageEvent::Blackout { .. }
+            | StageEvent::Media { .. }
+            | StageEvent::FadingOut { .. } => {}
         }
         Task::none()
     }

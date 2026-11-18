@@ -1,0 +1,78 @@
+{
+  "title": "Domingo",
+  "steps": [
+    {
+      "id": 0,
+      "label": "Alabanza",
+      "action": {
+        "type": "section",
+        "budget": 900
+      }
+    },
+    {
+      "id": 1,
+      "label": "Sublime gracia",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "local:songs/sublime.mp4",
+          "title": "Sublime gracia",
+          "kind": "video",
+          "location": {
+            "file": "/songs/sublime.mp4"
+          }
+        }
+      },
+      "estimate": 240
+    },
+    {
+      "id": 2,
+      "label": "Salmo 23",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "bible-rv1909:Ps.23",
+          "title": "Salmo 23",
+          "kind": "text",
+          "location": {
+            "inline": "Jehová es mi pastor\n\nEn lugares de delicados pastos"
+          }
+        }
+      },
+      "sound": {
+        "resource": {
+          "id": "local:music/piano.mp3",
+          "title": "Piano",
+          "kind": "audio",
+          "location": {
+            "file": "/music/piano.mp3"
+          }
+        },
+        "from": 1
+      }
+    },
+    {
+      "id": 3,
+      "label": "Bienvenida",
+      "action": {
+        "type": "show",
+        "resource": {
+          "id": "local:pictures/welcome.png",
+          "title": "Bienvenida",
+          "kind": "image",
+          "location": {
+            "file": "/pictures/welcome.png"
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "label": "Oración",
+      "action": {
+        "type": "blank"
+      }
+    }
+  ],
+  "next_id": 5
+}

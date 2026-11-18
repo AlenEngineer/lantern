@@ -18,14 +18,19 @@
 //! A [`Look`] says how the stage looks: its background, and how text is
 //! set (font, colour, the size range text fits within).
 //!
+//! A scene can come up over a [`FadeTime`], and what is on can fade out
+//! ([`FadeOut`]) before the plan goes on. The renderer does the fading.
+//!
 //! Windows don't poll. [`Showman::subscribe`] returns a [`StageFeed`], a
 //! snapshot and the events after it. A window applies each event to its
 //! copy with [`StageState::apply`], the same function the `Showman` uses.
 
+mod fade;
 mod look;
 mod scene;
 mod showman;
 
+pub use fade::{FadeOut, FadeTime};
 pub use look::{Look, LookChange, Rgb};
 pub use scene::{
     Media, MediaReport, Playback, Scene, SceneId, Timed, fit_frames, fit_stanzas, slide_labels,
