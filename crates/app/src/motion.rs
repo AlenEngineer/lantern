@@ -29,8 +29,6 @@ pub const WHY: Duration = Duration::from_millis(1800);
 pub const FLASH: Duration = Duration::from_millis(600);
 /// The lit pill of the mode switch sliding to the mode.
 pub const SLIDE: Duration = Duration::from_millis(220);
-/// A section's steps closing under its heading, or opening.
-pub const FOLD: Duration = Duration::from_millis(180);
 /// The gap opening where what is carried would land.
 pub const GAP: Duration = Duration::from_millis(150);
 /// The gap going in or out as what is carried changes level.
@@ -109,8 +107,6 @@ pub struct Motion {
     /// The mode it is in, the one it was in before, and the slide between.
     mode: Mode,
     left: Option<(Mode, Run)>,
-    /// The section last folded (`true`) or opened.
-    fold: Option<(StepId, bool, Run)>,
     /// Where what is carried would land, opening.
     gap: Option<(usize, Run)>,
     /// Where it would have landed before that, closing.
@@ -161,7 +157,6 @@ impl Motion {
             changed: None,
             mode: Mode::Plan,
             left: None,
-            fold: None,
             gap: None,
             closing: None,
             indent: None,
@@ -411,19 +406,6 @@ impl Motion {
         Some((*from, self.along(Some(slide))?))
     }
 
-    /// `section` was folded, or opened.
-    pub fn folded(&mut self, section: StepId, closed: bool) {
-        self.fold = Some((section, closed, self.run(FOLD, Instant::now())));
-    }
-
-    /// How much of `section`'s steps is in sight while they close or
-    /// open: 1 is all of them.
-    pub fn open(&self, section: StepId) -> Option<f32> {
-        let (folding, closed, fold) = self.fold.as_ref()?;
-        let along = self.along((*folding == section).then_some(fold))?;
-        Some(if *closed { 1.0 - along } else { along })
-    }
-
     /// What is carried would land at `landing` now. The gap it leaves
     /// closes as the new one opens, so between them the rows slide and the
     /// list keeps its height.
@@ -515,7 +497,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 19] = [
+        let runs: [Option<&Run>; 18] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
@@ -527,7 +509,6 @@ impl Motion {
             self.breath.as_ref(),
             self.went_up.as_ref(),
             self.left.as_ref().map(|(_, run)| run),
-            self.fold.as_ref().map(|(_, _, run)| run),
             self.gap.as_ref().map(|(_, run)| run),
             self.closing.as_ref().map(|(_, run)| run),
             self.indent.as_ref().map(|(_, _, run)| run),

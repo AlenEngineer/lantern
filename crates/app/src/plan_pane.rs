@@ -662,7 +662,6 @@ impl App {
             let step = &plan.steps()[at];
             step.is_section()
                 && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
-                && self.motion.open(step.id).is_none()
                 && (shut(step.id)
                     || plan.group_end(at) == at + 1
                     || (at + 1..plan.group_end(at)).any(|row| {
@@ -880,7 +879,7 @@ impl App {
         let mut hidden_to = 0;
         let mut hidden_by_moving = false;
         // Up to where the section that is closing or opening reaches.
-        let mut folding_to = 0;
+        let folding_to = 0;
         let mut rest = 0;
         // The steps of a section that is closing or opening, kept apart
         // to be cut to the height they have so far: with how tall they
@@ -1116,13 +1115,6 @@ impl App {
                 }
                 if selected && adds {
                     put!(insertion_mark(p, inward + INDENT));
-                }
-                if folding.is_none()
-                    && let Some(open) = self.motion.open(step.id)
-                {
-                    folding = Some((column![], 0.0, open));
-                    folding_to = plan.group_end(index);
-                    hidden_by_moving = hidden_to == folding_to;
                 }
                 continue;
             }

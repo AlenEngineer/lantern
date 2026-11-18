@@ -2155,7 +2155,27 @@ impl App {
                 if closed {
                     self.folded.insert(section);
                 }
-                self.motion.folded(section, closed);
+                // Its rows close up into its one row, or grow out of it.
+                let plan = self.engine.0.plan();
+                if let Some(at) = plan.position(section) {
+                    let end = plan.group_end(at);
+                    let steps: Vec<StepId> = plan.steps()[at + 1..end]
+                        .iter()
+                        .filter(|step| !step.is_section())
+                        .map(|step| step.id)
+                        .collect();
+                    match closed {
+                        true if steps.len() > 1 => {
+                            let after = plan.steps()[end..]
+                                .iter()
+                                .find(|step| !step.is_section())
+                                .map(|step| step.id);
+                            self.motion.rows_gone(after, steps.len() - 1);
+                        }
+                        true => {}
+                        false => self.motion.rows_came(steps),
+                    }
+                }
             }
             Message::SetMode(to) => return self.set_mode(to),
             Message::StartService => return self.start_service(),
