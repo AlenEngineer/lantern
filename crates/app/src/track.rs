@@ -129,7 +129,12 @@ impl<Message> Widget<Message, Theme, Renderer> for Seen<'_, Message> {
     ) {
         // Before each drawing, so one out of sight says where it is too.
         if let Event::Window(window::Event::RedrawRequested(_)) = event {
-            self.places.borrow_mut().insert(self.key, layout.bounds());
+            let was = self.places.borrow_mut().insert(self.key, layout.bounds());
+            // It moved: what is drawn over the list is worked out from
+            // where things are, so it is asked for once more.
+            if was != Some(layout.bounds()) {
+                shell.request_redraw();
+            }
         }
         self.content.as_widget_mut().update(
             tree, event, layout, cursor, renderer, clipboard, shell, viewport,
@@ -364,6 +369,20 @@ pub struct Bracket {
 pub const BRACE: f32 = 18.0;
 pub const LABEL: f32 = 86.0;
 
+/// Where a bracket's brace is: across, and from its top to its foot.
+fn bracket_box(
+    bracket: &Bracket,
+    at: &dyn Fn(Key) -> Option<Rectangle>,
+) -> Option<(f32, f32, f32)> {
+    let first = at(Key::Side(bracket.first))?;
+    let last = at(Key::Side(bracket.last))?;
+    Some((
+        first.x + bracket.offset + 3.0,
+        first.y + 2.0,
+        (last.y + last.height - 4.0).min(limit(bracket.cut, at)),
+    ))
+}
+
 /// How much room right of the steps the brackets need, `lanes` deep:
 /// the innermost and what is written beside it, and a brace for each
 /// one further out; with room right of those too (`wide`) where one of
@@ -449,6 +468,8 @@ const WAVE_OUT: f32 = 3.5;
 const DRAW: f32 = 0.26;
 const OPEN: f32 = 0.3;
 const CATCH_UP: f32 = 0.12;
+/// How fast a bracket slides to where it should be (seconds).
+const SLIDE: f32 = 0.07;
 
 /// How much room left of the dots' middle the loops need, the deepest of
 /// them `lanes` deep (0 for none), with what they say of themselves.
@@ -492,6 +513,8 @@ struct Moves {
     drawn: HashMap<Thing, f32>,
     /// The dot under the pointer.
     over: Option<StepId>,
+    /// Where each bracket is shown, on its way to where it should be.
+    boxes: HashMap<StepId, (f32, f32, f32)>,
 }
 
 /// How far the step that is playing has come, if one is.
@@ -509,7 +532,12 @@ fn playing(picture: &Picture) -> Option<(StepId, f32)> {
 impl Moves {
     /// Moves everything on by `passed` seconds towards what `picture`
     /// shows; whether anything is still on its way.
-    fn on(&mut self, picture: &Picture, passed: f32) -> bool {
+    fn on(
+        &mut self,
+        picture: &Picture,
+        passed: f32,
+        at: &dyn Fn(Key) -> Option<Rectangle>,
+    ) -> bool {
         let fresh = !self.begun || picture.still;
         self.begun = true;
         let mut moving = false;
@@ -576,6 +604,27 @@ impl Moves {
             draw(Thing::Bracket(bracket.id), false);
         }
         self.drawn = drawn;
+        // The brackets slide to where they should be.
+        let near = 1.0 - (-passed / SLIDE).exp();
+        let mut boxes = HashMap::new();
+        for bracket in &picture.brackets {
+            let Some(to) = bracket_box(bracket, at) else {
+                continue;
+            };
+            let shown = match self.boxes.get(&bracket.id) {
+                Some(was) if !fresh => {
+                    let step = |a: f32, b: f32| match (b - a).abs() < 0.5 {
+                        true => b,
+                        false => a + (b - a) * near,
+                    };
+                    (step(was.0, to.0), step(was.1, to.1), step(was.2, to.2))
+                }
+                _ => to,
+            };
+            moving |= shown != to;
+            boxes.insert(bracket.id, shown);
+        }
+        self.boxes = boxes;
         moving
     }
 
@@ -608,6 +657,7 @@ type Shown = (
     Vec<(Thing, f32)>,
     Option<StepId>,
     Option<Rectangle>,
+    Vec<(StepId, i32, i32, i32)>,
 );
 
 #[derive(Default)]
@@ -654,7 +704,15 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                     .moves
                     .last
                     .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.1));
-                let moving = state.moves.on(&self.picture, passed);
+                let places = self.places.borrow().clone();
+                let at = |key: Key| {
+                    places.get(&key).map(|place| Rectangle {
+                        x: place.x - bounds.x,
+                        y: place.y - bounds.y,
+                        ..*place
+                    })
+                };
+                let moving = state.moves.on(&self.picture, passed, &at);
                 state.moves.last = moving.then_some(*now);
                 moving.then(canvas::Action::request_redraw)
             }
@@ -772,6 +830,15 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
             drawn,
             moves.over,
             band,
+            {
+                let mut boxes: Vec<(StepId, i32, i32, i32)> = moves
+                    .boxes
+                    .iter()
+                    .map(|(id, (x, top, foot))| (*id, *x as i32, *top as i32, *foot as i32))
+                    .collect();
+                boxes.sort_unstable();
+                boxes
+            },
         );
         vec![state.kept.draw(shown, renderer, bounds.size(), |frame| {
             // Where each is, from the canvas's own corner.
@@ -999,11 +1066,17 @@ fn paint(
             continue;
         };
         let far = moves.drawn(Thing::Bracket(bracket.id));
-        let x = first.x + bracket.offset + 3.0;
-        let (top, foot) = (
-            first.y + 2.0,
-            (last.y + last.height - 4.0).min(limit(bracket.cut, at)),
-        );
+        // Where it is on its way to where it should be: it slides out a
+        // lane, and stretches to take in what comes into it.
+        let Some((x, top, foot)) = moves
+            .boxes
+            .get(&bracket.id)
+            .copied()
+            .or_else(|| bracket_box(bracket, at))
+        else {
+            continue;
+        };
+        let _ = (first, last);
         if foot - top < 12.0 {
             continue;
         }
@@ -1682,28 +1755,28 @@ mod tests {
         };
         let mut moves = Moves::default();
         // What is there at first is there.
-        assert!(!moves.on(&playing(0.25), 0.0));
+        assert!(!moves.on(&playing(0.25), 0.0, &|_| None));
         assert_eq!(moves.played, Some((id(1), 0.25)));
         assert_eq!(moves.drawn(Thing::Line(id(1))), 1.0);
         // A jump is caught up with, not made at once.
-        assert!(moves.on(&playing(0.75), 0.05));
+        assert!(moves.on(&playing(0.75), 0.05, &|_| None));
         let shown = moves.shown(id(1), 0.75);
         assert!(shown > 0.25 && shown < 0.75);
         for _ in 0..100 {
-            moves.on(&playing(0.75), 0.05);
+            moves.on(&playing(0.75), 0.05, &|_| None);
         }
         assert_eq!(moves.played, Some((id(1), 0.75)));
         // A line that was not there is drawn in.
         let mut two = playing(0.75);
         two.stops
             .push(stop(2, Some(Line::Plain(Color::WHITE)), None));
-        assert!(moves.on(&two, 0.05));
+        assert!(moves.on(&two, 0.05, &|_| None));
         assert!(moves.drawn(Thing::Line(id(2))) < 1.0);
         // With motion off it is there at once.
         two.still = true;
         two.stops
             .push(stop(3, Some(Line::Plain(Color::WHITE)), None));
-        assert!(!moves.on(&two, 0.05));
+        assert!(!moves.on(&two, 0.05, &|_| None));
         assert_eq!(moves.drawn(Thing::Line(id(3))), 1.0);
     }
 
@@ -1715,7 +1788,7 @@ mod tests {
         };
         picture.stops[1].back = Some((0, 0.5, Color::WHITE));
         let mut moves = Moves::default();
-        moves.on(&picture, 0.0);
+        moves.on(&picture, 0.0, &|_| None);
         assert_eq!(moves.played, Some((id(2), 0.5)));
         assert_eq!(moves.shown(id(2), 0.5), 0.5);
     }

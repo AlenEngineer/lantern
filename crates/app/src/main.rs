@@ -1377,6 +1377,14 @@ impl App {
             }
             Message::Hover(row) => {
                 self.hovered = row;
+                // A file carried in lands by the last row it was over.
+                let plan = self.engine.0.plan();
+                if let Some(carried) = self.carried.as_mut().filter(|carried| carried.moving)
+                    && let Some((over, half)) = row
+                    && let Some(at) = plan.position(over)
+                {
+                    carried.landing = Some(at + usize::from(half == Half::Lower));
+                }
                 self.aim();
                 self.aim_pull();
             }
@@ -1388,6 +1396,9 @@ impl App {
             Message::LeftPlan => {
                 if let Some(drag) = &mut self.drag {
                     drag.landing = None;
+                }
+                if let Some(carried) = &mut self.carried {
+                    carried.landing = None;
                 }
             }
             Message::Pointer(window, _) | Message::Cursor(window, _)
@@ -3528,9 +3539,11 @@ impl App {
     /// or below the step the pointer is over. Nowhere while it isn't over
     /// one, or isn't being carried.
     pub(crate) fn carry_landing(&self, plan: &Plan) -> Option<usize> {
-        self.carried.as_ref().filter(|carried| carried.moving)?;
-        let (over, half) = self.hovered?;
-        let at = plan.position(over)? + usize::from(half == Half::Lower);
+        let at = self
+            .carried
+            .as_ref()
+            .filter(|carried| carried.moving)?
+            .landing?;
         // In a run, only after the step the service is at.
         let reached = (self.mode == mode::Mode::Run)
             .then(|| self.engine.0.current_step())
