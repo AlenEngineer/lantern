@@ -490,6 +490,8 @@ pub enum Icon {
     Folded,
     /// A sticky note: something to remember.
     Note,
+    /// A ring round a dot: what something aims at.
+    Target,
     /// A cross: close, take away.
     Close,
     /// A triangle with a mark in it: this can't be.
@@ -531,6 +533,9 @@ impl Icon {
             ),
             Icon::Command => mdi!(
                 "M13,19V16H21V19H13M8.5,13L2.47,7H6.71L11.67,11.95C12.25,12.54 12.25,13.5 11.67,14.07L6.74,19H2.5L8.5,13Z"
+            ),
+            Icon::Target => mdi!(
+                "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9Z"
             ),
             Icon::Note => mdi!(
                 "M14,10V4.5L19.5,10M5,3C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V9L15,3H5Z"

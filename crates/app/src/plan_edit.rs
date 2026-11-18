@@ -69,6 +69,8 @@ pub enum Part {
     Length,
     /// What a live slot searches.
     Search,
+    /// The time of day a section should be over by.
+    DoneBy,
 }
 
 /// The widget id of the field that edits `part` of step `id`, to focus it.

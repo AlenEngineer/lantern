@@ -315,6 +315,10 @@ enum Message {
     NoteEdit(iced::widget::text_editor::Action),
     /// The open note is taken away.
     NoteGone(lantern_engine::NoteId),
+    /// A section's time made longer or shorter by so many seconds.
+    SectionGoal(StepId, i64),
+    /// Typed in a section's time of day to be over by.
+    DoneBy(StepId, String),
     /// A section's bracket was pressed: it is picked, and held and moved
     /// it is carried with all it holds.
     Grab(StepId),
@@ -568,6 +572,8 @@ struct App {
     pub(crate) note_open: Option<lantern_engine::NoteId>,
     pub(crate) note_text: iced::widget::text_editor::Content,
     pub(crate) note_kept: bool,
+    /// The time of day a section should be over by, as it is typed.
+    pub(crate) done_typed: Option<(StepId, String)>,
     /// The loop or drawn order whose line was pressed last: Delete takes
     /// it away, its steps staying.
     pub(crate) line_picked: Option<lantern_engine::SpanId>,
@@ -840,6 +846,7 @@ impl App {
             note_open: None,
             note_text: iced::widget::text_editor::Content::new(),
             note_kept: false,
+            done_typed: None,
             line_picked: None,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
@@ -2142,6 +2149,44 @@ impl App {
                         .edit_plan(|plan| plan.set_note_text(id, words));
                 }
             }
+            Message::SectionGoal(id, by) => {
+                // One undo for a run of presses on the same section.
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(Step {
+                        action: Action::Section { budget, .. },
+                        ..
+                    }) = plan.get_mut(id)
+                    {
+                        let now = budget.unwrap_or_default().as_secs() as i64;
+                        let to = (now + by).max(0) as u64;
+                        *budget = (to > 0).then(|| Duration::from_secs(to));
+                    }
+                });
+            }
+            // Only what could still become a time of day is taken.
+            Message::DoneBy(_, typed)
+                if !typed.trim().chars().all(|c| c.is_ascii_digit() || c == ':')
+                    || typed.matches(':').count() > 1 => {}
+            Message::DoneBy(id, typed) => {
+                let to = match typed.trim() {
+                    "" => Some(None),
+                    text => lantern_engine::TimeOfDay::parse(text).map(Some),
+                };
+                if let Some(to) = to {
+                    self.remember(Some(id));
+                    self.engine.0.edit_plan(|plan| {
+                        if let Some(Step {
+                            action: Action::Section { done_by, .. },
+                            ..
+                        }) = plan.get_mut(id)
+                        {
+                            *done_by = to;
+                        }
+                    });
+                }
+                self.done_typed = Some((id, typed));
+            }
             Message::NoteGone(id) => {
                 self.remember(None);
                 self.engine.0.edit_plan(|plan| plan.remove_note(id));
@@ -2307,6 +2352,18 @@ impl App {
                     self.engine.0.clear_preview();
                 }
                 self.editing = Some((id, part));
+                // The time of day starts from what it is.
+                if part == plan_edit::Part::DoneBy {
+                    let now = self
+                        .engine
+                        .0
+                        .plan()
+                        .get(id)
+                        .and_then(Step::done_by)
+                        .map(|time| time.to_string())
+                        .unwrap_or_default();
+                    self.done_typed = Some((id, now));
+                }
                 let field = plan_edit::part_id(id, part);
                 return Task::batch([
                     operation::focus(field.clone()),
