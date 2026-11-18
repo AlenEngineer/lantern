@@ -555,6 +555,8 @@ impl App {
             },
         };
         let mut stops: Vec<track::Stop> = Vec::new();
+        // Every row in sight: a press on one of them is not on nothing.
+        let mut whole: Vec<StepId> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
         let mut headings: Vec<usize> = Vec::new();
         let mut cuts = 0u32;
@@ -822,6 +824,14 @@ impl App {
                 };
                 // A section inside the one that is closing or opening
                 // goes under the cut with its steps.
+                // A heading that has a row is a row to press, too.
+                let heading = match bracket {
+                    true => heading,
+                    false => {
+                        whole.push(step.id);
+                        track::seen(track::Key::Whole(step.id), &places, heading)
+                    }
+                };
                 match (bracket, folding.take()) {
                     // A bracket beside its steps: no row.
                     (true, kept) => folding = kept,
@@ -901,6 +911,8 @@ impl App {
                 self.side(plan, index, side, &places)
             ]
             .height(Length::Shrink);
+            whole.push(step.id);
+            let row = track::seen(track::Key::Whole(step.id), &places, row);
             // A step that stays in sight when its section is folded (the
             // one the service is at, the one being worked on) stays put
             // while the others close around it.
@@ -1305,9 +1317,11 @@ impl App {
             still: self.motion.still,
             hot: can,
             brackets,
+            select: (tree && can).then_some(p.primary),
+            rows: whole,
         };
         // Leaving the list means letting go would move nothing.
-        let mut layers = stack![rows, track::over(picture, &places)].width(Fill);
+        let mut layers = stack![rows, track::over(picture, &places, Message::Marquee)].width(Fill);
         if let Some(card) = card {
             layers = layers.push(card);
         }

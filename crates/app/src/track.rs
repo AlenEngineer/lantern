@@ -44,6 +44,8 @@ pub enum Key {
     Side(StepId),
     /// The canvas itself: where what is laid over the list starts.
     Canvas,
+    /// All of a row: a press outside every row is on nothing.
+    Whole(StepId),
 }
 
 /// Where each of them is, as last laid out.
@@ -305,6 +307,12 @@ pub struct Picture {
     pub still: bool,
     /// The dots can be pressed: the one under the pointer shows it.
     pub hot: bool,
+    /// Steps can be picked together by a box pulled from where there is
+    /// nothing: its colour, where they can.
+    pub select: Option<Color>,
+    /// Every row in sight, headings too: a press on one is not a press
+    /// on nothing.
+    pub rows: Vec<StepId>,
     /// The sections, each a bracket beside the steps it holds.
     pub brackets: Vec<Bracket>,
 }
@@ -594,20 +602,38 @@ type Shown = (
     Option<(StepId, f32)>,
     Vec<(Thing, f32)>,
     Option<StepId>,
+    Option<Rectangle>,
 );
 
 #[derive(Default)]
 struct State {
+    /// The box being pulled from where there is nothing: where it began,
+    /// where the pointer is, and whether it has moved far enough to be a
+    /// box, not a click.
+    band: Option<(Point, Point, bool)>,
+    /// The steps the box was last over.
+    banded: Vec<StepId>,
     kept: Kept<Shown>,
     moves: Moves,
 }
 
-struct Over {
+struct Over<'a, Message> {
     picture: Picture,
     places: Places,
+    /// What to say when a box has picked some steps, or a click on
+    /// nothing has let go of them all.
+    pick: Rc<dyn Fn(Vec<StepId>) -> Message + 'a>,
 }
 
-impl<Message> canvas::Program<Message> for Over {
+/// The box from one corner to the other.
+fn boxed(from: Point, to: Point) -> Rectangle {
+    Rectangle::new(
+        Point::new(from.x.min(to.x), from.y.min(to.y)),
+        Size::new((from.x - to.x).abs(), (from.y - to.y).abs()),
+    )
+}
+
+impl<Message> canvas::Program<Message> for Over<'_, Message> {
     type State = State;
 
     fn update(
@@ -626,6 +652,61 @@ impl<Message> canvas::Program<Message> for Over {
                 let moving = state.moves.on(&self.picture, passed);
                 state.moves.last = moving.then_some(*now);
                 moving.then(canvas::Action::request_redraw)
+            }
+            // A press where there is no row begins a box; let go there,
+            // it was a click on nothing, and nothing is picked.
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let at = cursor
+                    .position()
+                    .filter(|_| self.picture.select.is_some() && cursor.is_over(bounds))?;
+                let places = self.places.borrow();
+                let on_a_row = self.picture.rows.iter().any(|id| {
+                    places
+                        .get(&Key::Whole(*id))
+                        .is_some_and(|row| row.contains(at))
+                });
+                if !on_a_row {
+                    state.band = Some((at, at, false));
+                    state.banded.clear();
+                }
+                None
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                let (_, _, moved) = state.band.take()?;
+                Some(match moved {
+                    true => canvas::Action::request_redraw(),
+                    false => canvas::Action::publish((self.pick)(Vec::new())),
+                })
+            }
+            // As the box is pulled, the steps it is over are picked.
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.band.is_some() => {
+                let (from, _, moved) = state.band?;
+                let at = cursor.position()?;
+                let moved = moved || from.distance(at) > 4.0;
+                state.band = Some((from, at, moved));
+                if !moved {
+                    return None;
+                }
+                let over = boxed(from, at);
+                let places = self.places.borrow();
+                let picked: Vec<StepId> = self
+                    .picture
+                    .stops
+                    .iter()
+                    .filter(|stop| {
+                        places
+                            .get(&Key::Whole(stop.id))
+                            .is_some_and(|row| row.intersects(&over))
+                    })
+                    .map(|stop| stop.id)
+                    .collect();
+                Some(match picked == state.banded {
+                    true => canvas::Action::request_redraw(),
+                    false => {
+                        state.banded = picked.clone();
+                        canvas::Action::publish((self.pick)(picked))
+                    }
+                })
             }
             Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::CursorLeft) => {
                 let over = cursor
@@ -668,6 +749,16 @@ impl<Message> canvas::Program<Message> for Over {
             .map(|(thing, far)| (*thing, *far))
             .collect();
         drawn.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // The box being pulled, from the canvas's own corner.
+        let band = state
+            .band
+            .filter(|(.., moved)| *moved)
+            .map(|(from, to, _)| boxed(from, to))
+            .map(|over| Rectangle {
+                x: over.x - bounds.x,
+                y: over.y - bounds.y,
+                ..over
+            });
         let shown = (
             self.picture.clone(),
             places.clone(),
@@ -675,6 +766,7 @@ impl<Message> canvas::Program<Message> for Over {
             moves.ring,
             drawn,
             moves.over,
+            band,
         );
         vec![state.kept.draw(shown, renderer, bounds.size(), |frame| {
             // Where each is, from the canvas's own corner.
@@ -686,16 +778,30 @@ impl<Message> canvas::Program<Message> for Over {
                 })
             };
             paint(frame, &self.picture, &at, moves);
+            if let (Some(over), Some(ink)) = (band, self.picture.select) {
+                frame.fill_rectangle(over.position(), over.size(), faded(ink, 0.14));
+                frame.stroke(
+                    &Path::rectangle(over.position(), over.size()),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(faded(ink, 0.7)),
+                );
+            }
         })]
     }
 }
 
 /// The canvas that draws `picture` over the list its rows are in: laid
 /// over all of it, it takes no press and no pointer from what is under.
-pub fn over<'a, Message: 'a>(picture: Picture, places: &Places) -> Element<'a, Message> {
+pub fn over<'a, Message: 'a>(
+    picture: Picture,
+    places: &Places,
+    pick: impl Fn(Vec<StepId>) -> Message + 'a,
+) -> Element<'a, Message> {
     iced::widget::canvas(Over {
         picture,
         places: places.clone(),
+        pick: Rc::new(pick),
     })
     .width(Fill)
     .height(Fill)
