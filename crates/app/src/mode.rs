@@ -105,7 +105,6 @@ fn does(message: &Message) -> Does {
         | M::ReplaceStep(id)
         | M::EditStep(Some((id, _))) => Does::EditsStep(*id),
         M::AddStep(_)
-        | M::ToggleAdd
         | M::Unstandby(_)
         | M::PlanStarts(_)
         | M::PlanTarget(_)
@@ -400,7 +399,6 @@ impl App {
         self.pull = None;
         self.plan_typed = None;
         self.editing = None;
-        self.adding = None;
         self.selected = None;
         self.search.unpick();
         self.search_open = false;
@@ -444,7 +442,6 @@ impl App {
         self.unlocked = match self.unlocked {
             Some(_) => {
                 self.editing = None;
-                self.adding = None;
                 None
             }
             None => Some(self.engine.0.current_step().map(|step| step.id)),

@@ -473,7 +473,6 @@ enum Message {
     /// writes it; `None` for Escape, which gives up.
     KeyRecorded(Option<String>),
     /// Opens or closes the plan's "Add step" row.
-    ToggleAdd,
     /// Back to the steps from the name editor, the open list or the question.
     ClosePlanMode,
     EditPlanName,
@@ -679,9 +678,6 @@ struct App {
     /// A search result just went on stage: what's typed next starts a new
     /// search instead of adding to the old one.
     spent: bool,
-    /// The plan's "Add step" row is open, showing the kinds of step.
-    /// and which of them the arrows are on, for Enter.
-    adding: Option<usize>,
     /// The search is open in the middle pane. Closed, the middle shows
     /// the keys, and the arrows and Enter are the plan pane's.
     search_open: bool,
@@ -907,7 +903,6 @@ impl App {
             stepping: false,
             stray: None,
             spent: false,
-            adding: None,
             search_open: false,
             plan_needs: library::PlanNeeds::default(),
             plan_dragged: layout.0,
@@ -2384,11 +2379,10 @@ impl App {
                 return self.update(Message::Click(Clicked::Step(section)));
             }
             Message::Marquee(steps) => {
-                // A press on nothing closes what is open: the note, the
-                // kinds of step to add, and the fill.
+                // A press on nothing closes what is open: the note and
+                // the fill.
                 if steps.is_empty() {
                     self.close_note();
-                    self.adding = None;
                     self.filling = None;
                 }
                 self.line_picked = None;
@@ -2523,7 +2517,6 @@ impl App {
             }
             Message::AddStep(new) => {
                 let (label, action) = new.step();
-                self.adding = None;
                 self.remember(None);
                 let id = self.engine.0.add(self.selected, label, action);
                 // A new step opens on its name.
@@ -2962,12 +2955,6 @@ impl App {
                 let replaced = self.plans.leave(&self.engine.0);
                 return self.switched(replaced);
             }
-            Message::ToggleAdd => {
-                self.adding = match self.adding {
-                    Some(_) => None,
-                    None => Some(0),
-                }
-            }
             Message::DiscardPlan => {
                 let replaced = self.plans.discard(&self.engine.0);
                 return self.switched(replaced);
@@ -3214,12 +3201,7 @@ impl App {
                 }
             }
             // Without a search, Enter takes what the arrows are on in the
-            // plan pane: a kind of step, or a saved plan.
-            Op::Enter if !self.searching() && self.adding.is_some() => {
-                let (kind, _) = plan_edit::NewStep::ALL
-                    [self.adding.unwrap_or(0) % plan_edit::NewStep::ALL.len()];
-                return self.update(Message::AddStep(kind));
-            }
+            // plan pane: a saved plan.
             Op::Enter
                 if !self.searching()
                     && self.list_pick.is_some()
@@ -3396,9 +3378,7 @@ impl App {
                     }
                     _ => Task::none(),
                 };
-                if let Some(kind) = self.adding {
-                    self.adding = around(Some(kind), plan_edit::NewStep::ALL.len());
-                } else if let plans::Mode::Browsing(entries) = &self.plans.mode {
+                if let plans::Mode::Browsing(entries) = &self.plans.mode {
                     let order = self.plans.listed(entries);
                     let at = self
                         .list_pick
@@ -3473,8 +3453,7 @@ impl App {
                 }
                 // With nothing else to let go of, Esc leaves the list of
                 // plans for the plan that's open.
-                let idle = self.adding.is_none()
-                    && self.importing.is_none()
+                let idle = self.importing.is_none()
                     && !self.searching()
                     && !matches!(self.plans.mode, plans::Mode::Renaming(_));
                 if idle
@@ -3490,7 +3469,6 @@ impl App {
                 if closing {
                     self.search_open = false;
                 }
-                self.adding = None;
                 self.editing = None;
                 self.list_pick = None;
                 self.importing = None;
@@ -3541,7 +3519,6 @@ impl App {
             }
             Op::Search => {
                 self.search_open = true;
-                self.adding = None;
                 return Task::batch([
                     operation::focus(SEARCH_BOX),
                     operation::move_cursor_to_end(SEARCH_BOX),
@@ -3656,14 +3633,13 @@ impl App {
             }
             Op::Open => {
                 self.list_pick = None;
-                self.adding = None;
                 self.plans.browse();
             }
             // In the list of plans it's a new plan; in a plan, a new step.
             Op::New if matches!(self.plans.mode, plans::Mode::Browsing(_)) => {
                 return self.switch_plan(Switch::New);
             }
-            Op::New => return self.update(Message::ToggleAdd),
+            Op::New => return self.update(Message::AddStep(plan_edit::NewStep::Section)),
             Op::MoveUp | Op::MoveDown => {
                 if let Some(step) = self.selected {
                     let by = if op == Op::MoveUp { -1 } else { 1 };
