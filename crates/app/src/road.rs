@@ -1105,7 +1105,13 @@ impl canvas::Program<Message> for Drawn {
             ) else {
                 continue;
             };
-            let x = first.x + track::brace_at(brace.lane, true) + 3.0;
+            let x = first.x
+                + track::brace_at(
+                    &track::lane_widths(brace.lane, None, false),
+                    brace.lane,
+                    true,
+                )
+                + 3.0;
             let (top, foot) = (first.y + 2.0, last.y + last.height - 4.0);
             if foot - top < 12.0 {
                 continue;

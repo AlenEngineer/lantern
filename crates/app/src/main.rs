@@ -356,6 +356,8 @@ enum Message {
     /// A box pulled over the plan picked these steps; none, for a press
     /// where there is nothing, which lets go of whatever was picked.
     Marquee(Vec<StepId>),
+    /// The pointer came into a lane of the brackets' room, or left it.
+    BracketOver(Option<track::Pointed>),
     Remove(StepId),
     /// Takes this off the plan's standby shelf.
     Unstandby(ResourceId),
@@ -676,6 +678,9 @@ struct App {
     last_click: Option<(Clicked, Instant)>,
     /// The plan row (and its half) under the pointer.
     hovered: Option<(StepId, Half)>,
+    /// Where the pointer is in the room right of the plan's rows, for
+    /// the brackets there.
+    bracket_over: Option<track::Pointed>,
     /// The plan row the button went down on, while it's held.
     drag: Option<Drag>,
     /// A step's dot held down on the rail, and the step whose rail the
@@ -917,6 +922,7 @@ impl App {
             selected: None,
             last_click: None,
             hovered: None,
+            bracket_over: None,
             drag: None,
             pull: None,
             rail_over: None,
@@ -1546,6 +1552,10 @@ impl App {
                 }
             }
             Message::LeftPlan => {
+                // Off the list, no bracket is under the pointer.
+                if self.bracket_over.take().is_some() {
+                    self.motion.lanes_to(None);
+                }
                 if let Some(drag) = &mut self.drag {
                     drag.landing = None;
                 }
@@ -2434,6 +2444,12 @@ impl App {
                     self.drag = Some(Drag::new(&self.engine.0.plan(), section));
                 }
                 return self.update(Message::Click(Clicked::Step(section)));
+            }
+            Message::BracketOver(pointed) => {
+                self.bracket_over = pointed;
+                self.motion.lanes_to(pointed.map(|pointed| {
+                    track::lane_widths(pointed.lanes, Some(pointed.lane), pointed.from_right)
+                }));
             }
             Message::Marquee(steps) => {
                 // A press on nothing closes what is open: the note and

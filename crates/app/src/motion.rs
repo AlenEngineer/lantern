@@ -143,6 +143,8 @@ pub struct Motion {
     ringing: Option<Run>,
     /// The section what is carried would be a part of, lighting up.
     host: Option<(StepId, Run)>,
+    /// How wide each lane of the brackets' room is: from, to.
+    lanes: Option<(Vec<f32>, Vec<f32>, Run)>,
     /// The plan was just saved: its Save is a tick for a moment.
     saved: Option<Run>,
     /// The plan just became empty: its + breathes a few times, then
@@ -191,6 +193,7 @@ impl Motion {
             picked: None,
             ringing: None,
             host: None,
+            lanes: None,
             saved: None,
             breath: None,
             gone: None,
@@ -502,6 +505,41 @@ impl Motion {
             .unwrap_or(1.0)
     }
 
+    /// The brackets' lanes are to be `to` wide each, or back at rest for
+    /// none: they slide there from where they are shown.
+    pub fn lanes_to(&mut self, to: Option<Vec<f32>>) {
+        let Some(to) = to.or_else(|| {
+            let (_, was, _) = self.lanes.as_ref()?;
+            let n = was.len() as f32;
+            Some(vec![was.iter().sum::<f32>() / n; was.len()])
+        }) else {
+            return;
+        };
+        if self.lanes.as_ref().is_some_and(|(_, was, _)| *was == to) {
+            return;
+        }
+        // From where they are, else from at rest: as wide each, all of
+        // them as wide together.
+        let from = self
+            .lanes(to.len())
+            .unwrap_or_else(|| vec![to.iter().sum::<f32>() / to.len() as f32; to.len()]);
+        self.lanes = Some((from, to, self.run(LEVEL, Instant::now())));
+    }
+
+    /// How wide each of `n` lanes is shown, on its way: `None` where
+    /// they were last set for another number of lanes.
+    pub fn lanes(&self, n: usize) -> Option<Vec<f32>> {
+        let (from, to, slide) = self.lanes.as_ref().filter(|(_, to, _)| to.len() == n)?;
+        Some(match self.along(Some(slide)) {
+            Some(along) => from
+                .iter()
+                .zip(to)
+                .map(|(from, to)| between(*from, *to, along))
+                .collect(),
+            None => to.clone(),
+        })
+    }
+
     /// Something was just picked up: its card rises under the pointer.
     pub fn picked_up(&mut self) {
         self.picked = Some(self.run(LIFT, Instant::now()));
@@ -564,7 +602,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 20] = [
+        let runs: [Option<&Run>; 21] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
@@ -583,6 +621,7 @@ impl Motion {
             self.picked.as_ref(),
             self.ringing.as_ref(),
             self.host.as_ref().map(|(_, run)| run),
+            self.lanes.as_ref().map(|(_, _, run)| run),
             self.refused.as_ref().map(|(_, light, _)| light),
             self.changed.as_ref().map(|(_, run)| run),
         ];
@@ -849,6 +888,25 @@ mod tests {
         motion.lands_open(4);
         assert!(motion.gap().is_none() && motion.closing_gap().is_none());
         assert!(!motion.no_gap());
+    }
+
+    #[test]
+    fn the_brackets_lanes_slide_to_their_widths_and_back() {
+        let mut motion = Motion::new();
+        assert_eq!(motion.lanes(2), None);
+        motion.lanes_to(Some(vec![26.0, 10.0]));
+        // On their way from at rest.
+        let shown = motion.lanes(2).unwrap();
+        assert!((18.0..26.0).contains(&shown[0]), "{shown:?}");
+        assert!(motion.moving());
+        // For another number of lanes, nothing is said.
+        assert_eq!(motion.lanes(3), None);
+        // With motion off, there at once; and back at rest, as wide
+        // together.
+        motion.still = true;
+        assert_eq!(motion.lanes(2), Some(vec![26.0, 10.0]));
+        motion.lanes_to(None);
+        assert_eq!(motion.lanes(2), Some(vec![18.0, 18.0]));
     }
 
     #[test]
