@@ -493,6 +493,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   and what is next, a tube fills as it nears. A folded section is one
   row with the step of it that is on, and its tube fills with the whole
   section. Unlocked, the rail is the plan again, to change it.
+- The + under the plan adds a section, and only that. Live and Black
+  screen are always first in the library; pressed, one is added after
+  the selected step. A note is made from a step's ring, not as a step.
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.

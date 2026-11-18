@@ -1077,11 +1077,11 @@ impl App {
                 .padding([4, 8]),
             );
         }
-        // The last row adds a step that isn't a search result; it opens
-        // on the kinds there are.
+        // The last row adds a section. Steps come from the library and
+        // its search; Live and Black screen are first in the library.
         if moving.is_none() && self.can_edit() {
             // An empty plan's + breathes a few times: it is where to begin.
-            let breath = match plan.is_empty() && self.adding.is_none() {
+            let breath = match plan.is_empty() {
                 true => self.motion.breath(),
                 false => 0.0,
             };
@@ -1094,21 +1094,11 @@ impl App {
                     ),
                     ..p
                 },
-                if self.adding.is_some() { "−" } else { "+" },
-                String::new(),
-                Message::ToggleAdd,
+                "+",
+                "Add a section".to_string(),
+                Message::AddStep(NewStep::Section),
                 breath,
             ));
-            if let Some(on) = self.adding {
-                // The arrows move among the kinds; Enter adds the lit one.
-                let kinds = NewStep::ALL.iter().enumerate().map(|(n, (kind, label))| {
-                    let tone = if n == on { Tone::Selected } else { Tone::Plain };
-                    pill(p, label, tone, PILL_SMALL, Some(Message::AddStep(*kind))).into()
-                });
-                rows = rows.push(
-                    container(row(kinds).spacing(4)).padding(iced::Padding::default().left(34.0)),
-                );
-            }
         }
         // Under the steps, what's kept ready outside their order.
         if moving.is_none() && !plan.standby.is_empty() {

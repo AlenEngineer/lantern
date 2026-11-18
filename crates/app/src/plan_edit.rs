@@ -23,18 +23,9 @@ pub enum NewStep {
     Section,
     LiveSlot,
     BlackScreen,
-    Note,
 }
 
 impl NewStep {
-    /// The kinds, in the order the Add step row offers them.
-    pub const ALL: [(NewStep, &'static str); 4] = [
-        (NewStep::Section, "Section"),
-        (NewStep::LiveSlot, "Live slot"),
-        (NewStep::BlackScreen, "Black"),
-        (NewStep::Note, "Note"),
-    ];
-
     /// Its label and action, ready to rename. A section starts without a
     /// time; its row offers to set one.
     pub fn step(self) -> (&'static str, Action) {
@@ -56,7 +47,6 @@ impl NewStep {
                 },
             ),
             NewStep::BlackScreen => ("Black screen", Action::Blank),
-            NewStep::Note => ("Note", Action::Note),
         }
     }
 }

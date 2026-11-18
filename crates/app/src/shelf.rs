@@ -15,6 +15,7 @@ use iced::{Alignment, Element, Fill, Task};
 use lantern_engine::{Location, Query, Resource, ResourceId};
 
 use crate::look::{self, BODY, BOLD, Icon, META, Tone};
+use crate::plan_edit::NewStep;
 use crate::widgets::{scrolling, single_line};
 use crate::{App, Clicked, Message};
 
@@ -329,7 +330,7 @@ impl App {
     /// Whether the arrows are the library's: it was gone to, and it is
     /// in sight.
     pub(crate) fn keys_in_library(&self) -> bool {
-        self.in_library && self.mode == crate::mode::Mode::Plan && self.adding.is_none()
+        self.in_library && self.mode == crate::mode::Mode::Plan
     }
 
     /// Where the keyboard is in the library: a folder, or the file that
@@ -633,12 +634,61 @@ impl App {
             .spacing(10)
             .padding([0, 8])
             .align_y(Alignment::Center),
+            self.always_there(),
             scrolling(rows).id(ROWS),
             Space::new().height(4)
         ]
         .spacing(8)
         .width(Fill)
         .height(Fill)
+        .into()
+    }
+}
+
+impl App {
+    /// What the library always has, before its files: a live slot and a
+    /// black screen. Pressed, one is added after the selected step.
+    fn always_there(&self) -> Element<'_, Message> {
+        let p = self.palette;
+        let can = self.can_edit();
+        let item = |icon: Icon, ink: iced::Color, name: &'static str, says: &'static str, new| {
+            let body = row![
+                look::icon(icon, 16.0, ink),
+                column![
+                    text(name).size(BODY).font(BOLD).color(p.on_surface),
+                    text(says).size(META).color(p.on_surface_variant),
+                ]
+                .spacing(1),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center);
+            button(body)
+                .width(Fill)
+                .padding([6, 10])
+                .on_press_maybe(can.then_some(Message::AddStep(new)))
+                .style(look::row_filled(
+                    p,
+                    crate::palette::Palette::tint(p.on_surface, 0.06),
+                ))
+        };
+        column![
+            item(
+                Icon::Screen,
+                p.tertiary,
+                "Live",
+                "show anything as it comes",
+                NewStep::LiveSlot
+            ),
+            item(
+                Icon::ScreenOff,
+                p.on_surface,
+                "Black screen",
+                "nothing on the projector",
+                NewStep::BlackScreen
+            ),
+        ]
+        .spacing(4)
+        .padding([0, 4])
         .into()
     }
 }
