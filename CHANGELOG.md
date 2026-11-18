@@ -484,6 +484,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- In a service, a section that is over can be opened again: press its
+  folded row to see what was played, and double-click its bracket to
+  fold it back. Double-clicking a bracket in a service no longer takes
+  that section live.
 - The old heading row is gone. A section that holds only folded
   sections is a bracket round their rows too, and a loop over it runs
   beside the folded rows instead of disappearing.

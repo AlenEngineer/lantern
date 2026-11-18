@@ -407,6 +407,7 @@ impl App {
         self.engine.0.clear_preview();
         self.engine.0.rewind();
         self.mode = Mode::Run;
+        self.opened.clear();
         self.unlocked = None;
         self.ending = None;
         log("mode: the service starts");
