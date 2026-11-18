@@ -426,6 +426,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A section carried over steps lands among them, before or after the step
+  under the pointer: it goes into the section that holds them and holds
+  only its own steps, and those after it stay where they were.
 - A section that is carried is shown as letting go would have it: the
   section it would go into slides out a lane and takes its place in.
   Brackets slide to where they go instead of jumping.

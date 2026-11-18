@@ -57,6 +57,32 @@ fn heading(step: &Step) -> Option<u8> {
     step.depth()
 }
 
+/// Whether landing at `at` among `rest` is among steps: a step comes
+/// right after it.
+fn among(rest: &[&Step], at: usize) -> bool {
+    rest.get(at).is_some_and(|step| heading(step).is_none())
+}
+
+/// Puts the section `carried` (its heading first, then all it holds) at
+/// `at` among the rows that stay, `level` deep, as [`Plan::move_group`]
+/// does. Landing `among` steps, it ends after its own rows, so the steps
+/// after it stay in the section around it. Whether anything moved.
+pub fn place_section(
+    plan: &mut Plan,
+    carried: &[StepId],
+    at: usize,
+    level: u8,
+    among: bool,
+) -> bool {
+    if !plan.move_group(carried, at, level) {
+        return false;
+    }
+    if among && let (Some(section), Some(last)) = (carried.first(), carried.last()) {
+        let _ = plan.reach_section(*section, Some(*last));
+    }
+    true
+}
+
 /// How far the pointer goes sideways for one level in or out.
 const LEVEL_STEP: f32 = 24.0;
 
@@ -173,6 +199,12 @@ impl Drag {
             self.levels = (self.level, self.level);
             return;
         }
+        // Among steps: in the section that holds them, no further.
+        if among(&rest, at) {
+            self.level = level_at(&rest, at).min(DEEPEST.saturating_sub(self.span));
+            self.levels = (self.level, self.level);
+            return;
+        }
         let before = rest[..at.min(rest.len())]
             .iter()
             .rev()
@@ -186,6 +218,12 @@ impl Drag {
         let wish = f32::from(self.own) + (sideways / LEVEL_STEP).round();
         self.level = wish.clamp(f32::from(least), f32::from(most)) as u8;
         self.levels = (least, most);
+    }
+
+    /// Whether a section carried would land among steps, where it is put
+    /// in the section that holds them and holds only its own.
+    pub fn among(&self, plan: &Plan) -> bool {
+        self.section && self.landing.is_some_and(|at| among(&self.rest(plan), at))
     }
 
     /// Whether letting go would change how far in a section is, even
@@ -212,6 +250,11 @@ impl Drag {
         }
         if heading(rest[at]).is_some() && half == Half::Upper {
             return Some(at);
+        }
+        // Over a step it lands among the steps, before or after it: it is
+        // put in the section that holds them, holding only its own.
+        if heading(rest[at]).is_none() {
+            return Some(at + usize::from(half == Half::Lower));
         }
         let end = rest[at + 1..]
             .iter()
@@ -298,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn a_section_lands_between_sections_with_its_steps() {
+    fn a_section_lands_between_sections_or_among_steps_with_its_steps() {
         let (mut plan, [welcome, worship, song, _, word, reading]) = sunday();
         let drag = Drag::new(&plan, worship);
         assert_eq!(drag.carried.len(), 3);
@@ -309,13 +352,13 @@ mod tests {
         assert_eq!(drag.landing(&plan, word, Half::Lower), Some(3));
         assert_eq!(
             drag.landing(&plan, reading, Half::Upper),
-            Some(3),
-            "never splits Word"
+            Some(2),
+            "among Word's steps, before Reading"
         );
         assert_eq!(
             drag.landing(&plan, welcome, Half::Upper),
-            Some(1),
-            "after the loose steps"
+            Some(0),
+            "among the loose steps, before Welcome"
         );
         assert_eq!(
             drag.landing(&plan, song, Half::Upper),
@@ -414,5 +457,39 @@ mod tests {
         let rest = drag.rest(&plan);
         assert_eq!(host(&rest, 3, 2), Some((1, 3)), "Special, to its end");
         assert_eq!(host(&rest, 0, 0), None, "the plan's own level");
+    }
+
+    #[test]
+    fn a_section_landed_among_steps_holds_only_its_own() {
+        let (mut plan, [_, worship, song, hymn, word, reading]) = sunday();
+        let more = plan.show(resource("More"));
+        // Welcome; Worship [Song, Hymn]; Word [Reading, More].
+        let mut drag = Drag::new(&plan, worship);
+        // Rest: Welcome, Word, Reading, More. Over Reading's lower half:
+        // between Reading and More, in Word.
+        drag.landing = drag.landing(&plan, reading, Half::Lower);
+        assert_eq!(drag.landing, Some(3));
+        assert!(drag.among(&plan));
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 1, "in Word");
+        let at = drag.landing.unwrap();
+        assert!(place_section(
+            &mut plan,
+            &drag.carried,
+            at,
+            drag.level,
+            true
+        ));
+        assert_eq!(
+            labels(&plan),
+            [
+                "Welcome", "Word", "Reading", "Worship", "Song", "Hymn", "More"
+            ]
+        );
+        // Worship holds its own two; More is still Word's.
+        let held = |id: StepId| plan.within(plan.position(id).unwrap());
+        assert_eq!(held(song), vec![word, worship]);
+        assert_eq!(held(hymn), vec![word, worship]);
+        assert_eq!(held(more), vec![word]);
     }
 }
