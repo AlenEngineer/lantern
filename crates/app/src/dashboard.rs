@@ -1193,7 +1193,7 @@ impl App {
             );
         }
         let mut section: Vec<Element<'_, Message>> = vec![says.into()];
-        section.push(match scene {
+        let live: Element<'_, Message> = match scene {
             _ if blackout => empty_monitor(
                 p,
                 &format!(
@@ -1227,6 +1227,14 @@ impl App {
                 2,
             ),
             _ => empty_monitor(p, "Nothing on the projector"),
+        };
+        // What was just taken comes over from Up next and settles.
+        section.push(match self.motion.ring() {
+            Some(t) => iced::widget::float(live)
+                .scale(0.94 + 0.06 * t)
+                .translate(move |_, _| iced::Vector::new(48.0 * (1.0 - t), 0.0))
+                .into(),
+            None => live,
         });
         if let Some(scene) = scene {
             section.push(self.caption(scene));

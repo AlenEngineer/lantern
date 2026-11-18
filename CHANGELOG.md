@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- What is taken to the projector comes into the live monitor from the
+  side of Up next, a little smaller, and settles.
 - What a fill proposes drops in, one after another; accepted, the new
   rows' dashed outlines fade into plain rows.
 - An edit that puts a section over its time shows it: the section's
