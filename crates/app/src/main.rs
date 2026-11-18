@@ -225,6 +225,14 @@ enum Clicked {
     Shelf(ResourceId),
 }
 
+/// Which way a step fades: up as it goes on stage, or out as the plan
+/// goes on from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FadeEnd {
+    In,
+    Out,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     /// The stage as it was when the feed started. Always the feed's first message.
@@ -321,6 +329,9 @@ enum Message {
     NoteGone(lantern_engine::NoteId),
     /// A section's time made longer or shorter by so many seconds.
     SectionGoal(StepId, i64),
+    /// How long a step fades in, or out, made longer or shorter by so
+    /// many seconds.
+    SetFade(StepId, FadeEnd, i64),
     /// Typed in a section's time of day to be over by.
     DoneBy(StepId, String),
     /// A section's bracket was pressed: it is picked, and held and moved
@@ -2278,6 +2289,20 @@ impl App {
                         let now = budget.unwrap_or_default().as_secs() as i64;
                         let to = (now + by).max(0) as u64;
                         *budget = (to > 0).then(|| Duration::from_secs(to));
+                    }
+                });
+            }
+            Message::SetFade(id, end, by) => {
+                // One undo for a run of presses on the same step.
+                self.remember(Some(id));
+                self.engine.0.edit_plan(|plan| {
+                    if let Some(step) = plan.get_mut(id) {
+                        let fade = match end {
+                            FadeEnd::In => &mut step.fade.fade_in,
+                            FadeEnd::Out => &mut step.fade.fade_out,
+                        };
+                        let now = fade.map_or(0, lantern_engine::FadeTime::secs);
+                        *fade = lantern_engine::FadeTime::from_secs(now.saturating_add_signed(by));
                     }
                 });
             }

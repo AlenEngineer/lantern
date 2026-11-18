@@ -20,6 +20,16 @@ and the project uses [Semantic Versioning](https://semver.org/).
   loop's line and its round count lights up as it changes.
 - Rows taken away close up where they were, and rows Ctrl+Z (or redo)
   puts back grow in.
+- A step can fade in and fade out. The card under a picked step, or the
+  ring on its dot, sets each in seconds, a second less or more with − and
+  +. A sound fades how loud it is; a picture, a video or slides fade to
+  the stage with nothing on. Next on a step that fades out fades it out
+  over the same time, and the plan goes on once it has; Next again while
+  it fades goes on at once. A step cut off at a time of day fades out the
+  same way. In the plan, a small ramp before a step's length says it
+  fades, up where it fades in and down where it fades out, and in a
+  service the line of the step on stage thins away as it fades out.
+  Plans saved before load as they were.
 - Saving turns Save into a tick for a moment. A plan that becomes empty
   has its + breathe three times, then rest.
 - Several files of the library can be picked together: Ctrl+click adds

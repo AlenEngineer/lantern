@@ -233,11 +233,13 @@ pub enum Line {
     /// One colour, all of it.
     Plain(Color),
     /// The step is playing: `done` of the way along it in `played`, and
-    /// from there on only its two sides, in `ahead`.
+    /// from there on only its two sides, in `ahead`. `thick` of its usual
+    /// width: less as the step fades out, and none once it has.
     Playing {
         done: f32,
         played: Color,
         ahead: Color,
+        thick: f32,
     },
 }
 
@@ -936,10 +938,11 @@ fn bar(from: Point, to: Point, wide: f32) -> (Point, Size) {
 }
 
 /// `run` from `from` to `to` along it: all of the line, or its two sides.
-fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: bool) {
-    if to - from <= 0.0 {
+fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: bool, thick: f32) {
+    if to - from <= 0.0 || thick <= 0.0 {
         return;
     }
+    let (line, side) = (LINE * thick, SIDE * thick);
     let (a, b) = (along(run, from), along(run, to));
     // A line that leans is drawn as one stroke.
     if (a.x - b.x).abs() > 0.01 && (a.y - b.y).abs() > 0.01 {
@@ -948,25 +951,25 @@ fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: 
             Stroke::default()
                 .with_color(color)
                 .with_width(match hollow {
-                    true => SIDE * 2.0,
-                    false => LINE,
+                    true => side * 2.0,
+                    false => line,
                 }),
         );
         return;
     }
     if !hollow {
-        let (corner, size) = bar(a, b, LINE);
+        let (corner, size) = bar(a, b, line);
         frame.fill_rectangle(corner, size, color);
         return;
     }
     let across = (run.1.x - run.0.x).abs() > (run.1.y - run.0.y).abs();
-    for side in [-1.0, 1.0] {
-        let off = side * (LINE - SIDE) / 2.0;
+    for edge in [-1.0, 1.0] {
+        let off = edge * (line - side) / 2.0;
         let shift = match across {
             true => Vector::new(0.0, off),
             false => Vector::new(off, 0.0),
         };
-        let (corner, size) = bar(a + shift, b + shift, SIDE);
+        let (corner, size) = bar(a + shift, b + shift, side);
         frame.fill_rectangle(corner, size, color);
     }
 }
@@ -1033,23 +1036,32 @@ fn paint(
         let whole: f32 = runs.iter().map(long).sum();
         // As much of it as is drawn so far.
         let shown = whole * moves.drawn(Thing::Line(stop.id));
-        let (played, ink, ahead, hollow) = match line {
-            Line::Plain(color) => (0.0, color, color, false),
+        let (played, ink, ahead, hollow, thick) = match line {
+            Line::Plain(color) => (0.0, color, color, false, 1.0),
             // What has played is shown along the line it goes back by.
-            Line::Playing { ahead, .. } if stop.back.is_some() => (0.0, ahead, ahead, false),
+            Line::Playing { ahead, thick, .. } if stop.back.is_some() => {
+                (0.0, ahead, ahead, false, thick)
+            }
             Line::Playing {
                 done,
                 played,
                 ahead,
-            } => (whole * moves.shown(stop.id, done), played, ahead, true),
+                thick,
+            } => (
+                whole * moves.shown(stop.id, done),
+                played,
+                ahead,
+                true,
+                thick,
+            ),
         };
         let mut before = 0.0;
         for run in &runs {
             let length = long(run);
             let end = (shown - before).min(length);
             let solid = (played - before).clamp(0.0, length).min(end.max(0.0));
-            part(frame, run, 0.0, solid, ink, false);
-            part(frame, run, solid, end, ahead, hollow);
+            part(frame, run, 0.0, solid, ink, false, thick);
+            part(frame, run, solid, end, ahead, hollow, thick);
             before += length;
         }
     }
@@ -1876,6 +1888,7 @@ mod tests {
                     done,
                     played: Color::WHITE,
                     ahead: Color::BLACK,
+                    thick: 1.0,
                 }),
                 None,
             )],

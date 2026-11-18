@@ -439,6 +439,33 @@ pub fn ring<'a>(done: f32, size: f32, color: Color) -> svg::Svg<'a> {
         .style(move |_, _| svg::Style { color: Some(color) })
 }
 
+/// A small ramp that says a step fades: rising at its start where it
+/// fades in, falling at its end where it fades out, level elsewhere.
+/// `tall` high, and as wide as its shape.
+pub fn ramp<'a>(fades_in: bool, fades_out: bool, tall: f32, color: Color) -> svg::Svg<'a> {
+    static RAMPS: std::sync::OnceLock<Vec<svg::Handle>> = std::sync::OnceLock::new();
+    let ramps = RAMPS.get_or_init(|| {
+        [(false, false), (true, false), (false, true), (true, true)]
+            .into_iter()
+            .map(|(rises, falls)| {
+                let start = if rises { "2,11 8,3" } else { "2,3" };
+                let end = if falls { "16,3 22,11" } else { "22,3" };
+                svg::Handle::from_memory(
+                    format!(
+                        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 14" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="{start} {end}"/></svg>"#
+                    )
+                    .into_bytes(),
+                )
+            })
+            .collect()
+    });
+    let shape = usize::from(fades_in) + 2 * usize::from(fades_out);
+    svg(ramps[shape].clone())
+        .width(tall * 24.0 / 14.0)
+        .height(tall)
+        .style(move |_, _| svg::Style { color: Some(color) })
+}
+
 /// The icons the dashboard uses, from Material Design Icons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
