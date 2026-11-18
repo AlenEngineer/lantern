@@ -1469,9 +1469,19 @@ impl App {
         });
         if let Some(step) = &next {
             section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
-            // What is noted of it, read before it comes.
+            // What is noted of it, read before it comes: and of a section
+            // it begins.
             let plan = self.engine.0.plan();
-            for (_, n, words) in crate::notes::on_step(&plan, step.id, false) {
+            let reached = |id| self.engine.0.reached(id);
+            let mut noted = crate::notes::on_step(&plan, step.id, true, &reached);
+            noted.retain(|(note, ..)| {
+                plan.note(*note).is_some_and(|note| {
+                    note.on
+                        .iter()
+                        .all(|on| matches!(on, lantern_engine::NoteOn::Step(_)))
+                })
+            });
+            for (_, n, words) in noted {
                 section.push(crate::notes::said(p, n, words));
             }
         }

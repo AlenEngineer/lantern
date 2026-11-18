@@ -47,7 +47,15 @@ pub fn mark<'a>(n: usize, open: Option<Message>) -> Element<'a, Message> {
 /// The notes on what is noted of the step `id`, as they are numbered:
 /// its own, and with `around` those of the sections round it and of the
 /// loops and drawn orders it is in.
-pub fn on_step(plan: &Plan, id: StepId, around: bool) -> Vec<(NoteId, usize, String)> {
+///
+/// A section's notes come only with the first of its steps to be reached:
+/// `reached` says which the service has reached.
+pub fn on_step(
+    plan: &Plan,
+    id: StepId,
+    around: bool,
+    reached: &dyn Fn(StepId) -> bool,
+) -> Vec<(NoteId, usize, String)> {
     let numbers = plan.numbered_notes();
     let number = |note: NoteId| {
         numbers
@@ -57,7 +65,21 @@ pub fn on_step(plan: &Plan, id: StepId, around: bool) -> Vec<(NoteId, usize, Str
     };
     let mut on = vec![NoteOn::Step(id)];
     if around && let Some(at) = plan.position(id) {
-        on.extend(plan.within(at).into_iter().map(NoteOn::Step));
+        let steps = plan.steps();
+        let first_in = |section: StepId| {
+            plan.position(section).is_some_and(|head| {
+                (head + 1..plan.group_end(head))
+                    .map(|row| &steps[row])
+                    .filter(|step| !step.is_section() && step.id != id)
+                    .all(|step| !reached(step.id))
+            })
+        };
+        on.extend(
+            plan.within(at)
+                .into_iter()
+                .filter(|section| first_in(*section))
+                .map(NoteOn::Step),
+        );
         on.extend(plan.spans_at(at).into_iter().map(NoteOn::Span));
     }
     let mut found: Vec<(NoteId, usize, String)> = Vec::new();

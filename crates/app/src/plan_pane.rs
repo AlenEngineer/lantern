@@ -1087,9 +1087,12 @@ impl App {
             let mut row =
                 column![self.draggable(step.id, self.step_row(step, place, issue, &noted))];
             // In a service, what is noted of the step that is on is said
-            // under it: its own notes, its sections', and its loops'.
+            // under it: its own notes, its loops', and its sections' with
+            // the first of their steps to come.
             if place == Place::Current && running {
-                for (_, n, words) in crate::notes::on_step(plan, step.id, true) {
+                for (_, n, words) in
+                    crate::notes::on_step(plan, step.id, true, &|id| self.engine.0.reached(id))
+                {
                     row = row.push(
                         container(crate::notes::said(p, n, words))
                             .padding(iced::Padding::default().top(4.0)),

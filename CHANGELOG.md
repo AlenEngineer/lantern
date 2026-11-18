@@ -566,6 +566,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A note on a section shows in a service only with the first of its
+  steps to come, and in Up next just before it, not under every step.
 - In a service the step that is on keeps its whole name: how far it
   is goes under the name, and its note marks come off its row (its notes
   are open under it).
