@@ -2995,11 +2995,12 @@ impl App {
         let body = mouse_area(container(words).width(Fill).center_y(Fill))
             .interaction(mouse::Interaction::Pointer)
             .on_press(Message::Fold(id));
-        let mut beside = mouse_area(Space::new().width(side).height(Fill));
+        // Its bracket: twice opens it, as twice folded it.
+        let mut beside = mouse_area(Space::new().width(side).height(Fill))
+            .on_double_click(Message::Fold(id))
+            .interaction(mouse::Interaction::Pointer);
         if !over {
-            beside = beside
-                .on_press(Message::Click(Clicked::Step(id)))
-                .interaction(mouse::Interaction::Pointer);
+            beside = beside.on_press(Message::Click(Clicked::Step(id)));
         }
         let place = row![
             Space::new().width(lanes.curl),
