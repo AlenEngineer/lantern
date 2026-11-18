@@ -124,6 +124,9 @@ struct Side<'a> {
     more: f32,
 }
 
+/// How tall the foot of a bracket is, to be pulled.
+const FOOT: f32 = 16.0;
+
 /// How wide the card of a picked section is: a little more than the
 /// room its name had.
 const CARD: f32 = track::LABEL + 46.0;
@@ -628,6 +631,24 @@ impl App {
                     }))
         };
         let mut braced = lay_brackets(plan, &bracketed);
+        // A bracket's foot being pulled: the brackets as letting go would
+        // have them (no row moves, so they line up with the rows as they
+        // are); one that can't go there says so in the colour of what is
+        // wrong.
+        let foot_refused = match self.foot {
+            Some((section, Some(last))) => {
+                let mut after = plan.clone();
+                match after.reach_section(section, Some(last)) {
+                    Ok(()) => {
+                        braced = lay_brackets(&after, &bracketed);
+                        None
+                    }
+                    Err(_) => Some(section),
+                }
+            }
+            _ => None,
+        };
+        let footed = self.foot.map(|(section, _)| section);
         // A section that is carried is laid out as letting go would have
         // it: a dry run of the drop says which sections it would be in,
         // which it would take into itself, and how far out each bracket
@@ -1558,12 +1579,16 @@ impl App {
                         .and_then(own_of)
                         .map(|(first, last)| (id_at(first), id_at(last))),
                     color: match on {
+                        _ if foot_refused == Some(step.id) => p.error,
                         true => p.tertiary,
                         false => p.primary,
                     },
                     name: step.label.clone(),
                     lines,
-                    strong: picked || host_id == Some(step.id) || into.first() == Some(&step.id),
+                    strong: picked
+                        || host_id == Some(step.id)
+                        || into.first() == Some(&step.id)
+                        || footed == Some(step.id),
                     bare: picked,
                     place: false,
                     cut: None,
@@ -3095,11 +3120,52 @@ impl App {
                     crate::rail::RingOn::All(Some(section)),
                 )));
             }
+            // Beside the last of its steps, the foot of its bracket: held
+            // and pulled down it takes in what comes after; up, it lets go.
+            let last = side
+                .braced
+                .iter()
+                .find(|braced| plan.steps()[braced.at].id == section)
+                .and_then(|braced| {
+                    (braced.at + 1..braced.end)
+                        .rev()
+                        .find(|row| !plan.steps()[*row].is_section())
+                });
+            let area: Element<'a, Message> = match last == Some(index)
+                && self.can_edit()
+                && self.mode == crate::mode::Mode::Plan
+            {
+                true => {
+                    // A small grip shows where it is.
+                    let p = self.palette;
+                    let grip =
+                        container(container(Space::new().width(14).height(3)).style(move |_| {
+                            container::Style {
+                                background: Some(Palette::tint(p.primary, 0.55).into()),
+                                border: iced::Border {
+                                    radius: 1.5.into(),
+                                    ..iced::Border::default()
+                                },
+                                ..container::Style::default()
+                            }
+                        }))
+                        .padding(iced::Padding::default().left(2.0))
+                        .center_y(FOOT);
+                    column![
+                        area,
+                        mouse_area(container(grip).width(wide).height(FOOT))
+                            .on_press(Message::PressFoot(section))
+                            .interaction(mouse::Interaction::ResizingVertically)
+                    ]
+                    .into()
+                }
+                false => area.into(),
+            };
             // What is under the pointer here is this row's step, as on
             // the rest of the row: where something carried would land
             // goes by rows, and must not flip to the section's start as
             // the pointer crosses into its bracket's room.
-            self.draggable(plan.steps()[index].id, area.into())
+            self.draggable(plan.steps()[index].id, area)
         };
         // The innermost brace and the names beside it: the section this
         // step is most nearly in. Then a brace for each one further out,

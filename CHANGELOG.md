@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A bracket's foot can be pulled: down, it takes in what comes after it,
+  a section whole; up, it lets go. As it is pulled the brackets show what
+  letting go would make, in the colour of what is wrong where it can't
+  end there. A grip at the foot shows where to take it.
 - A length can be typed in hours: `3h`, `3h15` (or `3h 15m`), `45m`, or
   as a clock with hours, `1:02:03`. A number alone is still minutes and
   `4:30` still four and a half.

@@ -309,6 +309,9 @@ enum Message {
     /// A section's bracket was pressed: it is picked, and held and moved
     /// it is carried with all it holds.
     Grab(StepId),
+    /// The foot of a section's bracket was pressed: pulled, it ends the
+    /// section somewhere else.
+    PressFoot(StepId),
     /// A box pulled over the plan picked these steps; none, for a press
     /// where there is nothing, which lets go of whatever was picked.
     Marquee(Vec<StepId>),
@@ -560,6 +563,9 @@ struct App {
     /// A bracket was pressed just now: what is carried is its section,
     /// not the row the pointer is on.
     pub(crate) grabbed: bool,
+    /// The foot of a section's bracket held: the section, and the row it
+    /// would end at if let go now.
+    pub(crate) foot: Option<(StepId, Option<StepId>)>,
     /// What the deck on stage plays or links to that the stage can show,
     /// a list for each of its slides.
     pub(crate) attached: Option<(
@@ -810,6 +816,7 @@ impl App {
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
             grabbed: false,
+            foot: None,
             attached: None,
             left: None,
             config,
@@ -1377,6 +1384,12 @@ impl App {
             }
             Message::Hover(row) => {
                 self.hovered = row;
+                // A bracket's foot pulled over a row: where it would end.
+                if let Some((section, last)) = &mut self.foot
+                    && let Some((over, _)) = row
+                {
+                    *last = foot_end(&self.engine.0.plan(), *section, over);
+                }
                 // A file carried in lands by the last row it was over.
                 let plan = self.engine.0.plan();
                 if let Some(carried) = self.carried.as_mut().filter(|carried| carried.moving)
@@ -1557,6 +1570,30 @@ impl App {
             // A dot let go: where it was pressed it is a click, and the
             // step goes on or waits. Pulled to another step's, a loop is
             // drawn back up to it, or the steps down to it are joined.
+            // A bracket's foot let go: the section ends where it was
+            // pulled to.
+            Message::Pointer(_, false) if self.foot.is_some() => {
+                self.grabbed = false;
+                if let Some((section, Some(last))) = self.foot.take() {
+                    self.remember(None);
+                    match self.engine.0.reach_section(section, Some(last)) {
+                        Ok(()) => self.motion.changed(section),
+                        Err(why) => self.motion.refuse(match why {
+                            lantern_engine::BracketError::HalfOver(_) => {
+                                "It would take in a part of another section"
+                            }
+                            lantern_engine::BracketError::Cuts(_) => {
+                                "It would cut a drawn order in two"
+                            }
+                            lantern_engine::BracketError::TooDeep => {
+                                "Sections go no deeper than that"
+                            }
+                            _ => "It can't end there",
+                        }),
+                    }
+                    return self.preload();
+                }
+            }
             Message::Pointer(_, false) if self.pull.is_some() => {
                 self.grabbed = false;
                 let pull = self.pull.take().expect("checked above");
@@ -1647,7 +1684,7 @@ impl App {
                 // Not from the rail: a dot pressed there is its own thing.
                 // A bracket pressed just now carries its section: that
                 // stays, whichever of the two is heard first.
-                if !std::mem::take(&mut self.grabbed) {
+                if !std::mem::take(&mut self.grabbed) && self.foot.is_none() {
                     self.drag = self
                         .hovered
                         .filter(|_| self.rail_over.is_none() && self.pull.is_none())
@@ -1982,6 +2019,11 @@ impl App {
                 }
             }
             Message::Mods(mods) => self.mods = mods,
+            Message::PressFoot(section) => {
+                self.drag = None;
+                self.grabbed = false;
+                self.foot = Some((section, None));
+            }
             Message::Grab(section) => {
                 if self.can_edit() && self.mode != mode::Mode::Run {
                     self.grabbed = true;
@@ -4040,6 +4082,7 @@ impl App {
         // rail or a pane's edge.
         if self.drag.is_some()
             || self.pull.is_some()
+            || self.foot.is_some()
             || self.resizing.is_some()
             || self.carried.is_some()
             || self.balk.is_some()
@@ -4514,9 +4557,51 @@ fn move_stage(output: &str) {
     }
 }
 
+/// Where the section `section` would end with its bracket's foot pulled
+/// to the row `over`: at that row; or, where the row is in a section that
+/// starts after this one and is not round it, at the end of all of that
+/// section, so that a section is taken in whole. `None` at or above its
+/// own start.
+fn foot_end(plan: &Plan, section: StepId, over: StepId) -> Option<StepId> {
+    let at = plan.position(section)?;
+    let row = plan.position(over)?;
+    if row <= at {
+        return None;
+    }
+    let round = plan.within(at);
+    let whole = plan
+        .within(row)
+        .into_iter()
+        .find(|id| plan.position(*id).is_some_and(|start| start > at) && !round.contains(id));
+    Some(whole.unwrap_or(over))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{reference, typed_into};
+
+    #[test]
+    fn a_brackets_foot_pulled_down_takes_in_a_section_whole() {
+        use super::foot_end;
+        use lantern_engine::{Action, Plan};
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let a = plan.push("A", Action::Blank);
+        let school = plan.section("School", None);
+        let b = plan.push("B", Action::Blank);
+        let c = plan.push("C", Action::Blank);
+        // Over a step of the section after it: all of that section.
+        assert_eq!(foot_end(&plan, music, c), Some(school));
+        assert_eq!(foot_end(&plan, music, b), Some(school));
+        // Over its own step: there.
+        assert_eq!(foot_end(&plan, music, a), Some(a));
+        // At or above its own start: nowhere.
+        assert_eq!(foot_end(&plan, school, a), None);
+        // And the plan agrees: Music now holds School.
+        plan.reach_section(music, foot_end(&plan, music, c))
+            .unwrap();
+        assert!(plan.within(plan.position(c).unwrap()).contains(&music));
+    }
 
     #[test]
     fn the_corner_says_the_verse_the_passage_is_at() {
