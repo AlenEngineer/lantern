@@ -3514,6 +3514,8 @@ impl App {
                     self.search_open = false;
                 }
                 self.editing = None;
+                self.target_typed = None;
+                self.starts_typed = None;
                 self.list_pick = None;
                 self.importing = None;
                 if closing {

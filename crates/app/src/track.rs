@@ -43,6 +43,8 @@ pub enum Key {
     Whole(StepId),
     /// What a fill proposes, with its buttons: not nothing either.
     Fill,
+    /// The head of the plan's bracket: not nothing.
+    Head,
     /// Run's rail: the room for the dot of its `n`th row, and right of
     /// that row for the brackets.
     Road(usize),
@@ -731,7 +733,8 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                         .get(&Key::Whole(*id))
                         .is_some_and(|row| row.contains(at))
                 }) || (self.picture.filling
-                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)));
+                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)))
+                    || places.get(&Key::Head).is_some_and(|head| head.contains(at));
                 if !on_a_row {
                     state.band = Some((at, at, false));
                     state.banded.clear();

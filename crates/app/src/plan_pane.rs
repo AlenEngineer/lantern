@@ -190,6 +190,54 @@ fn plan_lines(
     lines
 }
 
+impl App {
+    /// The head of the plan's bracket, over its rows: its name, goal,
+    /// what it takes, and when it starts. Pressed, its card opens; a
+    /// right click opens its ring.
+    fn plan_head(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
+        let sums = self.plan_sums(plan);
+        let mut line = row![
+            Space::new().width(Fill),
+            text(plan.title.clone())
+                .size(META)
+                .font(BOLD)
+                .color(p.primary)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        for (sign, words, over) in plan_lines(plan.target, plan.starts, sums.filled, sums.open) {
+            let ink = match (sign, over) {
+                (_, true) => p.error,
+                (track::Sign::Sum, false) => p.on_surface,
+                _ => p.on_surface_variant,
+            };
+            let mark = match sign {
+                track::Sign::Goal => "◎",
+                track::Sign::Sum => "Σ",
+                track::Sign::Start => "▷",
+                track::Sign::Clock => "",
+            };
+            line = line.push(text(format!("{mark} {words}")).size(META).color(ink));
+        }
+        let line = track::seen(
+            track::Key::Head,
+            &self.places,
+            container(line).padding([2, 8]),
+        );
+        mouse_area(line)
+            .on_press(Message::PickPlan)
+            .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(None),
+            )))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    }
+}
+
+/// How wide the plan's goal is on its card, pressed or typed.
+const GOAL_WIDE: f32 = 54.0;
+
 /// How tall the foot of a bracket is, to be pulled.
 const FOOT: f32 = 16.0;
 
@@ -869,9 +917,12 @@ impl App {
             loop_lanes,
             order_lanes,
         };
-        // While planning, what the plan takes is beside its bracket.
+        // While planning, what the plan takes heads its bracket.
         if running {
             rows = rows.push(plans_own(self.run_time_row(plan, timing), can));
+        }
+        if plan_lane.is_some() && !(running && !can) {
+            rows = rows.push(self.plan_head(plan));
         }
         // A service locked is watched, not changed: its rail is the road
         // it takes.
@@ -1764,7 +1815,9 @@ impl App {
                     })
                     .collect(),
                 strong: plan_carded,
-                bare: plan_carded || (lane > 0 && beside.is_none() && !side.wide),
+                // Its words are at its head, over the rows: there is
+                // room there in the narrowest pane.
+                bare: true,
                 place: false,
                 marks: Vec::new(),
                 bulge: 0.0,
@@ -2538,13 +2591,24 @@ impl App {
         // or typed.
         let goal: Element<'_, Message> = match &self.target_typed {
             Some(typed) => field("45", TARGET_BOX, typed)
+                .width(GOAL_WIDE)
                 .on_input(Message::PlanTarget)
                 .on_submit(Message::TargetDone)
                 .into(),
-            None => pressed(
-                plan.target.map_or("—".to_string(), length::clock),
-                Message::EditTarget,
-            ),
+            // As wide as the field, and the same whatever it says, so the
+            // + beside it stays where it was pressed.
+            None => button(
+                text(plan.target.map_or("—".to_string(), length::clock))
+                    .size(META)
+                    .font(BOLD)
+                    .color(p.on_surface)
+                    .center(),
+            )
+            .width(GOAL_WIDE)
+            .padding([2, 0])
+            .on_press_maybe(can.then_some(Message::EditTarget))
+            .style(look::pill(p, Tone::Plain))
+            .into(),
         };
         let goal = row![
             look::icon(Icon::Target, 12.0, quiet),
