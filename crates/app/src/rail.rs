@@ -99,6 +99,8 @@ const PETAL: f32 = 34.0;
 const PILL: f32 = 30.0;
 const CARD: f32 = 6.0;
 /// How wide the card is that says how a step fades.
+/// How wide a section's card is under its ring.
+const CARD_WIDE: f32 = 170.0;
 const FADES: f32 = 300.0;
 
 impl App {
@@ -576,6 +578,47 @@ impl App {
                 ));
             }
         }
+        // A section's ring has its card under it: its name, its times,
+        // what it takes. Its fill is a button of the ring, while planning.
+        if let RingOn::All(Some(id)) = ring.on
+            && let Some(step) = plan.get(id)
+        {
+            let timing = self.timing();
+            let section = timing.sections.iter().find(|section| section.id == id);
+            let card = container(self.section_card(p, &plan, step, section))
+                .padding([8, 12])
+                .width(CARD_WIDE)
+                .style(move |_| container::Style {
+                    background: Some(p.surface_container.into()),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        ..iced::Border::default()
+                    },
+                    shadow: iced::Shadow {
+                        color: iced::Color::BLACK.scale_alpha(0.45),
+                        offset: iced::Vector::new(0.0, 2.0),
+                        blur_radius: 8.0,
+                    },
+                    ..container::Style::default()
+                });
+            layers.push(
+                pin(card)
+                    .x((middle.x - CARD_WIDE / 2.0).max(8.0))
+                    .y(middle.y + 48.0 + PETAL / 2.0 + 6.0)
+                    .into(),
+            );
+            if self.mode == crate::mode::Mode::Plan {
+                petals.push(petal(
+                    100.0,
+                    48.0,
+                    PETAL,
+                    false,
+                    glyph(Icon::Fill, false),
+                    "Fill it from the library",
+                    Some(Message::Fill(crate::fill_panel::FillEdit::Open(id))),
+                ));
+            }
+        }
         // A step's ring and a section's have, on the left, what is done
         // to it: renamed, copied, taken away. Its note is between.
         if let RingOn::Dot(id) | RingOn::All(Some(id)) = ring.on {
@@ -585,7 +628,7 @@ impl App {
                     -90.0,
                     Icon::Pencil,
                     match section {
-                        true => "Rename it, set its time",
+                        true => "Rename it",
                         false => "Rename it, set its length",
                     },
                     crate::keys::Op::Rename,
@@ -609,6 +652,14 @@ impl App {
                     crate::keys::Op::RemoveStep,
                 ),
             ] {
+                // A section is renamed in its card, under the ring, so
+                // the ring stays.
+                let does = match (section, op) {
+                    (true, crate::keys::Op::Rename) => {
+                        Message::EditStep(Some((id, crate::plan_edit::Part::Name)))
+                    }
+                    _ => Message::Rail(Act::Do(id, op)),
+                };
                 petals.push(petal(
                     angle,
                     48.0,
@@ -616,7 +667,7 @@ impl App {
                     false,
                     glyph(icon, false),
                     words,
-                    Some(Message::Rail(Act::Do(id, op))),
+                    Some(does),
                 ));
             }
         }

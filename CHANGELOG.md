@@ -540,6 +540,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The old heading row is gone. A section that holds only folded
   sections is a bracket round their rows too, and a loop over it runs
   beside the folded rows instead of disappearing.
+- A section's card is its ring now: a right click on its bracket opens
+  the ring with the card under it, its name (renamed there), the time it
+  is given, the time of day it should be over by, and what it takes.
+  Fill is a button of the ring. Picking a bracket no longer opens a card
+  over the steps, and its name and times stay written.
 - A step cut off at a time of day starts fading early, so it is silent
   when the time comes, and a picture that goes on by itself fades out
   within its own time: a fade never adds time.
