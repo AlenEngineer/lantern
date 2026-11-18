@@ -487,6 +487,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - A right click on a step's row, or on a section's bracket, opens its
   ring with what is done to it on the left: rename it, a copy of it, a
   note, take it away. How it flows stays on the right.
+- In a service, the plan's rail is the road the service takes. What was
+  played, what is on, then what comes in the order it will come: a
+  loop's next round is rows of its own, marked "2nd". Between what is on
+  and what is next, a tube fills as it nears. A folded section is one
+  row with the step of it that is on, and its tube fills with the whole
+  section. Unlocked, the rail is the plan again, to change it.
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.
