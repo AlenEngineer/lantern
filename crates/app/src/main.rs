@@ -2215,9 +2215,12 @@ impl App {
                 return self.update(Message::Click(Clicked::Step(section)));
             }
             Message::Marquee(steps) => {
-                // A press on nothing closes the note that is open.
+                // A press on nothing closes what is open: the note, the
+                // kinds of step to add, and the fill.
                 if steps.is_empty() {
                     self.close_note();
+                    self.adding = None;
+                    self.filling = None;
                 }
                 self.line_picked = None;
                 self.editing = None;

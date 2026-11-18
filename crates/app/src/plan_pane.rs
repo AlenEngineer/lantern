@@ -129,7 +129,7 @@ const FOOT: f32 = 16.0;
 
 /// How wide the card of a picked section is: a little more than the
 /// room its name had.
-const CARD: f32 = track::LABEL + 46.0;
+const CARD: f32 = track::LABEL + 30.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -1726,7 +1726,7 @@ impl App {
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 let card = container(self.section_card(plan, step, section))
                     .width(wide)
-                    .padding(8)
+                    .padding([8, 6])
                     .style(look::card(p, 0.0, 12.0));
                 Some(
                     iced::widget::pin(card)
