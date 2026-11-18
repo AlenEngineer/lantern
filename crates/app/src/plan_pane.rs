@@ -3740,6 +3740,51 @@ pub(crate) fn section_status(section: &SectionTiming) -> (String, Tone) {
     (text, pace_tone(pace))
 }
 
+/// What the top bar holds the service against: the innermost section
+/// under way that has a goal, else the plan's.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Goal {
+    pub(crate) name: String,
+    pub(crate) so_far: Duration,
+    pub(crate) goal: Duration,
+    pub(crate) tone: Tone,
+}
+
+/// The goal of where the service is. `plan` is the plan's name, its
+/// goal, how long it has run, and how long it is expected to take.
+pub(crate) fn goal_of(
+    timing: &Timing,
+    plan: Option<(&str, Duration, Duration, Duration)>,
+) -> Option<Goal> {
+    // Sections come outermost first: the last under way is the
+    // innermost.
+    let section = timing
+        .sections
+        .iter()
+        .rev()
+        .find_map(|section| match section.phase {
+            Phase::Running { elapsed, expected } => {
+                let goal = section.budget.filter(|goal| !goal.is_zero())?;
+                Some(Goal {
+                    name: section.title.clone(),
+                    so_far: elapsed,
+                    goal,
+                    tone: pace_tone(Pace::of(expected, goal)),
+                })
+            }
+            _ => None,
+        });
+    section.or_else(|| {
+        let (name, goal, so_far, expected) = plan.filter(|(_, goal, ..)| !goal.is_zero())?;
+        Some(Goal {
+            name: name.to_string(),
+            so_far,
+            goal,
+            tone: pace_tone(Pace::of(expected, goal)),
+        })
+    })
+}
+
 /// How long `step` fades in and out, each a second less or more with −
 /// and +.
 pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
@@ -4137,6 +4182,56 @@ mod tests {
             done_by: None,
             ends: None,
         }
+    }
+
+    #[test]
+    fn the_goal_is_the_innermost_section_s_else_the_plan_s() {
+        let goal = |budget: Option<Duration>, phase: Phase, title: &str| SectionTiming {
+            title: title.to_string(),
+            budget,
+            phase,
+            ..section(budget, phase)
+        };
+        let running = |elapsed: Duration| Phase::Running {
+            elapsed,
+            expected: elapsed,
+        };
+        let timing = Timing {
+            sections: vec![
+                goal(Some(45 * MIN), running(20 * MIN), "Culto"),
+                goal(Some(15 * MIN), running(8 * MIN), "Alabanza"),
+            ],
+            end: None,
+        };
+        let plan = Some(("Sábado", 180 * MIN, 30 * MIN, 170 * MIN));
+        assert_eq!(goal_of(&timing, plan).unwrap().name, "Alabanza");
+        let timing = Timing {
+            sections: vec![
+                goal(Some(45 * MIN), running(20 * MIN), "Culto"),
+                goal(None, running(8 * MIN), "Alabanza"),
+            ],
+            end: None,
+        };
+        assert_eq!(
+            goal_of(&timing, plan).unwrap().name,
+            "Culto",
+            "the one with a goal"
+        );
+        let timing = Timing {
+            sections: vec![goal(None, running(8 * MIN), "Alabanza")],
+            end: None,
+        };
+        let plan_goal = goal_of(&timing, plan).unwrap();
+        assert_eq!(
+            (plan_goal.name.as_str(), plan_goal.so_far),
+            ("Sábado", 30 * MIN)
+        );
+        assert_eq!(goal_of(&timing, None), None);
+        let over = Timing {
+            sections: vec![goal(Some(15 * MIN), running(16 * MIN), "Alabanza")],
+            end: None,
+        };
+        assert_eq!(goal_of(&over, None).unwrap().tone, Tone::Danger);
     }
 
     #[test]

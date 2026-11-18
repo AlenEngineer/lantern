@@ -496,6 +496,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The + under the plan adds a section, and only that. Live and Black
   screen are always first in the library; pressed, one is added after
   the selected step. A note is made from a step's ring, not as a step.
+- In a service, the top bar holds it against the goal of where it is:
+  the innermost section under way that has a time, else the plan's.
+  Its name, how long so far against the goal, and a thin bar under
+  them, red once over.
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.

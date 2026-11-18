@@ -633,20 +633,80 @@ impl App {
                 .wrapping(text::Wrapping::None)
                 .width(wide)
         };
-        match (timing.running(), timing.end) {
-            (Some(section), end) => {
-                let (status, tone) = section_status(section);
-                strip = strip.push(
-                    container(
-                        text(status.clone())
+        // The goal of where the service is: the innermost section with
+        // one, else the plan's; how far it has gone against it.
+        let goal = self.engine.0.started().and_then(|started| {
+            let so_far = SystemTime::now()
+                .duration_since(started)
+                .unwrap_or_default();
+            let expected = so_far + timing.end.map_or(Duration::ZERO, ends_in);
+            self.engine.0.edit_plan(|plan| {
+                let plan = plan
+                    .target
+                    .map(|target| (plan.title.as_str(), target, so_far, expected));
+                crate::plan_pane::goal_of(timing, plan)
+            })
+        });
+        let goal_chip = |goal: crate::plan_pane::Goal| {
+            let against = format!(
+                "{} / {}",
+                length::clock(goal.so_far),
+                length::clock(goal.goal)
+            );
+            let done = (goal.so_far.as_secs_f32() / goal.goal.as_secs_f32().max(1.0)).min(1.0);
+            let ink = goal.tone.text(p);
+            let filled = (done * 1000.0) as u16;
+            let bar = row![
+                container(Space::new().height(2))
+                    .width(Length::FillPortion(filled.max(1)))
+                    .style(move |_| container::Style::default().background(ink)),
+                container(Space::new().height(2))
+                    .width(Length::FillPortion((1000 - filled).max(1)))
+                    .style(move |_| {
+                        container::Style::default()
+                            .background(crate::palette::Palette::tint(ink, 0.25))
+                    }),
+            ];
+            container(
+                column![
+                    row![
+                        text(goal.name.clone())
+                            .size(META)
+                            .font(BOLD)
+                            .wrapping(text::Wrapping::None),
+                        Space::new().width(10),
+                        text(against.clone())
                             .size(META)
                             .font(BOLD)
                             .wrapping(text::Wrapping::None)
-                            .width(crate::widgets::steady(&status, META)),
-                    )
-                    .padding([3, 10])
-                    .style(look::chip(p, tone)),
-                );
+                            .width(crate::widgets::steady(&against, META)),
+                    ]
+                    .align_y(Alignment::Center),
+                    bar,
+                ]
+                .spacing(2)
+                .width(Length::Shrink),
+            )
+            .padding([2, 10])
+            .style(look::chip(p, goal.tone))
+        };
+        match (timing.running(), timing.end) {
+            (Some(section), end) => {
+                strip = strip.push(match goal.clone() {
+                    Some(goal) => goal_chip(goal),
+                    None => {
+                        let (status, tone) = section_status(section);
+                        container(
+                            text(status.clone())
+                                .size(META)
+                                .font(BOLD)
+                                .wrapping(text::Wrapping::None)
+                                .width(crate::widgets::steady(&status, META)),
+                        )
+                        .padding([3, 10])
+                        .style(look::chip(p, tone))
+                    }
+                });
                 if let Some(drift) = &drift {
                     strip = strip.push(container(said(drift.clone())).padding([0, 10]));
                 } else if let Some(end) = end {
@@ -661,6 +721,9 @@ impl App {
             }
             // Under way outside any section.
             (None, Some(_)) => {
+                if let Some(goal) = goal.clone() {
+                    strip = strip.push(goal_chip(goal));
+                }
                 if let Some(drift) = &drift {
                     strip = strip.push(container(said(drift.clone())).padding([0, 10]));
                 }
