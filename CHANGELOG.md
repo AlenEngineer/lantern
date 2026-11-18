@@ -474,6 +474,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Folding a section closes its rows up into its one row, and opening it
+  grows them out again, with no old heading row showing on the way.
 - A folded section, or one that is over in a service, stays a bracket one
   row tall: its steps gathered into a stacked dot with how many there are,
   beside it its name and, when over, how long it took against its time
