@@ -2190,7 +2190,7 @@ impl App {
         Some(
             container(
                 container(fade_steppers(p, step))
-                    .padding([4, 8])
+                    .padding([4, 5])
                     .style(look::card(p, 0.0, 10.0)),
             )
             .padding(iced::Padding::default().top(6.0))
@@ -2546,9 +2546,6 @@ impl App {
             // of it: its end has the length to click.
             label = label.push(single_line(said.clone()).size(META).color(said_color));
         }
-        if selected && let Some(card) = self.fade_card(step) {
-            label = label.push(card);
-        }
         // What can be done to the selected row comes up at its end while
         // the pointer is on it, in the length's place: at rest it is one
         // line like the others.
@@ -2612,6 +2609,11 @@ impl App {
         let fill = match self.motion.flash(step.id) {
             Some(faded) => crate::motion::blend(Palette::tint(p.primary, 0.5), fill, faded),
             None => fill,
+        };
+        // Picked, how it fades, under all of its line.
+        let line: Element<'_, Message> = match self.fade_card(step).filter(|_| selected) {
+            Some(card) => column![line, card].into(),
+            None => line.into(),
         };
         let row = button(line)
             .width(Fill)
@@ -4198,12 +4200,14 @@ pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message>
             .on_press_maybe(does)
             .style(look::pill(p, Tone::Plain))
     };
+    // Its ramp says which end it is, as on the row: up in, down out.
     let one = move |name: &'static str, end: FadeEnd, now: Option<FadeTime>| {
         let shown = now.map_or("—".to_string(), |time| format!("{} s", time.secs()));
+        let ramp = look::ramp(end == FadeEnd::In, end == FadeEnd::Out, 10.0, p.primary);
         row![
-            text(name).size(META).color(p.on_surface_variant),
+            hinted(p, ramp, name.to_string(), tooltip::Position::Left),
             small("−", now.map(|_| Message::SetFade(id, end, -1))),
-            container(text(shown).size(META).font(BOLD).color(p.on_surface)).center_x(34),
+            container(text(shown).size(META).font(BOLD).color(p.on_surface)).center_x(28),
             small(
                 "+",
                 (now != Some(FadeTime::LONGEST)).then_some(Message::SetFade(id, end, 1))
@@ -4212,12 +4216,11 @@ pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message>
         .spacing(3)
         .align_y(Alignment::Center)
     };
-    row![
+    column![
         one("Fades in", FadeEnd::In, step.fade.fade_in),
         one("Fades out", FadeEnd::Out, step.fade.fade_out),
     ]
-    .spacing(14)
-    .align_y(Alignment::Center)
+    .spacing(4)
     .into()
 }
 
