@@ -106,8 +106,10 @@ fn does(message: &Message) -> Does {
         | M::EditStep(Some((id, _))) => Does::EditsStep(*id),
         M::AddStep(_)
         | M::Unstandby(_)
+        | M::EditStarts
         | M::PlanStarts(_)
         | M::PlanTarget(_)
+        | M::PlanGoal(_)
         | M::Fill(crate::fill_panel::FillEdit::Accept)
         | M::Rail(
             crate::rail::Act::Unloop(FlowOf::Plan | FlowOf::Span(_))
@@ -115,8 +117,7 @@ fn does(message: &Message) -> Does {
             | crate::rail::Act::Ends(FlowOf::Plan | FlowOf::Span(_), _),
         )
         | M::PlanPanel(
-            crate::plan_panel::PlanEdit::Target(_)
-            | crate::plan_panel::PlanEdit::Folder(..)
+            crate::plan_panel::PlanEdit::Folder(..)
             | crate::plan_panel::PlanEdit::Done
             | crate::plan_panel::PlanEdit::AddFolder
             | crate::plan_panel::PlanEdit::RemoveFolder(_)
@@ -131,8 +132,7 @@ fn does(message: &Message) -> Does {
         | M::NoteFor(_)
         | M::NoteEdit(_)
         | M::NoteGone(_) => Does::EditsPlan,
-        M::RenamePlan(_)
-        | M::PlanTemplate(_)
+        M::PlanTemplate(_)
         | M::DuplicatePlan
         | M::DeletePlan
         | M::ToggleImport

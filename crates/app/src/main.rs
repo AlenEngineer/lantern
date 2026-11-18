@@ -330,6 +330,11 @@ enum Message {
     NoteGone(lantern_engine::NoteId),
     /// A section's time made longer or shorter by so many seconds.
     SectionGoal(StepId, i64),
+    /// The plan's bracket was pressed: the plan is picked, and its card
+    /// shows what it is set to.
+    PickPlan,
+    /// The plan's target made longer or shorter by so many seconds.
+    PlanGoal(i64),
     /// How long a step fades in, or out, made longer or shorter by so
     /// many seconds.
     SetFade(StepId, FadeEnd, i64),
@@ -411,12 +416,14 @@ enum Message {
     SoundFrom(StepId, String),
     /// Open the settings on this plan: its name, look, template, copy, delete.
     PlanSettings,
-    /// The plan's name, as typed in its settings.
-    RenamePlan(String),
     /// Makes the open plan a template, or a plan again.
     PlanTemplate(bool),
-    /// When the open plan's service starts, as typed in its settings.
+    /// The plan's start time is to be typed.
+    EditStarts,
+    /// When the open plan's service starts, as typed.
     PlanStarts(String),
+    /// The start time is typed.
+    StartsDone,
     /// Saves the open plan as a copy with its own file, and opens the copy.
     DuplicatePlan,
     /// Writes the open plan and its media to one file to take along.
@@ -594,6 +601,8 @@ struct App {
     /// The loop or drawn order whose line was pressed last: Delete takes
     /// it away, its steps staying.
     pub(crate) line_picked: Option<lantern_engine::SpanId>,
+    /// The plan's own bracket was pressed last: its card is open.
+    pub(crate) plan_picked: bool,
     /// The keys held that change what a press does.
     pub(crate) mods: iced::keyboard::Modifiers,
     /// The steps that were not let go where they were carried, and the
@@ -697,8 +706,8 @@ struct App {
     /// "Import a plan" is open in the list of plans: the path typed, and
     /// the exported plans found lying about.
     pub(crate) importing: Option<(String, Vec<PathBuf>)>,
-    /// The plan's start time while it's being typed and doesn't read as
-    /// one yet ("10:").
+    /// The plan's start time as typed, while its field is open: it may
+    /// not read as one yet ("10:").
     pub(crate) starts_typed: Option<String>,
     /// The plan's target time as typed, while its field is open.
     pub(crate) target_typed: Option<String>,
@@ -711,8 +720,9 @@ struct App {
     pub(crate) filling: Option<fill_panel::Filling>,
     /// The open plan's own settings are on show, in the side panel's place.
     pub(crate) plan_panel: bool,
-    /// What is typed there and isn't in the plan yet.
-    pub(crate) plan_typed: Option<(plan_panel::Typing, String)>,
+    /// The folder typed there that isn't in the plan yet: which of its
+    /// folders, and as typed.
+    pub(crate) plan_typed: Option<(usize, String)>,
     pub(crate) lens: side::Lens,
     /// A look value as typed so far: whose, which, and the text.
     pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
@@ -867,6 +877,7 @@ impl App {
             done_typed: None,
             edits: 0,
             line_picked: None,
+            plan_picked: false,
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
@@ -1119,6 +1130,10 @@ impl App {
             }
             None => self.handle(message),
         };
+        // Whatever else is picked, the plan is not.
+        if self.selected.is_some() || !self.picked.is_empty() || self.line_picked.is_some() {
+            self.plan_picked = false;
+        }
         // An edit that put a section over its time shows it tipping.
         if self.edits != edits
             && let Some(before) = self.undo.last()
@@ -1665,6 +1680,7 @@ impl App {
             }
             Message::Rail(rail::Act::RingClose) => {
                 self.ring = None;
+                self.deleting_plan = false;
                 self.repeat_until.clear();
             }
             Message::Rail(rail::Act::Do(id, op)) => {
@@ -2299,6 +2315,21 @@ impl App {
                         .edit_plan(|plan| plan.set_note_text(id, words));
                 }
             }
+            Message::PickPlan => {
+                self.selected = None;
+                self.picked.clear();
+                self.line_picked = None;
+                self.editing = None;
+                self.look_typed = None;
+                self.engine.0.clear_preview();
+                self.plan_picked = true;
+            }
+            Message::PlanGoal(by) => {
+                self.remember(None);
+                self.engine
+                    .0
+                    .edit_plan(|plan| plan.target = length::stepped(plan.target, by));
+            }
             Message::SectionGoal(id, by) => {
                 // One undo for a run of presses on the same section.
                 self.remember(Some(id));
@@ -2308,9 +2339,7 @@ impl App {
                         ..
                     }) = plan.get_mut(id)
                     {
-                        let now = budget.unwrap_or_default().as_secs() as i64;
-                        let to = (now + by).max(0) as u64;
-                        *budget = (to > 0).then(|| Duration::from_secs(to));
+                        *budget = length::stepped(*budget, by);
                     }
                 });
             }
@@ -2387,6 +2416,7 @@ impl App {
                 }
                 self.line_picked = None;
                 self.editing = None;
+                self.plan_picked = false;
                 self.selected = steps.first().copied();
                 self.picked = match steps.len() {
                     0 | 1 => Vec::new(),
@@ -2560,14 +2590,19 @@ impl App {
                 })
             }
             Message::PlanSettings => {
+                self.ring = None;
                 return self.plan_edit(plan_panel::PlanEdit::Toggle);
-            }
-            Message::RenamePlan(name) => {
-                self.engine.0.edit_plan(|plan| plan.title = name);
             }
             Message::PlanTemplate(template) => {
                 self.engine.0.edit_plan(|plan| plan.template = template);
             }
+            Message::EditStarts => {
+                let starts = self.engine.0.plan().starts;
+                self.starts_typed =
+                    Some(starts.map(|starts| starts.to_string()).unwrap_or_default());
+                return operation::focus(plan_pane::STARTS_BOX);
+            }
+            Message::StartsDone => self.starts_typed = None,
             Message::PlanStarts(text) => {
                 // Only what a time is made of; kept as typed until it
                 // reads as one. Emptied, the plan has no start time.
@@ -2580,6 +2615,7 @@ impl App {
                 }
             }
             Message::DuplicatePlan => {
+                self.ring = None;
                 self.deleting_plan = false;
                 if self.plans.duplicate(&self.engine.0) {
                     self.settings = None;
@@ -2705,6 +2741,7 @@ impl App {
             }
             Message::DeletePlan if !self.deleting_plan => self.deleting_plan = true,
             Message::DeletePlan => {
+                self.ring = None;
                 self.deleting_plan = false;
                 if self.plans.delete(&self.engine.0) {
                     self.settings = None;
@@ -2829,6 +2866,7 @@ impl App {
             Message::LookReset(field) => self.look_reset(field),
             Message::Unselect => {
                 self.selected = None;
+                self.plan_picked = false;
                 self.look_typed = None;
                 self.engine.0.clear_preview();
             }
@@ -2963,7 +3001,13 @@ impl App {
                 self.plans.cancel();
                 return operation::focus(SEARCH_BOX);
             }
+            // The name is typed in the plan's card.
             Message::EditPlanName => {
+                self.ring = None;
+                self.selected = None;
+                self.picked.clear();
+                self.line_picked = None;
+                self.plan_picked = true;
                 self.plans.edit_name(&self.engine.0);
                 return Task::batch([operation::focus(NAME_BOX), operation::select_all(NAME_BOX)]);
             }
@@ -3470,6 +3514,8 @@ impl App {
                     self.search_open = false;
                 }
                 self.editing = None;
+                self.target_typed = None;
+                self.starts_typed = None;
                 self.list_pick = None;
                 self.importing = None;
                 if closing {

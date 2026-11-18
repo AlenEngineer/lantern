@@ -491,6 +491,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   equal shares for the rest), over every round it comes. Skipping on
   moves it a step at a time.
 
+- A plan is a bracket: the outermost one, round all its steps, with its
+  name, its goal, its start and what it comes to beside it. Pressed, its
+  card sets its name, goal and start; a right click opens its ring, with
+  rename, a copy, delete and the rest of its settings on the left. The
+  time row over the plan is gone, and the plan's panel keeps only its
+  template, media, Bibles, look, export, copy and delete.
 - A right click on a step's row, or on a section's bracket, opens its
   ring with what is done to it on the left: rename it, a copy of it, a
   note, take it away. How it flows stays on the right.

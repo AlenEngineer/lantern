@@ -43,6 +43,8 @@ pub enum Key {
     Whole(StepId),
     /// What a fill proposes, with its buttons: not nothing either.
     Fill,
+    /// The head of the plan's bracket: not nothing.
+    Head,
     /// Run's rail: the room for the dot of its `n`th row, and right of
     /// that row for the brackets.
     Road(usize),
@@ -329,14 +331,17 @@ pub enum Sign {
     Sum,
     /// A time of day.
     Clock,
+    /// The time of day it starts.
+    Start,
 }
 
 /// A section: a bracket to the right of the steps it holds, from the
 /// first of them in sight to the last, with its name and its times
-/// beside it.
+/// beside it. The plan is one too, round all of them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bracket {
-    pub id: StepId,
+    /// The section's heading; `None` for the plan's own, which has none.
+    pub id: Option<StepId>,
     /// How far out it bulges, 0 to 1: it just took in what put it over
     /// its time.
     pub bulge: f32,
@@ -494,7 +499,7 @@ enum Thing {
     Line(StepId),
     Loop(StepId, StepId),
     Order(StepId, StepId),
-    Bracket(StepId),
+    Bracket(Option<StepId>),
 }
 
 /// What is under way.
@@ -514,7 +519,7 @@ struct Moves {
     /// The dot under the pointer.
     over: Option<StepId>,
     /// Where each bracket is shown, on its way to where it should be.
-    boxes: HashMap<StepId, (f32, f32, f32)>,
+    boxes: HashMap<Option<StepId>, (f32, f32, f32)>,
 }
 
 /// How far the step that is playing has come, if one is.
@@ -657,7 +662,7 @@ type Shown = (
     Vec<(Thing, f32)>,
     Option<StepId>,
     Option<Rectangle>,
-    Vec<(StepId, i32, i32, i32)>,
+    Vec<(Option<StepId>, i32, i32, i32)>,
 );
 
 #[derive(Default)]
@@ -728,7 +733,8 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                         .get(&Key::Whole(*id))
                         .is_some_and(|row| row.contains(at))
                 }) || (self.picture.filling
-                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)));
+                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)))
+                    || places.get(&Key::Head).is_some_and(|head| head.contains(at));
                 if !on_a_row {
                     state.band = Some((at, at, false));
                     state.banded.clear();
@@ -832,7 +838,7 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
             moves.over,
             band,
             {
-                let mut boxes: Vec<(StepId, i32, i32, i32)> = moves
+                let mut boxes: Vec<(Option<StepId>, i32, i32, i32)> = moves
                     .boxes
                     .iter()
                     .map(|(id, (x, top, foot))| (*id, *x as i32, *top as i32, *foot as i32))
@@ -1206,6 +1212,15 @@ fn paint(
                         path.line_to(Point::new(c.x + 3.5, c.y + 4.0));
                     }),
                     stroke,
+                ),
+                Sign::Start => frame.fill(
+                    &Path::new(|path| {
+                        path.move_to(Point::new(c.x - 3.0, c.y - 4.0));
+                        path.line_to(Point::new(c.x + 4.0, c.y));
+                        path.line_to(Point::new(c.x - 3.0, c.y + 4.0));
+                        path.close();
+                    }),
+                    ink,
                 ),
             }
             frame.fill_text(canvas::Text {

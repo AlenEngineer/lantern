@@ -38,6 +38,8 @@ pub(crate) const INDENT: f32 = 12.0;
 
 /// The field the plan's target time is typed in.
 pub(crate) const TARGET_BOX: &str = "plan-target";
+/// The field the plan's start time is typed in.
+pub(crate) const STARTS_BOX: &str = "plan-starts";
 
 /// The rail beside the steps: how wide its column is, its dots, its
 /// line, and how far down a row its dot sits, level with the step's name.
@@ -123,7 +125,118 @@ struct Side<'a> {
     /// How much wider the innermost brackets' room is while a picked
     /// section's card is in it.
     more: f32,
+    /// The lane of the plan's own bracket, round all of its steps,
+    /// where there is one: the outermost.
+    plan: Option<u8>,
 }
+
+impl Side<'_> {
+    /// How wide all of it is.
+    fn room(&self) -> f32 {
+        track::side_room(self.lanes, self.wide) + self.more
+    }
+
+    /// How wide the plan's part of it is, from its brace to the right.
+    fn plans_room(&self) -> Option<f32> {
+        let lane = self.plan?;
+        let more = match lane {
+            0 => 0.0,
+            _ => self.more,
+        };
+        Some(self.room() - track::brace_at(lane) - more)
+    }
+}
+
+/// What a part of the room beside the steps is the bracket of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Held {
+    Section(StepId),
+    Plan,
+}
+
+/// What a plan takes: see [`App::plan_sums`].
+struct PlanSums {
+    filled: Duration,
+    total: Duration,
+    open: bool,
+}
+
+/// What is written beside the plan's bracket, after its name, in the
+/// order a section's are: the time it is meant to take, what its steps
+/// come to (at least that, where something comes again with no end) and
+/// whether that is over it, and the time of day it starts.
+fn plan_lines(
+    target: Option<Duration>,
+    starts: Option<lantern_engine::TimeOfDay>,
+    filled: Duration,
+    open: bool,
+) -> Vec<(track::Sign, String, bool)> {
+    let mut lines = Vec::new();
+    if let Some(target) = target {
+        lines.push((track::Sign::Goal, length::clock(target), false));
+    }
+    let sum = match open {
+        true => format!("{}+", length::clock(filled)),
+        false => length::clock(filled),
+    };
+    lines.push((
+        track::Sign::Sum,
+        sum,
+        target.is_some_and(|target| filled > target),
+    ));
+    if let Some(starts) = starts {
+        lines.push((track::Sign::Start, starts.to_string(), false));
+    }
+    lines
+}
+
+impl App {
+    /// The head of the plan's bracket, over its rows: its name, goal,
+    /// what it takes, and when it starts. Pressed, its card opens; a
+    /// right click opens its ring.
+    fn plan_head(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
+        let sums = self.plan_sums(plan);
+        let mut line = row![
+            Space::new().width(Fill),
+            text(plan.title.clone())
+                .size(META)
+                .font(BOLD)
+                .color(p.primary)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        for (sign, words, over) in plan_lines(plan.target, plan.starts, sums.filled, sums.open) {
+            let ink = match (sign, over) {
+                (_, true) => p.error,
+                (track::Sign::Sum, false) => p.on_surface,
+                _ => p.on_surface_variant,
+            };
+            let mark = match sign {
+                track::Sign::Goal => "◎",
+                track::Sign::Sum => "Σ",
+                track::Sign::Start => "▷",
+                track::Sign::Clock => "",
+            };
+            line = line.push(text(format!("{mark} {words}")).size(META).color(ink));
+        }
+        let line = track::seen(
+            track::Key::Head,
+            &self.places,
+            container(line).padding([2, 8]),
+        );
+        mouse_area(line)
+            .on_press(Message::PickPlan)
+            .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(None),
+            )))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    }
+}
+
+/// How wide the plan's goal is on its card, pressed or typed.
+const GOAL_WIDE: f32 = 54.0;
 
 /// How tall the foot of a bracket is, to be pulled.
 const FOOT: f32 = 16.0;
@@ -320,48 +433,38 @@ impl App {
             tooltip::Position::Bottom,
         )
         .delay(look::TIP_DELAY);
-        let name: Element<'_, Message> = match &self.plans.mode {
-            plans::Mode::Renaming(draft) => text_input("Plan name", draft)
-                .id(NAME_BOX)
-                .on_input(Message::PlanName)
-                .on_submit(Message::SubmitPlanName)
-                .size(BODY)
-                .padding([6, 10])
-                .style(look::input(p))
-                .into(),
-            // A long name is cut at its edge, not drawn over the count.
-            // It opens the plan's own settings, and is lit while they
-            // are open; in a run it is only a name.
-            _ => {
-                let open = self.plan_panel;
-                let name = container(
-                    single_line(plan.title.clone())
-                        .size(HEADING)
-                        .font(BOLD)
-                        .color(p.primary),
-                )
-                .clip(true);
-                let running = self.mode == crate::mode::Mode::Run;
-                let mut inside = row![name].spacing(8).align_y(Alignment::Center);
-                if !running {
-                    inside = inside.push(look::icon(Icon::Tune, 14.0, p.primary));
-                }
-                tooltip(
-                    button(inside)
-                        .padding([4, 10])
-                        .on_press_maybe((!running).then_some(Message::PlanSettings))
-                        .style(look::pill(
-                            p,
-                            if open { Tone::Selected } else { Tone::Plain },
-                        )),
-                    container(text("This plan: name, time, media, look, copy, delete").size(META))
-                        .padding([4, 8])
-                        .style(look::tip(p)),
-                    tooltip::Position::Bottom,
-                )
-                .delay(look::TIP_DELAY)
-                .into()
+        // A long name is cut at its edge, not drawn over the count. It
+        // opens the plan's own settings, and is lit while they are open;
+        // in a run it is only a name. It is renamed in the plan's card.
+        let name: Element<'_, Message> = {
+            let open = self.plan_panel;
+            let name = container(
+                single_line(plan.title.clone())
+                    .size(HEADING)
+                    .font(BOLD)
+                    .color(p.primary),
+            )
+            .clip(true);
+            let running = self.mode == crate::mode::Mode::Run;
+            let mut inside = row![name].spacing(8).align_y(Alignment::Center);
+            if !running {
+                inside = inside.push(look::icon(Icon::Tune, 14.0, p.primary));
             }
+            tooltip(
+                button(inside)
+                    .padding([4, 10])
+                    .on_press_maybe((!running).then_some(Message::PlanSettings))
+                    .style(look::pill(
+                        p,
+                        if open { Tone::Selected } else { Tone::Plain },
+                    )),
+                container(text("This plan: media, look, copy, delete").size(META))
+                    .padding([4, 8])
+                    .style(look::tip(p)),
+                tooltip::Position::Bottom,
+            )
+            .delay(look::TIP_DELAY)
+            .into()
         };
         // The name has the header's room. Where the service is ("3 of 7")
         // shows only once it's running; how many steps there are is plain
@@ -702,34 +805,40 @@ impl App {
                     .collect();
             }
         }
-        let side_lanes = braced
+        let section_lanes = braced
             .iter()
             .map(|braced| braced.lane + 1)
             .chain(dropped.as_ref().map(|_| carried_lane + 1))
             .max()
             .unwrap_or(0);
-        // The steps that are a section's own: in it and in no section
-        // inside it. A section that holds others writes its name beside
-        // the longest run of those; one with none needs room right of
-        // its brace.
-        let own_of = |outer: &Braced| {
+        // The plan is a bracket too, round all of its steps, further out
+        // than every section's, where it can change.
+        let plan_lane = (matches!(self.mode, crate::mode::Mode::Plan | crate::mode::Mode::Run)
+            && self.can_edit()
+            && !plan.is_empty())
+        .then_some(section_lanes);
+        let side_lanes = section_lanes + u8::from(plan_lane.is_some());
+        // The steps that are a section's own, from `from` up to `end`: in
+        // it and in no section inside it. A section that holds others
+        // writes its name beside the longest run of those; one with none
+        // needs room right of its brace. The plan's are those in no
+        // section.
+        let own_of = |from: usize, end: usize| {
             // What is carried is not where it was.
             let own = |at: &usize| {
                 !plan.steps()[*at].is_section()
                     && !carried.contains(&plan.steps()[*at].id)
                     && !braced.iter().any(|inner| {
-                        inner.at > outer.at
-                            && inner.end <= outer.end
-                            && (inner.at..inner.end).contains(at)
+                        inner.at >= from && inner.end <= end && (inner.at..inner.end).contains(at)
                     })
             };
             // The longest run of them, the first of the longest.
             let mut best: Option<(usize, usize)> = None;
-            let mut at = outer.at + 1;
-            while at < outer.end {
+            let mut at = from;
+            while at < end {
                 match own(&at) {
                     true => {
-                        let last = (at..outer.end).take_while(own).last().unwrap_or(at);
+                        let last = (at..end).take_while(own).last().unwrap_or(at);
                         if best.is_none_or(|(from, to)| last - at > to - from) {
                             best = Some((at, last));
                         }
@@ -740,6 +849,9 @@ impl App {
             }
             best
         };
+        let plans_steps = plan_lane
+            .filter(|lane| *lane > 0)
+            .and_then(|_| own_of(0, plan.len()));
         // That room is given only while the steps keep enough of theirs
         // for their names: without it, such a section is its brace alone,
         // its name in its card.
@@ -749,14 +861,18 @@ impl App {
             .get(&track::Key::Canvas)
             .is_none_or(|canvas| canvas.width - track::side_room(side_lanes, true) >= NAMES_ROOM);
         let side_wide = roomy
-            && braced
+            && (braced
                 .iter()
-                .any(|braced| braced.lane > 0 && own_of(braced).is_none());
+                .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none())
+                || plan_lane.is_some_and(|lane| lane > 0 && plans_steps.is_none()));
         // A picked section's card takes the room its name had, and more:
-        // the steps give way to it, so it covers none of them.
-        let carded = braced
-            .iter()
-            .any(|braced| self.selected == Some(plan.steps()[braced.at].id));
+        // the steps give way to it, so it covers none of them. The plan's
+        // does the same.
+        let plan_carded = self.plan_picked && plan_lane.is_some();
+        let carded = plan_carded
+            || braced
+                .iter()
+                .any(|braced| self.selected == Some(plan.steps()[braced.at].id));
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
@@ -765,6 +881,7 @@ impl App {
                 true => CARD - track::LABEL,
                 false => 0.0,
             },
+            plan: plan_lane,
         };
         let mut stops: Vec<track::Stop> = Vec::new();
         // The row the place for what is carried was put before, where
@@ -800,10 +917,12 @@ impl App {
             loop_lanes,
             order_lanes,
         };
-        if tree {
-            rows = rows.push(plans_own(self.time_row(plan, timing), can));
-        } else if running {
+        // While planning, what the plan takes heads its bracket.
+        if running {
             rows = rows.push(plans_own(self.run_time_row(plan, timing), can));
+        }
+        if plan_lane.is_some() && !(running && !can) {
+            rows = rows.push(self.plan_head(plan));
         }
         // A service locked is watched, not changed: its rail is the road
         // it takes.
@@ -858,10 +977,7 @@ impl App {
                 continue;
             }
             if landing == Some(rest) {
-                put!(gap(
-                    track::side_room(side.lanes, side.wide) + side.more,
-                    lanes
-                ));
+                put!(gap(side.room(), lanes));
                 gap_at = Some(index);
             }
             if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
@@ -901,12 +1017,11 @@ impl App {
                 // A bracket beside its steps: no row. One folded has its
                 // steps gathered into one row; one with nothing in it has
                 // a place where its steps will be.
-                let wide = track::side_room(side.lanes, side.wide) + side.more;
                 if folded {
                     whole.push(step.id);
                     placed.push(index);
                     gathered.push(index);
-                    put!(self.folded_place(plan, step, over, lanes, wide, &places));
+                    put!(self.folded_place(plan, step, over, lanes, side, &places));
                     stops.push(track::Stop {
                         id: step.id,
                         dot: track::Dot::Stack {
@@ -923,7 +1038,7 @@ impl App {
                 } else if plan.group_end(index) == index + 1 {
                     whole.push(step.id);
                     placed.push(index);
-                    put!(self.empty_place(step.id, lanes, wide, &places));
+                    put!(self.empty_place(step.id, lanes, side, &places));
                 }
                 if selected && adds {
                     put!(insertion_mark(p, INDENT));
@@ -1043,10 +1158,7 @@ impl App {
             put!(track::seen(track::Key::Fill, &places, proposed));
         }
         if landing == Some(rest) {
-            put!(gap(
-                track::side_room(side.lanes, side.wide) + side.more,
-                lanes
-            ));
+            put!(gap(side.room(), lanes));
             gap_at = Some(plan.len());
         }
         if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
@@ -1446,7 +1558,7 @@ impl App {
                         }
                     }
                     return Some(track::Bracket {
-                        id: step.id,
+                        id: Some(step.id),
                         first: step.id,
                         last: step.id,
                         offset: track::brace_at(0),
@@ -1484,7 +1596,7 @@ impl App {
                         _ => step.id,
                     };
                     return Some(track::Bracket {
-                        id: step.id,
+                        id: Some(step.id),
                         first: step.id,
                         last,
                         offset: track::brace_at(0),
@@ -1594,10 +1706,10 @@ impl App {
                 let picked = self.selected == Some(step.id);
                 let beside = Some(braced)
                     .filter(|braced| braced.lane > 0)
-                    .and_then(own_of)
+                    .and_then(|braced| own_of(braced.at + 1, braced.end))
                     .map(|(first, last)| (id_at(first), id_at(last)));
                 Some(track::Bracket {
-                    id: step.id,
+                    id: Some(step.id),
                     first: first_key,
                     last: last_key,
                     offset: track::brace_at(braced.lane)
@@ -1650,7 +1762,7 @@ impl App {
                 .copied()
                 .unwrap_or(section);
             brackets.push(track::Bracket {
-                id: section,
+                id: Some(section),
                 first: section,
                 last,
                 offset: track::brace_at(carried_lane),
@@ -1674,8 +1786,69 @@ impl App {
                 bulge: 0.0,
             });
         }
+        // The plan's own, from the first row in sight to the last.
+        let plan_rows = beside.first().zip(beside.last());
+        if let (Some(lane), Some((first, last))) = (plan_lane, plan_rows) {
+            let sums = self.plan_sums(plan);
+            let beside = plans_steps.map(|(first, last)| (id_at(first), id_at(last)));
+            brackets.push(track::Bracket {
+                id: None,
+                first: id_at(*first),
+                last: id_at(*last),
+                offset: track::brace_at(lane)
+                    + match lane {
+                        0 => 0.0,
+                        _ => side.more,
+                    },
+                beside,
+                color: p.primary,
+                name: plan.title.clone(),
+                lines: plan_lines(plan.target, plan.starts, sums.filled, sums.open)
+                    .into_iter()
+                    .map(|(sign, words, over)| {
+                        let ink = match (sign, over) {
+                            (_, true) => p.error,
+                            (track::Sign::Sum, false) => p.on_surface,
+                            _ => p.on_surface_variant,
+                        };
+                        (sign, words, ink)
+                    })
+                    .collect(),
+                strong: plan_carded,
+                // Its words are at its head, over the rows: there is
+                // room there in the narrowest pane.
+                bare: true,
+                place: false,
+                marks: Vec::new(),
+                bulge: 0.0,
+            });
+        }
         // The section that is picked says what it is set to, and what
-        // can be done to it, in a card over its bracket's name.
+        // can be done to it, in a card over its bracket's name. The plan,
+        // picked, says the same of itself in the same place.
+        let plan_card = plan_rows.filter(|_| plan_carded).and_then(|(first, last)| {
+            let (first, last) = plans_steps.unwrap_or((*first, *last));
+            let (origin, top, foot) = {
+                let places = places.borrow();
+                (
+                    *places.get(&track::Key::Canvas)?,
+                    *places.get(&track::Key::Side(id_at(first)))?,
+                    *places.get(&track::Key::Side(id_at(last)))?,
+                )
+            };
+            let middle = (top.y + foot.y + foot.height) / 2.0 - origin.y;
+            let left = origin.width - side.room() + track::BRACE;
+            let card = container(self.plan_bracket_card(plan))
+                .width(CARD)
+                .padding([8, 6])
+                .style(look::card(p, 0.0, 12.0));
+            Some(
+                iced::widget::pin(card)
+                    .x(left.max(0.0))
+                    .y((middle - 52.0).max(0.0))
+                    .into(),
+            )
+        });
         let card: Option<Element<'_, Message>> = braced
             .iter()
             .find(|braced| self.selected == Some(plan.steps()[braced.at].id))
@@ -1716,7 +1889,8 @@ impl App {
                         .y((middle - 52.0).max(0.0))
                         .into(),
                 )
-            });
+            })
+            .or(plan_card);
         // A line that was pulled where none can be stays a moment, where
         // it was, shaking and flashing while why is said.
         if let (Some(aside), Some((pulled_to, first, last))) = (alarm, self.alarm_pull) {
@@ -2332,16 +2506,12 @@ impl App {
             .into()
     }
 
-    /// How long the plan takes, large, over everything else in the
-    /// pane: what is planned, the target to hold it against and how far
-    /// off it is, when it starts and ends, and a bar with a part for each
-    /// section, as wide as its time and as full as its steps make it.
-    fn time_row<'a>(&self, plan: &Plan, timing: &Timing) -> Element<'a, Message> {
-        let p = self.palette;
-        let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
-        let total = schedule.total;
-        // What the steps themselves add up to: sections' own times left
-        // out, so it is what has been put in so far.
+    /// What the plan takes: what its steps add up to, sections' own times
+    /// left out, so it is what has been put in so far; that with
+    /// sections' times; and whether something comes again with no end.
+    fn plan_sums(&self, plan: &Plan) -> PlanSums {
+        let length = |step: &Step| self.loaded_length(step);
+        let total = lantern_engine::timing::schedule(plan, &length).total;
         let mut bare = plan.clone();
         let sections: Vec<StepId> = bare
             .steps()
@@ -2358,115 +2528,180 @@ impl App {
                 *budget = None;
             }
         }
-        let filled =
-            lantern_engine::timing::schedule(&bare, &|step| self.loaded_length(step)).total;
-        // What it is held against: the plan's target, or else what its
-        // sections' times come to.
-        let against = plan.target.or((total != filled).then_some(total));
-        // A repeat with no number to it: at least this long.
-        let planned = match schedule.open {
-            true => format!("{}+", length::clock(filled)),
-            false => length::clock(filled),
-        };
-        let mut top = row![
-            look::icon(Icon::Clock, 16.0, p.primary),
-            text(planned).size(22).font(BOLD).color(p.on_surface),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        let target: Element<'a, Message> = match &self.target_typed {
-            Some(typed) => text_input("45", typed)
-                .id(TARGET_BOX)
-                .on_input(Message::PlanTarget)
-                .on_submit(Message::TargetDone)
-                .size(META)
-                .padding([3, 8])
-                .width(64)
+        let filled = lantern_engine::timing::schedule(&bare, &length);
+        PlanSums {
+            filled: filled.total,
+            total,
+            open: filled.open,
+        }
+    }
+
+    /// What the picked plan is set to and what can be done to it, as a
+    /// picked section's card says of the section: its name, the time it
+    /// is meant to take, when it starts and so ends, what its steps come
+    /// to, how it moves, and its other settings.
+    fn plan_bracket_card(&self, plan: &Plan) -> Element<'_, Message> {
+        let p = self.palette;
+        let quiet = p.on_surface_variant;
+        let can = self.can_edit();
+        // Renamed, copied and deleted only while planning.
+        let manages = can && self.mode == crate::mode::Mode::Plan;
+        let name: Element<'_, Message> = match &self.plans.mode {
+            plans::Mode::Renaming(draft) => text_input("Plan name", draft)
+                .id(NAME_BOX)
+                .on_input(Message::PlanName)
+                .on_submit(Message::SubmitPlanName)
+                .size(BODY)
+                .padding([3, 6])
                 .style(look::input(p))
                 .into(),
-            None => hinted(
-                p,
-                button(
-                    text(match against {
-                        Some(against) => format!("◎ {}", length::clock(against)),
-                        None => "◎".to_string(),
-                    })
+            _ => container(
+                single_line(plan.title.clone())
+                    .size(BODY)
+                    .font(BOLD)
+                    .color(p.primary),
+            )
+            .width(Fill)
+            .clip(true)
+            .into(),
+        };
+        let small = |label: &'static str, does: Message| -> Element<'_, Message> {
+            button(text(label).size(META).font(BOLD).color(p.on_surface))
+                .padding([1, 4])
+                .on_press_maybe(can.then_some(does))
+                .style(look::pill(p, Tone::Plain))
+                .into()
+        };
+        let pressed = |words: String, does: Message| -> Element<'_, Message> {
+            button(text(words).size(META).font(BOLD).color(p.on_surface))
+                .padding([2, 6])
+                .on_press_maybe(can.then_some(does))
+                .style(look::pill(p, Tone::Plain))
+                .into()
+        };
+        let field = |hint: &'static str, id: &'static str, typed: &str| {
+            text_input(hint, typed)
+                .id(id)
+                .size(META)
+                .width(62)
+                .padding([2, 6])
+                .style(look::input(p))
+        };
+        // The time it is meant to take: a minute less or more each press,
+        // or typed.
+        let goal: Element<'_, Message> = match &self.target_typed {
+            Some(typed) => field("45", TARGET_BOX, typed)
+                .width(GOAL_WIDE)
+                .on_input(Message::PlanTarget)
+                .on_submit(Message::TargetDone)
+                .into(),
+            // As wide as the field, and the same whatever it says, so the
+            // + beside it stays where it was pressed.
+            None => button(
+                text(plan.target.map_or("—".to_string(), length::clock))
                     .size(META)
                     .font(BOLD)
-                    .color(if plan.target.is_some() {
-                        p.primary
-                    } else {
-                        p.on_surface_variant
-                    }),
-                )
-                .padding([3, 8])
-                .on_press_maybe(self.can_edit().then_some(Message::EditTarget))
-                .style(look::pill(p, Tone::Plain)),
-                "How long the whole service is meant to take".to_string(),
-                tooltip::Position::Bottom,
+                    .color(p.on_surface)
+                    .center(),
+            )
+            .width(GOAL_WIDE)
+            .padding([2, 0])
+            .on_press_maybe(can.then_some(Message::EditTarget))
+            .style(look::pill(p, Tone::Plain))
+            .into(),
+        };
+        let goal = row![
+            look::icon(Icon::Target, 12.0, quiet),
+            small("−", Message::PlanGoal(-60)),
+            goal,
+            small("+", Message::PlanGoal(60)),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center);
+        let sums = self.plan_sums(plan);
+        // When it starts, typed, and so when it should end.
+        let starts: Element<'_, Message> = match &self.starts_typed {
+            Some(typed) => field("10:30", STARTS_BOX, typed)
+                .on_input(Message::PlanStarts)
+                .on_submit(Message::StartsDone)
+                .into(),
+            None => pressed(
+                plan.starts
+                    .map_or("—".to_string(), |starts| starts.to_string()),
+                Message::EditStarts,
             ),
         };
-        top = top.push(target).push(Space::new().width(Fill));
-        if let Some(starts) = plan.starts {
-            top = top.push(
+        let mut starts = row![look::icon(Icon::Play, 12.0, quiet), starts]
+            .spacing(4)
+            .align_y(Alignment::Center);
+        if let Some(begins) = plan.starts {
+            starts = starts.push(
                 text(format!(
-                    "{starts} → {}",
-                    starts.plus(against.unwrap_or(total))
+                    "→ {}",
+                    begins.plus(plan.target.unwrap_or(sums.total))
                 ))
                 .size(META)
-                .color(p.on_surface_variant),
+                .color(quiet),
             );
         }
-        // Under it: how far under or over, and how the plan itself moves.
-        let mut under = row![].spacing(8).align_y(Alignment::Center);
-        if let Some(against) = against {
-            let (sign, off, colour) = match filled > against {
-                true => ("↑", filled - against, p.error),
-                false => ("↓", against - filled, p.tertiary),
+        // What its steps come to, and how far from the time it is meant
+        // to take: over in the colour of what is wrong, under quietly.
+        let over = plan.target.is_some_and(|target| sums.filled > target);
+        let filled = match sums.open {
+            true => format!("Σ {}+", length::clock(sums.filled)),
+            false => format!("Σ {}", length::clock(sums.filled)),
+        };
+        let mut sum = row![text(filled).size(META).font(BOLD).color(if over {
+            p.error
+        } else {
+            p.on_surface
+        })]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if let Some(target) = plan.target.filter(|target| *target != sums.filled) {
+            let (sign, by, ink) = match over {
+                true => ("+", sums.filled - target, p.error),
+                false => ("−", target - sums.filled, quiet),
             };
-            if !off.is_zero() {
-                let off = format!("{sign} {}", length::clock(off));
-                under = under.push(
-                    text(off.clone())
-                        .size(META)
-                        .color(colour)
-                        .width(widgets::steady(&off, META)),
-                );
-            }
+            sum = sum.push(
+                text(format!("{sign}{}", length::clock(by)))
+                    .size(META)
+                    .color(ink),
+            );
         }
-        under = under
-            .push(Space::new().width(Fill))
-            .push(self.flow_buttons(None, plan.flow, false));
-        // One part for each of the plan's own sections.
-        let parts = timing
-            .sections
-            .iter()
-            .filter(|section| {
-                plan.get(section.id)
-                    .is_some_and(|step| step.depth() == Some(0))
-            })
-            .map(|section| {
-                let planned = match section.phase {
-                    Phase::Coming { planned } => planned,
-                    Phase::Running { expected, .. } => expected,
-                    Phase::Done { took } => took.unwrap_or_default(),
-                };
-                let wide = section.budget.unwrap_or(planned).as_secs().clamp(1, 60_000) as u16;
-                let (full, colour) = match section.budget {
-                    Some(budget) if planned > budget => (1.0, p.tertiary),
-                    Some(budget) if !budget.is_zero() => {
-                        (planned.as_secs_f32() / budget.as_secs_f32(), p.primary)
-                    }
-                    _ => (1.0, p.primary),
-                };
-                container(bar(p, full, colour, 0.0))
-                    .width(Length::FillPortion(wide))
-                    .into()
-            });
-        column![top, under, row(parts).spacing(3)]
-            .spacing(8)
-            .padding(iced::Padding::default().left(8.0).right(8.0).bottom(8.0))
-            .into()
+        let act = |mark: Element<'static, Message>, does: Message, says: &str| {
+            hinted(
+                p,
+                button(mark)
+                    .padding([3, 7])
+                    .on_press(does)
+                    .style(look::row(p, Tone::Plain)),
+                says.to_string(),
+                tooltip::Position::Top,
+            )
+        };
+        // How the whole plan moves, and rehearsing it.
+        let flow = self.flow_buttons(None, plan.flow, false);
+        let mut card = column![name, goal, starts, sum, flow].spacing(6);
+        if manages {
+            card = card.push(
+                row![
+                    act(
+                        look::icon(Icon::Pencil, 13.0, p.primary).into(),
+                        Message::EditPlanName,
+                        "Rename",
+                    ),
+                    act(
+                        look::icon(Icon::Settings, 13.0, p.primary).into(),
+                        Message::PlanSettings,
+                        "Its media, look and the rest",
+                    ),
+                ]
+                .spacing(2)
+                .align_y(Alignment::Center),
+            );
+        }
+        card.into()
     }
 
     pub(crate) fn flow_buttons<'a>(
@@ -2887,7 +3122,7 @@ impl App {
         &self,
         section: StepId,
         lanes: Lanes<'_>,
-        side: f32,
+        side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
         let p = self.palette;
@@ -2918,14 +3153,20 @@ impl App {
         .width(Fill)
         .on_press(pick.clone())
         .style(|_, _| button::Style::default());
-        let mut beside = mouse_area(Space::new().width(side).height(Fill))
-            .on_press(pick)
-            .interaction(mouse::Interaction::Pointer);
+        let plans = side.plans_room();
+        let mut beside = mouse_area(
+            Space::new()
+                .width(side.room() - plans.unwrap_or_default())
+                .height(Fill),
+        )
+        .on_press(pick)
+        .interaction(mouse::Interaction::Pointer);
         if self.can_edit() {
             beside = beside.on_right_press(Message::Rail(crate::rail::Act::Ring(
                 crate::rail::RingOn::All(Some(section)),
             )));
         }
+        let beside = self.with_plans_part(beside.into(), plans);
         let place = row![
             Space::new().width(lanes.curl + RAIL + lanes.drawn),
             container(slot).padding([4, 0]),
@@ -2967,7 +3208,7 @@ impl App {
         step: &Step,
         over: bool,
         lanes: Lanes<'_>,
-        side: f32,
+        side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
         let p = self.palette;
@@ -3011,12 +3252,18 @@ impl App {
             .interaction(mouse::Interaction::Pointer)
             .on_press(Message::Fold(id));
         // Its bracket: twice opens it, as twice folded it.
-        let mut beside = mouse_area(Space::new().width(side).height(Fill))
-            .on_double_click(Message::Fold(id))
-            .interaction(mouse::Interaction::Pointer);
+        let plans = side.plans_room();
+        let mut beside = mouse_area(
+            Space::new()
+                .width(side.room() - plans.unwrap_or_default())
+                .height(Fill),
+        )
+        .on_double_click(Message::Fold(id))
+        .interaction(mouse::Interaction::Pointer);
         if !over {
             beside = beside.on_press(Message::Click(Clicked::Step(id)));
         }
+        let beside = self.with_plans_part(beside.into(), plans);
         let place = row![
             Space::new().width(lanes.curl),
             track::seen(track::Key::Row(id), places, dot),
@@ -3221,11 +3468,37 @@ impl App {
         card.push(acts).into()
     }
 
+    /// The plan's bracket's part of the room right of a row, `wide`: a
+    /// press there picks the plan, a right click opens its ring.
+    fn plans_part<'a>(&self, wide: f32) -> Element<'a, Message> {
+        mouse_area(Space::new().width(wide).height(Fill))
+            .on_press(Message::PickPlan)
+            .on_right_press(Message::Rail(crate::rail::Act::Ring(
+                crate::rail::RingOn::All(None),
+            )))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    }
+
+    /// The room right of a section's own row, `section`, and the plan's
+    /// bracket's part right of it, `plans` wide, where there is one.
+    fn with_plans_part<'a>(
+        &self,
+        section: Element<'a, Message>,
+        plans: Option<f32>,
+    ) -> Element<'a, Message> {
+        match plans {
+            Some(plans) => row![section, self.plans_part(plans)].into(),
+            None => section,
+        }
+    }
+
     /// The room right of the step at `index` for the brackets of the
     /// sections it is in, a part for each lane, the innermost first. A
     /// press there picks that section, and held and moved carries it
     /// with all it holds; twice folds it away; a right click opens the
-    /// ring of what holds for all of it.
+    /// ring of what holds for all of it. The plan's bracket, round them
+    /// all, is the same but for being carried, folded or pulled.
     fn side<'a>(
         &self,
         plan: &Plan,
@@ -3239,12 +3512,21 @@ impl App {
                 .filter(|braced| (braced.at + 1..braced.end).contains(&index))
                 .filter(|braced| lane.is_none_or(|lane| braced.lane == lane))
                 .min_by_key(|braced| braced.lane)
-                .map(|braced| plan.steps()[braced.at].id)
+                .map(|braced| Held::Section(plan.steps()[braced.at].id))
+                .or_else(|| {
+                    side.plan
+                        .filter(|plan| lane.is_none_or(|lane| lane == *plan))
+                        .map(|_| Held::Plan)
+                })
         };
-        let part = |wide: f32, section: Option<StepId>| -> Element<'a, Message> {
+        let part = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
             let part = Space::new().width(wide).height(Fill);
-            let Some(section) = section else {
-                return part.into();
+            let section = match held {
+                None => return part.into(),
+                Some(Held::Plan) => {
+                    return self.draggable(plan.steps()[index].id, self.plans_part(wide));
+                }
+                Some(Held::Section(section)) => section,
             };
             let mut area = mouse_area(part)
                 .on_press(Message::Grab(section))
@@ -3314,9 +3596,7 @@ impl App {
         track::seen(
             track::Key::Side(plan.steps()[index].id),
             places,
-            row(parts)
-                .width(track::side_room(side.lanes, side.wide) + side.more)
-                .height(Fill),
+            row(parts).width(side.room()).height(Fill),
         )
     }
 
@@ -4160,6 +4440,32 @@ mod tests {
     use super::*;
 
     const MIN: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn the_plans_bracket_says_its_goal_its_sum_and_its_start() {
+        use track::Sign;
+        // Nothing set: only what its steps come to.
+        assert_eq!(
+            plan_lines(None, None, 40 * MIN, false),
+            [(Sign::Sum, "40:00".to_string(), false)]
+        );
+        // Something comes again with no end: at least that.
+        assert_eq!(
+            plan_lines(None, None, 40 * MIN, true)[0].1,
+            "40:00+".to_string()
+        );
+        // All of it, in a section's order; over its goal, the sum says so.
+        let starts = lantern_engine::TimeOfDay::parse("10:30");
+        assert_eq!(
+            plan_lines(Some(45 * MIN), starts, 50 * MIN, false),
+            [
+                (Sign::Goal, "45:00".to_string(), false),
+                (Sign::Sum, "50:00".to_string(), true),
+                (Sign::Start, "10:30".to_string(), false),
+            ]
+        );
+        assert!(!plan_lines(Some(45 * MIN), None, 45 * MIN, false)[1].2);
+    }
 
     #[test]
     fn ages_are_rough() {

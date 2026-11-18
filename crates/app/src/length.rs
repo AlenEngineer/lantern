@@ -126,6 +126,13 @@ pub fn typed(d: Duration) -> String {
     }
 }
 
+/// A time given, `by` seconds more or less: none at all once it comes
+/// to nothing or less.
+pub fn stepped(given: Option<Duration>, by: i64) -> Option<Duration> {
+    let to = (given.unwrap_or_default().as_secs() as i64 + by).max(0) as u64;
+    (to > 0).then(|| Duration::from_secs(to))
+}
+
 /// A guess, rounded to the minute: `~4 min`, `~1 min`, `~30 s` below one.
 pub fn rough(d: Duration) -> String {
     match d.as_secs() {
@@ -160,6 +167,16 @@ mod tests {
 
     const fn secs(s: u64) -> Duration {
         Duration::from_secs(s)
+    }
+
+    #[test]
+    fn a_time_given_steps_a_minute_and_is_gone_at_nothing() {
+        assert_eq!(stepped(None, 60), Some(secs(60)));
+        assert_eq!(stepped(Some(secs(600)), 60), Some(secs(660)));
+        assert_eq!(stepped(Some(secs(90)), -60), Some(secs(30)));
+        assert_eq!(stepped(Some(secs(60)), -60), None);
+        assert_eq!(stepped(Some(secs(30)), -60), None);
+        assert_eq!(stepped(None, -60), None);
     }
 
     #[test]
