@@ -10,7 +10,7 @@ use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Color, Element, Fill, Length, Point, Rectangle, Renderer, Theme, mouse};
 use lantern_engine::timing::{Phase, Timing};
-use lantern_engine::{Action, Coming, Plan, Step, StepId};
+use lantern_engine::{Action, Coming, FlowOf, Plan, Step, StepId};
 
 use crate::look::{self, BODY, BOLD, META, Tone};
 use crate::plan_pane::{RAIL, RAIL_DOT, RAIL_TOP};
@@ -34,6 +34,12 @@ pub(crate) enum What {
     Folded {
         section: StepId,
         holds: Option<StepId>,
+    },
+    /// The rounds of `of` from round `from` on, as one row: the road
+    /// lays out the round under way and the next, no more.
+    Again {
+        of: FlowOf,
+        from: u16,
     },
 }
 
@@ -78,20 +84,27 @@ pub(crate) fn lay(
     on: Option<StepId>,
     ahead: &[Coming],
     shut: &dyn Fn(StepId) -> bool,
+    round_now: &dyn Fn(FlowOf) -> u16,
 ) -> Road {
     let entries = played
         .iter()
-        .map(|id| (*id, Place::Played, 0, None))
-        .chain(on.map(|id| (id, Place::On, 0, None)))
+        .map(|id| (*id, Place::Played, 0, None, None))
+        .chain(on.map(|id| (id, Place::On, 0, None, None)))
         .chain(ahead.iter().enumerate().map(|(n, coming)| {
             let place = match n {
                 0 => Place::Next,
                 _ => Place::Coming,
             };
-            (coming.step, place, coming.round, Some(coming.after))
+            (
+                coming.step,
+                place,
+                coming.round,
+                Some(coming.after),
+                coming.of,
+            )
         }))
-        .filter_map(|(id, place, round, after)| {
-            Some((plan.position(id)?, id, place, round, after))
+        .filter_map(|(id, place, round, after, of)| {
+            Some((plan.position(id)?, id, place, round, after, of))
         });
     // What goes on by itself into what follows it: an entry ahead says
     // so of the one before it.
@@ -101,12 +114,36 @@ pub(crate) fn lay(
     // section's heading.
     let mut rows: Vec<usize> = Vec::new();
     let first_ahead = played.len() + usize::from(on.is_some());
-    for (n, (at, id, place, round, after)) in entries.enumerate() {
+    for (n, (at, id, place, round, after, of)) in entries.enumerate() {
         let joined = n + 1 >= first_ahead
             && joined_into
                 .get(n + 1 - first_ahead)
                 .copied()
                 .unwrap_or(false);
+        // Past the round under way and the next, what comes round again
+        // is one row.
+        if let Some(of) = of
+            && round >= round_now(of) + 2
+        {
+            if let Some(last) = things.last_mut()
+                && matches!(last.what, What::Again { of: o, .. } if o == of)
+            {
+                last.joined = joined;
+                continue;
+            }
+            things.push(Thing {
+                what: What::Again {
+                    of,
+                    from: round_now(of) + 2,
+                },
+                place,
+                round,
+                after,
+                joined,
+            });
+            rows.push(at);
+            continue;
+        }
         let folded = plan
             .within(at)
             .into_iter()
@@ -354,13 +391,16 @@ impl App {
         let left = current
             .as_ref()
             .map_or(Duration::ZERO, |step| self.on_for(step).1);
-        let ahead = engine.ahead(|step| self.estimate(step).length, left, 60);
+        // Far enough to see past a loop that goes round until a time:
+        // its later rounds are one row.
+        let ahead = engine.ahead(|step| self.estimate(step).length, left, 400);
         let road = lay(
             plan,
             &played,
             current.as_ref().map(|step| step.id),
             &ahead,
             &|id| self.shut(timing, id),
+            &|of| engine.round_of(of),
         );
         let lanes = road
             .braces
@@ -410,8 +450,20 @@ impl App {
                 What::Folded { section, holds } => {
                     self.road_folded(plan, section, holds, thing.place)
                 }
+                What::Again { of, from } => {
+                    let words = plan
+                        .flow_of(of)
+                        .map_or(String::new(), |flow| again_words(flow.repeat, from));
+                    container(text(words).size(BODY).color(p.on_surface_variant))
+                        .padding([12, 10])
+                        .into()
+                }
             };
             marks.push(match (thing.what, thing.place) {
+                (What::Again { .. }, _) => Mark::Stack {
+                    color: p.on_surface_variant,
+                    solid: false,
+                },
                 (What::Folded { .. }, Place::Played) => Mark::Stack {
                     color: p.outline,
                     solid: true,
@@ -648,6 +700,20 @@ pub(crate) fn through(
     (done + share(now) * part.clamp(0.0, 1.0)).clamp(0.0, 1.0)
 }
 
+/// What the row for the later rounds of a loop says: how many more from
+/// round `from` (counted from 0), until when, or for ever.
+fn again_words(repeat: lantern_engine::Repeat, from: u16) -> String {
+    match repeat {
+        lantern_engine::Repeat::Times(times) => match times.saturating_sub(from) {
+            1 => "again, once more".to_string(),
+            more => format!("again ×{more}"),
+        },
+        lantern_engine::Repeat::Until(time) => format!("again until {time}"),
+        lantern_engine::Repeat::Forever => "again, for ever".to_string(),
+        lantern_engine::Repeat::Once => String::new(),
+    }
+}
+
 /// "2nd", "3rd": which time round, for a step that comes again.
 fn again(round: u16) -> String {
     let n = round + 1;
@@ -881,6 +947,7 @@ mod tests {
                         Some(on) => format!("[{}:{}]", label(section), label(on)),
                         None => format!("[{}]", label(section)),
                     },
+                    What::Again { from, .. } => format!("again{from}"),
                 };
                 let round = match thing.round {
                     0 => String::new(),
@@ -932,6 +999,7 @@ mod tests {
             session.current().map(|step| step.id),
             &ahead,
             shut,
+            &|of| session.round_of(of),
         )
     }
 
@@ -950,6 +1018,36 @@ mod tests {
             braces(session.plan(), &road),
             "Culto0-4@1 Alabanza0-3@0 Oración4-4@0 Final5-5@0"
         );
+    }
+
+    #[test]
+    fn past_the_next_round_a_loop_is_one_row() {
+        // For ever: the round under way, the next, then one row.
+        let (mut plan, [_, alabanza, ..], [a, ..]) = plan();
+        plan.loop_section(alabanza).unwrap();
+        let span = plan.section_span(alabanza).unwrap().id;
+        let mut flow = plan.flow_of(lantern_engine::FlowOf::Span(span)).unwrap();
+        flow.repeat = lantern_engine::Repeat::Forever;
+        plan.set_flow(lantern_engine::FlowOf::Span(span), flow)
+            .unwrap();
+        let mut session = Session::new(plan);
+        session.next();
+        session.next();
+        let road = road_of(&session, &[a], &|_| false);
+        assert_eq!(names(session.plan(), &road), "-A *B >A'1 B'1 again2'2");
+        // Five times: the same, the row saying how many more.
+        let (mut plan, [_, alabanza, ..], _) = self::tests::plan();
+        plan.loop_section(alabanza).unwrap();
+        let span = plan.section_span(alabanza).unwrap().id;
+        let mut flow = plan.flow_of(lantern_engine::FlowOf::Span(span)).unwrap();
+        flow.repeat = lantern_engine::Repeat::Times(5);
+        plan.set_flow(lantern_engine::FlowOf::Span(span), flow)
+            .unwrap();
+        let mut session = Session::new(plan);
+        session.next();
+        let road = road_of(&session, &[], &|_| false);
+        assert_eq!(names(session.plan(), &road), "*A >B A'1 B'1 again2'2 C D");
+        assert_eq!(again_words(lantern_engine::Repeat::Times(5), 2), "again ×3");
     }
 
     #[test]

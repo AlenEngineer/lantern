@@ -516,6 +516,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - A double-click on a folded section's bracket opens it again, as a
   double-click folded it.
+- In a service, the road lays out a loop's round under way and the
+  next, no more: the rounds after are one row, "again ×3", "again
+  until 10:30" or "again, for ever". A loop for ever no longer fills
+  the rail with sixty rows, and what comes after a loop until a time
+  is still in sight.
 - The session can say the road ahead: every step still to come, in the
   order the service will reach it, which round it comes in, when, and
   whether it waits for the operator. Nothing shows it yet; Run's line

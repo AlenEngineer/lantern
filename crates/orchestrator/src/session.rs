@@ -50,6 +50,9 @@ pub struct Coming {
     /// Which time round it comes in, from 0: of the step itself when it
     /// repeats, else of the innermost loop it is in, else of the plan.
     pub round: u16,
+    /// What that round is of: the step itself, a loop, or the plan;
+    /// `None` where nothing it is in comes again.
+    pub of: Option<FlowOf>,
     /// How long from now until it starts.
     pub after: Duration,
     /// Whether what comes before it goes on to it by itself; if not, it
@@ -185,7 +188,8 @@ impl Session {
             let took = length(step);
             found.push(Coming {
                 step: id,
-                round: road.counting(id),
+                round: road.counting(id).map_or(0, |(_, round)| round),
+                of: road.counting(id).map(|(of, _)| of),
                 after,
                 joined,
             });
@@ -217,11 +221,10 @@ impl Session {
             .min()
     }
 
-    /// Which time round the step `id` is on, as [`Coming::round`] says.
-    fn counting(&self, id: StepId) -> u16 {
-        let Some(at) = self.plan.position(id) else {
-            return 0;
-        };
+    /// Which time round the step `id` is on, and of what, as
+    /// [`Coming::round`] and [`Coming::of`] say.
+    fn counting(&self, id: StepId) -> Option<(FlowOf, u16)> {
+        let at = self.plan.position(id)?;
         let repeats = |of: FlowOf| {
             self.plan
                 .flow_of(of)
@@ -229,7 +232,7 @@ impl Session {
         };
         let own = FlowOf::Step(id);
         if self.plan.steps()[at].flow.repeat != Repeat::Once {
-            return self.round(own);
+            return Some((own, self.round(own)));
         }
         self.plan
             .spans_at(at)
@@ -238,7 +241,7 @@ impl Session {
             .map(FlowOf::Span)
             .chain([FlowOf::Plan])
             .find(|of| repeats(*of))
-            .map_or(0, |of| self.round(of))
+            .map(|of| (of, self.round(of)))
     }
 
     /// The time of day, as time since midnight: a repeat that ends at a
