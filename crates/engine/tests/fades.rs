@@ -1,6 +1,8 @@
 //! Steps that fade: up as they go on stage, and out before the plan goes
 //! on from them.
 
+use std::time::Duration;
+
 use lantern_engine::{
     Action, Ending, Engine, Fade, FadeOut, FadeTime, Flow, Kind, Location, MediaReport, Moved,
     Plan, Repeat, Resource, ResourceId, SceneId, SourceId, StepId, StepSound, TimeOfDay,
@@ -248,8 +250,14 @@ fn a_step_cut_off_at_a_time_of_day_fades_out_first() {
 
     assert_eq!(engine.next(), Moved::Step(song));
     let (scene, _) = on_program(&engine).unwrap();
-    engine.tell_time(at("10:30").since_midnight());
-    assert!(engine.cut_now());
+    let half_past = at("10:30").since_midnight();
+    engine.tell_time(half_past - Duration::from_secs(7));
+    assert!(!engine.cut_now(), "more than its fade before the time");
+    engine.tell_time(half_past - Duration::from_secs(6));
+    assert!(
+        engine.cut_now(),
+        "its fade before the time, so it is silent when the time comes"
+    );
     assert_eq!(
         engine.next(),
         Moved::FadingOut(seconds(6).unwrap()),

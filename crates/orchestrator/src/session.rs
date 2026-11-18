@@ -294,9 +294,24 @@ impl Session {
             (Ending::Round, _) | (Ending::Step, Ending::Sharp)
         );
         match flow.repeat {
-            Repeat::Until(time) if ends => self.now.is_some_and(|now| now >= time.since_midnight()),
+            Repeat::Until(time) if ends => self.has_come(flow, time),
             _ => false,
         }
+    }
+
+    /// Whether `time` has come for `flow`. One that cuts there and then
+    /// counts it come as early as the step that is on takes to fade out,
+    /// so that is silent by then.
+    fn has_come(&self, flow: Flow, time: crate::timing::TimeOfDay) -> bool {
+        let early = match flow.ends {
+            Ending::Sharp => self
+                .current()
+                .and_then(|step| step.fade.fade_out)
+                .map_or(Duration::ZERO, |fade| fade.duration()),
+            Ending::Round | Ending::Step => Duration::ZERO,
+        };
+        self.now
+            .is_some_and(|now| now + early >= time.since_midnight())
     }
 
     /// Whether what is on should be cut off now: it, or something it is
@@ -321,7 +336,7 @@ impl Session {
             Repeat::Once => false,
             Repeat::Times(times) => done.saturating_add(1) < times,
             Repeat::Forever => true,
-            Repeat::Until(time) => self.now.is_none_or(|now| now < time.since_midnight()),
+            Repeat::Until(time) => self.now.is_none() || !self.has_come(flow, time),
         }
     }
 

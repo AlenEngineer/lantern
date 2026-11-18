@@ -484,6 +484,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A step cut off at a time of day starts fading early, so it is silent
+  when the time comes, and a picture that goes on by itself fades out
+  within its own time: a fade never adds time.
+- The service's time, its section and the clock in the top bar keep
+  their width as they count, so nothing beside them moves.
 - Folding a section closes its rows up into its one row, and opening it
   grows them out again, with no old heading row showing on the way.
 - A folded section, or one that is over in a service, stays a bracket one
