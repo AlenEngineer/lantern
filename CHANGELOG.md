@@ -560,6 +560,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   would go into lights up the same way and its lane widens; this takes
   the place of the line down the side of its rows. The thin colour mark
   on each row is gone.
+- A section's ring is in its bracket's colour: what is lit on it, and
+  its name on the card under it.
 - The plan's bracket does what a section's does: pressed, the plan is
   picked (F2 renames it, Ctrl+D copies it, Delete twice deletes it, Esc
   lets go); pressed twice, the plan folds into one row like the others

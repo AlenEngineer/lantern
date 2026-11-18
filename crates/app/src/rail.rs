@@ -377,9 +377,19 @@ impl App {
         let Some(ring) = self.ring else {
             return Vec::new();
         };
-        // The ring keeps its colours while all under it goes dim.
-        let p = self.bright;
+        // The ring keeps its colours while all under it goes dim. A
+        // section's is in its bracket's colour.
         let plan = self.engine.0.plan();
+        let p = match ring.on {
+            RingOn::All(Some(id)) => {
+                let hue = crate::plan_pane::section_hue(self.bright, &plan.section_colors(), id);
+                crate::palette::Palette {
+                    primary: hue,
+                    ..self.bright
+                }
+            }
+            _ => self.bright,
+        };
         // They fan out from the middle as it opens.
         let out = self.motion.lift();
         let close = Message::Rail(Act::RingClose);

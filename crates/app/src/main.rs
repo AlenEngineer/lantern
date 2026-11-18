@@ -1552,6 +1552,10 @@ impl App {
                 }
             }
             Message::LeftPlan => {
+                // Off the list, no bracket is under the pointer.
+                if self.bracket_over.take().is_some() {
+                    self.motion.lanes_to(None);
+                }
                 if let Some(drag) = &mut self.drag {
                     drag.landing = None;
                 }

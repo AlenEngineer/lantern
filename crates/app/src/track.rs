@@ -881,7 +881,12 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                 let moving = state.moves.on(&self.picture, passed, &at);
                 state.moves.last = moving.then_some(*now);
                 // Something carried may have moved on to another bracket.
-                if let Some(said) = self.repoint(state, cursor) {
+                // Only then: a redraw comes before the rows have said where
+                // they are this time, so a pointer at rest would read as on
+                // none of them.
+                if matches!(self.picture.lean, Lean::Carried(_))
+                    && let Some(said) = self.repoint(state, cursor)
+                {
                     return Some(canvas::Action::publish(said));
                 }
                 moving.then(canvas::Action::request_redraw)
@@ -964,6 +969,12 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                 }
                 let redraw = over != state.moves.over;
                 state.moves.over = over;
+                // A tip that comes up over the list takes the pointer from
+                // the canvas, which hears it leave: what it was on still
+                // holds. Leaving the list itself lets go of it.
+                if cursor.position().is_none() {
+                    return redraw.then(canvas::Action::request_redraw);
+                }
                 match self.repoint(state, cursor) {
                     Some(said) => Some(canvas::Action::publish(said)),
                     None => redraw.then(canvas::Action::request_redraw),
