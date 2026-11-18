@@ -263,33 +263,43 @@ impl App {
         // A file carried from the library follows the pointer the same
         // way, until it is let go over the plan.
         if let Some(carried) = self.carried.as_ref().filter(|carried| carried.moving) {
-            let card = container(
-                row![
-                    look::icon(Icon::of(&carried.file.kind), 14.0, p.primary),
-                    text(carried.file.title.clone())
+            let mut words = row![
+                look::icon(Icon::of(&carried.file.kind), 14.0, p.primary),
+                container(
+                    single_line(carried.file.title.clone())
+                        .size(BODY)
+                        .font(BOLD)
+                        .color(p.primary)
+                )
+                .max_width(240)
+                .clip(true),
+            ];
+            // How many more come with it, never cut off.
+            if !carried.more.is_empty() {
+                words = words.push(
+                    text(format!("+ {}", carried.more.len()))
                         .size(BODY)
                         .font(BOLD)
                         .color(p.primary),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding([10, 14])
-            .max_width(320)
-            .style(move |_| container::Style {
-                background: Some(p.surface_container_highest.into()),
-                border: iced::Border {
-                    color: p.primary,
-                    width: 1.0,
-                    radius: 14.0.into(),
-                },
-                shadow: iced::Shadow {
-                    color: Color::BLACK.scale_alpha(0.4),
-                    offset: iced::Vector::new(0.0, 4.0),
-                    blur_radius: 12.0,
-                },
-                ..container::Style::default()
-            });
+                );
+            }
+            let card = container(words.spacing(8).align_y(Alignment::Center))
+                .padding([10, 14])
+                .max_width(320)
+                .style(move |_| container::Style {
+                    background: Some(p.surface_container_highest.into()),
+                    border: iced::Border {
+                        color: p.primary,
+                        width: 1.0,
+                        radius: 14.0.into(),
+                    },
+                    shadow: iced::Shadow {
+                        color: Color::BLACK.scale_alpha(0.4),
+                        offset: iced::Vector::new(0.0, 4.0),
+                        blur_radius: 12.0,
+                    },
+                    ..container::Style::default()
+                });
             layers = layers.push(pin(card).x(carried.at.x + 16.0).y(carried.at.y + 8.0));
         }
         // A moving drag's card follows the pointer, just off to its side so

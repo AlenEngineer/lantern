@@ -75,8 +75,9 @@ fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
 
 /// What the place of a file carried in from the library goes by, among the
 /// places of steps: no step of a plan has it.
-fn held_place() -> StepId {
-    serde_json::from_value(serde_json::Value::from(u64::MAX)).expect("a step id is a number")
+fn held_place(n: usize) -> StepId {
+    serde_json::from_value(serde_json::Value::from(u64::MAX - n as u64))
+        .expect("a step id is a number")
 }
 
 /// The sections that are brackets in `plan` (as `bracketed` says), each
@@ -493,8 +494,14 @@ impl App {
         let stepwise: Vec<StepId> = moving
             .filter(|drag| !drag.is_section())
             .map(|drag| drag.carried.iter().copied().take(PLACES).collect())
-            // A file carried in from the library has a step's place too.
-            .or_else(|| held.map(|_| vec![held_place()]))
+            // Files carried in from the library have a step's place each.
+            .or_else(|| {
+                held.map(|held| {
+                    (0..(1 + held.more.len()).min(PLACES))
+                        .map(held_place)
+                        .collect()
+                })
+            })
             .unwrap_or_default();
         let blockwise = moving
             .filter(|drag| drag.is_section())
