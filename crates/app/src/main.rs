@@ -2241,7 +2241,10 @@ impl App {
                 let (Some(first), Some(last)) = (picked.first(), picked.last()) else {
                     return Task::none();
                 };
-                let (first, last) = (plan.steps()[*first].id, plan.steps()[*last].id);
+                // A picked bracket is taken in whole: to the last of what
+                // is in it.
+                let last = (*last..plan.group_end(*last)).last().unwrap_or(*last);
+                let (first, last) = (plan.steps()[*first].id, plan.steps()[last].id);
                 self.remember(None);
                 match self.engine.0.bracket_over(first, last, "Section") {
                     Ok(section) => {
@@ -2265,6 +2268,15 @@ impl App {
                         _ => "No section can be made there",
                     }),
                 }
+            }
+            // Ctrl on a bracket's name picks the bracket, as on its line.
+            Message::Select(step)
+                if self.mods.control()
+                    && self.mode == mode::Mode::Plan
+                    && self.can_edit()
+                    && self.engine.0.plan().get(step).is_some_and(Step::is_section) =>
+            {
+                return self.update(Message::Grab(step));
             }
             Message::Select(step) => {
                 self.line_picked = None;
