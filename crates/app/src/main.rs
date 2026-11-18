@@ -1762,13 +1762,13 @@ impl App {
                 }
                 // A section's loop or drawn order picked by its line is
                 // the section's: one of its steps carries the section.
-                if let Some(section) = self
-                    .line_picked
-                    .and_then(|line| plan.span(line))
-                    .and_then(|span| match span.over {
-                        lantern_engine::Over::Section(id) => Some(id),
-                        _ => None,
-                    })
+                if let Some(section) =
+                    self.line_picked
+                        .and_then(|line| plan.span(line))
+                        .and_then(|span| match span.over {
+                            lantern_engine::Over::Section(id) => Some(id),
+                            _ => None,
+                        })
                     && self
                         .drag
                         .as_ref()
