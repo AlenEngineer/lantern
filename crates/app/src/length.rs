@@ -3,26 +3,60 @@
 use std::time::Duration;
 
 /// Reads what the operator typed: `15` is fifteen minutes, `4:30` four and
-/// a half. Empty means no length. `None` if it can't be read (yet: `4:`
-/// while typing).
+/// a half. With hours: `3h` is three hours, `3h15` (or `3h 15`, `3h15m`)
+/// three and a quarter, `1:02:03` an hour, two minutes and three seconds;
+/// `45m` is forty-five minutes. Empty means no length. `None` if it can't
+/// be read (yet: `4:` while typing).
 pub fn parse(text: &str) -> Option<Option<Duration>> {
-    let text = text.trim();
+    let text = text.trim().to_lowercase();
     if text.is_empty() {
         return Some(None);
     }
-    let (minutes, seconds) = match text.split_once(':') {
-        Some((m, s)) if s.len() == 2 => (m.parse::<u64>().ok()?, s.parse::<u64>().ok()?),
-        Some(_) => return None,
-        None => (text.parse::<u64>().ok()?, 0),
+    // In words: hours, then minutes.
+    if text.contains('h') || text.ends_with('m') {
+        let (hours, rest) = match text.split_once('h') {
+            Some((hours, rest)) => (hours.trim().parse::<u64>().ok()?, rest.trim()),
+            None => (0, text.as_str()),
+        };
+        let rest = rest.strip_suffix('m').unwrap_or(rest).trim();
+        let minutes = match rest {
+            "" => 0,
+            minutes => minutes.parse::<u64>().ok()?,
+        };
+        return Some(Some(Duration::from_secs(hours * 3600 + minutes * 60)));
+    }
+    // As a clock: minutes and seconds, or hours, minutes and seconds.
+    let parts: Vec<&str> = text.split(':').collect();
+    let two = |part: &str| {
+        (part.len() == 2)
+            .then(|| part.parse::<u64>().ok())
+            .flatten()
     };
-    (seconds < 60).then(|| Some(Duration::from_secs(minutes * 60 + seconds)))
+    let (hours, minutes, seconds) = match parts[..] {
+        [minutes] => (0, minutes.parse::<u64>().ok()?, 0),
+        [minutes, seconds] => (0, minutes.parse::<u64>().ok()?, two(seconds)?),
+        [hours, minutes, seconds] => {
+            let minutes = two(minutes).filter(|minutes| *minutes < 60)?;
+            (hours.parse::<u64>().ok()?, minutes, two(seconds)?)
+        }
+        _ => return None,
+    };
+    (seconds < 60).then(|| Some(Duration::from_secs(hours * 3600 + minutes * 60 + seconds)))
 }
 
-/// Whether `text` could still become a length: digits and one colon.
-/// A length field takes nothing else, so it never holds what [`parse`]
-/// can't read once finished.
+/// Whether `text` could still become a length: digits, up to two colons,
+/// or an `h` and an `m` with spaces. A length field takes nothing else,
+/// so it never holds what [`parse`] can't read once finished.
 pub fn typeable(text: &str) -> bool {
-    text.chars().all(|c| c.is_ascii_digit() || c == ':') && text.matches(':').count() <= 1
+    let text = text.to_lowercase();
+    let only = |c: char| text.matches(c).count();
+    text.chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, ':' | 'h' | 'm' | ' '))
+        && only(':') <= 2
+        && only('h') <= 1
+        && only('m') <= 1
+        // One way of saying it or the other.
+        && (only(':') == 0 || only('h') + only('m') == 0)
 }
 
 /// `4:05`, `1:02:03` past an hour.
@@ -80,10 +114,15 @@ pub fn starting(starts: &str, until: i64) -> Option<String> {
 /// What the operator typed for a length, back: `15` or `4:30`.
 pub fn typed(d: Duration) -> String {
     let s = d.as_secs();
-    if s.is_multiple_of(60) {
-        (s / 60).to_string()
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
+    let (hours, minutes) = (s / 3600, s / 60 % 60);
+    match (s.is_multiple_of(60), hours) {
+        // Whole minutes under an hour: the number alone.
+        (true, 0) => (s / 60).to_string(),
+        // An hour or more: in hours and minutes, as it is said.
+        (true, _) if minutes == 0 => format!("{hours}h"),
+        (true, _) => format!("{hours}h{minutes:02}"),
+        (false, 0) => format!("{}:{:02}", s / 60, s % 60),
+        (false, _) => format!("{hours}:{minutes:02}:{:02}", s % 60),
     }
 }
 
@@ -124,12 +163,36 @@ mod tests {
     }
 
     #[test]
-    fn a_length_field_takes_digits_and_one_colon() {
-        for ok in ["", "4", "4:", "4:3", "4:30", ":30"] {
+    fn a_length_field_takes_a_clock_or_hours_and_minutes() {
+        for ok in [
+            "", "4", "4:", "4:3", "4:30", ":30", "1:02:03", "3h", "3h15", "3h 15m", "45m",
+        ] {
             assert!(typeable(ok), "{ok}");
         }
-        for no in ["a", "4a", "4:3:0", "4.5", "-4", "4 30"] {
+        for no in ["a", "4a", "4:3:0:1", "4.5", "-4", "3hh", "3h:15", "3m5m"] {
             assert!(!typeable(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn hours_read_as_they_are_said() {
+        assert_eq!(parse("3h"), Some(Some(secs(3 * 3600))));
+        assert_eq!(parse("3h15"), Some(Some(secs(3 * 3600 + 15 * 60))));
+        assert_eq!(parse("3H 15m"), Some(Some(secs(3 * 3600 + 15 * 60))));
+        assert_eq!(parse("45m"), Some(Some(secs(45 * 60))));
+        assert_eq!(parse("1:02:03"), Some(Some(secs(3723))));
+        assert_eq!(parse("1:75:00"), None);
+        assert_eq!(parse("h"), None, "still typing");
+        // Without an h, a number is minutes and a colon is minutes and
+        // seconds, as before.
+        assert_eq!(parse("195"), Some(Some(secs(195 * 60))));
+        assert_eq!(parse("3:15"), Some(Some(secs(195))));
+        // And they are written back the way they read.
+        assert_eq!(typed(secs(3 * 3600 + 15 * 60)), "3h15");
+        assert_eq!(typed(secs(3 * 3600)), "3h");
+        assert_eq!(typed(secs(3723)), "1:02:03");
+        for text in ["3h15", "3h", "1:02:03", "45"] {
+            assert_eq!(typed(parse(text).unwrap().unwrap()), text, "round trip");
         }
     }
 
