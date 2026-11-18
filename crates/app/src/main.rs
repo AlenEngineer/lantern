@@ -501,8 +501,8 @@ enum Message {
     ShelfFold(String),
     /// What is typed in the library's filter.
     ShelfFilter(String),
-    /// The pointer is over this file of the library, or over none.
-    ShelfHover(Option<ResourceId>),
+    /// The pointer is over this of the library, or over none of it.
+    ShelfHover(Option<shelf::Grip>),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -781,8 +781,8 @@ struct App {
     pub(crate) shelf_open: std::collections::HashSet<String>,
     /// What is typed in the library's filter.
     pub(crate) shelf_filter: String,
-    /// The file of the library under the pointer, and the one it holds.
-    shelf_hover: Option<ResourceId>,
+    /// What of the library is under the pointer, and the one it holds.
+    shelf_hover: Option<shelf::Grip>,
     /// The folder of the library the keyboard is on, when it is on one
     /// and not on a file.
     pub(crate) shelf_folder: Option<String>,
@@ -1507,7 +1507,7 @@ impl App {
                 {
                     *last = foot_end(&self.engine.0.plan(), *section, over);
                 }
-                // A file carried in lands by the last row it was over.
+                // What is carried in lands by the last row it was over.
                 let plan = self.engine.0.plan();
                 if let Some(carried) = self.carried.as_mut().filter(|carried| carried.moving)
                     && let Some((over, half)) = row
@@ -1588,14 +1588,15 @@ impl App {
                 self.aim();
                 self.aim_pull();
             }
-            // Pressed on a file of the library: it may be carried into
-            // the plan.
+            // Pressed on a file of the library, or on a step it always
+            // has: it may be carried into the plan.
             Message::Pointer(_, true) if self.shelf_hover.is_some() && self.can_edit() => {
-                self.carried = self
-                    .shelf_hover
-                    .as_ref()
-                    .and_then(|id| self.shelf_file(id))
-                    .map(shelf::Carried::new);
+                self.carried = match &self.shelf_hover {
+                    Some(shelf::Grip::File(id)) => self.shelf_file(id).map(shelf::Held::File),
+                    Some(shelf::Grip::New(new)) => Some(shelf::Held::New(*new)),
+                    None => None,
+                }
+                .map(shelf::Carried::new);
                 // One of the files picked together carries them all, in
                 // their order.
                 let together: Vec<_> = self
@@ -1604,12 +1605,13 @@ impl App {
                     .filter_map(|id| self.shelf_file(id))
                     .collect();
                 if let Some(carried) = self.carried.as_mut()
+                    && let Some(held) = carried.file()
                     && together.len() > 1
-                    && together.iter().any(|file| file.id == carried.file.id)
+                    && together.iter().any(|file| file.id == held.id)
                 {
                     let mut all = together.into_iter();
                     if let Some(first) = all.next() {
-                        carried.file = first;
+                        carried.what = shelf::Held::File(first);
                         carried.more = all.collect();
                     }
                 }
@@ -1622,19 +1624,12 @@ impl App {
                 let carried = self.carried.take().filter(|carried| carried.moving);
                 if let Some((carried, at)) = carried.zip(landing) {
                     self.remember(None);
+                    let steps = carried.steps();
                     let ids = self.engine.0.edit_plan(|plan| {
-                        std::iter::once(&carried.file)
-                            .chain(&carried.more)
+                        steps
+                            .into_iter()
                             .enumerate()
-                            .map(|(n, file)| {
-                                plan.insert(
-                                    at + n,
-                                    file.title.clone(),
-                                    Action::Show {
-                                        resource: (**file).clone(),
-                                    },
-                                )
-                            })
+                            .map(|(n, (label, action))| plan.insert(at + n, label, action))
                             .collect::<Vec<_>>()
                     });
                     self.selected = ids.first().copied();
@@ -1642,10 +1637,20 @@ impl App {
                         1 => Vec::new(),
                         _ => ids,
                     };
-                    self.shelf_pick = None;
-                    self.shelf_many.clear();
-                    self.engine.0.preview(carried.file);
-                    return self.preload();
+                    match carried.what {
+                        shelf::Held::File(file) => {
+                            self.shelf_pick = None;
+                            self.shelf_many.clear();
+                            self.engine.0.preview(file);
+                            return self.preload();
+                        }
+                        // A new step opens on its name, as pressing it does.
+                        shelf::Held::New(_) => {
+                            let id = self.selected.expect("one step was put in");
+                            return self
+                                .update(Message::EditStep(Some((id, plan_edit::Part::Name))));
+                        }
+                    }
                 }
             }
             Message::Rail(rail::Act::Press { step, toggle }) => {
@@ -4104,7 +4109,7 @@ impl App {
         }
     }
 
-    /// Where in `plan` a file carried from the library would land: above
+    /// Where in `plan` what is carried from the library would land: above
     /// or below the step the pointer is over. Nowhere while it isn't over
     /// one, or isn't being carried.
     pub(crate) fn carry_landing(&self, plan: &Plan) -> Option<usize> {
