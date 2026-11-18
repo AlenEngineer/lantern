@@ -1022,17 +1022,25 @@ impl App {
                     placed.push(index);
                     gathered.push(index);
                     put!(self.folded_place(plan, step, over, lanes, side, &places));
+                    // Its line is its last step's: down to what follows,
+                    // where that goes on into it by itself.
+                    let last = (index + 1..plan.group_end(index))
+                        .rev()
+                        .find(|at| !plan.steps()[*at].is_section());
+                    let after = last.and_then(|last| plan.next_step(last));
+                    let goes = last.is_some_and(|last| plan.goes_on(last)) && after.is_some();
+                    let ink = match over {
+                        true => p.outline,
+                        false => p.primary,
+                    };
                     stops.push(track::Stop {
                         id: step.id,
                         dot: track::Dot::Stack {
-                            color: match over {
-                                true => p.outline,
-                                false => p.primary,
-                            },
+                            color: ink,
                             solid: over,
                         },
-                        line: None,
-                        next: None,
+                        line: goes.then_some(track::Line::Plain(ink)),
+                        next: after.map(|after| plan.steps()[after].id),
                         back: None,
                     });
                 } else if plan.group_end(index) == index + 1 {
@@ -1969,6 +1977,19 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
+        // A line to a step folded away runs to its section's stacked
+        // dot, as a loop over it does.
+        let shown_as = |id: StepId| {
+            plan.position(id)
+                .and_then(|at| plan.within(at).into_iter().find(|section| shut(*section)))
+                .unwrap_or(id)
+        };
+        for stop in &mut stops {
+            stop.next = stop
+                .next
+                .map(shown_as)
+                .filter(|next| *next != shown_as(stop.id));
+        }
         let picture = track::Picture {
             stops,
             loops: drawn_loops,

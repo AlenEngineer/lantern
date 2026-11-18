@@ -529,6 +529,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   folded row to see what was played, and double-click its bracket to
   fold it back. Double-clicking a bracket in a service no longer takes
   that section live.
+- A joined line runs into a folded section's stacked dot when the step
+  it goes on to is folded away, as a loop over it does; and out of it,
+  down to what follows, when the section's last step goes on by itself.
 - The old heading row is gone. A section that holds only folded
   sections is a bracket round their rows too, and a loop over it runs
   beside the folded rows instead of disappearing.
