@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A bracket's head can be pulled too: up, it takes in what comes before
+  it, a section whole; down, it lets go of its first steps, which stay in
+  the section round it. It shows what it would make as it is pulled, and
+  goes back where it can't start there.
 - A bracket's foot can be pulled: down, it takes in what comes after it,
   a section whole; up, it lets go. As it is pulled the brackets show what
   letting go would make, in the colour of what is wrong where it can't
