@@ -130,6 +130,9 @@ pub enum Command {
     Length(usize, String),
     /// `go-on N`: join plan entry N to the next, so it goes on when done.
     GoOn(usize),
+    /// `fade N IN OUT`: plan entry N fades in over IN seconds and out
+    /// over OUT; 0 is no fade.
+    Fade(usize, u64, u64),
     /// `loop N M` or `loop N M until 10:30`: draw a loop round plan
     /// entries N to M, to come twice or until the time of day.
     Loop(usize, usize, Option<lantern_engine::TimeOfDay>),
@@ -305,6 +308,26 @@ impl Command {
                 Ok(n) if n > 0 => Command::GoOn(n - 1),
                 _ => return Err(format!("go-on needs a number from 1, got {rest:?}")),
             },
+            "fade" => {
+                let words: Vec<&str> = rest.split_whitespace().collect();
+                let parsed = match words[..] {
+                    [n, fade_in, fade_out] => n
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .zip(fade_in.parse::<u64>().ok())
+                        .zip(fade_out.parse::<u64>().ok()),
+                    _ => None,
+                };
+                match parsed {
+                    Some(((n, fade_in), fade_out)) => Command::Fade(n - 1, fade_in, fade_out),
+                    None => {
+                        return Err(format!(
+                            "fade needs an entry from 1, then seconds in and out, got {rest:?}"
+                        ));
+                    }
+                }
+            }
             "loop" => {
                 let usage = || format!("loop needs N M, or N M until 10:30, got {rest:?}");
                 let words: Vec<&str> = rest.split_whitespace().collect();
@@ -363,6 +386,7 @@ impl Command {
                 | Command::Drag(..)
                 | Command::Length(..)
                 | Command::GoOn(_)
+                | Command::Fade(..)
                 | Command::PlanLook(_)
                 | Command::Output(_)
                 | Command::Slide(_)
@@ -539,6 +563,20 @@ impl Script {
                         from + 1,
                         to + 1
                     ));
+                }
+            }
+            Command::Fade(n, fade_in, fade_out) => {
+                let fade = lantern_engine::Fade {
+                    fade_in: lantern_engine::FadeTime::from_secs(*fade_in),
+                    fade_out: lantern_engine::FadeTime::from_secs(*fade_out),
+                };
+                let faded = engine.edit_plan(|plan| {
+                    let id = plan.steps().get(*n)?.id;
+                    plan.get_mut(id)?.fade = fade;
+                    Some(())
+                });
+                if faded.is_none() {
+                    log(format!("script: fade: no entry {}", n + 1));
                 }
             }
             Command::Take => log(format!("script: take -> {}", engine.take())),
@@ -724,6 +762,20 @@ mod tests {
     fn quit_stops_the_script() {
         let engine = run("hymn\nquit\nnext");
         assert!(on_stage(&engine).unwrap().starts_with("Amazing grace"));
+    }
+
+    #[test]
+    fn fade_sets_how_an_entry_fades_and_the_next_waits_for_it() {
+        let engine = run("hymn\nfade 1 2 3\nnext\nnext\nnext");
+        let fade = engine.plan().steps()[0].fade;
+        assert_eq!(fade.fade_in, lantern_engine::FadeTime::from_secs(2));
+        assert_eq!(fade.fade_out, lantern_engine::FadeTime::from_secs(3));
+        assert!(
+            engine.stage().fading_out.is_some(),
+            "past its last stanza, it fades out"
+        );
+        assert!(Script::parse("fade 1 2", Path::new(""), None).is_err());
+        assert!(Script::parse("fade 0 2 3", Path::new(""), None).is_err());
     }
 
     #[test]
