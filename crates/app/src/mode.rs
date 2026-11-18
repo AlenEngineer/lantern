@@ -230,6 +230,7 @@ impl App {
                 | Op::NestOut
                 | Op::RemoveStep
                 | Op::Rename
+                | Op::Duplicate
                 | Op::Undo
                 | Op::Redo
         );

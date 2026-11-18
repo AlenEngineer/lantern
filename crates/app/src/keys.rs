@@ -79,6 +79,8 @@ pub enum Op {
     RemoveStep,
     /// Edits the selected step's name, in its row.
     Rename,
+    /// Copies what is selected, right after it.
+    Duplicate,
     /// Takes back the last edit of the plan.
     Undo,
     /// Does again the edit that was last taken back.
@@ -480,7 +482,7 @@ pub const ACTIONS: &[Action] = &[
         "delete",
         Op::RemoveStep,
         When::Unused,
-        "Remove the selected step",
+        "Take away what is selected: steps, a bracket (Shift: with its steps), a loop or drawn order",
     ),
     action(
         "rename",
@@ -488,6 +490,13 @@ pub const ACTIONS: &[Action] = &[
         Op::Rename,
         When::Always,
         "Rename the selected step",
+    ),
+    action(
+        "duplicate",
+        "ctrl+d",
+        Op::Duplicate,
+        When::Always,
+        "Copy what is selected, right after it, with its loops and drawn orders",
     ),
     action(
         "unlock",
