@@ -423,6 +423,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The places of carried steps show every flow the steps have among
+  themselves: the line from one that goes on into the next, as well as a
+  loop or a drawn order they bring whole; and none of them while Alt is
+  held, which strips them. The card at the pointer has a mark for joined
+  steps too.
 - The place that opens for what is carried is in its shape. For steps, a
   dashed place for each, with its dot's place on the line; the section
   they would be in takes them in, and a loop or a drawn order they bring

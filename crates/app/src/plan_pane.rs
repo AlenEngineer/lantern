@@ -1203,18 +1203,30 @@ impl App {
         // them, drawn beside their places.
         if gap_at.is_some() && !stepwise.is_empty() {
             let ink = Palette::tint(p.primary, 0.7);
-            stops.extend(stepwise.iter().map(|id| track::Stop {
-                id: *id,
-                dot: track::Dot::Place(ink),
-                line: None,
-                next: None,
-                back: None,
-                cut: None,
+            // With every flow stripped (Alt), the places show none: what
+            // is seen is what letting go would give.
+            let stripped = self.carry_how() == lantern_engine::Carry::Stripped;
+            stops.extend(stepwise.iter().enumerate().map(|(n, id)| {
+                // A carried step that goes on by itself goes on into the
+                // one carried after it: they land together.
+                let next = stepwise.get(n + 1).copied();
+                let goes = !stripped
+                    && next.is_some()
+                    && plan.position(*id).is_some_and(|at| plan.goes_on(at));
+                track::Stop {
+                    id: *id,
+                    dot: track::Dot::Place(ink),
+                    line: goes.then_some(track::Line::Plain(ink)),
+                    next: next.filter(|_| goes),
+                    back: None,
+                    cut: None,
+                }
             }));
             let brought = |laid: &Laid, mark: track::Mark| {
-                let all = (laid.first..=laid.last)
-                    .filter(|at| !plan.steps()[*at].is_section())
-                    .all(|at| stepwise.contains(&id_at(at)));
+                let all = !stripped
+                    && (laid.first..=laid.last)
+                        .filter(|at| !plan.steps()[*at].is_section())
+                        .all(|at| stepwise.contains(&id_at(at)));
                 all.then(|| track::Span {
                     first: track::From::Step(id_at(laid.first)),
                     last: id_at(laid.last),
