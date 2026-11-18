@@ -321,9 +321,53 @@ pub struct Picture {
     pub brackets: Vec<Bracket>,
     /// The open note's threads: from its card to each thing it is on.
     pub threads: Vec<(Point, Point)>,
-    /// The steps whose rows have a mark of the colour of the section
-    /// they are most nearly in, between the dot and the name.
-    pub ties: Vec<(StepId, Color)>,
+    /// How wide each lane's brace is now, the innermost first: the
+    /// brackets are drawn, and pressed, where these put them.
+    pub lanes: Vec<f32>,
+    /// The innermost lane has the brackets' names beside it.
+    pub named: bool,
+    /// Which lane the lanes make room for.
+    pub lean: Lean,
+    /// How far the lit bracket has come up, 0 to 1.
+    pub lit: f32,
+}
+
+/// How a bracket stands while one of them is pointed at, or would take
+/// in what is carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Light {
+    /// None is.
+    #[default]
+    Plain,
+    /// It is the one: its rows take its colour, and it is drawn thick.
+    Lit,
+    /// Inside the one: its rows take a lighter shade of its own colour.
+    Within,
+    /// Neither: it steps back.
+    Back,
+}
+
+/// Which lane the brackets make room for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lean {
+    /// The one under the pointer.
+    #[default]
+    Pointer,
+    /// While something is carried: the lane of the bracket it would go
+    /// into, where there is one.
+    Carried(Option<u8>),
+}
+
+/// Where the pointer is in the brackets' room: beside which row, in
+/// which lane of how many, and whether it came from the right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pointed {
+    /// `None` while something is carried: the lane is then the one of the
+    /// bracket it would go into.
+    pub row: Option<StepId>,
+    pub lane: u8,
+    pub lanes: u8,
+    pub from_right: bool,
 }
 
 /// What a line beside a bracket is about.
@@ -372,6 +416,7 @@ pub struct Bracket {
     /// Where a section that is being carried would land: dashed, and
     /// what is written beside it faint.
     pub place: bool,
+    pub lit: Light,
 }
 
 /// How much room a bracket takes, and what is written beside it.
@@ -428,13 +473,66 @@ pub fn side_room(lanes: u8, wide: bool, named: bool) -> f32 {
 }
 
 /// How far right of where the brackets start the brace in `lane` is,
-/// with the innermost's words beside it where they are `named`.
-pub fn brace_at(lane: u8, named: bool) -> f32 {
-    match lane {
-        0 => 0.0,
-        lane if !named => BRACE * f32::from(lane),
-        lane => BRACE + LABEL + BRACE * f32::from(lane - 1),
+/// each lane's brace as wide as `widths` says, with the innermost's
+/// words beside it where they are `named`.
+pub fn brace_at(widths: &[f32], lane: u8, named: bool) -> f32 {
+    let braces: f32 = widths.iter().take(usize::from(lane)).sum();
+    match lane > 0 && named {
+        true => braces + LABEL,
+        false => braces,
     }
+}
+
+/// How wide the lane under the pointer gets, and the lanes it came past.
+const LEANT: f32 = 30.0;
+const PASSED: f32 = 10.0;
+
+/// How wide each of `lanes` lanes' braces is, with the pointer `under`
+/// one of them, `from_right` or from the rows. The one under it widens,
+/// so it is easy to stay on; those it came past narrow, and the rest
+/// take what is left: all of them are as wide together as at rest, so
+/// the rows keep their width.
+pub fn lane_widths(lanes: u8, under: Option<u8>, from_right: bool) -> Vec<f32> {
+    let n = usize::from(lanes);
+    let Some(under) = under.map(usize::from).filter(|under| *under < n && n > 1) else {
+        return vec![BRACE; n];
+    };
+    let total = BRACE * n as f32;
+    let leant = LEANT.min(total - PASSED * (n - 1) as f32);
+    let passed = |lane: usize| match from_right {
+        true => lane > under,
+        false => lane < under,
+    };
+    let behind = (0..n).filter(|lane| passed(*lane)).count();
+    let ahead = n - 1 - behind;
+    let (behind_wide, ahead_wide) = match ahead {
+        0 => ((total - leant) / behind as f32, 0.0),
+        ahead => (
+            PASSED,
+            (total - leant - PASSED * behind as f32) / ahead as f32,
+        ),
+    };
+    (0..n)
+        .map(|lane| match lane {
+            lane if lane == under => leant,
+            lane if passed(lane) => behind_wide,
+            _ => ahead_wide,
+        })
+        .collect()
+}
+
+/// The lane `x` right of where the brackets start is in, each lane's
+/// brace as wide as `widths` says: the innermost's takes its names'
+/// room too where they are `named`, and the room right of them all is
+/// the outermost's.
+pub fn lane_under(widths: &[f32], named: bool, x: f32) -> Option<u8> {
+    let lanes = u8::try_from(widths.len()).ok()?;
+    let last = lanes.checked_sub(1).filter(|_| x >= 0.0)?;
+    Some(
+        (0..lanes)
+            .find(|lane| x < brace_at(widths, lane + 1, named))
+            .unwrap_or(last),
+    )
 }
 
 /// `name` on as few lines as it takes, two at most, each about as wide
@@ -692,6 +790,11 @@ struct State {
     banded: Vec<StepId>,
     kept: Kept<Shown>,
     moves: Moves,
+    /// Where across the pointer last was, and whether it last went left.
+    across: Option<f32>,
+    leftward: bool,
+    /// What was last said of the pointer in the brackets' room.
+    pointed: Option<Pointed>,
 }
 
 struct Over<'a, Message> {
@@ -700,6 +803,47 @@ struct Over<'a, Message> {
     /// What to say when a box has picked some steps, or a click on
     /// nothing has let go of them all.
     pick: Rc<dyn Fn(Vec<StepId>) -> Message + 'a>,
+    /// What to say when the pointer comes into a lane of the brackets'
+    /// room, or leaves it.
+    point: Rc<dyn Fn(Option<Pointed>) -> Message + 'a>,
+}
+
+impl<Message> Over<'_, Message> {
+    /// Where the pointer is in the brackets' room, as `state` last saw
+    /// it go; or, while something is carried, the lane it would go into.
+    fn pointing(&self, state: &State, cursor: mouse::Cursor) -> Option<Pointed> {
+        let lanes = u8::try_from(self.picture.lanes.len()).ok()?;
+        if let Lean::Carried(lane) = self.picture.lean {
+            return lane.map(|lane| Pointed {
+                row: None,
+                lane,
+                lanes,
+                from_right: state.leftward,
+            });
+        }
+        let at = cursor.position()?;
+        let places = self.places.borrow();
+        self.picture.rows.iter().find_map(|row| {
+            let side = places
+                .get(&Key::Side(*row))
+                .filter(|side| side.contains(at))?;
+            Some(Pointed {
+                row: Some(*row),
+                lane: lane_under(&self.picture.lanes, self.picture.named, at.x - side.x)?,
+                lanes,
+                from_right: state.leftward,
+            })
+        })
+    }
+
+    /// Says where the pointer is in the brackets' room, if that changed.
+    fn repoint(&self, state: &mut State, cursor: mouse::Cursor) -> Option<Message> {
+        let pointed = self.pointing(state, cursor);
+        (pointed != state.pointed).then(|| {
+            state.pointed = pointed;
+            (self.point)(pointed)
+        })
+    }
 }
 
 /// The box from one corner to the other.
@@ -736,6 +880,10 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                 };
                 let moving = state.moves.on(&self.picture, passed, &at);
                 state.moves.last = moving.then_some(*now);
+                // Something carried may have moved on to another bracket.
+                if let Some(said) = self.repoint(state, cursor) {
+                    return Some(canvas::Action::publish(said));
+                }
                 moving.then(canvas::Action::request_redraw)
             }
             // A press where there is no row begins a box; let go there,
@@ -808,10 +956,18 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                                 .map(|_| stop.id)
                         })
                     });
-                (over != state.moves.over).then(|| {
-                    state.moves.over = over;
-                    canvas::Action::request_redraw()
-                })
+                if let Some(x) = cursor.position().map(|at| at.x) {
+                    if let Some(was) = state.across.filter(|was| *was != x) {
+                        state.leftward = x < was;
+                    }
+                    state.across = Some(x);
+                }
+                let redraw = over != state.moves.over;
+                state.moves.over = over;
+                match self.repoint(state, cursor) {
+                    Some(said) => Some(canvas::Action::publish(said)),
+                    None => redraw.then(canvas::Action::request_redraw),
+                }
             }
             _ => None,
         }
@@ -893,11 +1049,13 @@ pub fn over<'a, Message: 'a>(
     picture: Picture,
     places: &Places,
     pick: impl Fn(Vec<StepId>) -> Message + 'a,
+    point: impl Fn(Option<Pointed>) -> Message + 'a,
 ) -> Element<'a, Message> {
     iced::widget::canvas(Over {
         picture,
         places: places.clone(),
         pick: Rc::new(pick),
+        point: Rc::new(point),
     })
     .width(Fill)
     .height(Fill)
@@ -1021,6 +1179,39 @@ fn paint(
     at: &dyn Fn(Key) -> Option<Rectangle>,
     moves: &Moves,
 ) {
+    // The rows of the bracket that is lit take its colour, and those of
+    // each inside it a lighter shade of their own: the outer first, so
+    // the inner are on top.
+    let mut banded: Vec<&Bracket> = picture
+        .brackets
+        .iter()
+        .filter(|bracket| matches!(bracket.lit, Light::Lit | Light::Within))
+        .collect();
+    banded.sort_by(|a, b| b.offset.total_cmp(&a.offset));
+    for bracket in banded {
+        let Some((x, top, foot)) = moves
+            .boxes
+            .get(&bracket.id)
+            .copied()
+            .or_else(|| bracket_box(bracket, at))
+        else {
+            continue;
+        };
+        let strength = match (bracket.lit, bracket.id) {
+            (Light::Lit, Some(_)) => 0.16,
+            // The plan's are all the rows: lightly.
+            (Light::Lit, None) => 0.1,
+            _ => 0.08,
+        };
+        frame.fill(
+            &Path::rounded_rectangle(
+                Point::new(0.0, top - 2.0),
+                Size::new(x + TICK, foot - top + 6.0),
+                6.0.into(),
+            ),
+            faded(bracket.color, strength * picture.lit),
+        );
+    }
     // The line from dot to dot.
     for (n, stop) in picture.stops.iter().enumerate() {
         let Some(line) = stop.line else {
@@ -1111,9 +1302,14 @@ fn paint(
             middle - (middle - top) * far,
             middle + (foot - middle) * far,
         );
+        // One that is not the lit one, nor inside it, steps back.
+        let back = match bracket.lit {
+            Light::Back => 1.0 - 0.65 * picture.lit,
+            _ => 1.0,
+        };
         let color = faded(
             bracket.color,
-            match bracket.place {
+            back * match bracket.place {
                 true => far * 0.6,
                 false => far,
             },
@@ -1131,12 +1327,13 @@ fn paint(
                     },
                     offset: 0,
                 },
-                ..Stroke::default()
-                    .with_color(color)
-                    .with_width(match bracket.strong {
-                        true => 2.6,
-                        false => 1.6,
-                    })
+                ..Stroke::default().with_color(color).with_width(
+                    match (bracket.lit, bracket.strong) {
+                        (Light::Lit, _) => 3.2,
+                        (_, true) => 2.6,
+                        (_, false) => 1.6,
+                    },
+                )
             },
         );
         if bracket.bare {
@@ -1233,23 +1430,6 @@ fn paint(
         // Its notes' marks, under what is written.
         for (n, number) in bracket.marks.iter().enumerate() {
             note_mark(frame, Point::new(left + 6.5 + 16.0 * n as f32, y), *number);
-        }
-    }
-    // Each row's mark of the section it is most nearly in.
-    for (id, color) in &picture.ties {
-        let Some(row) = at(Key::Row(*id)) else {
-            continue;
-        };
-        let (top, foot) = (row.y + 8.0, row.y + row.height - 8.0);
-        if foot > top {
-            frame.fill(
-                &Path::rounded_rectangle(
-                    Point::new(row.x + row.width - 4.5, top),
-                    Size::new(3.0, foot - top),
-                    1.5.into(),
-                ),
-                faded(*color, 0.8),
-            );
         }
     }
     // The open note's threads, from its card to what it is on.
@@ -1867,6 +2047,68 @@ mod tests {
         moves.on(&picture, 0.0, &|_| None);
         assert_eq!(moves.played, Some((id(2), 0.5)));
         assert_eq!(moves.shown(id(2), 0.5), 0.5);
+    }
+
+    #[test]
+    fn the_lane_under_the_pointer_widens_and_the_room_keeps_its_width() {
+        let whole = |widths: &[f32]| widths.iter().sum::<f32>();
+        assert_eq!(lane_widths(3, None, false), vec![BRACE; 3]);
+        // From the rows: the innermost comes to meet it.
+        assert_eq!(lane_widths(3, Some(0), false), vec![LEANT, 12.0, 12.0]);
+        // Further out, what it came past steps back.
+        assert_eq!(lane_widths(3, Some(1), false), vec![PASSED, LEANT, 14.0]);
+        // From the edge: the outermost comes forward, the rest step back.
+        assert_eq!(lane_widths(3, Some(2), true), vec![12.0, 12.0, LEANT]);
+        assert_eq!(lane_widths(3, Some(1), true), vec![14.0, LEANT, PASSED]);
+        // Two lanes leave the other room enough for its brace.
+        assert_eq!(lane_widths(2, Some(0), false), vec![26.0, PASSED]);
+        // One lane has nothing to make room for.
+        assert_eq!(lane_widths(1, Some(0), false), vec![BRACE]);
+        for lanes in 1..6 {
+            for under in 0..lanes {
+                for from_right in [false, true] {
+                    let widths = lane_widths(lanes, Some(under), from_right);
+                    assert!((whole(&widths) - BRACE * f32::from(lanes)).abs() < 0.01);
+                    assert!(widths.iter().all(|wide| *wide >= PASSED));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_lane_is_pressed_where_its_brace_is_drawn() {
+        for named in [false, true] {
+            for under in 0..4 {
+                for from_right in [false, true] {
+                    let widths = lane_widths(4, Some(under), from_right);
+                    for lane in 0..4 {
+                        let x = brace_at(&widths, lane, named) + 3.0;
+                        assert_eq!(lane_under(&widths, named, x), Some(lane));
+                    }
+                }
+            }
+        }
+        // The innermost's names are its own, and the room right of them
+        // all is the outermost's.
+        let rest = lane_widths(2, None, false);
+        assert_eq!(lane_under(&rest, true, BRACE + LABEL - 1.0), Some(0));
+        assert_eq!(lane_under(&rest, true, 500.0), Some(1));
+        assert_eq!(lane_under(&rest, true, -1.0), None);
+        assert_eq!(lane_under(&[], true, 5.0), None);
+    }
+
+    #[test]
+    fn the_pointer_stays_in_the_lane_that_widened_for_it() {
+        // Lanes at rest, the pointer come into one going either way: with
+        // the lanes leaning to it, it is in the same one.
+        let rest = lane_widths(3, None, false);
+        for x in [1.0, 17.0, 19.0, 35.0, 37.0, 53.0] {
+            for from_right in [false, true] {
+                let under = lane_under(&rest, false, x);
+                let leant = lane_widths(3, under, from_right);
+                assert_eq!(lane_under(&leant, false, x), under, "at {x}");
+            }
+        }
     }
 
     #[test]

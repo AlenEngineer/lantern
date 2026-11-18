@@ -549,14 +549,24 @@ and the project uses [Semantic Versioning](https://semver.org/).
 - The old heading row is gone. A section that holds only folded
   sections is a bracket round their rows too, and a loop over it runs
   beside the folded rows instead of disappearing.
+- Under the pointer, a bracket lights up: the rows it holds, folded
+  rows too, take its colour, it is drawn thicker, and the other brackets
+  fade; the sections inside it keep their own colours, a lighter shade
+  over their rows. The plan's bracket does the same, lightly over every
+  row. The lanes beside the rows make room for the pointer: coming from
+  the rows, the innermost bracket comes to meet it; coming from the edge,
+  the outermost comes forward and the rest step back, sliding, while the
+  rows keep their width. Carrying a step or a section, the bracket it
+  would go into lights up the same way and its lane widens; this takes
+  the place of the line down the side of its rows. The thin colour mark
+  on each row is gone.
 - The plan's bracket does what a section's does: pressed, the plan is
   picked (F2 renames it, Ctrl+D copies it, Delete twice deletes it, Esc
   lets go); pressed twice, the plan folds into one row like the others
   under it, and opens again the same way; a right click opens its ring.
 - A section's bracket is square, and in a colour of its own, from six
-  that read on dark and on light themes. Its rows have a thin mark of
-  that colour between the dot and the name, and its folded row, its
-  brackets on the Run rail and the top bar's goal take it too. A
+  that read on dark and on light themes. Its folded row, its brackets
+  on the Run rail and the top bar's goal take it too. A
   section takes the next colour its neighbours don't have; its ring has
   a swatch that fans out the six to pick another. Where the brackets'
   names leave the steps too little room, the names fold away and only

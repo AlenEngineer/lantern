@@ -130,6 +130,8 @@ struct Side<'a> {
     plan: Option<u8>,
     /// Each section's colour.
     colors: &'a [(StepId, u8)],
+    /// How wide each lane's brace is now, the innermost first.
+    widths: &'a [f32],
 }
 
 impl Side<'_> {
@@ -141,7 +143,7 @@ impl Side<'_> {
     /// How wide the plan's part of it is, from its brace to the right.
     fn plans_room(&self) -> Option<f32> {
         let lane = self.plan?;
-        Some(self.room() - track::brace_at(lane, self.named))
+        Some(self.room() - track::brace_at(self.widths, lane, self.named))
     }
 }
 
@@ -150,6 +152,43 @@ impl Side<'_> {
 enum Held {
     Section(StepId),
     Plan,
+}
+
+/// What the part of the room right of the row at `index` in `lane` is
+/// the bracket of; with no lane, the innermost section the row is in.
+/// The plan's in its own lane, and round a row in no section.
+fn covering(plan: &Plan, side: Side<'_>, index: usize, lane: Option<u8>) -> Option<Held> {
+    side.braced
+        .iter()
+        .filter(|braced| (braced.at + 1..braced.end).contains(&index))
+        .filter(|braced| lane.is_none_or(|lane| braced.lane == lane))
+        .min_by_key(|braced| braced.lane)
+        .map(|braced| Held::Section(plan.steps()[braced.at].id))
+        .or_else(|| {
+            side.plan
+                .filter(|plan| lane.is_none_or(|lane| lane == *plan))
+                .map(|_| Held::Plan)
+        })
+}
+
+/// How the bracket of `id` (the plan's for none) stands in `plan` while
+/// `lit` is the one pointed at or taking in what is carried: that one
+/// lit, those inside it in their own colours, the rest stepping back.
+fn lit_of(plan: &Plan, lit: Option<Held>, id: Option<StepId>) -> track::Light {
+    let inside = match (lit, id) {
+        (None, _) => return track::Light::Plain,
+        (Some(Held::Plan), None) => return track::Light::Lit,
+        (Some(Held::Section(lit)), Some(id)) if lit == id => return track::Light::Lit,
+        (Some(Held::Plan), Some(_)) => true,
+        (Some(Held::Section(_)), None) => false,
+        (Some(Held::Section(lit)), Some(id)) => plan
+            .position(id)
+            .is_some_and(|at| plan.within(at).contains(&lit)),
+    };
+    match inside {
+        true => track::Light::Within,
+        false => track::Light::Back,
+    }
 }
 
 /// What a plan takes: see [`App::plan_sums`].
@@ -712,14 +751,10 @@ impl App {
                 None => slot,
             }
         };
-        // The section it would be a part of: lit, with a line down the
-        // side of all it holds, the gap too.
-        let host = landing.and_then(|at| crate::drag::host(&rest_steps, at, gap_level));
-        let host_id = host.map(|(start, _)| rest_steps[start].id);
-        let host_lit = self.motion.host_lit();
-        let host_in = host.map_or(0.0, |(start, _)| {
-            INDENT * f32::from(rest_steps[start].depth().unwrap_or(0))
-        });
+        // The section it would be a part of.
+        let host_id = landing
+            .and_then(|at| crate::drag::host(&rest_steps, at, gap_level))
+            .map(|(start, _)| rest_steps[start].id);
         // The pink line is there only while a search has a result for
         // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
@@ -868,6 +903,12 @@ impl App {
             .ring
             .is_some_and(|ring| ring.on == crate::rail::RingOn::All(None));
         let colors = plan.section_colors();
+        // The lanes lean to the pointer, or to where what is carried
+        // would go, as the motion has them now.
+        let widths = self
+            .motion
+            .lanes(usize::from(side_lanes))
+            .unwrap_or_else(|| track::lane_widths(side_lanes, None, false));
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
@@ -875,6 +916,7 @@ impl App {
             named,
             plan: plan_lane,
             colors: &colors,
+            widths: &widths,
         };
         let hue = |id: StepId| section_hue(p, &colors, id);
         let mut stops: Vec<track::Stop> = Vec::new();
@@ -942,24 +984,13 @@ impl App {
         let fill_indent = fill_of.map_or(0.0, |at| {
             INDENT * f32::from(plan.level(at) + 1) + lanes.curl
         });
-        // The rows of the section something would land in are kept apart
-        // while they are gathered, to have one line down their side.
-        let mut hosting: Option<iced::widget::Column<'_, Message>> = None;
         // The steps and what sits among them, with no room between two:
         // each brings its own under it, but for a step's rail, which runs
         // the whole of its row so the line down the dots is unbroken.
         let mut list = column![];
-        macro_rules! put_whole {
-            ($row:expr $(,)?) => {
-                match hosting.take() {
-                    Some(held) => hosting = Some(held.push($row)),
-                    None => list = list.push($row),
-                }
-            };
-        }
         macro_rules! put {
             ($row:expr $(,)?) => {
-                put_whole!(apart($row))
+                list = list.push(apart($row))
             };
         }
         // Up to where rows are folded away with the section that holds
@@ -982,15 +1013,6 @@ impl App {
             }
             if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
                 put!(closing_gap(left));
-            }
-            // What the section it would be a part of holds ends here.
-            if host.is_some_and(|(_, end)| end == rest)
-                && let Some(held) = hosting.take()
-            {
-                list = list.push(hosted(p, held, host_in, host_lit));
-            }
-            if host.is_some_and(|(start, _)| start == rest) {
-                hosting = Some(column![]);
             }
             rest += 1;
             let selected = self.selected == Some(step.id) && moving.is_none();
@@ -1156,7 +1178,7 @@ impl App {
                 ),
                 None => row,
             };
-            put_whole!(row);
+            list = list.push(row);
             stops.push(stop);
             shown.push(index);
         }
@@ -1174,9 +1196,6 @@ impl App {
         }
         if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
             put!(closing_gap(left));
-        }
-        if let Some(held) = hosting.take() {
-            list = list.push(hosted(p, held, host_in, host_lit));
         }
         if folded_plan {
             let sums = self.plan_sums(plan);
@@ -1560,6 +1579,45 @@ impl App {
                 })
                 .unwrap_or_default(),
         };
+        // The bracket the pointer is on, or, while something is carried,
+        // the one it would go into: its rows take its colour, those inside
+        // it keep theirs, and the rest step back.
+        let carrying = moving.is_some() || held.is_some();
+        let lit: Option<Held> = match carrying {
+            true => landing.and_then(|_| match into.first() {
+                Some(section) => Some(Held::Section(*section)),
+                None => plan_lane.map(|_| Held::Plan),
+            }),
+            false => self.bracket_over.and_then(|pointed| {
+                let at = plan.position(pointed.row?)?;
+                match plan.steps()[at].is_section() {
+                    // A section's own row is its bracket's, but for the
+                    // plan's part right of it.
+                    true => Some(match plan_lane == Some(pointed.lane) {
+                        true => Held::Plan,
+                        false => Held::Section(plan.steps()[at].id),
+                    }),
+                    false => covering(plan, side, at, (pointed.lane > 0).then_some(pointed.lane)),
+                }
+            }),
+        };
+        // As letting go would lay them out, for a section carried.
+        let laid_plan = dropped.as_ref().map_or(plan, |(_, after)| after);
+        let lit_as = |id: Option<StepId>| lit_of(laid_plan, lit, id);
+        // While something is carried, the lane of where it would go makes
+        // room for it.
+        let lean = match carrying {
+            true => track::Lean::Carried(lit.and_then(|lit| {
+                match lit {
+                    Held::Plan => plan_lane,
+                    Held::Section(id) => braced
+                        .iter()
+                        .find(|braced| plan.steps()[braced.at].id == id)
+                        .map(|braced| braced.lane),
+                }
+            })),
+            false => track::Lean::Pointer,
+        };
         // The first and last of the places that were opened.
         let place_keys = match (stepwise.first(), stepwise.last(), blockwise) {
             (Some(first), Some(last), _) => Some((*first, *last)),
@@ -1627,7 +1685,7 @@ impl App {
                         id: Some(step.id),
                         first: step.id,
                         last: step.id,
-                        offset: track::brace_at(0, named),
+                        offset: track::brace_at(&widths, 0, named),
                         beside: None,
                         color: match self.over(timing, step.id) {
                             true => Palette::tint(hue(step.id), 0.45),
@@ -1638,6 +1696,7 @@ impl App {
                         strong: picked,
                         bare: !named,
                         place: false,
+                        lit: lit_as(Some(step.id)),
                         marks: crate::notes::numbers_on(
                             plan,
                             lantern_engine::NoteOn::Step(step.id),
@@ -1665,7 +1724,7 @@ impl App {
                         id: Some(step.id),
                         first: step.id,
                         last,
-                        offset: track::brace_at(0, named),
+                        offset: track::brace_at(&widths, 0, named),
                         beside: None,
                         color: hue(step.id),
                         name: step.label.clone(),
@@ -1680,6 +1739,7 @@ impl App {
                             || into.first() == Some(&step.id),
                         bare: !named,
                         place: false,
+                        lit: lit_as(Some(step.id)),
                         marks: crate::notes::numbers_on(
                             plan,
                             lantern_engine::NoteOn::Step(step.id),
@@ -1778,7 +1838,7 @@ impl App {
                     id: Some(step.id),
                     first: first_key,
                     last: last_key,
-                    offset: track::brace_at(braced.lane, named),
+                    offset: track::brace_at(&widths, braced.lane, named),
                     // One that holds others writes beside its own steps.
                     beside,
                     color: match foot_refused == Some(step.id) {
@@ -1795,6 +1855,7 @@ impl App {
                         || footed == Some(step.id),
                     bare: !named || (braced.lane > 0 && beside.is_none() && !side.wide),
                     place: false,
+                    lit: lit_as(Some(step.id)),
                     marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
                         .into_iter()
                         .map(|(_, n)| n)
@@ -1826,7 +1887,7 @@ impl App {
                 id: Some(section),
                 first: section,
                 last,
-                offset: track::brace_at(carried_lane, named),
+                offset: track::brace_at(&widths, carried_lane, named),
                 beside: None,
                 color: hue(section),
                 name: step.label.clone(),
@@ -1843,6 +1904,11 @@ impl App {
                 strong: false,
                 bare: !named,
                 place: true,
+                // It lands in the lit one.
+                lit: match lit {
+                    Some(_) => track::Light::Within,
+                    None => track::Light::Plain,
+                },
                 marks: Vec::new(),
                 bulge: 0.0,
             });
@@ -1856,7 +1922,7 @@ impl App {
                 id: None,
                 first: id_at(*first),
                 last: id_at(*last),
-                offset: track::brace_at(lane, named),
+                offset: track::brace_at(&widths, lane, named),
                 beside,
                 color: p.primary,
                 name: plan.title.clone(),
@@ -1876,6 +1942,7 @@ impl App {
                 // room there in the narrowest pane.
                 bare: true,
                 place: false,
+                lit: lit_as(None),
                 marks: Vec::new(),
                 bulge: 0.0,
             });
@@ -1949,11 +2016,6 @@ impl App {
                 .map(shown_as)
                 .filter(|next| *next != shown_as(stop.id));
         }
-        // Each step's row is tied to the section it is most nearly in.
-        let ties = shown
-            .iter()
-            .filter_map(|at| Some((plan.steps()[*at].id, hue(*plan.within(*at).last()?))))
-            .collect();
         let picture = track::Picture {
             stops,
             loops: drawn_loops,
@@ -1962,13 +2024,23 @@ impl App {
             hot: can,
             brackets,
             threads,
-            ties,
+            lanes: widths.clone(),
+            named,
+            lean,
+            lit: match carrying {
+                true => self.motion.host_lit(),
+                false => 1.0,
+            },
             select: (tree && can).then_some(p.primary),
             rows: whole,
             filling: self.filling.is_some(),
         };
         // Leaving the list means letting go would move nothing.
-        let mut layers = stack![rows, track::over(picture, &places, Message::Marquee)].width(Fill);
+        let mut layers = stack![
+            rows,
+            track::over(picture, &places, Message::Marquee, Message::BracketOver)
+        ]
+        .width(Fill);
         // The open note's card, beside the first thing it is on, with a
         // thread to each of them.
         if let Some(card) = self.note_card(plan)
@@ -3488,19 +3560,7 @@ impl App {
         side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
-        let covering = |lane: Option<u8>| {
-            side.braced
-                .iter()
-                .filter(|braced| (braced.at + 1..braced.end).contains(&index))
-                .filter(|braced| lane.is_none_or(|lane| braced.lane == lane))
-                .min_by_key(|braced| braced.lane)
-                .map(|braced| Held::Section(plan.steps()[braced.at].id))
-                .or_else(|| {
-                    side.plan
-                        .filter(|plan| lane.is_none_or(|lane| lane == *plan))
-                        .map(|_| Held::Plan)
-                })
-        };
+        let covering = |lane: Option<u8>| covering(plan, side, index, lane);
         let part = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
             let part = Space::new().width(wide).height(Fill);
             let section = match held {
@@ -3559,16 +3619,17 @@ impl App {
         // The innermost brace and the names beside it: the section this
         // step is most nearly in. Then a brace for each one further out,
         // and the room right of those, which is the outermost's.
+        // Each as wide as its lane is now, so a press lands on the
+        // bracket drawn there.
         let mut parts: Vec<Element<'a, Message>> = Vec::new();
-        if side.lanes > 0 {
-            let wide = match side.named {
-                true => track::BRACE + track::LABEL,
-                false => track::BRACE,
-            };
-            parts.push(part(wide, covering(None)));
-        }
-        for lane in 1..side.lanes {
-            parts.push(part(track::BRACE, covering(Some(lane))));
+        for (lane, wide) in (0..side.lanes).zip(side.widths) {
+            parts.push(match lane {
+                0 => part(
+                    wide + if side.named { track::LABEL } else { 0.0 },
+                    covering(None),
+                ),
+                lane => part(*wide, covering(Some(lane))),
+            });
         }
         if side.wide {
             let outermost = side
@@ -4488,28 +4549,6 @@ fn level_ruler<'a>(p: Palette, at: u8, least: u8, most: u8) -> Element<'a, Messa
         .into()
 }
 
-/// The rows of the section something held would be a part of, with a
-/// line down their side, `indent` in, `lit` of the way to lit.
-fn hosted<'a>(
-    p: Palette,
-    rows: iced::widget::Column<'a, Message>,
-    indent: f32,
-    lit: f32,
-) -> Element<'a, Message> {
-    let line = container(
-        container(Space::new().width(3).height(Fill)).style(move |_| container::Style {
-            background: Some(p.primary.scale_alpha(lit).into()),
-            border: iced::Border {
-                radius: 2.0.into(),
-                ..iced::Border::default()
-            },
-            ..container::Style::default()
-        }),
-    )
-    .padding(iced::Padding::default().left(indent));
-    stack![rows, line].into()
-}
-
 /// Where a drag would land: a highlighted slot naming what it carries.
 fn drop_gap<'a>(p: Palette, label: String) -> Element<'a, Message> {
     // On one line whatever its length: the gap is as tall for every
@@ -4717,6 +4756,65 @@ mod tests {
             None,
             "length unknown"
         );
+    }
+
+    #[test]
+    fn a_lane_beside_a_row_is_the_bracket_of_what_holds_it_there() {
+        // Music: A, and Hymns in it: B, C. The plan round them all.
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        plan.push("A", Action::Blank);
+        let hymns = plan.section("Hymns", None);
+        plan.push("B", Action::Blank);
+        plan.push("C", Action::Blank);
+        assert!(plan.nest(hymns, true));
+        let braced = lay_brackets(&plan, &|plan, at| plan.steps()[at].is_section());
+        let side = Side {
+            braced: &braced,
+            lanes: 3,
+            wide: false,
+            named: true,
+            plan: Some(2),
+            colors: &[],
+            widths: &[],
+        };
+        let (a, b) = (1, 3);
+        // Nearest the rows, the innermost the row is in.
+        assert_eq!(covering(&plan, side, a, None), Some(Held::Section(music)));
+        assert_eq!(covering(&plan, side, b, None), Some(Held::Section(hymns)));
+        // Each lane further out, the one there.
+        assert_eq!(
+            covering(&plan, side, b, Some(1)),
+            Some(Held::Section(music))
+        );
+        assert_eq!(covering(&plan, side, b, Some(2)), Some(Held::Plan));
+        // A lane with no bracket beside this row is no one's.
+        assert_eq!(covering(&plan, side, a, Some(0)), None);
+    }
+
+    #[test]
+    fn the_lit_bracket_keeps_those_inside_it_and_the_rest_step_back() {
+        use crate::track::Light;
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        plan.push("A", Action::Blank);
+        let hymns = plan.section("Hymns", None);
+        plan.push("B", Action::Blank);
+        assert!(plan.nest(hymns, true));
+        let sermon = plan.section("Sermon", None);
+        plan.push("C", Action::Blank);
+        let of = |lit, id| lit_of(&plan, lit, id);
+        assert_eq!(of(None, Some(music)), Light::Plain);
+        let lit = Some(Held::Section(music));
+        assert_eq!(of(lit, Some(music)), Light::Lit);
+        assert_eq!(of(lit, Some(hymns)), Light::Within);
+        assert_eq!(of(lit, Some(sermon)), Light::Back);
+        assert_eq!(of(lit, None), Light::Back);
+        // Inside it, the one round it steps back.
+        assert_eq!(of(Some(Held::Section(hymns)), Some(music)), Light::Back);
+        // The plan holds every section.
+        assert_eq!(of(Some(Held::Plan), None), Light::Lit);
+        assert_eq!(of(Some(Held::Plan), Some(sermon)), Light::Within);
     }
 
     #[test]
