@@ -195,6 +195,8 @@ pub enum Dot {
     },
     /// One of the steps a pull would be about.
     Would(Color),
+    /// Where a step that is being carried would land: a dashed ring.
+    Place(Color),
 }
 
 impl Dot {
@@ -208,7 +210,7 @@ impl Dot {
 
     fn color(self) -> Color {
         match self {
-            Dot::Solid(color) | Dot::Hollow(color) | Dot::Would(color) => color,
+            Dot::Solid(color) | Dot::Hollow(color) | Dot::Would(color) | Dot::Place(color) => color,
             Dot::On { color, .. } => color,
         }
     }
@@ -352,6 +354,9 @@ pub struct Bracket {
     /// Its name and times are not written: something open over them
     /// says them.
     pub bare: bool,
+    /// Where a section that is being carried would land: dashed, and
+    /// what is written beside it faint.
+    pub place: bool,
     pub cut: Option<u32>,
 }
 
@@ -1008,7 +1013,13 @@ fn paint(
             middle - (middle - top) * far,
             middle + (foot - middle) * far,
         );
-        let color = faded(bracket.color, far);
+        let color = faded(
+            bracket.color,
+            match bracket.place {
+                true => far * 0.6,
+                false => far,
+            },
+        );
         let round = 7.0_f32.min((foot - top) / 4.0);
         let brace = Path::new(|path| {
             path.move_to(Point::new(x, top));
@@ -1033,6 +1044,13 @@ fn paint(
             Stroke {
                 line_cap: canvas::LineCap::Round,
                 line_join: canvas::LineJoin::Round,
+                line_dash: canvas::LineDash {
+                    segments: match bracket.place {
+                        true => &[4.0, 4.0],
+                        false => &[],
+                    },
+                    offset: 0,
+                },
                 ..Stroke::default()
                     .with_color(color)
                     .with_width(match bracket.strong {
@@ -1179,6 +1197,16 @@ fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
         Dot::Hollow(color) => frame.stroke(
             &Path::circle(middle, DOT - 1.0),
             Stroke::default().with_width(2.0).with_color(color),
+        ),
+        Dot::Place(color) => frame.stroke(
+            &Path::circle(middle, DOT - 1.0),
+            Stroke {
+                line_dash: canvas::LineDash {
+                    segments: &[2.0, 2.0],
+                    offset: 0,
+                },
+                ..Stroke::default().with_width(2.0).with_color(color)
+            },
         ),
         Dot::Would(color) => {
             glow(frame, color, 0.3);

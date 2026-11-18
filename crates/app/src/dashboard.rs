@@ -314,6 +314,28 @@ impl App {
             ]
             .spacing(8)
             .align_y(Alignment::Center);
+            // What it is: a section has its bracket; steps that bring a
+            // loop or a drawn order whole have its mark.
+            if drag.is_section() {
+                said = said.push(text("}").size(BODY).font(BOLD).color(p.primary));
+            } else {
+                let whole = |shuffle: bool| {
+                    plan.laid_spans().into_iter().any(|(span, first, last)| {
+                        (match shuffle {
+                            true => span.is_drawn(),
+                            false => span.is_loop(),
+                        }) && (first..=last)
+                            .filter(|at| !plan.steps()[*at].is_section())
+                            .all(|at| drag.carried.contains(&plan.steps()[at].id))
+                    })
+                };
+                if whole(false) {
+                    said = said.push(look::icon(Icon::Repeat, 14.0, p.primary));
+                }
+                if whole(true) {
+                    said = said.push(look::icon(Icon::Shuffle, 14.0, p.primary));
+                }
+            }
             if cuts {
                 said = said.push(look::icon(Icon::Warning, 14.0, p.error));
                 for key in ["Ctrl", "Alt"] {

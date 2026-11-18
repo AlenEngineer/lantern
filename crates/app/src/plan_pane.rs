@@ -54,6 +54,11 @@ const RAIL_RING: f32 = 4.0;
 const ROW_TALL: f32 = 44.0;
 const PART_TALL: f32 = 22.0;
 const GAP_TALL: f32 = 48.0;
+/// How tall the place for one carried step is, how many of them are
+/// drawn at most, and how tall the place for a carried section is.
+const PLACE_TALL: f32 = 36.0;
+const PLACES: usize = 6;
+const BLOCK_TALL: f32 = 60.0;
 
 /// The plan's own row: a right click on it opens the ring of how the
 /// whole plan moves, where the plan can change (`can`).
@@ -425,23 +430,119 @@ impl App {
             .filter(|drag| drag.is_section())
             .map(|drag| (drag.level, drag.levels));
         let gap_tall = GAP_TALL + ruler.map_or(0.0, |_| RULER_TALL);
+        // The place that opens is in the shape of what is carried. For
+        // steps, a dashed place for each (up to a few), with a dot's
+        // place on the line and room for the brackets, so the section
+        // they would be in takes them in and a loop or a drawn order
+        // they bring is drawn beside them. For a section, one place with
+        // a bracket of its own. For a file from the library, as before.
+        let stepwise: Vec<StepId> = moving
+            .filter(|drag| !drag.is_section())
+            .map(|drag| drag.carried.iter().copied().take(PLACES).collect())
+            .unwrap_or_default();
+        let blockwise = moving
+            .filter(|drag| drag.is_section())
+            .map(|drag| drag.step);
+        let gap_tall = match (stepwise.len(), blockwise) {
+            (0, None) => gap_tall,
+            (0, Some(_)) => BLOCK_TALL + 4.0 + ruler.map_or(0.0, |_| RULER_TALL),
+            (places, _) => PLACE_TALL * places as f32,
+        };
         let closing_gap = move |left: f32| Space::new().height(gap_tall * left);
-        let gap = || {
-            let mut slot = column![drop_gap(
-                p,
-                moving
-                    .map(|d| d.label(plan))
-                    .or_else(|| held.map(|held| held.file.title.clone()))
-                    .unwrap_or_default(),
-            )]
-            .spacing(4);
-            if let Some((at, (least, most))) = ruler {
-                slot = slot.push(level_ruler(p, at, least, most));
-            }
-            let gap = container(slot).padding(iced::Padding::default().left(gap_in));
+        let gap = |side_wide: f32, lanes: Lanes<'_>| -> Element<'_, Message> {
+            let dashes = |tall: f32| {
+                crate::drawn::dashed(
+                    container(Space::new().width(Fill).height(tall)).style(move |_| {
+                        container::Style {
+                            background: Some(Palette::tint(p.primary, 0.08).into()),
+                            border: iced::Border {
+                                radius: 9.0.into(),
+                                ..iced::Border::default()
+                            },
+                            ..container::Style::default()
+                        }
+                    }),
+                    Palette::tint(p.primary, 0.7),
+                    9.0,
+                )
+            };
+            let beside = |id: StepId, dot: bool| -> Element<'_, Message> {
+                // The same room a step's rail takes, with where its dot
+                // would be.
+                let mark: Element<'_, Message> = match dot {
+                    true => column![
+                        Space::new().height(RAIL_TOP - 2.0),
+                        track::seen(
+                            track::Key::Dot(id),
+                            &self.places,
+                            Space::new().width(RAIL_DOT).height(RAIL_DOT)
+                        ),
+                    ]
+                    .width(RAIL)
+                    .align_x(Alignment::Center)
+                    .into(),
+                    false => Space::new().width(RAIL).into(),
+                };
+                track::seen(
+                    track::Key::Row(id),
+                    &self.places,
+                    row![
+                        Space::new().width(lanes.curl),
+                        mark,
+                        Space::new().width(lanes.drawn)
+                    ]
+                    .height(Fill),
+                )
+            };
+            let room = |id: StepId| {
+                track::seen(
+                    track::Key::Side(id),
+                    &self.places,
+                    Space::new().width(side_wide).height(Fill),
+                )
+            };
+            let slot: Element<'_, Message> = match (stepwise.is_empty(), blockwise) {
+                (false, _) => column(stepwise.iter().map(|id| {
+                    row![
+                        beside(*id, true),
+                        container(dashes(PLACE_TALL - 8.0)).padding([4, 0]),
+                        room(*id)
+                    ]
+                    .height(PLACE_TALL)
+                    .into()
+                }))
+                .into(),
+                (true, Some(section)) => {
+                    let mut block = column![
+                        row![
+                            beside(section, false),
+                            container(dashes(BLOCK_TALL - 4.0)).padding([2, 0]),
+                            room(section)
+                        ]
+                        .height(BLOCK_TALL)
+                    ]
+                    .spacing(4);
+                    if let Some((at, (least, most))) = ruler {
+                        block = block.push(
+                            container(level_ruler(p, at, least, most))
+                                .padding(iced::Padding::default().left(gap_in)),
+                        );
+                    }
+                    block.into()
+                }
+                (true, None) => container(drop_gap(
+                    p,
+                    held.map(|held| held.file.title.clone()).unwrap_or_default(),
+                ))
+                .padding(iced::Padding::default().left(gap_in))
+                .into(),
+            };
             match opening {
-                Some(open) => gap.max_height(gap_tall * open).clip(true),
-                None => gap,
+                Some(open) => container(slot)
+                    .max_height(gap_tall * open)
+                    .clip(true)
+                    .into(),
+                None => slot,
             }
         };
         // The section it would be a part of: lit, with a line down the
@@ -555,6 +656,9 @@ impl App {
             },
         };
         let mut stops: Vec<track::Stop> = Vec::new();
+        // The row the place for what is carried was put before, where
+        // there is one.
+        let mut gap_at: Option<usize> = None;
         // Every row in sight: a press on one of them is not on nothing.
         let mut whole: Vec<StepId> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
@@ -648,7 +752,11 @@ impl App {
                 continue;
             }
             if landing == Some(rest) {
-                put!(gap());
+                put!(gap(
+                    track::side_room(side.lanes, side.wide) + side.more,
+                    lanes
+                ));
+                gap_at = Some(index);
             }
             if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
                 put!(closing_gap(left));
@@ -945,7 +1053,11 @@ impl App {
             put!(proposed);
         }
         if landing == Some(rest) {
-            put!(gap());
+            put!(gap(
+                track::side_room(side.lanes, side.wide) + side.more,
+                lanes
+            ));
+            gap_at = Some(plan.len());
         }
         if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
             put!(closing_gap(left));
@@ -1086,6 +1198,46 @@ impl App {
             .iter()
             .filter_map(|laid| span(laid, p.primary, track::Mark::Crossed, false))
             .collect();
+        // Where carried steps would land, each has a dot's place; and a
+        // loop or a drawn order that is wholly among them comes with
+        // them, drawn beside their places.
+        if gap_at.is_some() && !stepwise.is_empty() {
+            let ink = Palette::tint(p.primary, 0.7);
+            stops.extend(stepwise.iter().map(|id| track::Stop {
+                id: *id,
+                dot: track::Dot::Place(ink),
+                line: None,
+                next: None,
+                back: None,
+                cut: None,
+            }));
+            let brought = |laid: &Laid, mark: track::Mark| {
+                let all = (laid.first..=laid.last)
+                    .filter(|at| !plan.steps()[*at].is_section())
+                    .all(|at| stepwise.contains(&id_at(at)));
+                all.then(|| track::Span {
+                    first: track::From::Step(id_at(laid.first)),
+                    last: id_at(laid.last),
+                    starts: true,
+                    ends: true,
+                    lane: laid.lane,
+                    color: ink,
+                    mark,
+                    pulled: true,
+                    shift: 0.0,
+                })
+            };
+            for laid in lanes.loops {
+                let words = plan
+                    .flow_of(laid.of)
+                    .and_then(|flow| repeat_words(flow.repeat));
+                let mark = words.map_or(track::Mark::Nothing, track::Mark::Words);
+                drawn_loops.extend(brought(laid, mark));
+            }
+            for laid in lanes.orders {
+                drawn_orders.extend(brought(laid, track::Mark::Crossed));
+            }
+        }
         // What has played of the step that is on is shown along the line
         // it goes back by.
         if let Some(back) = goes_back
@@ -1169,7 +1321,30 @@ impl App {
         }
         // The sections' brackets, each beside the first to the last of
         // its steps in sight, with its name and its times.
-        let brackets: Vec<track::Bracket> = braced
+        // The sections what is carried would be in, innermost first: for
+        // steps, where they would land and all that is around it; for a
+        // section, the one it would be a part of.
+        let into: Vec<StepId> = match moving {
+            Some(drag) if !drag.is_section() => drag
+                .landing
+                .and_then(|at| self.carry_place(plan, drag, at).section)
+                .map(|section| {
+                    let around = plan.position(section).map(|at| plan.within(at));
+                    std::iter::once(section)
+                        .chain(around.unwrap_or_default().into_iter().rev())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Some(_) => host_id.into_iter().collect(),
+            None => Vec::new(),
+        };
+        // The first and last of the places that were opened.
+        let place_keys = match (stepwise.first(), stepwise.last(), blockwise) {
+            (Some(first), Some(last), _) => Some((*first, *last)),
+            (_, _, Some(section)) => Some((section, section)),
+            _ => None,
+        };
+        let mut brackets: Vec<track::Bracket> = braced
             .iter()
             .filter_map(|braced| {
                 let step = &plan.steps()[braced.at];
@@ -1179,6 +1354,16 @@ impl App {
                     .filter(|at| (braced.at + 1..braced.end).contains(at));
                 let first = inside.next()?;
                 let last = inside.next_back().unwrap_or(first);
+                // The section what is carried would be in takes its
+                // place in: its bracket runs from there, or to there,
+                // where the place is before its first step or after its
+                // last.
+                let takes = into.contains(&step.id);
+                let (first_key, last_key) = match (gap_at.filter(|_| takes), place_keys) {
+                    (Some(gap), Some((from, _))) if gap <= first => (from, id_at(last)),
+                    (Some(gap), Some((_, to))) if gap > last => (id_at(first), to),
+                    _ => (id_at(first), id_at(last)),
+                };
                 let section = timing.sections.iter().find(|s| s.id == step.id);
                 let budget = match step.action {
                     Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
@@ -1228,8 +1413,8 @@ impl App {
                 let picked = self.selected == Some(step.id);
                 Some(track::Bracket {
                     id: step.id,
-                    first: id_at(first),
-                    last: id_at(last),
+                    first: first_key,
+                    last: last_key,
                     offset: track::brace_at(braced.lane)
                         + match braced.lane {
                             0 => 0.0,
@@ -1246,12 +1431,46 @@ impl App {
                     },
                     name: step.label.clone(),
                     lines,
-                    strong: picked || host_id == Some(step.id),
+                    strong: picked || host_id == Some(step.id) || into.first() == Some(&step.id),
                     bare: picked,
+                    place: false,
                     cut: None,
                 })
             })
             .collect();
+        // A section that is carried has a bracket of its own at its
+        // place, dashed, with its name faint beside it.
+        if let Some(section) = blockwise.filter(|_| gap_at.is_some())
+            && let Some(step) = plan.get(section)
+        {
+            let budget = match step.action {
+                Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+                _ => None,
+            };
+            brackets.push(track::Bracket {
+                id: section,
+                first: section,
+                last: section,
+                offset: track::brace_at(0),
+                beside: None,
+                color: p.primary,
+                name: step.label.clone(),
+                lines: budget
+                    .map(|budget| {
+                        (
+                            track::Sign::Goal,
+                            length::clock(budget),
+                            p.on_surface_variant,
+                        )
+                    })
+                    .into_iter()
+                    .collect(),
+                strong: false,
+                bare: false,
+                place: true,
+                cut: None,
+            });
+        }
         // The section that is picked says what it is set to, and what
         // can be done to it, in a card over its bracket's name.
         let card: Option<Element<'_, Message>> = braced
