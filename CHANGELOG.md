@@ -718,6 +718,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- In a wide plan pane, the name of a section that holds only sections is
+  no longer written over the bracket of the one outside it.
 - A fill's buttons sit above what it proposes, so they stay put while
   more of the library is measured and the proposals change.
 - Accepting a fill with its ✓ did nothing: since a press on nothing

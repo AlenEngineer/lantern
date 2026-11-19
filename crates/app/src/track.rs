@@ -465,11 +465,26 @@ pub fn side_room(lanes: u8, wide: bool, named: bool) -> f32 {
                 + LABEL
                 + BRACE * f32::from(lanes - 1)
                 + match wide {
-                    true => LABEL,
+                    // Right of each brace but the innermost, whose names
+                    // are written before the next.
+                    true => LABEL * f32::from(lanes - 1),
                     false => 0.0,
                 }
         }
     }
+}
+
+/// The lanes' `widths` with room right of each brace but the innermost
+/// and the outermost for what is written there, where that is (`wide`):
+/// a bracket's name right of its brace keeps clear of the next one out.
+pub fn written_right(mut widths: Vec<f32>, wide: bool) -> Vec<f32> {
+    let lanes = widths.len();
+    if wide && lanes > 2 {
+        for width in &mut widths[1..lanes - 1] {
+            *width += LABEL;
+        }
+    }
+    widths
 }
 
 /// How far right of where the brackets start the brace in `lane` is,
@@ -1996,6 +2011,21 @@ mod tests {
             way(&picture, 1, &at),
             vec![(Point::new(25.0, 65.0), Point::new(25.0, 78.0))]
         );
+    }
+
+    #[test]
+    fn a_name_right_of_a_brace_has_room_before_the_next() {
+        for lanes in 1..5u8 {
+            let widths = written_right(lane_widths(lanes, None, false), true);
+            // The outermost's name is written past its brace, in the room
+            // left right of them all.
+            let outermost = brace_at(&widths, lanes - 1, true);
+            assert_eq!(outermost + BRACE + LABEL, side_room(lanes, true, true));
+            for lane in 1..lanes.saturating_sub(1) {
+                let room = brace_at(&widths, lane + 1, true) - brace_at(&widths, lane, true);
+                assert_eq!(room, BRACE + LABEL);
+            }
+        }
     }
 
     #[test]
