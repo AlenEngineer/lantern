@@ -4306,6 +4306,40 @@ pub(crate) fn goal_of(
 /// and +.
 pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
     let id = step.id;
+    // What it plays apart fades with what it shows, or on its own; the
+    // two say which is which as the lines above do.
+    let apart = crate::sources::plays_apart(step);
+    let mut steppers = fade_pair(
+        p,
+        apart.then_some(Icon::Image),
+        step.fade,
+        ["Fades in", "Fades out"],
+        move |end, by| Message::SetFade(id, end, by),
+    );
+    if apart {
+        steppers = steppers.push(crate::sources::sound_fade_chooser(p, step));
+        if let Some(fade) = step.sound_fade {
+            steppers = steppers.push(fade_pair(
+                p,
+                Some(Icon::Music),
+                fade,
+                ["Its sound fades in", "Its sound fades out"],
+                move |end, by| Message::SoundFade(id, Some((end, by))),
+            ));
+        }
+    }
+    steppers.into()
+}
+
+/// A fade's two ends, each with its ramp, its time, and − and + that
+/// make it shorter or longer.
+fn fade_pair<'a>(
+    p: Palette,
+    mark: Option<Icon>,
+    fade: lantern_engine::Fade,
+    names: [&'static str; 2],
+    set: impl Fn(FadeEnd, i64) -> Message + Copy + 'a,
+) -> iced::widget::Column<'a, Message> {
     let small = move |label: &'static str, does: Option<Message>| {
         button(text(label).size(META).font(BOLD).color(p.on_surface))
             .padding([1, 4])
@@ -4317,23 +4351,20 @@ pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message>
         let shown = now.map_or("—".to_string(), |time| format!("{} s", time.secs()));
         let ramp = look::ramp(end == FadeEnd::In, end == FadeEnd::Out, 10.0, p.primary);
         row![
+            mark.map(|mark| look::icon(mark, 12.0, p.on_surface_variant)),
             hinted(p, ramp, name.to_string(), tooltip::Position::Left),
-            small("−", now.map(|_| Message::SetFade(id, end, -1))),
+            small("−", now.map(|_| set(end, -1))),
             container(text(shown).size(META).font(BOLD).color(p.on_surface)).center_x(28),
-            small(
-                "+",
-                (now != Some(FadeTime::LONGEST)).then_some(Message::SetFade(id, end, 1))
-            ),
+            small("+", (now != Some(FadeTime::LONGEST)).then(|| set(end, 1))),
         ]
         .spacing(3)
         .align_y(Alignment::Center)
     };
     column![
-        one("Fades in", FadeEnd::In, step.fade.fade_in),
-        one("Fades out", FadeEnd::Out, step.fade.fade_out),
+        one(names[0], FadeEnd::In, fade.fade_in),
+        one(names[1], FadeEnd::Out, fade.fade_out),
     ]
     .spacing(4)
-    .into()
 }
 
 /// `words` at a row's end, after a small ramp where the step fades: up

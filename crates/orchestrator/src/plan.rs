@@ -656,6 +656,11 @@ pub struct Step {
     /// How what it shows comes up and goes off: see [`Fade`].
     #[serde(default, skip_serializing_if = "Fade::is_none")]
     pub fade: Fade,
+    /// How what it plays apart from its picture (its own sound under
+    /// another picture, or a sound set in place of its own) comes up and
+    /// goes, when not with the picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound_fade: Option<Fade>,
     /// What this step changes of the look it is given, or for a section
     /// what it changes for everything in it. See [`Plan::look_at`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2448,6 +2453,7 @@ impl Plan {
             picture: Picture::Own,
             silent: false,
             fade: Fade::default(),
+            sound_fade: None,
             look: None,
             filled: false,
         }

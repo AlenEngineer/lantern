@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- What a step plays apart from its picture can fade on its own: its
+  card sets it to fade with the picture, as before, or on its own with
+  a fade in and a fade out of its own. Going on, it fades out over its
+  own time as soon as the picture begins to fade out. Saved plans open
+  as they were.
 - In Run, a sound that keeps going has its line beside the rail too,
   from its step to the last it keeps going under; while it plays the
   line fills on the sound's own clock, the rest faint.
