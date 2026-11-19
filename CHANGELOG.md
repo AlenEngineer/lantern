@@ -731,6 +731,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - In a wide plan pane, the name of a section that holds only sections is
   no longer written over the bracket of the one outside it.
+- A step's ✕ under the pointer takes its length's place, so in a narrow
+  plan pane its name is no longer cut down to nothing.
 - A fill's buttons sit above what it proposes, so they stay put while
   more of the library is measured and the proposals change.
 - Accepting a fill with its ✓ did nothing: since a press on nothing

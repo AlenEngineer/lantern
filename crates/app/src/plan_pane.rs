@@ -2518,10 +2518,12 @@ impl App {
         let mut line = row![container(label).width(Fill).clip(true)]
             .spacing(8)
             .align_y(Alignment::Center);
-        // Under the pointer, a row that can change says so: what would
-        // replace it, and the way to take it out. The selected row has
-        // all of that on its second line already.
-        if self.pointed(step.id) {
+        // Under the pointer, a row that can change says so, in its
+        // length's place so its name keeps its room: what would replace
+        // it, and the way to take it out. The selected row has all of
+        // that on its second line already.
+        let pointed = self.pointed(step.id);
+        if pointed {
             line = line.push(self.pointed_actions(step.id));
         }
         if place == Place::Current && shown && self.motion.by_phone() && self.motion.rung_by_phone()
@@ -2553,9 +2555,10 @@ impl App {
             )),
             None => line,
         };
-        let line = match acting {
-            true => line.push(self.step_actions(step)).push(end),
-            false => line.push(end),
+        let line = match (acting, pointed) {
+            (true, _) => line.push(self.step_actions(step)).push(end),
+            (false, true) => line,
+            (false, false) => line.push(end),
         };
         // Its row is lit a shade more as it goes up, and settles.
         let fill = look::row_fill(p, tone);
