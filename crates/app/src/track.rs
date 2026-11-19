@@ -335,10 +335,21 @@ pub struct Picture {
     pub lit: f32,
     /// Something is carried.
     pub carrying: bool,
-    /// The sounds that keep going under the steps after their own: from
-    /// the step it is set on to the last it keeps going under, in its
-    /// colour.
-    pub sounds: Vec<(StepId, StepId, Color)>,
+    /// The sounds that keep going under the steps after their own.
+    pub sounds: Vec<SoundLine>,
+}
+
+/// A sound that keeps going under the steps after its own, beside the
+/// rail: from the step it is set on to the last it keeps going under.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoundLine {
+    pub first: StepId,
+    pub last: StepId,
+    pub color: Color,
+    /// How much of it has played, 0 to 1, while it plays in Run: the line
+    /// fills on the sound's own clock, the rest faint. `None` draws it
+    /// whole.
+    pub played: Option<f32>,
 }
 
 /// How a bracket stands while one of them is pointed at, or would take
@@ -1148,6 +1159,37 @@ fn bar(from: Point, to: Point, wide: f32) -> (Point, Size) {
     }
 }
 
+/// A sound that keeps going, beside the dot at `from` down to `foot`:
+/// filled as far as it has `played` while it plays, else whole.
+pub fn sound_line(frame: &mut Frame, from: Point, foot: f32, color: Color, played: Option<f32>) {
+    let x = from.x + DOT + 5.0;
+    let top = from.y;
+    let line = |frame: &mut Frame, upto: f32, color: Color| {
+        frame.stroke(
+            &Path::line(Point::new(x, top), Point::new(x, upto)),
+            Stroke::default()
+                .with_width(3.0)
+                .with_color(color)
+                .with_line_cap(canvas::LineCap::Round),
+        );
+    };
+    match played {
+        None => line(frame, foot, color),
+        Some(played) => {
+            line(frame, foot, faded(color, 0.3));
+            line(frame, top + (foot - top) * played.clamp(0.0, 1.0), color);
+        }
+    }
+    frame.fill(&Path::circle(Point::new(x, top), 3.5), color);
+    frame.stroke(
+        &Path::line(
+            Point::new(x - 5.0, foot + 4.0),
+            Point::new(x + 5.0, foot + 4.0),
+        ),
+        Stroke::default().with_width(2.0).with_color(color),
+    );
+}
+
 /// `run` from `from` to `to` along it: all of the line, or its two sides.
 fn part(frame: &mut Frame, run: &Run, from: f32, to: f32, color: Color, hollow: bool, thick: f32) {
     if to - from <= 0.0 || thick <= 0.0 {
@@ -1304,26 +1346,16 @@ fn paint(
     }
     // A sound that keeps going: a line of its own, just right of the
     // dots, from its step to the last it keeps going under.
-    for (first, last, color) in &picture.sounds {
-        let (Some(from), Some(to)) = (at(Key::Dot(*first)), at(Key::Dot(*last))) else {
+    for sound in &picture.sounds {
+        let (Some(from), Some(to)) = (at(Key::Dot(sound.first)), at(Key::Dot(sound.last))) else {
             continue;
         };
-        let x = from.center().x + DOT + 5.0;
-        let (top, foot) = (from.center().y, to.center().y);
-        frame.stroke(
-            &Path::line(Point::new(x, top), Point::new(x, foot)),
-            Stroke::default()
-                .with_width(3.0)
-                .with_color(*color)
-                .with_line_cap(canvas::LineCap::Round),
-        );
-        frame.fill(&Path::circle(Point::new(x, top), 3.5), *color);
-        frame.stroke(
-            &Path::line(
-                Point::new(x - 5.0, foot + 4.0),
-                Point::new(x + 5.0, foot + 4.0),
-            ),
-            Stroke::default().with_width(2.0).with_color(*color),
+        sound_line(
+            frame,
+            from.center(),
+            to.center().y,
+            sound.color,
+            sound.played,
         );
     }
     // The spans beside it.

@@ -374,7 +374,7 @@ impl App {
 }
 
 /// The colour of a sound that keeps going under the steps after its own.
-const SOUND_LINE: iced::Color = iced::Color::from_rgb(0.557, 0.773, 1.0);
+pub(crate) const SOUND_LINE: iced::Color = iced::Color::from_rgb(0.557, 0.773, 1.0);
 
 /// How wide the plan's goal is on its card, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
@@ -2153,7 +2153,12 @@ impl App {
                 .filter_map(|step| {
                     let until = step.sound.as_ref()?.until?;
                     plan.get(until)?;
-                    Some((step.id, until, SOUND_LINE))
+                    Some(track::SoundLine {
+                        first: step.id,
+                        last: until,
+                        color: SOUND_LINE,
+                        played: self.apart_played(step.id),
+                    })
                 })
                 .collect(),
             select: (tree && can).then_some(p.primary),

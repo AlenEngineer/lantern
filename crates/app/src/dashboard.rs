@@ -1683,6 +1683,18 @@ impl App {
             .filter(|bed| owner == id && bed.id == scene)
     }
 
+    /// How much of the sound the step `id` set has played, 0 to 1, while
+    /// it plays apart from the program, its own or kept going.
+    pub(crate) fn apart_played(&self, id: StepId) -> Option<f32> {
+        let (scene, owner) = self.engine.0.plays_apart()?;
+        let bed = self
+            .stage
+            .bed
+            .as_ref()
+            .filter(|bed| owner == id && bed.id == scene)?;
+        crate::plan_pane::progress(&bed.media, &bed.resource).map(|(_, done)| done)
+    }
+
     /// What plays apart from the program, said under what is on: its
     /// name, how far it has played, and whether it came from an earlier
     /// step or plays lowered.
