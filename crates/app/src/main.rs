@@ -393,6 +393,10 @@ enum Message {
     StepPicture(StepId, sources::PictureChoice),
     /// Where a step's sound comes from.
     StepSoundFrom(StepId, sources::SoundChoice),
+    /// How far a step's sound keeps going.
+    StepSoundUntil(StepId, Option<StepId>),
+    /// What a step's sound does under one with a sound of its own.
+    StepSoundMeets(StepId, lantern_engine::Meets),
     /// A change in the open plan's own panel.
     PlanPanel(plan_panel::PlanEdit),
     /// Something done on the rail beside the plan's steps.
@@ -2953,6 +2957,8 @@ impl App {
                 self.set_sound(step, choice);
                 return self.preload();
             }
+            Message::StepSoundUntil(step, until) => self.set_until(step, until),
+            Message::StepSoundMeets(step, meets) => self.set_meets(step, meets),
             Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;
