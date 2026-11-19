@@ -1360,7 +1360,10 @@ impl App {
                 self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
-                if let Some((scene, position)) = self.media.playhead() {
+                for (scene, position) in [self.media.playhead(), self.media.bed_playhead()]
+                    .into_iter()
+                    .flatten()
+                {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
                 // A sound has no picture to say it ended or broke through.
@@ -4561,6 +4564,16 @@ impl App {
             .current_step()
             .filter(|_| self.engine.0.goes_on() && self.stage.fading_out.is_none())?;
         if !matches!(step.action, Action::Show { .. } | Action::Blank) {
+            return None;
+        }
+        // Its own sound playing apart moves it on when it ends.
+        let apart = self.engine.0.plays_apart();
+        if apart.is_some_and(|(_, owner)| owner == step.id)
+            && !matches!(
+                self.stage.bed.as_ref().map(|bed| &bed.media),
+                Some(lantern_engine::Media::Failed { .. })
+            )
+        {
             return None;
         }
         let program = self.engine.0.stage().program;

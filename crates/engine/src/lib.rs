@@ -543,7 +543,8 @@ impl Engine {
     ///
     /// When the current step's video ends and the step goes on by itself
     /// ([`Plan::goes_on`]), the plan moves to its next step, with no
-    /// fade: it is over.
+    /// fade: it is over. So does the end of the step's own sound playing
+    /// apart, under a picture with no end of its own.
     pub fn report(&self, scene: SceneId, report: MediaReport) -> bool {
         let ended = report == MediaReport::Ended;
         let applied = lock(&self.stage).report(scene, report);
@@ -553,8 +554,9 @@ impl Engine {
         applied
     }
 
-    /// Whether `scene` is on program for the current step, and that step
-    /// goes on by itself.
+    /// Whether `scene` is what the current step plays, and that step goes
+    /// on by itself: its own on program, or its sound apart from the
+    /// program while what is seen has no end of its own.
     fn goes_on_after(&self, scene: SceneId) -> bool {
         let Some(step) = self.current_step().filter(|_| self.goes_on()) else {
             return false;
@@ -562,10 +564,20 @@ impl Engine {
         let Action::Show { resource } = &step.action else {
             return false;
         };
+        let apart = self.plays_apart() == Some((scene, step.id));
         let stage = lock(&self.stage);
-        stage
-            .program()
-            .is_some_and(|program| program.id == scene && program.resource.id == resource.id)
+        match stage.program() {
+            Some(program) if program.id == scene => program.resource.id == resource.id,
+            Some(program) => apart && program.timed().is_none(),
+            None => apart,
+        }
+    }
+
+    /// The sound playing apart from the program that the plan put on, and
+    /// the step it is of: the current step's own, or one an earlier step
+    /// set that keeps going under it.
+    pub fn plays_apart(&self) -> Option<(SceneId, StepId)> {
+        *lock(&self.accompanying)
     }
 
     // ----- The one door --------------------------------------------------

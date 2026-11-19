@@ -927,6 +927,13 @@ impl Stage {
             })
     }
 
+    /// Where the sound apart from the program is now.
+    pub fn bed_playhead(&self) -> Option<(SceneId, Duration)> {
+        let bed = self.bed.as_ref()?;
+        let (sound, _) = bed.playing.as_ref()?;
+        Some((bed.scene, sound.position()?))
+    }
+
     /// What the sound apart from the program has said since it was last
     /// asked: that it reached its end, or why it stopped.
     pub fn bed_event(&self) -> Option<(SceneId, Result<(), String>)> {
