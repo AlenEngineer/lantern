@@ -59,6 +59,8 @@ pub struct Search {
     /// Kept by id, not position, so live results arriving above it don't
     /// move the pick to another row.
     picked: Option<ResourceId>,
+    /// Results picked together, with Ctrl or Shift, in the list's order.
+    many: Vec<ResourceId>,
     edits: u64,
     pub live: Live,
 }
@@ -73,6 +75,7 @@ impl Default for Search {
             asked: Query::new(""),
             groups: Vec::new(),
             picked: None,
+            many: Vec::new(),
             edits: 0,
             live: Live::Idle,
         }
@@ -92,6 +95,7 @@ impl Search {
         self.query = query;
         self.edits += 1;
         self.picked = None;
+        self.many.clear();
         self.groups.clear();
         self.live = Live::Idle;
         self.scope = Scope::Everything;
@@ -161,6 +165,8 @@ impl Search {
         {
             self.picked = None;
         }
+        let found: Vec<ResourceId> = self.results().map(|r| r.id.clone()).collect();
+        self.many.retain(|id| found.contains(id));
     }
 
     /// The bangs to offer: every one while the box is empty, the matching
@@ -307,7 +313,51 @@ impl Search {
     }
 
     pub fn is_picked(&self, resource: &Resource) -> bool {
-        self.picked.as_ref() == Some(&resource.id)
+        self.picked.as_ref() == Some(&resource.id) || self.many.contains(&resource.id)
+    }
+
+    /// A press on the result `id` with Ctrl adds it to those picked
+    /// together, or drops it; with Shift, takes all from the picked one
+    /// to it; with neither, leaves it picked alone.
+    pub fn pick_many(&mut self, id: &ResourceId, ctrl: bool, shift: bool) {
+        if !ctrl && !shift {
+            self.many.clear();
+            return;
+        }
+        let order: Vec<ResourceId> = self.pickable().map(|r| r.id.clone()).collect();
+        let at = |want: &ResourceId| order.iter().position(|id| id == want);
+        if shift {
+            if let (Some(from), Some(to)) = (self.picked.as_ref().and_then(at), at(id)) {
+                self.many = order[from.min(to)..=from.max(to)].to_vec();
+            }
+            return;
+        }
+        if self.many.is_empty()
+            && let Some(first) = self.picked.clone()
+        {
+            self.many.push(first);
+        }
+        match self.many.iter().position(|picked| picked == id) {
+            Some(at) => {
+                self.many.remove(at);
+            }
+            None => self.many.push(id.clone()),
+        }
+        self.many.sort_by_key(|picked| at(picked));
+    }
+
+    /// The results picked together, in the list's order: none unless
+    /// there are two or more.
+    pub fn together(&self) -> Vec<Arc<Resource>> {
+        let all: Vec<Arc<Resource>> = self
+            .pickable()
+            .filter(|r| self.many.contains(&r.id))
+            .cloned()
+            .collect();
+        match all.len() {
+            0 | 1 => Vec::new(),
+            _ => all,
+        }
     }
 
     /// Picks a result, if it can be shown. Returns it.
@@ -350,6 +400,7 @@ impl Search {
     /// Forgets the pick, e.g. once it went on program.
     pub fn unpick(&mut self) {
         self.picked = None;
+        self.many.clear();
     }
 
     /// Where the picked result is in the list, from 0.0 (top) to 1.0, for scrolling to it.
@@ -536,6 +587,37 @@ mod tests {
         let first = search.pick_nth(0).unwrap();
         run_live(&mut search, edit, &engine);
         assert_eq!(search.picked().map(|r| &r.id), Some(&first.id));
+    }
+
+    #[test]
+    fn results_are_picked_together_with_ctrl_and_shift() {
+        let engine = engine();
+        let mut search = Search::default();
+        search.edit("pa".into(), &engine);
+        let ids: Vec<ResourceId> = search.pickable().map(|r| r.id.clone()).collect();
+        assert!(ids.len() > 2);
+        let together = |search: &Search| -> Vec<ResourceId> {
+            search
+                .together()
+                .into_iter()
+                .map(|r| r.id.clone())
+                .collect()
+        };
+        search.pick(&ids[0]);
+        // One alone is not picked together.
+        search.pick_many(&ids[0], false, false);
+        assert!(together(&search).is_empty());
+        // Ctrl adds the next to the one picked, and drops it again.
+        search.pick_many(&ids[2], true, false);
+        assert_eq!(together(&search), [ids[0].clone(), ids[2].clone()]);
+        search.pick_many(&ids[2], true, false);
+        assert!(together(&search).is_empty());
+        // Shift takes all from the picked one, in the list's order.
+        search.pick_many(&ids[2], false, true);
+        assert_eq!(together(&search), ids[..3]);
+        // A new search starts again.
+        search.edit("p".into(), &engine);
+        assert!(together(&search).is_empty());
     }
 
     fn bang_names(search: &Search, engine: &Engine) -> Vec<String> {

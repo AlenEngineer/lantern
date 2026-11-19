@@ -2030,7 +2030,16 @@ impl App {
                     _ => false,
                 };
                 let lined_up = match target {
-                    Clicked::Result(id) => self.update(Message::Pick(id)),
+                    Clicked::Result(id) => {
+                        let (ctrl, shift) = (self.mods.control(), self.mods.shift());
+                        let anchored = shift && self.search.picked().is_some();
+                        self.search.pick_many(&id, ctrl, shift);
+                        // Shift keeps where it was taken from.
+                        match anchored {
+                            true => Task::none(),
+                            false => self.update(Message::Pick(id)),
+                        }
+                    }
                     Clicked::Step(step) => self.update(Message::Select(step)),
                     Clicked::Standby(id) => self.line_up_standby(&id),
                     // Looked at on this screen; the plan's selection
@@ -2051,7 +2060,11 @@ impl App {
                         self.preload()
                     }
                 };
-                if double && !section && self.shelf_many.len() < 2 {
+                if double
+                    && !section
+                    && self.shelf_many.len() < 2
+                    && self.search.together().is_empty()
+                {
                     return Task::batch([lined_up, self.op(Op::Take)]);
                 }
                 return lined_up;
@@ -3377,6 +3390,23 @@ impl App {
                     self.stepping = true;
                     self.spent = !self.search.query.is_empty();
                 }
+            }
+            // Results picked together go in together, in their order,
+            // after the selected step.
+            Op::AddToPlan if self.searching() && !self.search.together().is_empty() => {
+                self.remember(None);
+                let mut after = self.selected;
+                let mut ids = Vec::new();
+                for resource in self.search.together() {
+                    let id = engine.add_resource(after, &resource);
+                    after = Some(id);
+                    ids.push(id);
+                }
+                self.motion.rows_came(ids.clone());
+                self.selected = ids.first().copied();
+                self.picked = ids;
+                self.search.unpick();
+                return self.preload();
             }
             Op::AddToPlan => {
                 // While searching, the result picked or else the first;

@@ -12,6 +12,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   the section's colour: as wide as its time, as full as its steps make it,
   red when they run over. A plan with no goal of its own is held against
   what its sections' times come to.
+- Search results can be picked together, as library files can: Ctrl and
+  a click adds one or drops it, Shift takes all from the picked one.
+  "Add 3 to the plan" (or Ctrl+Enter) puts them in, in their order,
+  picked together.
 - A search result added to the plan travels from the results to its row,
   which grows in to take it.
 - A move that changes what goes on into what draws the new line in, and
