@@ -8,6 +8,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A step can lay out what it shows with a second thing, a picture or a
+  text: side by side (a verse and a quote, two pictures), or in a band
+  across its foot (a verse over a picture or a video). The stage draws
+  it, and the dashboard's live picture shows it the same. A picture
+  shown in a step's place, or laid out with it, is kept loaded with the
+  plan. Saved plans open as they were.
 - The line of a sound that keeps going is pulled by its foot, like a
   section's bracket: let go over a later step, the sound keeps going to
   there; over its own step, it plays for that step alone. Above its

@@ -3,8 +3,8 @@
 //! after its own.
 
 use lantern_engine::{
-    Action, Engine, Fade, FadeTime, Kind, Location, MediaReport, Meets, Picture, Plan, Resource,
-    ResourceId, SourceId, StepSound,
+    Action, Engine, Fade, FadeTime, Kind, Layout, Location, MediaReport, Meets, Picture, Plan,
+    Resource, ResourceId, SourceId, StepSound,
 };
 
 fn file(name: &str, kind: Kind) -> Resource {
@@ -221,4 +221,29 @@ fn a_steps_sound_apart_can_fade_on_its_own() {
         });
         assert_eq!(lifted, own.then_some(secs(6)), "own fade: {own}");
     }
+}
+
+#[test]
+fn a_steps_layout_is_saved_with_the_plan() {
+    let mut plan = Plan::new("Sunday");
+    let verse = plan.show(file("verse", Kind::Text));
+    let hymn = plan.show(file("hymn.mp4", Kind::Video));
+    let plain = plan.show(file("welcome.png", Kind::Image));
+    plan.get_mut(verse).unwrap().layout = Layout::Beside(file("quote", Kind::Text));
+    plan.get_mut(hymn).unwrap().layout = Layout::LowerThird(file("psalm", Kind::Text));
+    let back = Plan::from_json(&plan.to_json()).unwrap();
+    assert_eq!(back.steps(), plan.steps());
+    assert_eq!(
+        back.get(hymn)
+            .unwrap()
+            .layout
+            .second()
+            .map(|s| s.title.as_str()),
+        Some("psalm")
+    );
+    // A plan whose steps are shown alone, as ever, says nothing of it.
+    let mut alone = Plan::new("x");
+    alone.show(file("welcome.png", Kind::Image));
+    assert!(!alone.to_json().contains("layout"));
+    assert!(back.get(plain).unwrap().layout.is_one());
 }

@@ -30,8 +30,8 @@ pub use lantern_orchestrator::timing::{
 };
 pub use lantern_orchestrator::{
     Action, BracketError, COLORS, Carried, Carry, CarryError, Coming, DEEPEST, Drawn, Ending, Fade,
-    Flow, FlowOf, LogEntry, Looped, Meets, Note, NoteId, NoteOn, Over, Picture, Place, Plan,
-    PlanError, Repeat, Session, Span, SpanError, SpanId, Step, StepId, StepSound,
+    Flow, FlowOf, Layout, LogEntry, Looped, Meets, Note, NoteId, NoteOn, Over, Picture, Place,
+    Plan, PlanError, Repeat, Session, Span, SpanError, SpanId, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
