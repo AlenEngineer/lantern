@@ -2151,7 +2151,13 @@ impl App {
                 .steps()
                 .iter()
                 .filter_map(|step| {
-                    let until = step.sound.as_ref()?.until?;
+                    // Its end being pulled: where letting go would put it.
+                    let until = match self.sound_end {
+                        Some((owner, Some(to))) if owner == step.id => {
+                            Some(to).filter(|to| *to != owner)
+                        }
+                        _ => step.sound.as_ref()?.until,
+                    }?;
                     plan.get(until)?;
                     Some(track::SoundLine {
                         first: step.id,
@@ -2169,7 +2175,13 @@ impl App {
         // Leaving the list means letting go would move nothing.
         let mut layers = stack![
             rows,
-            track::over(picture, &places, Message::Marquee, Message::BracketOver)
+            track::over(
+                picture,
+                &places,
+                Message::Marquee,
+                Message::BracketOver,
+                Message::PressSoundEnd,
+            )
         ]
         .width(Fill);
         // The open note's card, beside the first thing it is on, with a

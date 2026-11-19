@@ -351,6 +351,9 @@ enum Message {
     /// The foot of a section's bracket was pressed: pulled, it ends the
     /// section somewhere else.
     PressFoot(StepId),
+    /// The foot of the line of a sound that keeps going was pressed, the
+    /// step that set it named: pulled, it stops somewhere else.
+    PressSoundEnd(StepId),
     /// The head of a section's bracket was pressed: pulled, it starts the
     /// section somewhere else.
     PressHead(StepId),
@@ -641,6 +644,10 @@ struct App {
     /// The foot of a section's bracket held: the section, and the row it
     /// would end at if let go now.
     pub(crate) foot: Option<(StepId, Option<StepId>)>,
+    /// The end of a sound's line being pulled: the step that set the
+    /// sound, and the row it would stop at (that step itself for its
+    /// step alone), while over one it can.
+    pub(crate) sound_end: Option<(StepId, Option<StepId>)>,
     /// The head of a section's bracket held: the section, the plan as it
     /// was when it was taken hold of (it is changed as it is pulled, and
     /// put back where it can't start), and whether it can't start where
@@ -913,6 +920,7 @@ impl App {
             alarm_pull: None,
             grabbed: false,
             foot: None,
+            sound_end: None,
             head: None,
             attached: None,
             left: None,
@@ -1574,6 +1582,17 @@ impl App {
                     let to = pulled.unwrap_or_else(|| was.clone());
                     self.engine.0.edit_plan(|plan| *plan = to);
                 }
+                // A sound's line pulled over a row: it stops there, where
+                // it can, under a step after its own.
+                if let Some((owner, to)) = &mut self.sound_end
+                    && let Some((over, _)) = row
+                {
+                    let plan = self.engine.0.plan();
+                    let at = |id| plan.position(id);
+                    let can = plan.get(over).is_some_and(|step| !step.is_section())
+                        && at(over).zip(at(*owner)).is_some_and(|(o, w)| o >= w);
+                    *to = can.then_some(over);
+                }
                 // A bracket's foot pulled over a row: where it would end.
                 if let Some((section, last)) = &mut self.foot
                     && let Some((over, _)) = row
@@ -1830,6 +1849,26 @@ impl App {
                     return self.preload();
                 }
             }
+            // A sound's line let go: it keeps going to where it was pulled,
+            // or plays for its step alone, pulled back up to it.
+            Message::Pointer(_, false) if self.sound_end.is_some() => {
+                self.grabbed = false;
+                if let Some((owner, to)) = self.sound_end.take() {
+                    let was = self
+                        .engine
+                        .0
+                        .plan()
+                        .get(owner)
+                        .and_then(|step| step.sound.as_ref()?.until);
+                    match to.map(|to| (to != owner).then_some(to)) {
+                        Some(until) if until == was => {}
+                        Some(until) => self.set_until(owner, until),
+                        None => self
+                            .motion
+                            .refuse("It keeps going only under the steps after its own"),
+                    }
+                }
+            }
             // A bracket's foot let go: the section ends where it was
             // pulled to.
             Message::Pointer(_, false) if self.foot.is_some() => {
@@ -1945,6 +1984,7 @@ impl App {
                 // carry.
                 if !std::mem::take(&mut self.grabbed)
                     && self.foot.is_none()
+                    && self.sound_end.is_none()
                     && self.head.is_none()
                     && !self.mods.shift()
                 {
@@ -2375,6 +2415,17 @@ impl App {
                 self.drag = None;
                 self.grabbed = false;
                 self.foot = Some((section, None));
+            }
+            Message::PressSoundEnd(owner) => {
+                self.drag = None;
+                self.grabbed = false;
+                let until = self
+                    .engine
+                    .0
+                    .plan()
+                    .get(owner)
+                    .and_then(|step| step.sound.as_ref()?.until);
+                self.sound_end = Some((owner, until));
             }
             Message::OpenNote(id) => {
                 self.close_note();
@@ -4906,6 +4957,7 @@ impl App {
         if self.drag.is_some()
             || self.pull.is_some()
             || self.foot.is_some()
+            || self.sound_end.is_some()
             || self.head.is_some()
             || self.resizing.is_some()
             || self.carried.is_some()
