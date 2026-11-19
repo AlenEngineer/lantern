@@ -10,6 +10,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - A search result added to the plan travels from the results to its row,
   which grows in to take it.
+- A move that changes what goes on into what draws the new line in, and
+  the dots it joins flash once.
 - What is taken to the projector comes into the live monitor from the
   side of Up next, a little smaller, and settles.
 - What a fill proposes drops in, one after another; accepted, the new

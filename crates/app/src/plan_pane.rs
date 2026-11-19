@@ -2031,6 +2031,7 @@ impl App {
                 true => self.motion.host_lit(),
                 false => 1.0,
             },
+            carrying,
             select: (tree && can).then_some(p.primary),
             rows: whole,
             filling: self.filling.is_some(),
