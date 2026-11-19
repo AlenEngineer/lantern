@@ -48,6 +48,7 @@ mod settings;
 mod settle;
 mod shelf;
 mod side;
+mod sources;
 mod stage;
 mod thumbs;
 mod track;
@@ -388,6 +389,10 @@ enum Message {
     /// Open a deck's or a PDF's step into a section of its pages, one
     /// step each.
     OpenPages(StepId),
+    /// Where a step's picture comes from.
+    StepPicture(StepId, sources::PictureChoice),
+    /// Where a step's sound comes from.
+    StepSoundFrom(StepId, sources::SoundChoice),
     /// A change in the open plan's own panel.
     PlanPanel(plan_panel::PlanEdit),
     /// Something done on the rail beside the plan's steps.
@@ -2940,6 +2945,14 @@ impl App {
             Message::RehearseTick => return self.rehearse_tick(),
             Message::Fill(edit) => self.fill_edit(edit),
             Message::OpenPages(step) => return self.open_pages(step),
+            Message::StepPicture(step, choice) => {
+                self.set_picture(step, choice);
+                return self.preload();
+            }
+            Message::StepSoundFrom(step, choice) => {
+                self.set_sound(step, choice);
+                return self.preload();
+            }
             Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;

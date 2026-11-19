@@ -14,8 +14,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   before it). A step can be silent. A sound set on a step can keep going
   under the steps after it, up to one; under a step with a sound of its
   own it fades out, stops at once, or plays on lowered, as it is set.
-  Saved plans open as they were. (Set in the plan file for now; the
-  plan pane's chips and card come next.)
+  Saved plans open as they were. The picked step's card sets where its
+  picture comes from (its own, the picture picked in search or the
+  library, what was on, or nothing) and its sound (its own, the sound
+  or video picked, or none); a row that mixes says so under its name.
+  Any step can have a sound set, a video too.
 - A presentation or a PDF in the plan opens into its pages: its ring
   says "Open it into its 18 pages", and it becomes a section of them,
   one step each, sharing the deck's time. A picture can then go between
