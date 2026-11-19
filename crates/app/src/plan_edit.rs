@@ -370,6 +370,20 @@ fn takes_sound(step: &Step) -> bool {
 /// When a step that goes on by itself would: a video when it ends, a still
 /// after its length. `None` for steps that can't (sections, live slots,
 /// notes), which wait for the operator.
+/// The deck or PDF the step `id` shows, whole: one that can open into
+/// its pages.
+pub(crate) fn paged(plan: &Plan, id: StepId) -> Option<lantern_engine::Resource> {
+    match &plan.get(id)?.action {
+        Action::Show { resource }
+            if matches!(resource.kind, Kind::Document | Kind::Presentation)
+                && resource.page_of().is_none() =>
+        {
+            Some(resource.clone())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn goes_on_when(step: &Step) -> Option<&'static str> {
     match &step.action {
         Action::Show { resource } if matches!(resource.kind, Kind::Video | Kind::Audio) => {

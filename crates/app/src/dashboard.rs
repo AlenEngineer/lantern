@@ -1939,6 +1939,9 @@ impl App {
         let resource = &scene.resource;
         let mut facts: Vec<String> = resource.subtitle.iter().cloned().collect();
         match &scene.media {
+            // One page of a deck or a PDF, opened into a step of its own:
+            // its title says which.
+            Media::Frames { .. } if resource.page_of().is_some() => {}
             Media::Frames { frame, count } => facts.extend(match count {
                 Some(count) if count.get() == 1 => None,
                 Some(count) => Some(format!("{} {} of {count}", unit(resource), frame + 1)),

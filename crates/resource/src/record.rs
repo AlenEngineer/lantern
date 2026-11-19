@@ -43,6 +43,25 @@ impl Resource {
     /// to time their sections.
     pub const DURATION: &'static str = "duration_seconds";
 
+    /// Meta key for which page of a paged file (a PDF, a deck) the
+    /// resource is, counted from 0: the stage shows that page alone.
+    pub const PAGE: &'static str = "page";
+
+    /// Page `n` of this paged file, counted from 0, as a resource of its
+    /// own: the same file, its own id, and a title that says which page.
+    pub fn page(&self, n: usize) -> Resource {
+        let mut page = self.clone();
+        page.id = self.id.part(&format!("page{}", n + 1));
+        page.title = format!("{} · {}", self.title, n + 1);
+        page.meta.insert(Self::PAGE.to_string(), n.to_string());
+        page
+    }
+
+    /// Which page of its file this is, counted from 0, if it is one.
+    pub fn page_of(&self) -> Option<usize> {
+        self.meta.get(Self::PAGE)?.parse().ok()
+    }
+
     /// A resource with the required fields; use the `with_*` methods for the rest.
     pub fn new(id: ResourceId, title: impl Into<String>, kind: Kind, location: Location) -> Self {
         Self {

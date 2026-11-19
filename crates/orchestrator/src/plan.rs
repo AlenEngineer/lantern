@@ -86,6 +86,12 @@ pub enum Action {
     },
 }
 
+/// What a page opened out of a deck or a PDF is called, `n` counted
+/// from 0.
+fn page_label(n: usize) -> String {
+    format!("p. {}", n + 1)
+}
+
 /// How many colours sections are told apart by.
 pub const COLORS: u8 = 6;
 
@@ -2438,6 +2444,72 @@ impl Plan {
         Ok(id)
     }
 
+    /// Opens the step `id`, a paged file (a deck or a PDF) of `pages`
+    /// pages, into a section of its pages, one step each, the section
+    /// named as the step was. The step becomes the first page, so what
+    /// was on it (notes, a loop starting at it) stays; what ended at it
+    /// ends at the last page. Its sound goes with the page it started
+    /// at, and its fade out with the last page. Each page is `each`
+    /// long, where that is known. The section's heading.
+    pub fn open_pages(
+        &mut self,
+        id: StepId,
+        pages: usize,
+        each: Option<Duration>,
+    ) -> Result<StepId, BracketError> {
+        let at = self.position(id).ok_or(BracketError::Missing)?;
+        let resource = match &self.steps[at].action {
+            Action::Show { resource } if pages > 0 && resource.page_of().is_none() => {
+                resource.clone()
+            }
+            _ => return Err(BracketError::Missing),
+        };
+        let mut next = self.clone();
+        let label = next.steps[at].label.clone();
+        let sound = next.steps[at].sound.take();
+        let fade_out = next.steps[at].fade.fade_out.take();
+        let look = next.steps[at].look.clone();
+        next.steps[at].action = Action::Show {
+            resource: resource.page(0),
+        };
+        next.steps[at].label = page_label(0);
+        next.steps[at].estimate = each;
+        let mut ids = vec![id];
+        for n in 1..pages {
+            let mut step = next.new_step(
+                page_label(n),
+                Action::Show {
+                    resource: resource.page(n),
+                },
+            );
+            step.look.clone_from(&look);
+            step.estimate = each;
+            ids.push(step.id);
+            next.steps.insert(at + n, step);
+        }
+        let last = ids[ids.len() - 1];
+        if let Some(sound) = sound {
+            let on = ids[sound.from.min(pages - 1)];
+            if let Some(step) = next.get_mut(on) {
+                step.sound = Some(StepSound { from: 0, ..sound });
+            }
+        }
+        if let Some(step) = next.get_mut(last) {
+            step.fade.fade_out = fade_out;
+        }
+        for span in &mut next.spans {
+            if let Over::Steps { last: ends, .. } = &mut span.over
+                && *ends == id
+            {
+                *ends = last;
+            }
+        }
+        next.settle();
+        let section = next.bracket_over(id, last, label)?;
+        *self = next;
+        Ok(section)
+    }
+
     /// Takes the section `section` away and leaves its steps where they
     /// are, in whatever section was around it; the sections it held go
     /// one level out. A loop or drawn order attached to it is laid over
@@ -3028,6 +3100,51 @@ mod tests {
         let notes = plan.insert(99, "Notes", Action::Note);
         assert_eq!(labels(&plan), ["Prayer", "Welcome", "Notes"]);
         assert_ne!(notes, worship);
+    }
+
+    #[test]
+    fn a_deck_opens_into_a_section_of_its_pages() {
+        let mut plan = Plan::new("Sunday");
+        let word = plan.section("Word", None);
+        let welcome = plan.show(resource("Welcome"));
+        let deck = plan.show(resource("News"));
+        let after = plan.section("After", None);
+        plan.show(resource("Song"));
+        plan.loop_over(welcome, deck).unwrap();
+        let section = plan.open_pages(deck, 3, None).unwrap();
+        assert_eq!(
+            labels(&plan),
+            [
+                "Word", "Welcome", "News", "p. 1", "p. 2", "p. 3", "After", "Song"
+            ]
+        );
+        // In the section the deck was in, one further in.
+        assert_eq!(plan.within(plan.position(section).unwrap()), [word]);
+        assert_eq!(plan.get(section).unwrap().depth(), Some(1));
+        let pages: Vec<StepId> = plan.steps()[3..6].iter().map(|step| step.id).collect();
+        assert_eq!(pages[0], deck, "the deck's step is its first page");
+        for (n, id) in pages.iter().enumerate() {
+            let Some(Action::Show { resource }) = plan.get(*id).map(|step| &step.action) else {
+                panic!("a page shows");
+            };
+            assert_eq!(resource.page_of(), Some(n));
+        }
+        // The loop that ended at the deck ends at its last page.
+        let span = plan.spans()[0].over;
+        assert_eq!(
+            span,
+            Over::Steps {
+                first: welcome,
+                last: pages[2]
+            }
+        );
+        // What came after it is where it was.
+        assert_eq!(
+            plan.within(plan.position(after).unwrap()),
+            Vec::<StepId>::new()
+        );
+        // A page opens no further.
+        assert!(plan.open_pages(pages[1], 2, None).is_err());
     }
 
     #[test]

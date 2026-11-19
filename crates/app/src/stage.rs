@@ -90,10 +90,11 @@ enum Loader {
     Video(PathBuf),
     /// A sound file: it plays over what is on stage.
     Audio(PathBuf),
-    Pdf(PathBuf),
+    /// A PDF's pages, or only the one named (counted from 0).
+    Pdf(PathBuf, Option<usize>),
     /// A PowerPoint file or its like, shown as the pages of the PDF
-    /// LibreOffice makes of it.
-    Deck(PathBuf),
+    /// LibreOffice makes of it, or only the one named.
+    Deck(PathBuf, Option<usize>),
     Youtube(YoutubeVideo),
 }
 
@@ -129,8 +130,8 @@ pub fn needs(resource: &Resource) -> Result<Needs, String> {
             Loader::Image(path)
             | Loader::Video(path)
             | Loader::Audio(path)
-            | Loader::Pdf(path)
-            | Loader::Deck(path),
+            | Loader::Pdf(path, _)
+            | Loader::Deck(path, _),
         ) => Needs::File(path),
         Some(Loader::Youtube(video)) => Needs::Youtube(video),
         Some(Loader::RemoteImage(urls)) => Needs::Images(urls),
@@ -176,8 +177,10 @@ impl Loader {
             Kind::Image => Ok(Some(Loader::Image(path))),
             Kind::Video => Ok(Some(Loader::Video(path))),
             Kind::Audio => Ok(Some(Loader::Audio(path))),
-            Kind::Document if is_pdf => Ok(Some(Loader::Pdf(path))),
-            Kind::Presentation if crate::deck::is_deck(&path) => Ok(Some(Loader::Deck(path))),
+            Kind::Document if is_pdf => Ok(Some(Loader::Pdf(path, resource.page_of()))),
+            Kind::Presentation if crate::deck::is_deck(&path) => {
+                Ok(Some(Loader::Deck(path, resource.page_of())))
+            }
             kind => Err(format!("the stage can't show {} files", kind.name())),
         }
     }
@@ -187,7 +190,7 @@ impl Loader {
     fn is_still(&self) -> bool {
         matches!(
             self,
-            Loader::Image(_) | Loader::RemoteImage(_) | Loader::Pdf(_) | Loader::Deck(_)
+            Loader::Image(_) | Loader::RemoteImage(_) | Loader::Pdf(..) | Loader::Deck(..)
         )
     }
 
@@ -224,10 +227,10 @@ impl Loader {
                     Err(reason) => Err(reason),
                 }
             }
-            Loader::Pdf(path) => {
-                render_pdf(existing(path)?, &cache_dir().join("pdf")).map(Content::Pages)
-            }
-            Loader::Deck(path) => {
+            Loader::Pdf(path, page) => render_pdf(existing(path)?, &cache_dir().join("pdf"))
+                .and_then(|pages| only(pages, *page))
+                .map(Content::Pages),
+            Loader::Deck(path, page) => {
                 let decks = cache_dir().join("decks");
                 let pdf = crate::deck::to_pdf(existing(path)?, &decks)?;
                 // Its videos come out now, so one plays the moment it is
@@ -239,7 +242,9 @@ impl Loader {
                         crate::log(format!("stage: {err}"));
                     }
                 }
-                render_pdf(&pdf, &cache_dir().join("pdf")).map(Content::Pages)
+                render_pdf(&pdf, &cache_dir().join("pdf"))
+                    .and_then(|pages| only(pages, *page))
+                    .map(Content::Pages)
             }
         }
     }
@@ -906,9 +911,10 @@ impl Stage {
         self.lengths.get(id).copied()
     }
 
-    /// What a preload has finished loading for `id`.
+    /// What a preload has finished loading for `id`, to show it.
     pub fn preloaded(&self, id: &ResourceId) -> Option<&Content> {
-        self.ready.get(id)
+        // Or one of the plan's pictures or pages, kept loaded.
+        self.ready.get(id).or_else(|| self.kept.get(id))
     }
 
     /// The program's player, while a video is on program.
@@ -1241,6 +1247,14 @@ impl Stage {
     /// everything the plan may show, in the order to load it. Videos aren't
     /// kept (a player each is too much); the next one is still preloaded.
     /// What left the plan is let go.
+    /// How many pages the paged file `id` has, once its pages are kept.
+    pub fn pages(&self, id: &ResourceId) -> Option<usize> {
+        match self.kept.get(id)? {
+            Content::Pages(pages) => Some(pages.len()),
+            _ => None,
+        }
+    }
+
     pub fn keep(
         &mut self,
         resources: impl IntoIterator<Item = Resource>,
@@ -1503,6 +1517,19 @@ fn open_playbin(playbin: &str, uri: &url::Url, size: &str, patient: bool) -> Res
     let mut video = Video::from_gst_pipeline(pipeline, sink, None).map_err(|err| fail(&err))?;
     video.set_paused(true);
     Ok(video)
+}
+
+/// `pages`, or only the one `page` names (counted from 0): a page opened
+/// out of its file into a step of its own.
+fn only(pages: Vec<Handle>, page: Option<usize>) -> Result<Vec<Handle>, String> {
+    match page {
+        None => Ok(pages),
+        Some(n) => pages
+            .into_iter()
+            .nth(n)
+            .map(|one| vec![one])
+            .ok_or_else(|| format!("its file has no page {} any more", n + 1)),
+    }
 }
 
 /// Renders every page with `pdftoppm` into a folder under `cache`, keyed by
@@ -1794,7 +1821,7 @@ mod tests {
         );
         assert_eq!(
             Loader::for_resource(&file(Kind::Document, "pages.pdf")),
-            Ok(Some(Loader::Pdf(fixture("pages.pdf"))))
+            Ok(Some(Loader::Pdf(fixture("pages.pdf"), None)))
         );
         assert_eq!(
             Loader::for_resource(&resource(Kind::Text, Location::Inline("hi".into()))),
@@ -1887,5 +1914,22 @@ mod tests {
         assert_eq!(pages.len(), 3);
         let again = render_pdf(&fixture("pages.pdf"), cache.path()).unwrap();
         assert_eq!(again, pages);
+    }
+    #[test]
+    fn a_page_opened_out_of_its_file_loads_alone() {
+        let pages: Vec<Handle> = (0..3)
+            .map(|n| Handle::from_path(format!("page-{n}.png")))
+            .collect();
+        assert_eq!(only(pages.clone(), None).unwrap().len(), 3);
+        assert_eq!(only(pages.clone(), Some(1)).unwrap(), [pages[1].clone()]);
+        assert!(
+            only(pages, Some(5)).is_err(),
+            "a page the file no longer has"
+        );
+        let deck = resource(Kind::Presentation, Location::File(fixture("deck.pptx"))).page(2);
+        assert_eq!(
+            Loader::for_resource(&deck),
+            Ok(Some(Loader::Deck(fixture("deck.pptx"), Some(2))))
+        );
     }
 }

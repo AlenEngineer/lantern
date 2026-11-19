@@ -8,6 +8,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A presentation or a PDF in the plan opens into its pages: its ring
+  says "Open it into its 18 pages", and it becomes a section of them,
+  one step each, sharing the deck's time. A picture can then go between
+  two pages, a sound after the last, a page can be skipped or looped,
+  as with any steps. While planning or, unlocked, in a service; not the
+  one on the projector.
 - With Shift held, the box that picks steps can be pulled from a row
   too, so it works in a plan pane full of rows.
 - Under the plan's name, a bar with a part for each of its sections, in
@@ -735,6 +741,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A presentation's or a PDF's step shows its first page in the preview
+  and Up next, not a blank card that says "loading…".
 - Rows taken away, or folded into their section, close up from as tall
   as they were drawn, so a picked row with its card no longer jumps.
 - What a fill proposes stays as the library goes on being measured:

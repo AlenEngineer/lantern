@@ -656,6 +656,28 @@ impl App {
                 Some(Message::Fill(crate::fill_panel::FillEdit::Open(id))),
             ));
         }
+        // A deck or a PDF opens into its pages, while planning or in a
+        // service, once its pages are known.
+        if let RingOn::Dot(id) = ring.on
+            && let Some(resource) = crate::plan_edit::paged(&plan, id)
+        {
+            let pages = self.media.pages(&resource.id).filter(|pages| *pages > 1);
+            let words = match pages {
+                Some(pages) => format!("Open it into its {pages} pages"),
+                None => "Its pages are still being read".to_string(),
+            };
+            petals.push(petal(
+                100.0,
+                48.0,
+                PETAL,
+                false,
+                glyph(Icon::Document, false),
+                &words,
+                pages
+                    .filter(|_| self.can_edit())
+                    .map(|_| Message::OpenPages(id)),
+            ));
+        }
         // A section's colour: its swatch, out past the inner row. Pressed,
         // the colours fan out round it, and one pressed is the section's.
         if let RingOn::All(Some(id)) = ring.on {
