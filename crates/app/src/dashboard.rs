@@ -47,6 +47,14 @@ const MIDDLE_LEAST: f32 = 320.0;
 /// How wide the line between panes is to the pointer.
 /// How far short of a card's top and foot the line between two of its
 /// panes stops.
+/// About how wide the strip's right end is (search, the stage window,
+/// blackout, settings and what isn't ready): the plan's part of the strip
+/// leaves it this.
+const STRIP_RIGHT: f32 = 380.0;
+/// About how wide the modes and starting the service are, beside the
+/// plan's part of the strip.
+const STRIP_MIDDLE: f32 = 340.0;
+
 const SEAM_INSET: f32 = 20.0;
 
 const SEAM_GRIP: f32 = 10.0;
@@ -610,12 +618,15 @@ impl App {
             .into(),
             _ => self.plan_header(&plan),
         };
-        let mut strip = row![
-            container(header).width(self.plan_width() - 8.0),
-            self.mode_switch()
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
+        // The modes start over the stage's pane, where there is room for
+        // them and for what is right of them; else the plan's name and
+        // buttons give way.
+        let header_room = (self.plan_width() - 8.0)
+            .min(wide - 2.0 * EDGE - 16.0 - STRIP_RIGHT - STRIP_MIDDLE)
+            .max(120.0);
+        let mut strip = row![self.mode_switch()]
+            .spacing(4)
+            .align_y(Alignment::Center);
         strip = strip.push(Space::new().width(Fill));
         // The running section and how the service stands against its
         // schedule: behind or ahead with a start time, else when it ends.
@@ -790,6 +801,9 @@ impl App {
             );
         }
         strip = strip.push(Space::new().width(Fill));
+        // Right of that, what is always wanted: it has its room first,
+        // and what is between gives way.
+        let mut right = row![].spacing(4).align_y(Alignment::Center);
         // One button a source: the Bible, YouTube, the folders, the clock…
         // Each only opens the search on its bang, as typing `!b ` would;
         // a folder's own bang, which has no picture, shows as it's typed.
@@ -818,7 +832,7 @@ impl App {
                         .into(),
                 };
                 let about = format!("{} · !{}", bang.sources.join(", "), bang.bang);
-                strip = strip.push(
+                right = right.push(
                     iced::widget::tooltip(
                         button(face)
                             .padding([9, 10])
@@ -838,7 +852,7 @@ impl App {
         } else {
             Tone::Plain
         };
-        strip = strip.push(hinted(
+        right = right.push(hinted(
             p,
             tool(
                 Icon::Search,
@@ -854,14 +868,14 @@ impl App {
         if !issues.is_empty()
             && let Some(readiness) = self.readiness(&plan, &issues)
         {
-            strip = strip.push(readiness);
+            right = right.push(readiness);
         }
         // The stage window: lit while it is open. Closed with a service
         // or Live going, nothing reaches the projector: it is the alarm's
         // colour, and the picture's label says so in words.
         let open = self.stage_window.is_some();
         let missing = !open && (self.stage_lost || self.stage_missing());
-        strip = strip.push(hinted(
+        right = right.push(hinted(
             p,
             tool(
                 Icon::Screen,
@@ -885,7 +899,7 @@ impl App {
         ));
         // Blackout: solid while the projector is black.
         let blackout = self.stage.blackout;
-        strip = strip.push(hinted(
+        right = right.push(hinted(
             p,
             button(
                 text(if blackout {
@@ -916,7 +930,7 @@ impl App {
             ),
             tooltip::Position::Bottom,
         ));
-        strip = strip.push(hinted(
+        right = right.push(hinted(
             p,
             tool(
                 Icon::Settings,
@@ -931,6 +945,13 @@ impl App {
             keys::with_key("Settings", Op::Settings),
             tooltip::Position::Bottom,
         ));
+        let strip = row![
+            container(header).width(header_room).clip(true),
+            container(strip).width(Fill).clip(true),
+            right,
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
         container(strip)
             .height(STRIP)
             .padding([0, 8])
