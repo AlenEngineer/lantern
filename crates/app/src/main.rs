@@ -1896,7 +1896,12 @@ impl App {
                 // Not from the rail: a dot pressed there is its own thing.
                 // A bracket pressed just now carries its section: that
                 // stays, whichever of the two is heard first.
-                if !std::mem::take(&mut self.grabbed) && self.foot.is_none() && self.head.is_none()
+                // With Shift held a press on a row begins a box, not a
+                // carry.
+                if !std::mem::take(&mut self.grabbed)
+                    && self.foot.is_none()
+                    && self.head.is_none()
+                    && !self.mods.shift()
                 {
                     self.drag = self
                         .hovered

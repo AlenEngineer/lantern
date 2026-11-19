@@ -2145,6 +2145,7 @@ impl App {
             },
             carrying,
             select: (tree && can).then_some(p.primary),
+            band_anywhere: tree && can && self.mods.shift(),
             rows: whole,
             filling: self.filling.is_some(),
         };
