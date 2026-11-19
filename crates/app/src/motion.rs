@@ -158,7 +158,7 @@ pub struct Motion {
     breath: Option<Run>,
     /// Rows just taken away, closing up before the row named (the end of
     /// the plan for none): how many.
-    gone: Option<(Option<StepId>, usize, Run)>,
+    gone: Option<(Option<StepId>, f32, Run)>,
     /// Rows just put back, growing in.
     came: Option<(Vec<StepId>, Run)>,
     /// What the service just went round, its light running back.
@@ -340,16 +340,16 @@ impl Motion {
     }
 
     /// `rows` rows were taken away from before `anchor`.
-    pub fn rows_gone(&mut self, anchor: Option<StepId>, rows: usize) {
-        self.gone = Some((anchor, rows, self.run(ROWS, Instant::now())));
+    pub fn rows_gone(&mut self, anchor: Option<StepId>, tall: f32) {
+        self.gone = Some((anchor, tall, self.run(ROWS, Instant::now())));
     }
 
-    /// How much room the rows taken away still take before `anchor`, as a
-    /// share of their height: 1 just taken, 0 closed.
-    pub fn gone_before(&self, anchor: Option<StepId>) -> Option<(usize, f32)> {
-        let (at, rows, run) = self.gone.as_ref()?;
+    /// How much room the rows taken away still take before `anchor`: all
+    /// they took just taken, none once closed.
+    pub fn gone_before(&self, anchor: Option<StepId>) -> Option<f32> {
+        let (at, tall, run) = self.gone.as_ref()?;
         (*at == anchor).then_some(())?;
-        Some((*rows, 1.0 - self.along(Some(run))?))
+        Some(*tall * (1.0 - self.along(Some(run))?))
     }
 
     /// The rows `came` were put back.

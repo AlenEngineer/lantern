@@ -51,8 +51,9 @@ pub(crate) const RAIL_TOP: f32 = 15.0;
 const RAIL_RING: f32 = 4.0;
 
 /// About how tall a step's row is, and each line under it, and the gap a
-/// drag opens: for what is cut to a height on its way open or closed. A
-/// little over is right; under would cut a row that should show whole.
+/// drag opens: for what is cut to a height on its way open or closed, and
+/// a row not drawn yet. A little over is right; under would cut a row
+/// that should show whole.
 const ROW_TALL: f32 = 44.0;
 const PART_TALL: f32 = 22.0;
 const GAP_TALL: f32 = 48.0;
@@ -353,6 +354,22 @@ impl App {
             ),
             Err(_) => when,
         }
+    }
+}
+
+impl App {
+    /// How tall the rows of `steps` were last drawn, together; one never
+    /// drawn as tall as a row usually is.
+    pub(crate) fn rows_tall(&self, steps: &[StepId]) -> f32 {
+        let places = self.places.borrow();
+        steps
+            .iter()
+            .map(|id| {
+                places
+                    .get(&track::Key::Whole(*id))
+                    .map_or(ROW_TALL, |row| row.height)
+            })
+            .sum()
     }
 }
 
@@ -1169,8 +1186,8 @@ impl App {
                 continue;
             }
             // Rows just taken away from before this one close up.
-            if let Some((rows, left)) = self.motion.gone_before(Some(step.id)) {
-                put!(Space::new().height(ROW_TALL * rows as f32 * left));
+            if let Some(room) = self.motion.gone_before(Some(step.id)) {
+                put!(Space::new().height(room));
             }
             let place = if self
                 .rehearsal
@@ -1267,8 +1284,8 @@ impl App {
             stops.push(stop);
             shown.push(index);
         }
-        if let Some((rows, left)) = self.motion.gone_before(None) {
-            put!(Space::new().height(ROW_TALL * rows as f32 * left));
+        if let Some(room) = self.motion.gone_before(None) {
+            put!(Space::new().height(room));
         }
         if fill_at == Some(plan.len())
             && let Some(proposed) = self.fill_rows(fill_indent)
