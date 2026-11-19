@@ -67,6 +67,12 @@ impl ResourceId {
         Self(format!("{source}:{key}"))
     }
 
+    /// The id of a part of this item, such as one page of it: this id
+    /// with `#part` after it.
+    pub fn part(&self, part: &str) -> Self {
+        Self(format!("{}#{part}", self.0))
+    }
+
     /// The source part of the id.
     pub fn source(&self) -> &str {
         self.split().0

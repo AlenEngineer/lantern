@@ -385,6 +385,9 @@ enum Message {
     RehearseTick,
     /// A change to the fill of a section from the library.
     Fill(fill_panel::FillEdit),
+    /// Open a deck's or a PDF's step into a section of its pages, one
+    /// step each.
+    OpenPages(StepId),
     /// A change in the open plan's own panel.
     PlanPanel(plan_panel::PlanEdit),
     /// Something done on the rail beside the plan's steps.
@@ -2924,6 +2927,7 @@ impl App {
             Message::RehearseSpeed => self.rehearse_speed(),
             Message::RehearseTick => return self.rehearse_tick(),
             Message::Fill(edit) => self.fill_edit(edit),
+            Message::OpenPages(step) => return self.open_pages(step),
             Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;
@@ -4400,6 +4404,62 @@ impl App {
     }
 
     /// Closes the open note; one that says nothing is taken away.
+    /// Opens the deck or PDF of the step `step` into a section of its
+    /// pages. Not the one on the projector: its pages would start over.
+    fn open_pages(&mut self, step: StepId) -> Task<Message> {
+        let plan = self.engine.0.plan();
+        let Some(pages) = plan_edit::paged(&plan, step)
+            .and_then(|resource| self.media.pages(&resource.id))
+            .filter(|_| self.can_edit())
+        else {
+            return Task::none();
+        };
+        if self.engine.0.current_step().is_some_and(|on| on.id == step)
+            && self.engine.0.stage().program.is_some()
+        {
+            self.motion
+                .refuse("It is on the projector: open it once it is off");
+            return Task::none();
+        }
+        // The deck's time shared out between its pages, a few seconds
+        // each at least.
+        let each = plan
+            .get(step)
+            .map(|deck| (self.estimate(deck).length / pages as u32).max(Duration::from_secs(5)));
+        self.remember(None);
+        match self
+            .engine
+            .0
+            .edit_plan(|plan| plan.open_pages(step, pages, each))
+        {
+            Ok(section) => {
+                self.ring = None;
+                let plan = self.engine.0.plan();
+                let came: Vec<StepId> = plan
+                    .position(section)
+                    .map(|at| {
+                        plan.steps()[at + 1..plan.group_end(at)]
+                            .iter()
+                            .map(|s| s.id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                self.motion.rows_came(came);
+                self.selected = None;
+                self.preload()
+            }
+            Err(why) => {
+                self.motion.refuse(match why {
+                    lantern_engine::BracketError::TooDeep => {
+                        "Sections go no more than three deep: it can't open here"
+                    }
+                    _ => "It can't open here",
+                });
+                Task::none()
+            }
+        }
+    }
+
     pub(crate) fn close_note(&mut self) {
         let Some(id) = self.note_open.take() else {
             return;
