@@ -335,6 +335,10 @@ pub struct Picture {
     pub lit: f32,
     /// Something is carried.
     pub carrying: bool,
+    /// The sounds that keep going under the steps after their own: from
+    /// the step it is set on to the last it keeps going under, in its
+    /// colour.
+    pub sounds: Vec<(StepId, StepId, Color)>,
 }
 
 /// How a bracket stands while one of them is pointed at, or would take
@@ -1297,6 +1301,30 @@ fn paint(
             part(frame, run, solid, end, ahead, hollow, thick);
             before += length;
         }
+    }
+    // A sound that keeps going: a line of its own, just right of the
+    // dots, from its step to the last it keeps going under.
+    for (first, last, color) in &picture.sounds {
+        let (Some(from), Some(to)) = (at(Key::Dot(*first)), at(Key::Dot(*last))) else {
+            continue;
+        };
+        let x = from.center().x + DOT + 5.0;
+        let (top, foot) = (from.center().y, to.center().y);
+        frame.stroke(
+            &Path::line(Point::new(x, top), Point::new(x, foot)),
+            Stroke::default()
+                .with_width(3.0)
+                .with_color(*color)
+                .with_line_cap(canvas::LineCap::Round),
+        );
+        frame.fill(&Path::circle(Point::new(x, top), 3.5), *color);
+        frame.stroke(
+            &Path::line(
+                Point::new(x - 5.0, foot + 4.0),
+                Point::new(x + 5.0, foot + 4.0),
+            ),
+            Stroke::default().with_width(2.0).with_color(*color),
+        );
     }
     // The spans beside it.
     let going_back = picture

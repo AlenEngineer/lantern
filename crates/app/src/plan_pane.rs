@@ -373,6 +373,9 @@ impl App {
     }
 }
 
+/// The colour of a sound that keeps going under the steps after its own.
+const SOUND_LINE: iced::Color = iced::Color::from_rgb(0.557, 0.773, 1.0);
+
 /// How wide the plan's goal is on its card, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
 
@@ -2144,6 +2147,15 @@ impl App {
                 false => 1.0,
             },
             carrying,
+            sounds: plan
+                .steps()
+                .iter()
+                .filter_map(|step| {
+                    let until = step.sound.as_ref()?.until?;
+                    plan.get(until)?;
+                    Some((step.id, until, SOUND_LINE))
+                })
+                .collect(),
             select: (tree && can).then_some(p.primary),
             band_anywhere: tree && can && self.mods.shift(),
             rows: whole,
@@ -2248,7 +2260,22 @@ impl App {
     fn step_parts<'a>(&self, step: &Step, on_stage: bool) -> Vec<Element<'a, Message>> {
         let p = self.palette;
         let Action::Show { resource } = &step.action else {
-            return Vec::new();
+            // A note or a live slot under a sound that keeps going says so.
+            return crate::sources::mix_lines(&self.engine.0.plan(), step)
+                .into_iter()
+                .map(|(icon, words)| {
+                    container(
+                        row![
+                            look::icon(icon, 12.0, p.on_surface_variant),
+                            single_line(words).size(META).color(p.on_surface_variant),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding(iced::Padding::default().left(34.0).top(2.0).bottom(3.0))
+                    .into()
+                })
+                .collect();
         };
         let at = self
             .stage
@@ -2305,7 +2332,7 @@ impl App {
             }
         }
         // Where its picture comes from, when not from what it is.
-        for (icon, words) in crate::sources::mix_lines(step) {
+        for (icon, words) in crate::sources::mix_lines(&self.engine.0.plan(), step) {
             parts.push(line(icon, words, false, 0));
         }
         if let Some(sound) = &step.sound {

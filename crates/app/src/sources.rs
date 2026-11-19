@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use iced::widget::{column, pick_list, row};
 use iced::{Alignment, Element};
-use lantern_engine::{Action, Kind, Picture, Resource, Step, StepId, StepSound};
+use lantern_engine::{Action, Kind, Meets, Picture, Plan, Resource, Step, StepId, StepSound};
 
 use crate::look::{self, Icon, META};
 use crate::palette::Palette;
@@ -54,6 +54,56 @@ impl fmt::Display for SoundChoice {
             SoundChoice::None => write!(f, "none"),
         }
     }
+}
+
+/// How far a step's sound keeps going: its own step alone, or under the
+/// steps after it, up to one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Until {
+    pub to: Option<StepId>,
+    label: String,
+}
+
+impl fmt::Display for Until {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
+/// What a sound that keeps going does under a step with a sound of its
+/// own, in words.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeetsChoice(pub Meets);
+
+impl fmt::Display for MeetsChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self.0 {
+            Meets::Fade => "fades out under a sound",
+            Meets::Cut => "stops at a sound",
+            Meets::Under => "plays lowered under a sound",
+        })
+    }
+}
+
+/// How far `step`'s sound can keep going: its step alone, or to any of
+/// the steps after it.
+fn untils(plan: &Plan, step: &Step) -> Vec<Until> {
+    let mut choices = vec![Until {
+        to: None,
+        label: "for this step".to_string(),
+    }];
+    if let Some(at) = plan.position(step.id) {
+        choices.extend(
+            plan.steps()[at + 1..]
+                .iter()
+                .filter(|later| !later.is_section())
+                .map(|later| Until {
+                    to: Some(later.id),
+                    label: format!("on to {}", later.label),
+                }),
+        );
+    }
+    choices
 }
 
 /// What the step's picture is set to now.
@@ -120,7 +170,59 @@ impl App {
                 Message::StepSoundFrom(id, choice)
             })
         };
-        column![picture, sound].spacing(4).into()
+        let mut card = column![picture, sound].spacing(4);
+        // A sound of its own can keep going under the steps after it.
+        if let Some(set) = &step.sound {
+            let plan = self.engine.0.plan();
+            let choices = untils(&plan, step);
+            let now = choices
+                .iter()
+                .find(|choice| choice.to == set.until)
+                .cloned()
+                .unwrap_or_else(|| choices[0].clone());
+            card = card.push(chooser(
+                p,
+                Icon::Joined,
+                choices,
+                now,
+                move |choice: Until| Message::StepSoundUntil(id, choice.to),
+            ));
+            if set.until.is_some() {
+                card = card.push(chooser(
+                    p,
+                    Icon::Sound,
+                    vec![
+                        MeetsChoice(Meets::Fade),
+                        MeetsChoice(Meets::Cut),
+                        MeetsChoice(Meets::Under),
+                    ],
+                    MeetsChoice(set.meets),
+                    move |choice: MeetsChoice| Message::StepSoundMeets(id, choice.0),
+                ));
+            }
+        }
+        card.into()
+    }
+
+    /// Sets how far the step `id`'s sound keeps going.
+    pub(crate) fn set_until(&mut self, id: StepId, until: Option<StepId>) {
+        self.remember(None);
+        self.engine.0.edit_plan(|plan| {
+            if let Some(sound) = plan.get_mut(id).and_then(|step| step.sound.as_mut()) {
+                sound.until = until;
+            }
+        });
+    }
+
+    /// Sets what the step `id`'s sound does under a step with a sound of
+    /// its own.
+    pub(crate) fn set_meets(&mut self, id: StepId, meets: Meets) {
+        self.remember(None);
+        self.engine.0.edit_plan(|plan| {
+            if let Some(sound) = plan.get_mut(id).and_then(|step| step.sound.as_mut()) {
+                sound.meets = meets;
+            }
+        });
     }
 
     /// Sets where the step `id`'s picture comes from. Another picture is
@@ -222,13 +324,46 @@ where
         .into()
 }
 
+/// Whether `step` makes a sound of its own: a video or a sound, heard,
+/// or a sound set in place of its own.
+fn sounds(step: &Step) -> bool {
+    match &step.action {
+        Action::Show { resource } => {
+            step.sound.is_some()
+                || (!step.silent && matches!(resource.kind, Kind::Video | Kind::Audio))
+        }
+        _ => false,
+    }
+}
+
 /// What a row that mixes says under its name: where its picture and its
-/// sound come from, when not from what it is.
-pub fn mix_lines(step: &Step) -> Vec<(Icon, String)> {
-    let Action::Show { .. } = &step.action else {
-        return Vec::new();
-    };
+/// sound come from, when not from what it is; and the sound an earlier
+/// step set that keeps going under it.
+pub fn mix_lines(plan: &Plan, step: &Step) -> Vec<(Icon, String)> {
     let mut lines = Vec::new();
+    if let Some(at) = plan.position(step.id) {
+        for (from, earlier) in plan.steps()[..at].iter().enumerate() {
+            let Some(sound) = &earlier.sound else {
+                continue;
+            };
+            let keeps = sound
+                .until
+                .and_then(|until| plan.position(until))
+                .is_some_and(|until| from < at && at <= until);
+            if keeps {
+                // Under a step with a sound of its own, as it is set to.
+                let words = match (sounds(step), sound.meets) {
+                    (false, _) | (true, Meets::Under) => "keeps going",
+                    (true, Meets::Fade) => "fades out here",
+                    (true, Meets::Cut) => "stops here",
+                };
+                lines.push((Icon::Music, format!("{} {words}", sound.resource.title)));
+            }
+        }
+    }
+    let Action::Show { .. } = &step.action else {
+        return lines;
+    };
     match &step.picture {
         Picture::Own => {}
         Picture::File(file) => lines.push((Icon::Image, format!("Shows {}", file.title))),
