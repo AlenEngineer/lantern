@@ -780,8 +780,12 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
         return;
     };
     let plan = session.plan();
-    // The current step's own, or one that keeps going to here.
-    let own = sound_of(current, stage).map(|sound| (sound, current.id, false));
+    // The current step's own, or one that keeps going to here. With a fade
+    // of its own it goes as soon as what is seen begins to fade out.
+    let fading = stage.state().fading_out.is_some();
+    let own = sound_of(current, stage)
+        .filter(|_| !(fading && current.sound_fade.is_some()))
+        .map(|sound| (sound, current.id, false));
     let kept = playing.and_then(|(_, owner)| {
         let from = plan.get(owner)?;
         let sound = from.sound.as_ref()?;
@@ -801,18 +805,29 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
         },
         (None, None) => None,
     };
-    // It goes as what it played with goes, or as the step it meets says.
-    let going = stage.state().fading_out.map(|fade| fade.over).or_else(|| {
-        kept.filter(|(_, sound)| sound.meets == Meets::Fade)
-            .and_then(|_| FadeTime::from_secs(MEETS_FADE))
-    });
+    // It goes over its own fade out, else as what it played with goes,
+    // or as the step it meets says.
+    let meets_fade = kept
+        .filter(|(_, sound)| sound.meets == Meets::Fade)
+        .and_then(|_| FadeTime::from_secs(MEETS_FADE));
+    let own_fade = playing
+        .and_then(|(_, owner)| plan.get(owner))
+        .and_then(|owner| owner.sound_fade);
+    let going = match own_fade {
+        Some(fade) => fade.fade_out.or(meets_fade),
+        None => stage
+            .state()
+            .fading_out
+            .map(|fade| fade.over)
+            .or(meets_fade),
+    };
     match (wanted, *playing) {
         (Some((_, owner, lowered)), Some((_, of))) if owner == of => {
             stage.set_lowered(lowered);
         }
         (Some((sound, owner, lowered)), _) => {
             let fade_in = (owner == current.id)
-                .then_some(current.fade.fade_in)
+                .then(|| current.sound_fade.unwrap_or(current.fade).fade_in)
                 .flatten();
             stage.bed(Arc::new(sound), fade_in, going);
             stage.set_lowered(lowered);
@@ -821,7 +836,9 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
         (None, Some((_, owner))) => {
             stage.lift_bed(going);
             stage.set_lowered(false);
-            if current.id == owner && current.picture.is_own() {
+            // Back before the slide it starts from, its own is heard
+            // again; not while it fades out.
+            if current.id == owner && current.picture.is_own() && !fading {
                 stage.set_muted(false);
             }
             *playing = None;

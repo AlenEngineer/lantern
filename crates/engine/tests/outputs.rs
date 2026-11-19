@@ -3,8 +3,8 @@
 //! after its own.
 
 use lantern_engine::{
-    Action, Engine, Kind, Location, MediaReport, Meets, Picture, Plan, Resource, ResourceId,
-    SourceId, StepSound,
+    Action, Engine, Fade, FadeTime, Kind, Location, MediaReport, Meets, Picture, Plan, Resource,
+    ResourceId, SourceId, StepSound,
 };
 
 fn file(name: &str, kind: Kind) -> Resource {
@@ -175,4 +175,50 @@ fn a_still_goes_on_when_the_sound_it_plays_apart_ends() {
     engine.report(video, MediaReport::Timeline { duration: None });
     engine.report(bed, MediaReport::Ended);
     assert_eq!(engine.current_step().map(|s| s.id), Some(hymn));
+}
+
+#[test]
+fn a_steps_sound_apart_can_fade_on_its_own() {
+    let secs = |n| FadeTime::from_secs(n);
+    let plan = |own: bool| {
+        let mut plan = Plan::new("Sunday");
+        let song = plan.show(file("song.mp3", Kind::Audio));
+        plan.show(file("welcome.png", Kind::Image));
+        let step = plan.get_mut(song).unwrap();
+        step.picture = Picture::File(file("cross.png", Kind::Image));
+        step.fade = Fade {
+            fade_in: secs(1),
+            fade_out: secs(2),
+        };
+        if own {
+            step.sound_fade = Some(Fade {
+                fade_in: secs(4),
+                fade_out: secs(6),
+            });
+        }
+        plan
+    };
+    for own in [false, true] {
+        let engine = Engine::new();
+        engine.load_plan(plan(own));
+        engine.next();
+        let bed = engine.stage().bed.unwrap();
+        let fade_in = if own { secs(4) } else { secs(1) };
+        assert_eq!(bed.fade_in, fade_in, "own fade: {own}");
+        // Going on, what is seen fades out first; a sound fading on its
+        // own goes at once, over its own fade.
+        let feed = engine.subscribe();
+        engine.next();
+        let stage = engine.stage();
+        assert!(stage.fading_out.is_some());
+        assert_eq!(stage.bed.is_none(), own, "own fade: {own}");
+        let lifted = feed.events.try_iter().find_map(|event| match event {
+            lantern_engine::StageEvent::Bed {
+                scene: None,
+                fade_out,
+            } => Some(fade_out),
+            _ => None,
+        });
+        assert_eq!(lifted, own.then_some(secs(6)), "own fade: {own}");
+    }
 }

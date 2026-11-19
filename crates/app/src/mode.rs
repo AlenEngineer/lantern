@@ -98,6 +98,7 @@ fn does(message: &Message) -> Does {
         )
         | M::StepSound(id, _)
         | M::SetFade(id, ..)
+        | M::SoundFade(id, _)
         | M::KeepCopy(id)
         | M::SoundFrom(id, _)
         | M::SlotSearch(id, _)
