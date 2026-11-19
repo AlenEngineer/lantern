@@ -60,10 +60,10 @@ const SEAM_INSET: f32 = 20.0;
 const SEAM_GRIP: f32 = 10.0;
 /// The window's padding, the gap between its cards, a card's padding, and
 /// the strip's height.
-const EDGE: f32 = 12.0;
+pub(crate) const EDGE: f32 = 12.0;
 const GAP: f32 = 10.0;
 const CARD_PADDING: f32 = 16.0;
-const STRIP: f32 = 48.0;
+pub(crate) const STRIP: f32 = 48.0;
 /// How wide the search panel is, where the window has the room.
 const SEARCH_PANEL: f32 = 460.0;
 

@@ -818,6 +818,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A ring's buttons no longer overlap (those on its left were too close
+  together), and a ring opened near the window's edge or the strip moves
+  in so all of it is in sight.
 - A wide plan pane no longer pushes the strip's last buttons (settings
   among them) off its right end: those have their room first, and the
   modes, which start over the stage's pane where there is room, move in
