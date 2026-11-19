@@ -330,6 +330,8 @@ pub struct Picture {
     pub lean: Lean,
     /// How far the lit bracket has come up, 0 to 1.
     pub lit: f32,
+    /// Something is carried.
+    pub carrying: bool,
 }
 
 /// How a bracket stands while one of them is pointed at, or would take
@@ -616,7 +618,9 @@ pub fn order_room(lanes: u8) -> f32 {
 /// Something that is drawn in when it first appears.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Thing {
-    Line(StepId),
+    /// A step's line, to the step it goes on into: one that comes to go
+    /// on into another is a new line.
+    Line(StepId, Option<StepId>),
     Loop(StepId, StepId),
     Order(StepId, StepId),
     Bracket(Option<StepId>),
@@ -701,6 +705,16 @@ impl Moves {
         });
         // What is drawn in.
         let mut drawn = HashMap::new();
+        // While something is carried, lines come and go with where it
+        // would land: they are drawn as they are, and what is new once it
+        // is let go is told from the lines there before it was picked up.
+        if picture.carrying {
+            for (thing, far) in &self.drawn {
+                if let Thing::Line(..) = thing {
+                    drawn.insert(*thing, *far);
+                }
+            }
+        }
         let mut draw = |thing: Thing, there: bool| {
             let from = match self.drawn.get(&thing) {
                 Some(far) => *far,
@@ -715,8 +729,8 @@ impl Moves {
             drawn.insert(thing, far);
         };
         for stop in &picture.stops {
-            if stop.line.is_some() {
-                draw(Thing::Line(stop.id), false);
+            if stop.line.is_some() && !picture.carrying {
+                draw(Thing::Line(stop.id, stop.next), false);
             }
         }
         for span in &picture.loops {
@@ -1231,7 +1245,7 @@ fn paint(
         let runs = way(picture, n, at);
         let whole: f32 = runs.iter().map(long).sum();
         // As much of it as is drawn so far.
-        let shown = whole * moves.drawn(Thing::Line(stop.id));
+        let shown = whole * moves.drawn(Thing::Line(stop.id, stop.next));
         let (played, ink, ahead, hollow, thick) = match line {
             Line::Plain(color) => (0.0, color, color, false, 1.0),
             // What has played is shown along the line it goes back by.
@@ -1472,6 +1486,18 @@ fn paint(
             continue;
         };
         let middle = place.center();
+        // The two dots a new line joins flash as it is drawn in.
+        let joining = picture
+            .stops
+            .iter()
+            .filter(|from| {
+                from.line.is_some() && (from.id == stop.id || from.next == Some(stop.id))
+            })
+            .map(|from| moves.drawn(Thing::Line(from.id, from.next)))
+            .fold(1.0, f32::min);
+        if joining < 1.0 {
+            flash(frame, middle, stop.dot.color(), joining);
+        }
         if moves.over == Some(stop.id) {
             frame.fill(
                 &Path::circle(middle, DOT + RING),
@@ -1482,15 +1508,19 @@ fn paint(
     }
 }
 
+/// A ring going out from the dot at `middle`, `gone` of the way, fading
+/// as it goes.
+fn flash(frame: &mut Frame, middle: Point, color: Color, gone: f32) {
+    frame.stroke(
+        &Path::circle(middle, DOT + 1.5 + 9.0 * gone),
+        Stroke::default()
+            .with_width(2.5)
+            .with_color(faded(color, 0.6 * (1.0 - gone))),
+    );
+}
+
 fn dot(frame: &mut Frame, stop: &Stop, middle: Point, moves: &Moves) {
-    let glow = |frame: &mut Frame, color: Color, gone: f32| {
-        frame.stroke(
-            &Path::circle(middle, DOT + 1.5 + 9.0 * gone),
-            Stroke::default()
-                .with_width(2.5)
-                .with_color(faded(color, 0.6 * (1.0 - gone))),
-        );
-    };
+    let glow = |frame: &mut Frame, color: Color, gone: f32| flash(frame, middle, color, gone);
     match stop.dot {
         Dot::Solid(color) => frame.fill(&Path::circle(middle, DOT), color),
         Dot::Hollow(color) => frame.stroke(
@@ -2024,7 +2054,7 @@ mod tests {
         // What is there at first is there.
         assert!(!moves.on(&playing(0.25), 0.0, &|_| None));
         assert_eq!(moves.played, Some((id(1), 0.25)));
-        assert_eq!(moves.drawn(Thing::Line(id(1))), 1.0);
+        assert_eq!(moves.drawn(Thing::Line(id(1), None)), 1.0);
         // A jump is caught up with, not made at once.
         assert!(moves.on(&playing(0.75), 0.05, &|_| None));
         let shown = moves.shown(id(1), 0.75);
@@ -2038,13 +2068,37 @@ mod tests {
         two.stops
             .push(stop(2, Some(Line::Plain(Color::WHITE)), None));
         assert!(moves.on(&two, 0.05, &|_| None));
-        assert!(moves.drawn(Thing::Line(id(2))) < 1.0);
+        assert!(moves.drawn(Thing::Line(id(2), None)) < 1.0);
         // With motion off it is there at once.
         two.still = true;
         two.stops
             .push(stop(3, Some(Line::Plain(Color::WHITE)), None));
         assert!(!moves.on(&two, 0.05, &|_| None));
-        assert_eq!(moves.drawn(Thing::Line(id(3))), 1.0);
+        assert_eq!(moves.drawn(Thing::Line(id(3), None)), 1.0);
+    }
+
+    #[test]
+    fn a_line_that_comes_to_go_into_another_step_is_drawn_in_unless_carried() {
+        let joined = |next, carrying| Picture {
+            stops: vec![stop(1, Some(Line::Plain(Color::WHITE)), Some(next))],
+            carrying,
+            ..Picture::default()
+        };
+        let mut moves = Moves::default();
+        moves.on(&joined(2, false), 0.0, &|_| None);
+        assert_eq!(moves.drawn(Thing::Line(id(1), Some(id(2)))), 1.0);
+        // Carried, where it would land comes and goes: no line is drawn in.
+        assert!(!moves.on(&joined(3, true), 0.05, &|_| None));
+        assert_eq!(moves.drawn(Thing::Line(id(1), Some(id(3)))), 1.0);
+        // Let go there, the step it now goes on into is new to it.
+        assert!(moves.on(&joined(3, false), 0.05, &|_| None));
+        assert!(moves.drawn(Thing::Line(id(1), Some(id(3)))) < 1.0);
+        // A line there before it was picked up is not.
+        for _ in 0..20 {
+            moves.on(&joined(3, false), 0.05, &|_| None);
+        }
+        moves.on(&joined(3, true), 0.05, &|_| None);
+        assert!(!moves.on(&joined(3, false), 0.05, &|_| None));
     }
 
     #[test]
