@@ -504,6 +504,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A step's own sound set to another file (music under a passage, or
+  under the last slides of a deck) plays apart from what the step
+  shows, so it can go under a video too: the video plays without its
+  own sound. It fades in and out with the step, and stops when the step
+  is gone back before its slide or something else is put on.
 - The other plans, folded under the open one and in the list of plans,
   say what their steps come to beside how many there are. Templates are
   folded under them too, starred: pressed, a new plan starts from one.

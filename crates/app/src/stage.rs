@@ -28,7 +28,8 @@ use gstreamer::prelude::*;
 use iced::widget::image::Handle;
 use iced_video_player::Video;
 use lantern_engine::{
-    Engine, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId, StageState, Timed,
+    Engine, FadeTime, Kind, Location, MediaReport, Playback, Resource, ResourceId, SceneId,
+    StageState, Timed,
 };
 
 use crate::fading::{Fades, Levels, loudness};
@@ -707,9 +708,44 @@ enum Program {
     },
 }
 
+/// The sound playing apart from the program ([`StageState::bed`]).
+struct Bed {
+    scene: SceneId,
+    /// What it is loaded as: apart from the same file loading for the
+    /// program or a preload.
+    key: ResourceId,
+    /// Its player once loaded, and when it began to play.
+    playing: Option<(Sound, Instant)>,
+    /// How long it takes to come up from nothing.
+    fade_in: Option<Duration>,
+}
+
+/// A sound that played apart from the program, going out: from `from`
+/// of the way up, over `over` from `since`.
+struct Going {
+    sound: Sound,
+    from: f32,
+    since: Instant,
+    over: Duration,
+}
+
+/// How far up something is that comes up over `fade_in` and began at
+/// `since`.
+fn come_up(fade_in: Option<Duration>, since: Instant, now: Instant) -> f32 {
+    match fade_in {
+        Some(over) if !over.is_zero() => {
+            (now.saturating_duration_since(since).as_secs_f32() / over.as_secs_f32()).min(1.0)
+        }
+        _ => 1.0,
+    }
+}
+
 /// The renderer's state. The engine's mirror ([`StageState`]) stays the
 /// authority on what is shown; this only holds what it takes to draw it.
 pub struct Stage {
+    /// The sound playing apart from the program, and those going out.
+    bed: Option<Bed>,
+    going: Vec<Going>,
     program: Program,
     /// What is loaded for the picture a sound plays over
     /// ([`StageState::under`]): it was the program when the sound went on.
@@ -756,6 +792,8 @@ pub struct Stage {
 impl Stage {
     pub fn new(downloads: Arc<Downloads>) -> Self {
         Stage {
+            bed: None,
+            going: Vec::new(),
             downloads,
             program: Program::Bare,
             under: None,
@@ -785,6 +823,144 @@ impl Stage {
         self.play_levels(stage, now);
     }
 
+    /// Follows the sound playing apart from the program: the one it takes
+    /// the place of goes out over `fade_out`, or at once, and a new one
+    /// starts loading. One that can't be played says why.
+    pub fn bed_changed(
+        &mut self,
+        stage: &StageState,
+        fade_out: Option<FadeTime>,
+        engine: &Engine,
+    ) -> iced::Task<Arc<Loaded>> {
+        let wanted = stage.bed.as_ref();
+        if self.bed.as_ref().map(|bed| bed.scene) == wanted.map(|scene| scene.id) {
+            return iced::Task::none();
+        }
+        let now = Instant::now();
+        if let Some(Bed {
+            playing: Some((sound, since)),
+            fade_in,
+            ..
+        }) = self.bed.take()
+        {
+            let from = come_up(fade_in, since, now) * self.fades.levels(stage, now).sound;
+            if let Some(over) = fade_out {
+                self.going.push(Going {
+                    sound,
+                    from,
+                    since: now,
+                    over: over.duration(),
+                });
+            }
+        }
+        let Some(scene) = wanted else {
+            crate::log("stage: nothing plays apart");
+            return iced::Task::none();
+        };
+        let path = match &scene.resource.location {
+            Location::File(path) => path.clone(),
+            _ => {
+                engine.report(
+                    scene.id,
+                    MediaReport::Failed {
+                        reason: "only a file can play apart from the program".into(),
+                    },
+                );
+                return iced::Task::none();
+            }
+        };
+        let key = scene.resource.id.part("bed");
+        self.bed = Some(Bed {
+            scene: scene.id,
+            key: key.clone(),
+            playing: None,
+            fade_in: scene.fade_in.map(FadeTime::duration),
+        });
+        crate::log(format!("stage: {} plays apart", scene.id));
+        spawn(
+            key,
+            Loader::Audio(path),
+            self.downloads.clone(),
+            false,
+            None,
+        )
+    }
+
+    /// Plays the sound apart from the program, and those going out, as
+    /// loud as their fades say at `now`; one gone out is let go. While
+    /// what is on fades out, the sound apart fades with it.
+    fn play_bed(&mut self, stage: &StageState, now: Instant) {
+        let with = self.fades.levels(stage, now).sound;
+        if let Some(Bed {
+            playing: Some((sound, since)),
+            fade_in,
+            ..
+        }) = &self.bed
+        {
+            sound.set_volume(loudness(come_up(*fade_in, *since, now) * with));
+        }
+        self.going.retain(|going| {
+            let gone = now.saturating_duration_since(going.since).as_secs_f32()
+                / going.over.as_secs_f32().max(f32::EPSILON);
+            going.sound.set_volume(loudness(going.from * (1.0 - gone)));
+            gone < 1.0
+        });
+    }
+
+    /// Whether the sound apart from the program is coming up, or one is
+    /// going out.
+    fn bed_moving(&self, now: Instant) -> bool {
+        !self.going.is_empty()
+            || self.bed.as_ref().is_some_and(|bed| {
+                bed.playing
+                    .as_ref()
+                    .is_some_and(|(_, since)| come_up(bed.fade_in, *since, now) < 1.0)
+            })
+    }
+
+    /// What the sound apart from the program has said since it was last
+    /// asked: that it reached its end, or why it stopped.
+    pub fn bed_event(&self) -> Option<(SceneId, Result<(), String>)> {
+        let bed = self.bed.as_ref()?;
+        let (sound, _) = bed.playing.as_ref()?;
+        Some((bed.scene, sound.event()?))
+    }
+
+    /// The sound apart from the program, loaded: it plays from silence or
+    /// at once. `true` when `loaded` was it.
+    fn bed_loaded(&mut self, loaded: &Loaded, stage: &StageState, engine: &Engine) -> bool {
+        let Some(bed) = self
+            .bed
+            .as_mut()
+            .filter(|bed| bed.key == loaded.resource && bed.playing.is_none())
+        else {
+            return false;
+        };
+        self.loading.remove(&loaded.resource);
+        let Some(result) = loaded.result.lock().ok().and_then(|mut slot| slot.take()) else {
+            return true;
+        };
+        match result {
+            Ok(Content::Sound(sound)) => {
+                let now = Instant::now();
+                let level = come_up(bed.fade_in, now, now) * self.fades.levels(stage, now).sound;
+                sound.set_volume(loudness(level));
+                sound.unmute();
+                sound.set_paused(false);
+                let duration = Some(sound.duration()).filter(|d| !d.is_zero());
+                engine.report(bed.scene, MediaReport::Timeline { duration });
+                bed.playing = Some((sound, now));
+                crate::log(format!("stage: {} playing apart", bed.scene));
+            }
+            Ok(_) => {}
+            Err(reason) => {
+                crate::log(format!("stage: {} can't play apart: {reason}", bed.scene));
+                engine.report(bed.scene, MediaReport::Failed { reason });
+            }
+        }
+        true
+    }
+
     /// How much of what is on gets through now, as it fades.
     pub fn levels(&self, stage: &StageState) -> Levels {
         self.fades.levels(stage, Instant::now())
@@ -794,7 +970,9 @@ impl Stage {
     /// level is still to be played and drawn.
     pub fn fading(&self, stage: &StageState) -> bool {
         let now = Instant::now();
-        self.fades.moving(stage, now) || self.played != self.fades.levels(stage, now)
+        self.fades.moving(stage, now)
+            || self.played != self.fades.levels(stage, now)
+            || self.bed_moving(now)
     }
 
     /// Plays what is on as loud as its fade says, and once what was
@@ -813,7 +991,12 @@ impl Stage {
     /// levels as played.
     fn play_levels(&mut self, stage: &StageState, now: Instant) {
         self.played = self.fades.levels(stage, now);
-        self.set_loudness(self.played.sound);
+        // Silenced while something plays in its place.
+        self.set_loudness(match stage.muted {
+            true => 0.0,
+            false => self.played.sound,
+        });
+        self.play_bed(stage, now);
     }
 
     /// Sets how loud the program's player plays, `level` of the way up.
@@ -1015,6 +1198,9 @@ impl Stage {
         stage: &StageState,
         engine: &Engine,
     ) -> iced::Task<Arc<Loaded>> {
+        if self.bed_loaded(loaded, stage, engine) {
+            return iced::Task::none();
+        }
         self.loading.remove(&loaded.resource);
         self.keep_loading.remove(&loaded.resource);
         let dwelt = self.dwelling.remove(&loaded.resource);
@@ -1105,7 +1291,11 @@ impl Stage {
         // Ready to show: one that fades in starts from silence.
         let now = Instant::now();
         self.fades.up(scene, now);
-        let volume = loudness(self.fades.levels(stage, now).sound);
+        // Silenced while something plays in its place.
+        let volume = match stage.muted {
+            true => 0.0,
+            false => loudness(self.fades.levels(stage, now).sound),
+        };
         match &mut content {
             Content::Image(_) => {}
             Content::Pages(pages) => {

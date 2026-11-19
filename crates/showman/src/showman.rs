@@ -25,6 +25,15 @@ pub struct StageState {
     /// What is on is fading out, for the plan to go on once it has.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fading_out: Option<FadeOut>,
+    /// A sound playing apart from the program, whatever goes on and off
+    /// it: a step's sound in place of its own, or one that keeps going
+    /// under several steps. It plays as soon as it is ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bed: Option<Scene>,
+    /// The program's own sound is not heard: something plays in its place.
+    /// Heard again when something else comes on program.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub muted: bool,
 }
 
 impl StageState {
@@ -44,6 +53,8 @@ impl StageState {
                     return false;
                 }
                 self.fading_out = None;
+                // Silenced was what was on: what comes on is heard.
+                self.muted = false;
                 let was = self.program.take();
                 self.under = match (scene, was) {
                     // A sound after a sound plays over the same picture.
@@ -92,6 +103,8 @@ impl StageState {
             StageEvent::FadingOut { fade } => {
                 self.program.is_some() && set_if_different(&mut self.fading_out, &Some(*fade))
             }
+            StageEvent::Bed { scene, .. } => set_if_different(&mut self.bed, scene),
+            StageEvent::Muted { on } => set_if_different(&mut self.muted, on),
         }
     }
 
@@ -109,17 +122,22 @@ impl StageState {
     /// whether the scene is still on stage and what the operator did
     /// meanwhile.
     pub fn scene(&self, id: SceneId) -> Option<&Scene> {
-        [&self.program, &self.preview, &self.under]
+        [&self.program, &self.preview, &self.under, &self.bed]
             .into_iter()
             .flatten()
             .find(|scene| scene.id == id)
     }
 
     fn scene_mut(&mut self, id: SceneId) -> Option<&mut Scene> {
-        [&mut self.program, &mut self.preview, &mut self.under]
-            .into_iter()
-            .flatten()
-            .find(|scene| scene.id == id)
+        [
+            &mut self.program,
+            &mut self.preview,
+            &mut self.under,
+            &mut self.bed,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|scene| scene.id == id)
     }
 
     fn picture_media(&mut self) -> Option<&mut Media> {
@@ -201,6 +219,21 @@ pub enum StageEvent {
     FadingOut {
         /// How.
         fade: FadeOut,
+    },
+    /// Another sound plays apart from the program, or none. Always a new
+    /// `SceneId`. The one it takes the place of goes out over `fade_out`,
+    /// or at once.
+    Bed {
+        /// The new sound.
+        scene: Option<Scene>,
+        /// How long the one before takes to go.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fade_out: Option<FadeTime>,
+    },
+    /// The program's own sound is silenced, or heard again.
+    Muted {
+        /// Whether it is silenced.
+        on: bool,
     },
 }
 
@@ -345,9 +378,47 @@ impl Showman {
         true
     }
 
-    /// Empties the stage.
+    /// Empties the stage: what is on, and what plays apart from it.
     pub fn clear(&mut self) {
         self.emit(StageEvent::Program { scene: None });
+        self.lift_bed(None);
+        self.set_muted(false);
+    }
+
+    /// Plays `resource` apart from the program, coming up over `fade_in`;
+    /// what played apart before goes out over `fade_out`.
+    pub fn bed(
+        &mut self,
+        resource: Arc<Resource>,
+        fade_in: Option<FadeTime>,
+        fade_out: Option<FadeTime>,
+    ) {
+        let scene = Scene {
+            fade_in,
+            ..Scene::new(self.next_id(), resource)
+        };
+        self.emit(StageEvent::Bed {
+            scene: Some(scene),
+            fade_out,
+        });
+    }
+
+    /// The sound playing apart from the program goes, over `fade_out` or
+    /// at once. Returns `false` when none was.
+    pub fn lift_bed(&mut self, fade_out: Option<FadeTime>) -> bool {
+        if self.state.bed.is_none() {
+            return false;
+        }
+        self.emit(StageEvent::Bed {
+            scene: None,
+            fade_out,
+        });
+        true
+    }
+
+    /// Silences the program's own sound, or lets it be heard again.
+    pub fn set_muted(&mut self, on: bool) {
+        self.emit(StageEvent::Muted { on });
     }
 
     /// Turns blackout on or off.

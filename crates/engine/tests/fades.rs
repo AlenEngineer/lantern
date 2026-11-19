@@ -124,14 +124,14 @@ fn a_step_comes_up_over_its_fade_in_with_the_sound_it_plays() {
 
     engine.next();
     let stage = engine.stage();
-    let (sound, picture) = (stage.program.unwrap(), stage.under.unwrap());
+    let (sound, picture) = (stage.bed.unwrap(), stage.program.unwrap());
     assert_eq!(sound.resource.title, "Piano");
     assert_eq!(sound.fade_in, seconds(3));
     assert_eq!(picture.resource.title, "Salmo 23");
     assert_eq!(picture.fade_in, seconds(3));
     engine.go_to_at(psalm, 1).unwrap();
     assert_eq!(
-        engine.stage().under.unwrap().fade_in,
+        engine.stage().program.unwrap().fade_in,
         seconds(3),
         "picked up where it was, it comes up the same way"
     );
