@@ -379,8 +379,10 @@ pub(crate) const SOUND_LINE: iced::Color = iced::Color::from_rgb(0.557, 0.773, 1
 /// How wide the plan's goal is on its card, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
 
-/// How tall the foot of a bracket is, to be pulled.
-const FOOT: f32 = 16.0;
+/// How tall the head and the foot of a bracket are, to be pulled: thin
+/// bands at its very ends, so the rest of it, its name too, picks the
+/// section up.
+const FOOT: f32 = 8.0;
 
 /// How wide the steps' room is kept, for their dots, names and times,
 /// before a section that holds only sections gives up the room for its
@@ -3497,11 +3499,30 @@ impl App {
             track::seen(track::Key::Side(section), places, beside),
         ]
         .height(PLACE_TALL);
+        // A section carried over it goes into it, as over its bracket.
+        let level = plan
+            .get(section)
+            .and_then(Step::depth)
+            .map(|depth| depth + 1);
+        let place: Element<'a, Message> = match (self.carrying_section(), level) {
+            (true, Some(level)) => mouse_area(place)
+                .on_enter(Message::CarryInto(level))
+                .on_exit(Message::CarryOut(level))
+                .into(),
+            _ => place.into(),
+        };
         track::seen(
             track::Key::Whole(section),
             places,
-            self.draggable(section, place.into()),
+            self.draggable(section, place),
         )
+    }
+
+    /// Whether a section is being carried.
+    pub(crate) fn carrying_section(&self) -> bool {
+        self.drag
+            .as_ref()
+            .is_some_and(|drag| drag.moving && drag.is_section())
     }
 
     /// A section over in a service, by the clock of its run.

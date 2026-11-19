@@ -824,6 +824,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A section carried over an empty section goes into it, as over its
+  bracket; its place lights where it would land. A bracket's head and
+  foot, pulled to stretch it, are thin bands at its ends, so a
+  one-step section is picked up by its bracket and name; and pulling a
+  head no longer changes the sections' colours.
 - A section whose steps are all being carried keeps its bracket and
   its empty place, instead of vanishing. Carried over an empty section,
   its own place lights in its colour as where it lands, with no second
