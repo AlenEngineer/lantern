@@ -2304,6 +2304,10 @@ impl App {
                 ));
             }
         }
+        // Where its picture comes from, when not from what it is.
+        for (icon, words) in crate::sources::mix_lines(step) {
+            parts.push(line(icon, words, false, 0));
+        }
         if let Some(sound) = &step.sound {
             let words = match sound.from {
                 0 => format!("With {}", sound.resource.title),
@@ -2334,7 +2338,7 @@ impl App {
         let p = self.palette;
         Some(
             container(
-                container(fade_steppers(p, step))
+                container(column![self.sources_card(p, step), fade_steppers(p, step)].spacing(6))
                     .padding([4, 5])
                     .style(look::card(p, 0.0, 10.0)),
             )

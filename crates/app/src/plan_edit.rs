@@ -364,7 +364,7 @@ pub fn insertion_mark(p: Palette, indent: f32) -> Element<'static, Message> {
 /// Whether a step can have a sound play with it: one that shows something
 /// still. A video or a sound has its own.
 fn takes_sound(step: &Step) -> bool {
-    matches!(&step.action, Action::Show { resource } if !matches!(resource.kind, Kind::Video | Kind::Audio))
+    matches!(&step.action, Action::Show { .. })
 }
 
 /// When a step that goes on by itself would: a video when it ends, a still
