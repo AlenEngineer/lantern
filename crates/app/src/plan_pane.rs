@@ -2198,7 +2198,7 @@ impl App {
         let p = self.palette;
         let make = hinted(
             p,
-            button(text("{ + }").size(META).font(BOLD).color(p.primary))
+            button(text("[+]").size(META).font(BOLD).color(p.primary))
                 .padding([3, 6])
                 .on_press(Message::BracketPicked)
                 .style(look::pill(p, Tone::Selected)),
@@ -2459,8 +2459,6 @@ impl App {
         let on_now = place == Place::Current && self.mode == crate::mode::Mode::Run;
         let end: Element<'_, Message> = if self.editing(step.id, Part::Length) {
             self.step_length_field(step)
-        } else if picked_end {
-            self.picked_actions()
         } else if on_now && said.is_some() {
             Space::new().into()
         } else if selected && has_length {
@@ -2579,11 +2577,16 @@ impl App {
             Some(faded) => crate::motion::blend(Palette::tint(p.primary, 0.5), fill, faded),
             None => fill,
         };
-        // Picked, how it fades, under all of its line.
-        let line: Element<'_, Message> = match self.fade_card(step).filter(|_| selected) {
-            Some(card) => column![line, card].into(),
-            None => line.into(),
-        };
+        // Under all of its line: what can be done to the steps picked
+        // together, under the last of them so its name keeps the row's
+        // width; and picked, how it fades.
+        let mut line = column![line];
+        if picked_end {
+            line = line.push(self.picked_actions());
+        }
+        if let Some(card) = self.fade_card(step).filter(|_| selected) {
+            line = line.push(card);
+        }
         let row = button(line)
             .width(Fill)
             .padding([10, 10])

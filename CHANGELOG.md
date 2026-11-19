@@ -739,6 +739,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   no longer written over the bracket of the one outside it.
 - A step's ✕ under the pointer takes its length's place, so in a narrow
   plan pane its name is no longer cut down to nothing.
+- The mark that makes a section of picked steps is square, `[+]`, as
+  the brackets are now, and it sits under the last picked step's name
+  instead of cutting it off in a narrow plan pane.
 - A fill's buttons sit above what it proposes, so they stay put while
   more of the library is measured and the proposals change.
 - Accepting a fill with its ✓ did nothing: since a press on nothing
