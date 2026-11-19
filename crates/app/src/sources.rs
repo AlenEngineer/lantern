@@ -1,19 +1,21 @@
 //! Where a picked step's picture and sound come from, in its card: its
 //! own, another file (the one picked in search or the library), what was
 //! on kept, or nothing. And the lines under a row that says so, on the
-//! rows that mix.
+//! rows that mix. And how it lays out what it shows with a second
+//! thing.
 
 use std::fmt;
 use std::sync::Arc;
 
-use iced::widget::{column, pick_list, row};
-use iced::{Alignment, Element};
+use iced::widget::{button, column, pick_list, row, text, text_input};
+use iced::{Alignment, Element, Fill};
 use lantern_engine::{
-    Action, FadeTime, Kind, Meets, Picture, Plan, Resource, Step, StepId, StepSound,
+    Action, FadeTime, Kind, Layout, Location, Meets, Picture, Plan, Resource, ResourceId, SourceId,
+    Step, StepId, StepSound,
 };
 
 use crate::FadeEnd;
-use crate::look::{self, Icon, META};
+use crate::look::{self, BOLD, Icon, META, Tone};
 use crate::palette::Palette;
 use crate::{App, Message};
 
@@ -173,7 +175,7 @@ impl App {
                 Message::StepSoundFrom(id, choice)
             })
         };
-        let mut card = column![picture, sound].spacing(4);
+        let mut card = column![picture, self.layout_card(p, step), sound].spacing(4);
         // A sound of its own can keep going under the steps after it.
         if let Some(set) = &step.sound {
             let plan = self.engine.0.plan();
@@ -205,6 +207,136 @@ impl App {
             }
         }
         card.into()
+    }
+
+    /// The picked file, when it can be laid out with what a step shows:
+    /// a picture, a page, or a text. Never a video.
+    fn picked_second(&self) -> Option<Arc<Resource>> {
+        self.picked_file()
+            .filter(|file| matches!(file.kind, Kind::Image | Kind::Document | Kind::Text))
+    }
+
+    /// The card's lines that lay out what the step shows with a second
+    /// thing: which layout, what the second is, and a quote typed in.
+    fn layout_card<'a>(&self, p: Palette, step: &Step) -> Element<'a, Message> {
+        let id = step.id;
+        let now = match &step.layout {
+            Layout::One => LayoutChoice::Alone,
+            Layout::Beside(_) => LayoutChoice::Beside,
+            Layout::LowerThird(_) => LayoutChoice::LowerThird,
+        };
+        let mut lines = column![chooser(
+            p,
+            Icon::Screen,
+            vec![
+                LayoutChoice::Alone,
+                LayoutChoice::Beside,
+                LayoutChoice::LowerThird
+            ],
+            now,
+            move |choice| Message::StepLayout(id, choice),
+        )]
+        .spacing(4);
+        let Some(second) = step.layout.second() else {
+            return lines.into();
+        };
+        let (icon, named) = match (&second.kind, second.title.trim()) {
+            (Kind::Text, "") => (Icon::Pencil, "nothing yet".to_string()),
+            (Kind::Text, title) => (Icon::Pencil, title.to_string()),
+            (_, title) => (Icon::Image, title.to_string()),
+        };
+        let mut said = row![
+            look::icon(icon, 12.0, p.on_surface_variant),
+            iced::widget::container(
+                crate::widgets::single_line(named)
+                    .size(META)
+                    .color(p.on_surface_variant),
+            )
+            .width(Fill),
+        ]
+        .spacing(5)
+        .align_y(Alignment::Center);
+        if self
+            .picked_second()
+            .is_some_and(|picked| picked.id != second.id)
+        {
+            said = said.push(
+                button(text("Use picked").size(META).font(BOLD).color(p.on_surface))
+                    .padding([1, 6])
+                    .on_press(Message::LayoutPicked(id))
+                    .style(look::pill(p, Tone::Plain)),
+            );
+        }
+        let typed = match &self.layout_typed {
+            Some((at, typed)) if *at == id => typed.clone(),
+            _ => String::new(),
+        };
+        lines = lines.push(said).push(
+            text_input("type a quote", &typed)
+                .on_input(move |typed| Message::LayoutTyping(id, typed))
+                .on_submit(Message::LayoutTyped(id))
+                .size(META)
+                .padding([2, 6]),
+        );
+        lines.into()
+    }
+
+    /// Lays out what the step `id` shows as `choice` says. The second
+    /// thing stays when one was; else it is the picture or text picked,
+    /// else a text still to type.
+    pub(crate) fn set_layout(&mut self, id: StepId, choice: LayoutChoice) {
+        let picked = self.picked_second();
+        self.remember(None);
+        self.engine.0.edit_plan(|plan| {
+            let Some(step) = plan.get_mut(id) else {
+                return;
+            };
+            let second = step
+                .layout
+                .second()
+                .cloned()
+                .or_else(|| picked.map(|file| (*file).clone()))
+                .unwrap_or_else(|| typed(id, ""));
+            step.layout = match choice {
+                LayoutChoice::Alone => Layout::One,
+                LayoutChoice::Beside => Layout::Beside(second),
+                LayoutChoice::LowerThird => Layout::LowerThird(second),
+            };
+        });
+    }
+
+    /// Puts `second` in the step `id`'s layout, as it is laid out.
+    pub(crate) fn set_second(&mut self, id: StepId, second: Resource) {
+        self.remember(None);
+        self.engine.0.edit_plan(|plan| {
+            if let Some(step) = plan.get_mut(id) {
+                step.layout = match &step.layout {
+                    Layout::One => Layout::One,
+                    Layout::Beside(_) => Layout::Beside(second),
+                    Layout::LowerThird(_) => Layout::LowerThird(second),
+                };
+            }
+        });
+    }
+
+    /// The picture or text picked, laid out with the step `id`.
+    pub(crate) fn second_picked(&mut self, id: StepId) {
+        match self.picked_second() {
+            Some(file) => self.set_second(id, (*file).clone()),
+            None => self
+                .motion
+                .refuse("Pick a picture or a text in search or the library first"),
+        }
+    }
+
+    /// What was typed into the step `id`'s card, laid out with it.
+    pub(crate) fn second_typed(&mut self, id: StepId) {
+        let Some((at, words)) = self.layout_typed.take() else {
+            return;
+        };
+        if at == id && !words.trim().is_empty() {
+            self.set_second(id, typed(id, words.trim()));
+        }
     }
 
     /// Sets how far the step `id`'s sound keeps going.
@@ -310,6 +442,49 @@ impl App {
     }
 }
 
+/// How a step lays out what it shows, in words.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LayoutChoice {
+    Alone,
+    Beside,
+    LowerThird,
+}
+
+impl fmt::Display for LayoutChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            LayoutChoice::Alone => "alone",
+            LayoutChoice::Beside => "side by side",
+            LayoutChoice::LowerThird => "lower third",
+        })
+    }
+}
+
+/// A text typed into the step `id`'s card, to lay out with what it
+/// shows; named by its first words.
+fn typed(id: StepId, words: &str) -> Resource {
+    let source = SourceId::new("typed").expect("a valid source id");
+    let name: String = words.chars().take(32).collect();
+    let name = match words.chars().count() > 32 {
+        true => format!("{}…", name.trim_end()),
+        false => name,
+    };
+    Resource::new(
+        ResourceId::new(
+            &source,
+            &format!("{id}-{:x}", {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                words.hash(&mut hasher);
+                hasher.finish()
+            }),
+        ),
+        name,
+        Kind::Text,
+        Location::Inline(words.to_string()),
+    )
+}
+
 /// One line of the card: its icon, and what it is set to, to pick
 /// another.
 fn chooser<'a, T>(
@@ -399,6 +574,15 @@ pub fn mix_lines(plan: &Plan, step: &Step) -> Vec<(Icon, String)> {
     if step.silent && step.sound.is_none() {
         lines.push((Icon::Music, "Silent".to_string()));
     }
+    match &step.layout {
+        Layout::One => {}
+        Layout::Beside(second) => {
+            lines.push((Icon::Screen, format!("Beside it: {}", named(second))));
+        }
+        Layout::LowerThird(second) => {
+            lines.push((Icon::Screen, format!("Lower third: {}", named(second))));
+        }
+    }
     lines
 }
 
@@ -444,4 +628,13 @@ pub(crate) fn sound_fade_chooser<'a>(p: Palette, step: &Step) -> Element<'a, Mes
             )
         },
     )
+}
+
+/// What a second thing laid out with a step is called: a text still to
+/// type is nothing yet.
+fn named(second: &Resource) -> &str {
+    match second.title.trim() {
+        "" => "nothing yet",
+        title => title,
+    }
 }
