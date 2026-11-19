@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A presentation or PDF opened into pages remembers its file as it was.
+  When the file changes on disk (the deck saved again), its first page
+  says so ("The file changed. Take it in"); pressed, the file is read
+  again: the pages show it as it is now, pages it gained come at the
+  end of its section, and pages it lost go.
 - A background track: a sound set on a step to keep going under the
   steps after it, as "is a background track" in its card, plays apart
   from what those steps play. A step with a sound of its own, played

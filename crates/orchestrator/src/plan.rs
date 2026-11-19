@@ -2627,6 +2627,93 @@ impl Plan {
         Ok(section)
     }
 
+    /// Takes in the paged file `file` as it is now, with `pages` pages:
+    /// every run of steps opened out of it ([`Plan::open_pages`]) is its
+    /// pages again, carrying what `file` says of itself now. Pages past
+    /// the new last go; pages it gained come after the run's last, as it
+    /// is (its look, its length), inside whatever section ended there.
+    /// Returns how many runs there were.
+    pub fn repage(&mut self, file: &Resource, pages: usize) -> usize {
+        if pages == 0 {
+            return 0;
+        }
+        let of = |step: &Step| match &step.action {
+            Action::Show { resource } => resource
+                .page_of()
+                .filter(|n| resource.id == file.id.part(&format!("page{}", n + 1))),
+            _ => None,
+        };
+        // Each run: its steps' ids and their pages, in plan order.
+        let mut runs: Vec<Vec<(StepId, usize)>> = Vec::new();
+        let mut last_at: Option<usize> = None;
+        for (at, step) in self.steps.iter().enumerate() {
+            let Some(n) = of(step) else {
+                continue;
+            };
+            match runs.last_mut() {
+                Some(run) if last_at == Some(at - 1) => run.push((step.id, n)),
+                _ => runs.push(vec![(step.id, n)]),
+            }
+            last_at = Some(at);
+        }
+        for run in &runs {
+            for (id, n) in run.iter().filter(|(_, n)| *n < pages) {
+                if let Some(step) = self.get_mut(*id) {
+                    step.action = Action::Show {
+                        resource: file.page(*n),
+                    };
+                }
+            }
+            for (id, _) in run.iter().filter(|(_, n)| *n >= pages) {
+                self.remove(*id);
+            }
+            let kept: Vec<(StepId, usize)> =
+                run.iter().copied().filter(|(_, n)| *n < pages).collect();
+            let Some(&(last, most)) = kept.iter().max_by_key(|(_, n)| *n) else {
+                continue;
+            };
+            let Some(at) = self.position(last) else {
+                continue;
+            };
+            let (look, each) = (self.steps[at].look.clone(), self.steps[at].estimate);
+            let mut after = last;
+            for n in most + 1..pages {
+                let mut step = self.new_step(
+                    page_label(n),
+                    Action::Show {
+                        resource: file.page(n),
+                    },
+                );
+                step.look.clone_from(&look);
+                step.estimate = each;
+                let id = step.id;
+                let Some(at) = self.position(after) else {
+                    break;
+                };
+                self.steps.insert(at + 1, step);
+                // A section that ended at its last page ends at its last
+                // page still.
+                for heading in &mut self.steps {
+                    if matches!(heading.action, Action::Section { last: Some(ends), .. } if ends == after)
+                    {
+                        heading.set_last(Some(id));
+                    }
+                }
+                // So does a loop or a join that ended there.
+                for span in &mut self.spans {
+                    if let Over::Steps { last: ends, .. } = &mut span.over
+                        && *ends == after
+                    {
+                        *ends = id;
+                    }
+                }
+                after = id;
+            }
+        }
+        self.settle();
+        runs.len()
+    }
+
     /// Takes the section `section` away and leaves its steps where they
     /// are, in whatever section was around it; the sections it held go
     /// one level out. A loop or drawn order attached to it is laid over
@@ -3217,6 +3304,46 @@ mod tests {
         let notes = plan.insert(99, "Notes", Action::Note);
         assert_eq!(labels(&plan), ["Prayer", "Welcome", "Notes"]);
         assert_ne!(notes, worship);
+    }
+
+    #[test]
+    fn a_changed_deck_is_taken_in_page_by_page() {
+        let mut plan = Plan::new("Sunday");
+        let deck = plan.show(resource("News"));
+        plan.show(resource("Song"));
+        let section = plan.open_pages(deck, 3, None).unwrap();
+        let file = resource("News");
+        let pages = |plan: &Plan| -> Vec<usize> {
+            plan.steps()
+                .iter()
+                .filter_map(|step| match &step.action {
+                    Action::Show { resource } => resource.page_of(),
+                    _ => None,
+                })
+                .collect()
+        };
+        // It gained two pages: they come in its section, after its last.
+        let mut newer = file.clone();
+        newer.meta.insert("modified".into(), "2".into());
+        assert_eq!(plan.repage(&newer, 5), 1);
+        assert_eq!(pages(&plan), [0, 1, 2, 3, 4]);
+        assert_eq!(
+            labels(&plan),
+            ["News", "p. 1", "p. 2", "p. 3", "p. 4", "p. 5", "Song"]
+        );
+        let at = plan.position(section).unwrap();
+        assert_eq!(plan.group_end(at), at + 6, "the section holds all five");
+        assert!(plan.steps()[at + 1..at + 6].iter().all(|step| matches!(
+            &step.action,
+            Action::Show { resource } if resource.meta.get("modified").map(String::as_str) == Some("2")
+        )));
+        // It lost three: they go, the first page stays the deck's step.
+        assert_eq!(plan.repage(&newer, 2), 1);
+        assert_eq!(pages(&plan), [0, 1]);
+        assert_eq!(plan.steps()[at + 1].id, deck);
+        assert_eq!(labels(&plan), ["News", "p. 1", "p. 2", "Song"]);
+        // Another file is none of its business.
+        assert_eq!(plan.repage(&resource("Other"), 4), 0);
     }
 
     #[test]

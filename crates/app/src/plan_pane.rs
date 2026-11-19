@@ -2348,6 +2348,45 @@ impl App {
                 ));
             }
         }
+        // Its file changed since it was opened into pages: its first
+        // page says so, and takes it in.
+        if resource.page_of() == Some(0)
+            && let Some(file) = resource.file_of_page()
+            && self
+                .files_changed
+                .iter()
+                .any(|changed| changed.id == file.id)
+        {
+            let reading = self.taking_in.as_ref() == Some(&file.id);
+            let words = match reading {
+                true => "The file changed. Reading it again…",
+                false => "The file changed. Take it in",
+            };
+            parts.push(
+                button(
+                    row![
+                        look::icon(Icon::Warning, 12.0, p.tertiary),
+                        // Said in full, over two lines where the row is narrow.
+                        text(words).size(META).color(p.tertiary).width(Fill),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .width(Fill)
+                .padding(
+                    iced::Padding::default()
+                        .left(34.0)
+                        .right(8.0)
+                        .top(2.0)
+                        .bottom(3.0),
+                )
+                .on_press_maybe(
+                    (!reading && self.can_edit()).then(|| Message::TakeIn(file.id.clone())),
+                )
+                .style(look::row(p, Tone::Plain))
+                .into(),
+            );
+        }
         // Where its picture comes from, when not from what it is.
         for (icon, words) in crate::sources::mix_lines(&self.engine.0.plan(), step) {
             parts.push(line(icon, words, false, 0));
