@@ -474,9 +474,17 @@ impl Sound {
         Ok(sound)
     }
 
-    /// Its length; zero when it couldn't say.
+    /// Its length; zero while it can't say. A file that didn't say as
+    /// it opened is asked again.
     pub fn duration(&self) -> Duration {
-        self.duration
+        if !self.duration.is_zero() {
+            return self.duration;
+        }
+        self.player
+            .query_duration::<gst::ClockTime>()
+            .map_or(Duration::ZERO, |length| {
+                Duration::from_nanos(length.nseconds())
+            })
     }
 
     fn set_paused(&self, paused: bool) {
@@ -932,6 +940,14 @@ impl Stage {
         let bed = self.bed.as_ref()?;
         let (sound, _) = bed.playing.as_ref()?;
         Some((bed.scene, sound.position()?))
+    }
+
+    /// How long the sound apart from the program is, once its player
+    /// knows: a file may not say so as it starts.
+    pub fn bed_length(&self) -> Option<(SceneId, Duration)> {
+        let bed = self.bed.as_ref()?;
+        let (sound, _) = bed.playing.as_ref()?;
+        Some((bed.scene, sound.duration())).filter(|(_, length)| !length.is_zero())
     }
 
     /// What the sound apart from the program has said since it was last
