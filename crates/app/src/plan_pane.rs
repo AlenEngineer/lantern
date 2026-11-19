@@ -964,10 +964,12 @@ impl App {
         let colors = plan.section_colors();
         // The lanes lean to the pointer, or to where what is carried
         // would go, as the motion has them now.
-        let widths = self
-            .motion
-            .lanes(usize::from(side_lanes))
-            .unwrap_or_else(|| track::lane_widths(side_lanes, None, false));
+        let widths = track::written_right(
+            self.motion
+                .lanes(usize::from(side_lanes))
+                .unwrap_or_else(|| track::lane_widths(side_lanes, None, false)),
+            side_wide && named,
+        );
         let side = Side {
             braced: &braced,
             lanes: side_lanes,
