@@ -8,6 +8,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A background track: a sound set on a step to keep going under the
+  steps after it, as "is a background track" in its card, plays apart
+  from what those steps play. A step with a sound of its own, played
+  apart or its video's, is heard over it: the track goes down under it
+  over a moment and comes back up after, so two sounds play at most.
+  The dashboard shows it on a line of its own ("background track · from
+  Bienvenida · lowered"), and its line beside the rail fills in Run.
+  Plans saved with a sound set to play lowered under a sound open with
+  it as their background track.
 - The picked step's card lays out what it shows: alone, side by side,
   or with a lower third. What goes with it is the picture or text
   picked in search or the library ("Use picked"), or a quote typed in

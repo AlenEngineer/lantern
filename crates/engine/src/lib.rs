@@ -82,7 +82,7 @@ pub struct Engine {
     stage: Mutex<Showman>,
     /// The sound the current step is playing over what it shows
     /// ([`StepSound`]), while it is on program. Locked last.
-    accompanying: Mutex<Option<(SceneId, StepId)>>,
+    accompanying: Mutex<Accompanying>,
 }
 
 impl Default for Engine {
@@ -98,7 +98,7 @@ impl Engine {
             searcher: Searcher::new(),
             session: Mutex::new(Session::new(Plan::default())),
             stage: Mutex::new(Showman::new()),
-            accompanying: Mutex::new(None),
+            accompanying: Mutex::default(),
         }
     }
 
@@ -564,7 +564,7 @@ impl Engine {
         let Action::Show { resource } = &step.action else {
             return false;
         };
-        let apart = self.plays_apart() == Some((scene, step.id));
+        let apart = [self.plays_apart(), self.background()].contains(&Some((scene, step.id)));
         let stage = lock(&self.stage);
         match stage.program() {
             Some(program) if program.id == scene => program.resource.id == resource.id,
@@ -577,7 +577,13 @@ impl Engine {
     /// the step it is of: the current step's own, or one an earlier step
     /// set that keeps going under it.
     pub fn plays_apart(&self) -> Option<(SceneId, StepId)> {
-        *lock(&self.accompanying)
+        lock(&self.accompanying).bed
+    }
+
+    /// The background track the plan put on, and the step that set it
+    /// ([`StepSound::is_background`]).
+    pub fn background(&self) -> Option<(SceneId, StepId)> {
+        lock(&self.accompanying).track
     }
 
     // ----- The one door --------------------------------------------------
@@ -593,7 +599,10 @@ impl Engine {
         let mut stage = lock(&self.stage);
         let before = stage.program().map(|scene| scene.id);
         let result = f(&mut session, &mut stage);
-        accompany(&session, &mut stage, &mut lock(&self.accompanying));
+        let mut accompanying = lock(&self.accompanying);
+        accompany(&session, &mut stage, &mut accompanying.bed);
+        accompany_track(&session, &mut stage, &mut accompanying.track);
+        mute(&session, &mut stage, &accompanying);
         if let Some(scene) = stage.program().filter(|scene| Some(scene.id) != before) {
             session.record((*scene.resource).clone(), planned);
         }
@@ -723,6 +732,8 @@ fn sound_of(step: &Step, stage: &Showman) -> Option<Resource> {
         return None;
     };
     match (&step.sound, &step.picture) {
+        // A background track plays as one ([`accompany_track`]).
+        (Some(sound), _) if sound.is_background() => None,
         // Over its own picture, from its slide; not over what the
         // operator put on instead.
         (Some(sound), Picture::Own) => {
@@ -785,7 +796,7 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
     let fading = stage.state().fading_out.is_some();
     let own = sound_of(current, stage)
         .filter(|_| !(fading && current.sound_fade.is_some()))
-        .map(|sound| (sound, current.id, false));
+        .map(|sound| (sound, current.id));
     let kept = playing.and_then(|(_, owner)| {
         let from = plan.get(owner)?;
         let sound = from.sound.as_ref()?;
@@ -798,11 +809,9 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
     });
     let wanted = match (own, kept) {
         (Some(own), _) => Some(own),
-        (None, Some((from, sound))) => match (sounds(current), sound.meets) {
-            (false, _) => Some((sound.resource.clone(), from.id, false)),
-            (true, Meets::Under) => Some((sound.resource.clone(), from.id, true)),
-            (true, Meets::Fade | Meets::Cut) => None,
-        },
+        (None, Some((from, sound))) => {
+            (!sounds(current)).then(|| (sound.resource.clone(), from.id))
+        }
         (None, None) => None,
     };
     // It goes over its own fade out, else as what it played with goes,
@@ -822,20 +831,16 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
             .or(meets_fade),
     };
     match (wanted, *playing) {
-        (Some((_, owner, lowered)), Some((_, of))) if owner == of => {
-            stage.set_lowered(lowered);
-        }
-        (Some((sound, owner, lowered)), _) => {
+        (Some((_, owner)), Some((_, of))) if owner == of => {}
+        (Some((sound, owner)), _) => {
             let fade_in = (owner == current.id)
                 .then(|| current.sound_fade.unwrap_or(current.fade).fade_in)
                 .flatten();
             stage.bed(Arc::new(sound), fade_in, going);
-            stage.set_lowered(lowered);
             *playing = stage.state().bed.as_ref().map(|scene| (scene.id, owner));
         }
         (None, Some((_, owner))) => {
             stage.lift_bed(going);
-            stage.set_lowered(false);
             // Back before the slide it starts from, its own is heard
             // again; not while it fades out.
             if current.id == owner && current.picture.is_own() && !fading {
@@ -845,17 +850,111 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
         }
         (None, None) => {}
     }
-    // What the current step shows is silent while its sound plays apart
-    // or it is set to be; a picture kept from before is silent too.
-    if let Action::Show { .. } = current.action {
-        let silent = match &current.picture {
-            Picture::Own => current.silent || playing.is_some_and(|(_, owner)| owner == current.id),
-            Picture::Keep => true,
-            Picture::File(_) | Picture::Black => false,
-        };
-        if silent {
-            stage.set_muted(true);
+}
+
+/// What plays apart from the program that the plan put on: in the bed,
+/// and as the background track; each with the step it is of.
+#[derive(Debug, Default, Clone, Copy)]
+struct Accompanying {
+    bed: Option<(SceneId, StepId)>,
+    track: Option<(SceneId, StepId)>,
+}
+
+/// Keeps the background track with the plan ([`StepSound::is_background`]):
+/// the current step's own, from the slide it starts at, coming up with
+/// its fade in; else the one playing while the plan is still within the
+/// steps it keeps going under; else none, going out over its own fade
+/// out or [`MEETS_FADE`]. It is lowered while anything else is heard: a
+/// step with a sound of its own, or a sound apart from the program.
+fn accompany_track(
+    session: &Session,
+    stage: &mut Showman,
+    playing: &mut Option<(SceneId, StepId)>,
+) {
+    let track = stage.state().track.as_ref().map(|scene| scene.id);
+    if playing.is_some_and(|(sound, _)| Some(sound) != track) {
+        *playing = None;
+    }
+    let plan = session.plan();
+    let going = |owner: StepId| {
+        plan.get(owner)
+            .and_then(|step| step.sound_fade)
+            .and_then(|fade| fade.fade_out)
+            .or_else(|| FadeTime::from_secs(MEETS_FADE))
+    };
+    let Some(current) = session.current() else {
+        if let Some((_, owner)) = playing.take() {
+            stage.lift_track(going(owner));
+            stage.set_lowered(false);
         }
+        return;
+    };
+    // Its own, over its own picture from its slide.
+    let own = current
+        .sound
+        .as_ref()
+        .filter(|sound| sound.is_background())
+        .filter(|sound| match (&current.action, &current.picture) {
+            (Action::Show { resource }, Picture::Own) => stage.program().is_some_and(|program| {
+                program.resource.id == resource.id && program.frame() >= sound.from
+            }),
+            _ => true,
+        });
+    let kept = playing.and_then(|(_, owner)| {
+        let sound = plan.get(owner)?.sound.as_ref()?;
+        let (at, here, until) = (
+            plan.position(owner)?,
+            plan.position(current.id)?,
+            plan.position(sound.until?)?,
+        );
+        (at <= here && here <= until).then_some(owner)
+    });
+    let wanted = match (own, kept) {
+        (Some(_), Some(owner)) if owner == current.id => Some(owner),
+        (Some(sound), _) => {
+            let fade_in = current.sound_fade.unwrap_or(current.fade).fade_in;
+            let before = playing.map(|(_, owner)| going(owner)).flatten();
+            stage.track(Arc::new(sound.resource.clone()), fade_in, before);
+            *playing = stage
+                .state()
+                .track
+                .as_ref()
+                .map(|scene| (scene.id, current.id));
+            Some(current.id)
+        }
+        (None, Some(owner)) => Some(owner),
+        (None, None) => {
+            if let Some((_, owner)) = playing.take() {
+                stage.lift_track(going(owner));
+            }
+            None
+        }
+    };
+    // Under anything else heard, it goes down.
+    let lowered = wanted.is_some_and(|owner| {
+        stage.state().bed.is_some() || (owner != current.id && sounds(current))
+    });
+    stage.set_lowered(lowered);
+}
+
+/// What the current step shows is silent while its sound plays apart, as
+/// its sound in the bed or as its background track, or it is set to be;
+/// a picture kept from before is silent too.
+fn mute(session: &Session, stage: &mut Showman, playing: &Accompanying) {
+    let Some(current) = session.current() else {
+        return;
+    };
+    let Action::Show { .. } = current.action else {
+        return;
+    };
+    let ours = |of: Option<(SceneId, StepId)>| of.is_some_and(|(_, owner)| owner == current.id);
+    let silent = match &current.picture {
+        Picture::Own => current.silent || ours(playing.bed) || ours(playing.track),
+        Picture::Keep => true,
+        Picture::File(_) | Picture::Black => false,
+    };
+    if silent {
+        stage.set_muted(true);
     }
 }
 
