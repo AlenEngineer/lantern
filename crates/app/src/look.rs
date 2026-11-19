@@ -222,7 +222,7 @@ fn darker(colour: Color, share: f32) -> Color {
 
 /// A card on the window's ground: the strip, the plan, the stage.
 /// `surface`, less see-through than the ground it sits on so what's
-/// written on it reads, with a hairline of light and a shadow to lift it.
+/// written on it reads, with a hairline of light round it.
 pub fn card(
     p: Palette,
     see_through: f32,
@@ -235,11 +235,6 @@ pub fn card(
             color: Color::WHITE.scale_alpha(0.10),
             width: 1.0,
             radius: radius.into(),
-        },
-        shadow: iced::Shadow {
-            color: Color::BLACK.scale_alpha(0.35),
-            offset: iced::Vector::new(0.0, 8.0),
-            blur_radius: 24.0,
         },
         ..container::Style::default()
     }
@@ -255,21 +250,11 @@ pub fn float_colour(p: Palette, see_through: f32) -> Color {
     }
 }
 
-/// The strip: a card's colour, a pill, lifted by a shadow. It has no
-/// outline, so a panel can drop from it without a seam.
-pub fn strip(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+/// The strip: the top of the card the panes are in, drawn over it with
+/// no ground of its own, so a panel can drop from it without a seam.
+pub fn strip(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(float_colour(p, see_through))),
         text_color: Some(p.on_surface),
-        border: Border {
-            radius: PILL_RADIUS.into(),
-            ..Border::default()
-        },
-        shadow: iced::Shadow {
-            color: Color::BLACK.scale_alpha(0.35),
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 18.0,
-        },
         ..container::Style::default()
     }
 }
