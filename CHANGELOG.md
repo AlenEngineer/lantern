@@ -22,6 +22,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
   bracket bulges out and settles, and its time turns red as it goes.
 - When a service goes back round a loop, a light runs back along the
   loop's line and its round count lights up as it changes.
+- The bracket of the section something carried would go into stands out
+  and back once as it comes to be that section.
 - Rows taken away close up where they were, and rows Ctrl+Z (or redo)
   puts back grow in.
 - A step can fade in and fade out. The card under a picked step, or the
