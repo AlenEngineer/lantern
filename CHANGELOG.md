@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A step whose own sound plays apart from its picture (a song under a
+  still) goes on by itself when that sound ends, where the step is
+  joined to the next; its length no longer moves it on first. Under a
+  video of its own, the video's end still moves the plan.
+
 - What a step shows can come from elsewhere: another picture in its
   place, the picture that was on kept, or nothing, while the step's own
   sound plays (a song under a still, a video heard over the picture

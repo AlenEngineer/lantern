@@ -3,7 +3,8 @@
 //! after its own.
 
 use lantern_engine::{
-    Action, Engine, Kind, Location, Meets, Picture, Plan, Resource, ResourceId, SourceId, StepSound,
+    Action, Engine, Kind, Location, MediaReport, Meets, Picture, Plan, Resource, ResourceId,
+    SourceId, StepSound,
 };
 
 fn file(name: &str, kind: Kind) -> Resource {
@@ -140,4 +141,38 @@ fn where_a_step_keeps_its_sound_is_saved_with_the_plan() {
     // A step as ever says nothing of it.
     let plain = Plan::new("x");
     assert!(!plain.to_json().contains("picture"));
+}
+
+#[test]
+fn a_still_goes_on_when_the_sound_it_plays_apart_ends() {
+    let mut plan = Plan::new("Sunday");
+    let song = plan.show(file("song.mp3", Kind::Audio));
+    let after = plan.show(file("welcome.png", Kind::Image));
+    let hymn = plan.show(file("hymn.mp4", Kind::Video));
+    let last = plan.show(file("end.png", Kind::Image));
+    plan.get_mut(song).unwrap().picture = Picture::File(file("cross.png", Kind::Image));
+    plan.get_mut(hymn).unwrap().sound = Some(StepSound::new(file("track.mp3", Kind::Audio)));
+    plan.join_over(song, after).unwrap();
+    plan.join_over(hymn, last).unwrap();
+    let engine = Engine::new();
+    engine.load_plan(plan);
+
+    engine.next();
+    let (bed, owner) = engine.plays_apart().unwrap();
+    assert_eq!(owner, song);
+    engine.report(bed, MediaReport::Ended);
+    assert_eq!(
+        engine.current_step().map(|s| s.id),
+        Some(after),
+        "it went on"
+    );
+
+    // Under a video of its own, the video's end moves the plan, not the
+    // sound's.
+    engine.next();
+    let (bed, _) = engine.plays_apart().unwrap();
+    let video = engine.stage().program.unwrap().id;
+    engine.report(video, MediaReport::Timeline { duration: None });
+    engine.report(bed, MediaReport::Ended);
+    assert_eq!(engine.current_step().map(|s| s.id), Some(hymn));
 }
