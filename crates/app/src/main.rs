@@ -2289,7 +2289,9 @@ impl App {
                                 .iter()
                                 .find(|step| !step.is_section())
                                 .map(|step| step.id);
-                            self.motion.rows_gone(after, steps.len() - 1);
+                            // All but the one row it folds into.
+                            let tall = self.rows_tall(&steps[1..]);
+                            self.motion.rows_gone(after, tall);
                         }
                         true => {}
                         false => self.motion.rows_came(steps),
@@ -3196,20 +3198,21 @@ impl App {
     /// were; those that came grow in.
     fn rows_changed(&mut self, before: &Plan, after: &Plan) {
         let kept = |plan: &Plan, id: StepId| plan.get(id).is_some();
-        let gone: Vec<usize> = before
+        let gone: Vec<(usize, StepId)> = before
             .steps()
             .iter()
             .enumerate()
             .filter(|(_, step)| !step.is_section() && !kept(after, step.id))
-            .map(|(at, _)| at)
+            .map(|(at, step)| (at, step.id))
             .collect();
-        if let Some(first) = gone.first() {
+        if let Some((first, _)) = gone.first() {
             // Before the first row after them that is still there.
             let anchor = before.steps()[*first..]
                 .iter()
                 .find(|step| !step.is_section() && kept(after, step.id))
                 .map(|step| step.id);
-            self.motion.rows_gone(anchor, gone.len());
+            let ids: Vec<StepId> = gone.iter().map(|(_, id)| *id).collect();
+            self.motion.rows_gone(anchor, self.rows_tall(&ids));
         }
         let came: Vec<StepId> = after
             .steps()
