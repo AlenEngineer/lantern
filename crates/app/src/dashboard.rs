@@ -11,7 +11,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Fill, Length};
 use lantern_engine::{
-    Action, Bang, Media, Playback, Resource, Scene, Scope, Step, StepId, Timed, Timing,
+    Action, Bang, Media, Picture, Playback, Resource, Scene, Scope, Step, StepId, Timed, Timing,
 };
 
 use crate::keys::{self, Op};
@@ -1385,6 +1385,9 @@ impl App {
                 section.push(back);
             }
         }
+        if let Some(apart) = self.apart_line() {
+            section.push(apart);
+        }
         // Blackout is in the strip; what's left here empties the stage.
         section.push(
             row![
@@ -1664,10 +1667,64 @@ impl App {
         // plays over what the step shows.
         let scene = self.stage.picture().or(self.stage.program.as_ref())?;
         match &step.action {
-            Action::Show { resource } if resource.id != scene.resource.id => Some(step),
+            Action::Show { .. } if !shows(&step, scene) => Some(step),
             Action::Blank => Some(step),
             _ => None,
         }
+    }
+
+    /// The sound playing apart from the program, when the step `id` put it
+    /// on: its own, playing with it.
+    pub(crate) fn apart_of(&self, id: StepId) -> Option<&Scene> {
+        let (scene, owner) = self.engine.0.plays_apart()?;
+        self.stage
+            .bed
+            .as_ref()
+            .filter(|bed| owner == id && bed.id == scene)
+    }
+
+    /// What plays apart from the program, said under what is on: its
+    /// name, how far it has played, and whether it came from an earlier
+    /// step or plays lowered.
+    fn apart_line(&self) -> Option<Element<'_, Message>> {
+        let p = self.palette;
+        let bed = self.stage.bed.as_ref()?;
+        let plan = self.engine.0.plan();
+        let owner = self
+            .engine
+            .0
+            .plays_apart()
+            .filter(|(scene, _)| *scene == bed.id)
+            .and_then(|(_, owner)| plan.get(owner).cloned());
+        let current = self.engine.0.current_step().map(|step| step.id);
+        let mut how = Vec::new();
+        if let Some(owner) = owner.filter(|owner| Some(owner.id) != current) {
+            how.push(format!("kept going from {}", owner.label));
+        }
+        if self.stage.lowered {
+            how.push("lowered".to_string());
+        }
+        let progress = crate::plan_pane::progress(&bed.media, &bed.resource);
+        let mut line = row![
+            look::icon(Icon::Music, 14.0, p.on_surface_variant),
+            single_line(bed.resource.title.clone())
+                .size(BODY)
+                .font(BOLD),
+            Space::new().width(Fill),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        if let Some((far, _)) = &progress {
+            line = line.push(text(far.clone()).size(META).color(p.on_surface_variant));
+        }
+        let mut lines = column![line].spacing(3);
+        if !how.is_empty() {
+            lines = lines.push(text(how.join(" · ")).size(META).color(p.on_surface_variant));
+        }
+        if let Some((_, done)) = progress {
+            lines = lines.push(crate::plan_pane::bar(p, done, p.tertiary, 0.0));
+        }
+        Some(lines.into())
     }
 
     /// What PgDn does now, for its button, and whether it does anything:
@@ -2330,6 +2387,21 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .height(Fill)
         .content_fit(iced::ContentFit::Contain)
         .into()
+}
+
+/// Whether `scene` is what the plan step `step` puts on: its own, the
+/// picture set in its place, any picture kept from before, never one
+/// when it shows nothing.
+pub(crate) fn shows(step: &Step, scene: &Scene) -> bool {
+    let Action::Show { resource } = &step.action else {
+        return false;
+    };
+    match &step.picture {
+        Picture::Own => scene.resource.id == resource.id,
+        Picture::File(file) => scene.resource.id == file.id,
+        Picture::Keep => true,
+        Picture::Black => false,
+    }
 }
 
 #[cfg(test)]

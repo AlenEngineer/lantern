@@ -1366,6 +1366,19 @@ impl App {
                 {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
+                let unknown = |scene: &lantern_engine::Scene| {
+                    scene.timed().is_some_and(|timed| timed.duration.is_none())
+                };
+                if let Some((scene, length)) = self.media.bed_length()
+                    && self.stage.bed.as_ref().is_some_and(unknown)
+                {
+                    self.engine.0.report(
+                        scene,
+                        MediaReport::Timeline {
+                            duration: Some(length),
+                        },
+                    );
+                }
                 // A sound has no picture to say it ended or broke through.
                 match self.media.sound_event() {
                     Some((scene, Ok(()))) => return self.update(Message::Ended(scene)),

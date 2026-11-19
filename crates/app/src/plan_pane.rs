@@ -2420,11 +2420,13 @@ impl App {
         // The current step is on stage unless something off the plan was
         // shown since.
         let shown = match &step.action {
-            Action::Show { resource } => self
-                .stage
-                .program
-                .as_ref()
-                .is_some_and(|scene| scene.resource.id == resource.id),
+            Action::Show { .. } => {
+                self.stage
+                    .program
+                    .as_ref()
+                    .is_some_and(|scene| crate::dashboard::shows(step, scene))
+                    || self.apart_of(step.id).is_some()
+            }
             _ => false,
         };
         let tone = match place {
@@ -2433,8 +2435,16 @@ impl App {
             _ => Tone::Plain,
         };
         // On stage, the row says how far into it the stage is.
-        let progress = match (place, &self.stage.program) {
-            (Place::Current, Some(scene)) if shown => progress(&scene.media, &scene.resource),
+        // Its own sound playing apart says it, over a picture without an
+        // end of its own.
+        let apart = self.apart_of(step.id);
+        let progress = match (place, apart, &self.stage.program) {
+            (Place::Current, Some(bed), program)
+                if program.as_ref().is_none_or(|scene| scene.timed().is_none()) =>
+            {
+                progress(&bed.media, &bed.resource)
+            }
+            (Place::Current, _, Some(scene)) if shown => progress(&scene.media, &scene.resource),
             _ => None,
         };
         // Just gone off, it fades from lit to played.

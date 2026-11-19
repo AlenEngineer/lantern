@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The dashboard says what plays apart from the program under what is
+  on: its name, how far it has played, and whether it kept going from
+  an earlier step or plays lowered. A step's own sound playing apart
+  says how far it has played on its row.
 - A step whose own sound plays apart from its picture (a song under a
   still) goes on by itself when that sound ends, where the step is
   joined to the next; its length no longer moves it on first. Under a
@@ -764,6 +768,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   does, and so do the keys.
 
 ### Fixed
+
+- A step showing another picture in place of its own, or the picture
+  kept from before, no longer reads as off the plan on the dashboard
+  ("live · off the plan", "The plan is waiting"). A sound playing apart
+  that didn't say its length as it started says it once it knows.
 
 - A presentation's or a PDF's step shows its first page in the preview
   and Up next, not a blank card that says "loading…".
