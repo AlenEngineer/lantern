@@ -500,6 +500,68 @@ pub struct StepSound {
     /// stops when the step goes back before it.
     #[serde(default, skip_serializing_if = "is_first")]
     pub from: usize,
+    /// It keeps going under the steps after this one, up to this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<StepId>,
+    /// What it does under a step, while it keeps going, that has a sound
+    /// of its own.
+    #[serde(default, skip_serializing_if = "Meets::is_fade")]
+    pub meets: Meets,
+}
+
+impl StepSound {
+    /// `resource`, from the first slide, for its step alone.
+    pub fn new(resource: Resource) -> StepSound {
+        StepSound {
+            resource,
+            from: 0,
+            until: None,
+            meets: Meets::Fade,
+        }
+    }
+}
+
+/// What a sound that keeps going under the steps after its own does under
+/// one that has a sound of its own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Meets {
+    /// It fades out as that step comes on.
+    #[default]
+    Fade,
+    /// It stops there at once.
+    Cut,
+    /// It goes on under that step's sound, lowered.
+    Under,
+}
+
+impl Meets {
+    fn is_fade(&self) -> bool {
+        *self == Meets::Fade
+    }
+}
+
+/// Where what a step shows comes from, when it is not what the step is.
+/// The step's own sound, when it has one, plays apart from it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Picture {
+    /// What the step is: as ever.
+    #[default]
+    Own,
+    /// Another picture in its place.
+    File(Resource),
+    /// What was on stage stays.
+    Keep,
+    /// Nothing is seen.
+    Black,
+}
+
+impl Picture {
+    /// The step's own, as ever.
+    pub fn is_own(&self) -> bool {
+        *self == Picture::Own
+    }
 }
 
 fn is_first(slide: &usize) -> bool {
@@ -585,6 +647,12 @@ pub struct Step {
     /// still (slides, a passage, a picture, pages) plays one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<StepSound>,
+    /// Where what it shows comes from, when not from what it is.
+    #[serde(default, skip_serializing_if = "Picture::is_own")]
+    pub picture: Picture,
+    /// Its own sound is not heard.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub silent: bool,
     /// How what it shows comes up and goes off: see [`Fade`].
     #[serde(default, skip_serializing_if = "Fade::is_none")]
     pub fade: Fade,
@@ -2377,6 +2445,8 @@ impl Plan {
             estimate: None,
             flow: Flow::default(),
             sound: None,
+            picture: Picture::Own,
+            silent: false,
             fade: Fade::default(),
             look: None,
             filled: false,

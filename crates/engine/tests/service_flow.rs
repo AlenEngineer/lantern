@@ -467,6 +467,8 @@ fn a_steps_sound_plays_from_its_slide_and_stops_with_the_step() {
         plan.get_mut(step).unwrap().sound = Some(StepSound {
             resource: music.clone(),
             from: 1,
+            until: None,
+            meets: lantern_engine::Meets::Fade,
         });
         step
     });
@@ -568,6 +570,8 @@ fn a_videos_own_sound_gives_way_to_its_steps_sound() {
         plan.get_mut(step).unwrap().sound = Some(StepSound {
             resource: file("track.mp3", Kind::Audio),
             from: 0,
+            until: None,
+            meets: lantern_engine::Meets::Fade,
         });
     });
     engine.next();
@@ -602,6 +606,8 @@ fn a_steps_sound_from_the_first_slide_starts_with_the_step() {
         plan.get_mut(step).unwrap().sound = Some(StepSound {
             resource: music,
             from: 0,
+            until: None,
+            meets: lantern_engine::Meets::Fade,
         });
     });
     engine.next();

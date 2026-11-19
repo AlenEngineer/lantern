@@ -30,8 +30,8 @@ pub use lantern_orchestrator::timing::{
 };
 pub use lantern_orchestrator::{
     Action, BracketError, COLORS, Carried, Carry, CarryError, Coming, DEEPEST, Drawn, Ending, Fade,
-    Flow, FlowOf, LogEntry, Looped, Note, NoteId, NoteOn, Over, Place, Plan, PlanError, Repeat,
-    Session, Span, SpanError, SpanId, Step, StepId, StepSound,
+    Flow, FlowOf, LogEntry, Looped, Meets, Note, NoteId, NoteOn, Over, Picture, Place, Plan,
+    PlanError, Repeat, Session, Span, SpanError, SpanId, Step, StepId, StepSound,
 };
 pub use lantern_resource::{
     Capabilities, Hit, Kind, Location, Query, Resource, ResourceId, Source, SourceError, SourceId,
@@ -405,7 +405,7 @@ impl Engine {
                 .cloned()
                 .ok_or(EngineError::UnknownStep(id))?;
             match &step.action {
-                Action::Show { resource } => {
+                Action::Show { resource } if step.picture.is_own() => {
                     stage.show_fading_in(Arc::new(resource.clone()), frame, step.fade.fade_in);
                 }
                 _ => perform(stage, &step),
@@ -598,9 +598,17 @@ impl Engine {
 /// Makes a step take effect on stage.
 fn perform(stage: &mut Showman, step: &Step) {
     match &step.action {
-        Action::Show { resource } => {
-            stage.show_fading_in(Arc::new(resource.clone()), 0, step.fade.fade_in);
-        }
+        Action::Show { resource } => match &step.picture {
+            Picture::Own => {
+                stage.show_fading_in(Arc::new(resource.clone()), 0, step.fade.fade_in);
+            }
+            // Another picture in its place; its own sound plays apart.
+            Picture::File(picture) => {
+                stage.show_fading_in(Arc::new(picture.clone()), 0, step.fade.fade_in);
+            }
+            Picture::Keep => {}
+            Picture::Black => stage.blank(),
+        },
         Action::Blank => stage.clear(),
         // Live slots and notes leave the stage as the operator left it, and
         // the session never stops on a section marker.
@@ -657,14 +665,31 @@ fn how_it_fades_out(step: &Step, stage: &StageState) -> Option<FadeOut> {
     let Action::Show { resource } = &step.action else {
         return None;
     };
-    let picture = stage
-        .picture()
-        .is_some_and(|seen| seen.resource.id == resource.id && still_on(seen));
+    // What it shows: its own, or another picture in its place.
+    let shows = match &step.picture {
+        Picture::Own => Some(resource),
+        Picture::File(picture) => Some(picture),
+        Picture::Keep | Picture::Black => None,
+    };
+    let picture = shows.is_some_and(|shows| {
+        stage
+            .picture()
+            .is_some_and(|seen| seen.resource.id == shows.id && still_on(seen))
+    });
     let sound = stage
         .program
         .as_ref()
         .is_some_and(|on| on.sounds_only() && of_step(step, on) && still_on(on));
-    (picture || sound).then_some(FadeOut { over, picture })
+    // Or what it plays apart from the program.
+    let apart = stage.bed.as_ref().is_some_and(|bed| {
+        still_on(bed)
+            && (bed.resource.id == resource.id
+                || step
+                    .sound
+                    .as_ref()
+                    .is_some_and(|sound| sound.resource.id == bed.resource.id))
+    });
+    (picture || sound || apart).then_some(FadeOut { over, picture })
 }
 
 /// Whether a scene still shows or plays something: not one that has
@@ -677,12 +702,55 @@ fn still_on(scene: &Scene) -> bool {
     }
 }
 
-/// Keeps the current step's sound ([`StepSound`]) with what the step
-/// shows, after anything the operator did: it plays apart from the
-/// program, in place of the step's own sound, once the step's picture is
-/// on at the slide the sound starts from; it goes, and the program's own
-/// sound is heard again, when the picture goes back before that slide,
-/// something else is put on program, or the plan moves on.
+/// The sound `step` plays apart from the program, when it is due: its
+/// own sound set to another file, from the slide it starts at; or, with
+/// another picture in place of its own, its own sound. `None` with
+/// neither, or before that slide.
+fn sound_of(step: &Step, stage: &Showman) -> Option<Resource> {
+    let Action::Show { resource } = &step.action else {
+        return None;
+    };
+    match (&step.sound, &step.picture) {
+        // Over its own picture, from its slide; not over what the
+        // operator put on instead.
+        (Some(sound), Picture::Own) => {
+            let program = stage.program()?;
+            let due = program.resource.id == resource.id && program.frame() >= sound.from;
+            due.then(|| sound.resource.clone())
+        }
+        (Some(sound), _) => Some(sound.resource.clone()),
+        (None, Picture::Own) => None,
+        (None, _) => (!step.silent && has_sound(resource)).then(|| resource.clone()),
+    }
+}
+
+/// Whether `resource` has a sound of its own: a video or a sound.
+fn has_sound(resource: &Resource) -> bool {
+    matches!(resource.kind, Kind::Video | Kind::Audio)
+}
+
+/// Whether `step` makes a sound of its own as it goes on: a video or a
+/// sound, heard, or a sound set in place of its own.
+fn sounds(step: &Step) -> bool {
+    match &step.action {
+        Action::Show { resource } => step.sound.is_some() || (!step.silent && has_sound(resource)),
+        _ => false,
+    }
+}
+
+/// How long a sound that keeps going takes to fade out under a step with
+/// a sound of its own, in seconds.
+const MEETS_FADE: u64 = 2;
+
+/// Keeps what plays apart from the program with the plan, after anything
+/// the operator did ([`StepSound`], [`Picture`]):
+///
+/// - the current step's sound apart, when it has one ([`sound_of`]), in
+///   place of the sound of what it shows, coming up with its fade in;
+/// - else one an earlier step started that keeps going to here
+///   ([`StepSound::until`]): under a step with a sound of its own, as it
+///   says ([`Meets`]);
+/// - else none: it goes, over the program's fade out when there is one.
 ///
 /// `playing` is the sound this put on, and the step it is of. Going on
 /// from that step to one that leaves the stage as it is, what it showed
@@ -693,31 +761,72 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(Scene
     if playing.is_some_and(|(sound, _)| Some(sound) != bed) {
         *playing = None;
     }
-    let wanted = session.current().and_then(|step| {
-        let sound = step.sound.as_ref()?;
-        let Action::Show { resource } = &step.action else {
-            return None;
-        };
-        let program = stage.program()?;
-        let due = program.resource.id == resource.id && program.frame() >= sound.from;
-        due.then(|| (sound.resource.clone(), step.fade.fade_in, step.id))
+    let Some(current) = session.current() else {
+        if playing.take().is_some() {
+            stage.lift_bed(None);
+        }
+        return;
+    };
+    let plan = session.plan();
+    // The current step's own, or one that keeps going to here.
+    let own = sound_of(current, stage).map(|sound| (sound, current.id, false));
+    let kept = playing.and_then(|(_, owner)| {
+        let from = plan.get(owner)?;
+        let sound = from.sound.as_ref()?;
+        let (at, here, until) = (
+            plan.position(owner)?,
+            plan.position(current.id)?,
+            plan.position(sound.until?)?,
+        );
+        (at < here && here <= until).then_some((from, sound))
+    });
+    let wanted = match (own, kept) {
+        (Some(own), _) => Some(own),
+        (None, Some((from, sound))) => match (sounds(current), sound.meets) {
+            (false, _) => Some((sound.resource.clone(), from.id, false)),
+            (true, Meets::Under) => Some((sound.resource.clone(), from.id, true)),
+            (true, Meets::Fade | Meets::Cut) => None,
+        },
+        (None, None) => None,
+    };
+    // It goes as what it played with goes, or as the step it meets says.
+    let going = stage.state().fading_out.map(|fade| fade.over).or_else(|| {
+        kept.filter(|(_, sound)| sound.meets == Meets::Fade)
+            .and_then(|_| FadeTime::from_secs(MEETS_FADE))
     });
     match (wanted, *playing) {
-        (Some((sound, fade_in, step)), None) => {
-            stage.bed(Arc::new(sound), fade_in, None);
-            stage.set_muted(true);
-            *playing = stage.state().bed.as_ref().map(|scene| (scene.id, step));
+        (Some((_, owner, lowered)), Some((_, of))) if owner == of => {
+            stage.set_lowered(lowered);
         }
-        (None, Some((_, step))) => {
-            // It goes as what it played with goes: over its fade out.
-            let fade = stage.state().fading_out.map(|fade| fade.over);
-            stage.lift_bed(fade);
-            if session.current().is_some_and(|current| current.id == step) {
+        (Some((sound, owner, lowered)), _) => {
+            let fade_in = (owner == current.id)
+                .then_some(current.fade.fade_in)
+                .flatten();
+            stage.bed(Arc::new(sound), fade_in, going);
+            stage.set_lowered(lowered);
+            *playing = stage.state().bed.as_ref().map(|scene| (scene.id, owner));
+        }
+        (None, Some((_, owner))) => {
+            stage.lift_bed(going);
+            stage.set_lowered(false);
+            if current.id == owner && current.picture.is_own() {
                 stage.set_muted(false);
             }
             *playing = None;
         }
-        _ => {}
+        (None, None) => {}
+    }
+    // What the current step shows is silent while its sound plays apart
+    // or it is set to be; a picture kept from before is silent too.
+    if let Action::Show { .. } = current.action {
+        let silent = match &current.picture {
+            Picture::Own => current.silent || playing.is_some_and(|(_, owner)| owner == current.id),
+            Picture::Keep => true,
+            Picture::File(_) | Picture::Black => false,
+        };
+        if silent {
+            stage.set_muted(true);
+        }
     }
 }
 

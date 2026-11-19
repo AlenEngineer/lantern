@@ -2912,10 +2912,8 @@ impl App {
                 self.engine.0.edit_plan(|plan| {
                     if let Some(step) = plan.get_mut(id) {
                         self.from_typed = None;
-                        step.sound = sound.map(|resource| lantern_engine::StepSound {
-                            resource: (*resource).clone(),
-                            from: 0,
-                        });
+                        step.sound = sound
+                            .map(|resource| lantern_engine::StepSound::new((*resource).clone()));
                     }
                 })
             }
@@ -4163,7 +4161,9 @@ impl App {
                     .map(Message::Loaded);
             }
             // Heard again, or silenced: as loud as its fade says.
-            StageEvent::Muted { .. } => self.media.sync_fades(&self.stage),
+            StageEvent::Muted { .. } | StageEvent::Lowered { .. } => {
+                self.media.sync_fades(&self.stage);
+            }
         }
         Task::none()
     }
