@@ -57,6 +57,21 @@ impl Resource {
         page
     }
 
+    /// The whole file this page was opened out of, if it is a page: the
+    /// resource [`page`](Self::page) was given.
+    pub fn file_of_page(&self) -> Option<Resource> {
+        let n = self.page_of()?;
+        let id = String::from(self.id.clone());
+        let id = id.strip_suffix(&format!("#page{}", n + 1))?.to_string();
+        let mut file = self.clone();
+        file.id = ResourceId::try_from(id).ok()?;
+        if let Some(title) = self.title.strip_suffix(&format!(" · {}", n + 1)) {
+            file.title = title.to_string();
+        }
+        file.meta.remove(Self::PAGE);
+        Some(file)
+    }
+
     /// Which page of its file this is, counted from 0, if it is one.
     pub fn page_of(&self) -> Option<usize> {
         self.meta.get(Self::PAGE)?.parse().ok()
@@ -107,6 +122,21 @@ pub struct Hit {
 mod tests {
     use super::*;
     use crate::SourceId;
+
+    #[test]
+    fn a_page_knows_the_file_it_was_opened_out_of() {
+        let source = SourceId::new("local").unwrap();
+        let deck = Resource::new(
+            ResourceId::new(&source, "/decks/news.pptx"),
+            "News",
+            Kind::Presentation,
+            Location::File("/decks/news.pptx".into()),
+        )
+        .with_meta("modified", "1");
+        let page = deck.page(11);
+        assert_eq!(page.file_of_page(), Some(deck.clone()));
+        assert_eq!(deck.file_of_page(), None, "a whole file is no page");
+    }
 
     #[test]
     fn serde_round_trip() {
