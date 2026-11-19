@@ -4,9 +4,12 @@
 //! carried rows leave the list and a gap opens where they'd land, so
 //! positions here count the plan *without* them (the "rest").
 //!
-//! Up and down say where; for a section, left and right say how far in:
-//! its own section, or a part of the one before it. A step has no such
-//! choice: it is in whatever section it lands under.
+//! Up and down say where. A section lands beside the section above where
+//! it lands; pointed at a bracket's lane it goes into that section (the
+//! plan's own bracket: the plan's level), and ← and → move it a level
+//! out or in. Moving sideways changes nothing, and a section carried
+//! never takes in the sections after it. A step has no such choice: it
+//! is in whatever section it lands under.
 
 use iced::Point;
 use lantern_engine::{DEEPEST, Plan, Step, StepId};
@@ -50,6 +53,11 @@ pub struct Drag {
     /// The least and the most a section's level can be where it would
     /// land.
     pub levels: (u8, u8),
+    /// The level of the bracket the pointer is over, going into it: one
+    /// further in than that section, or the plan's own.
+    pub into: Option<u8>,
+    /// Levels in (more) or out (less) by the arrow keys.
+    pub nudge: i8,
 }
 
 /// How far in a heading sits.
@@ -104,9 +112,6 @@ pub fn section_cuts(
         .collect()
 }
 
-/// How far the pointer goes sideways for one level in or out.
-const LEVEL_STEP: f32 = 24.0;
-
 /// How far in a step's row is drawn, landing at `at` among `rest`: one
 /// further than the section it lands under.
 pub fn level_at(rest: &[&Step], at: usize) -> u8 {
@@ -159,6 +164,8 @@ impl Drag {
             at: Point::ORIGIN,
             moving: false,
             landing: None,
+            into: None,
+            nudge: 0,
         }
     }
 
@@ -203,13 +210,15 @@ impl Drag {
             .collect()
     }
 
-    /// Works out the level it would land at, from where it would land
-    /// and how far sideways the pointer has gone since it was picked up.
+    /// Works out the level it would land at, from where it would land,
+    /// the bracket the pointer is over, and the arrow keys.
     ///
     /// A section can be at the plan's own level or a part of the section
     /// before it, no further in than that one's parts are, and no further
     /// than leaves room for the sections it carries. It is never further
     /// out than the section after it: that one would become its part.
+    /// Between those it is beside the section above, unless a bracket
+    /// pointed at or the keys say otherwise.
     pub fn aim_level(&mut self, plan: &Plan) {
         let Some(at) = self.landing else {
             return;
@@ -235,10 +244,33 @@ impl Drag {
             .map_or(0, |before| before + 1)
             .min(DEEPEST.saturating_sub(self.span));
         let least = after.min(most);
-        let sideways = self.origin.map_or(0.0, |origin| self.at.x - origin.x);
-        let wish = f32::from(self.own) + (sideways / LEVEL_STEP).round();
-        self.level = wish.clamp(f32::from(least), f32::from(most)) as u8;
+        let beside = before.unwrap_or(0);
+        let base = self
+            .into
+            .filter(|into| (least..=most).contains(into))
+            .unwrap_or(beside);
+        let wish = i16::from(base) + i16::from(self.nudge);
+        self.level = wish.clamp(i16::from(least), i16::from(most)) as u8;
         self.levels = (least, most);
+    }
+
+    /// The pointer came over a bracket's lane, going into that section
+    /// at `level`, or left them all. The keys start over from there.
+    pub fn point_into(&mut self, level: Option<u8>) {
+        if self.into != level {
+            self.into = level;
+            self.nudge = 0;
+        }
+    }
+
+    /// The arrow keys: a level in (→) or out (←), as far as there is room.
+    pub fn nudge(&mut self, inward: bool) {
+        let (least, most) = self.levels;
+        let at = i16::from(self.level);
+        let wish = if inward { at + 1 } else { at - 1 };
+        if (i16::from(least)..=i16::from(most)).contains(&wish) {
+            self.nudge += if inward { 1 } else { -1 };
+        }
     }
 
     /// Whether a section carried would land among steps, where it is put
@@ -428,39 +460,53 @@ mod tests {
     }
 
     #[test]
-    fn sideways_a_section_goes_into_the_one_before_it_and_out_again() {
+    fn a_section_goes_into_the_bracket_pointed_at_or_by_the_keys() {
         let (mut plan, [singing, _, special, _, school, _]) = sabbath();
         let mut drag = Drag::new(&plan, special);
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
         assert!(drag.moving);
         drag.aim_level(&plan);
-        // Where it was: its own section, or a part of Singing.
+        // Where it was: beside Singing, or a part of it.
         assert_eq!((drag.level, drag.levels), (0, (0, 1)));
         assert!(!drag.nests());
-        // A step's worth to the right: into Singing.
-        drag.to(Point::new(100.0 + LEVEL_STEP, 110.0));
+        // Moving sideways changes nothing.
+        drag.to(Point::new(400.0, 110.0));
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 0);
+        // Over Singing's bracket: into it.
+        drag.point_into(Some(1));
         drag.aim_level(&plan);
         assert_eq!(drag.level, 1);
         assert!(drag.nests(), "let go where it is, it still moves in");
         let rest = drag.rest(&plan);
         let at = drag.landing.unwrap();
         assert_eq!(host(&rest, at, drag.level), Some((0, 2)), "Singing");
-        // Further right changes nothing: Singing has no part to be in.
-        drag.to(Point::new(100.0 + 5.0 * LEVEL_STEP, 110.0));
+        // → can't go further: Singing has no part to be in.
+        drag.nudge(true);
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 1);
+        // ← brings it out again.
+        drag.nudge(false);
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 0);
+        // Off the bracket, the keys start over: beside Singing; → in.
+        drag.point_into(None);
+        drag.nudge(true);
         drag.aim_level(&plan);
         assert_eq!(drag.level, 1);
         plan.move_group(&drag.carried, at, drag.level);
         assert_eq!(plan.within(plan.position(special).unwrap()), [singing]);
-        // Picked up again and pulled left, it is its own section again.
+        // Picked up again over the plan's own bracket: its own section.
         let mut drag = Drag::new(&plan, special);
         drag.to(Point::new(100.0, 100.0));
-        drag.to(Point::new(100.0 - LEVEL_STEP, 110.0));
+        drag.to(Point::new(100.0, 110.0));
+        drag.point_into(Some(0));
         drag.aim_level(&plan);
         assert_eq!(drag.level, 0);
         // First in the plan there is nothing to be a part of.
         drag.landing = Some(0);
-        drag.to(Point::new(200.0, 110.0));
+        drag.point_into(Some(1));
         drag.aim_level(&plan);
         assert_eq!((drag.level, drag.levels), (0, (0, 0)));
         let _ = school;
@@ -476,9 +522,11 @@ mod tests {
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
         // Before Special, which is a part: out at the plan's level it
-        // would take Special for its own.
+        // would take Special for its own, so even pointed there it
+        // stays a part.
         drag.landing = Some(2);
-        drag.to(Point::new(100.0 - 3.0 * LEVEL_STEP, 110.0));
+        drag.point_into(Some(0));
+        drag.nudge(false);
         drag.aim_level(&plan);
         assert_eq!((drag.level, drag.levels), (1, (1, 1)));
     }

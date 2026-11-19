@@ -522,20 +522,32 @@ impl App {
                     .spacing(6)
                     .align_y(Alignment::Center)
             };
-            pane = pane.push(
-                container(
-                    row![
-                        named(
-                            look::icon(Icon::Joined, 13.0, p.primary).into(),
-                            "by itself"
-                        ),
-                        named(look::icon(Icon::Pause, 13.0, quiet).into(), "waits"),
-                        named(look::ring(0.4, 13.0, p.tertiary).into(), "downloading"),
-                    ]
-                    .spacing(16),
-                )
-                .padding([0, 8]),
-            );
+            // While a section is carried: how to set how far in it goes.
+            let carrying = self
+                .drag
+                .as_ref()
+                .is_some_and(|drag| drag.moving && drag.is_section());
+            let legend = match carrying {
+                true => row![
+                    named(
+                        text("]").size(BODY).font(BOLD).color(p.primary).into(),
+                        "over a bracket: into it"
+                    ),
+                    named(
+                        text("← →").size(META).font(BOLD).color(p.primary).into(),
+                        "a level out or in"
+                    ),
+                ],
+                false => row![
+                    named(
+                        look::icon(Icon::Joined, 13.0, p.primary).into(),
+                        "by itself"
+                    ),
+                    named(look::icon(Icon::Pause, 13.0, quiet).into(), "waits"),
+                    named(look::ring(0.4, 13.0, p.tertiary).into(), "downloading"),
+                ],
+            };
+            pane = pane.push(container(legend.spacing(16)).padding([0, 8]));
         }
         pane = pane.push(container(status).padding([0, 8]));
         let pane = pane.padding([16, 12]).height(Fill);
@@ -3812,7 +3824,31 @@ impl App {
         places: &track::Places,
     ) -> Element<'a, Message> {
         let covering = |lane: Option<u8>| covering(plan, side, index, lane);
-        let part = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
+        // While a section is carried, a bracket's lane under the pointer
+        // is where it would go: into that section, or the plan's level.
+        let carrying = self
+            .drag
+            .as_ref()
+            .is_some_and(|drag| drag.moving && drag.is_section());
+        let into = |held: Option<Held>, part: Element<'a, Message>| -> Element<'a, Message> {
+            let level = match held {
+                _ if !carrying => None,
+                Some(Held::Plan) => Some(0),
+                Some(Held::Section(section)) => plan
+                    .get(section)
+                    .and_then(Step::depth)
+                    .map(|depth| depth + 1),
+                None => None,
+            };
+            match level {
+                Some(level) => mouse_area(part)
+                    .on_enter(Message::CarryInto(level))
+                    .on_exit(Message::CarryOut(level))
+                    .into(),
+                None => part,
+            }
+        };
+        let part_of = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
             let part = Space::new().width(wide).height(Fill);
             let section = match held {
                 None => return part.into(),
@@ -3866,6 +3902,9 @@ impl App {
             // goes by rows, and must not flip to the section's start as
             // the pointer crosses into its bracket's room.
             self.draggable(plan.steps()[index].id, area)
+        };
+        let part = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
+            into(held, part_of(wide, held))
         };
         // The innermost brace and the names beside it: the section this
         // step is most nearly in. Then a brace for each one further out,
