@@ -810,6 +810,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A wide plan pane no longer pushes the strip's last buttons (settings
+  among them) off its right end: those have their room first, and the
+  modes, which start over the stage's pane where there is room, move in
+  when there isn't.
 - The plan pane no longer keeps an empty strip right of the plan's
   bracket: the plan writes its name at its head, so the rows get that
   room for their names.
