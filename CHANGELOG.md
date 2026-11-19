@@ -735,6 +735,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 - Rows taken away, or folded into their section, close up from as tall
   as they were drawn, so a picked row with its card no longer jumps.
+- What a fill proposes stays as the library goes on being measured:
+  only the room it leaves is filled from what was just measured.
 - A section carried in amongst the steps of a loop, a drawn order or a
   join is refused, as steps are, instead of quietly taking it away. Its
   card says so before it is let go.

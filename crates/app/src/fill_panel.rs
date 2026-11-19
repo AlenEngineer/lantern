@@ -109,8 +109,8 @@ impl App {
                 .unwrap_or_default()
         };
         let before = ids(self.filling.as_ref());
-        // More of the library measured changes the draw a little: that
-        // settles in place, unless it is the first there is to see.
+        // More of the library measured keeps what is proposed and may
+        // add to it, in place, unless it is the first there is to see.
         let measured = matches!(edit, FillEdit::Measured) && !before.is_empty();
         self.fill_edit_now(edit);
         if measured {
@@ -231,16 +231,24 @@ impl App {
                         fill.kept.retain(|kept| *kept != id);
                         fill.out.push(id);
                     }
-                    FillEdit::Measured | FillEdit::Open(_) | FillEdit::Close | FillEdit::Accept => {
+                    // What is proposed stays: only room it leaves is
+                    // filled from what was just measured.
+                    FillEdit::Measured => {
+                        let held: Vec<ResourceId> =
+                            fill.picks.iter().map(|pick| pick.id.clone()).collect();
+                        self.fill_propose(&held);
+                        return;
                     }
+                    FillEdit::Open(_) | FillEdit::Close | FillEdit::Accept => {}
                 }
             }
         }
-        self.fill_propose();
+        self.fill_propose(&[]);
     }
 
-    /// Chooses again for what is asked now.
-    fn fill_propose(&mut self) {
+    /// Chooses again for what is asked now, keeping `held` as well as
+    /// what the operator kept.
+    fn fill_propose(&mut self, held: &[ResourceId]) {
         let Some(fill) = &self.filling else {
             return;
         };
@@ -281,7 +289,7 @@ impl App {
                         }
                     },
                 };
-                let kept = fill.kept.contains(&file.id);
+                let kept = fill.kept.contains(&file.id) || held.contains(&file.id);
                 let times = self.usage.times(&file.id);
                 // On lately: the usual order leaves it for another week.
                 let lately = self
@@ -304,6 +312,7 @@ impl App {
         let kept: Vec<usize> = fill
             .kept
             .iter()
+            .chain(held.iter().filter(|id| !fill.kept.contains(id)))
             .filter_map(|id| offered.iter().position(|(file, _)| &file.id == id))
             .collect();
         let wish = Wish {
