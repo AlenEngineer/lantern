@@ -321,6 +321,11 @@ enum Message {
     CheckPalette,
     /// A new, empty plan in place of this one.
     NewPlan,
+    /// The pointer came over a bracket's lane while a section is carried:
+    /// it would go into that section, at this level.
+    CarryInto(u8),
+    /// It left that lane.
+    CarryOut(u8),
     /// Time to see whether a file the plan opened into pages changed.
     CheckFiles,
     /// The file with this id, opened into pages, is taken in as it is now.
@@ -2217,6 +2222,20 @@ impl App {
                 return self.complete(query);
             }
             Message::CheckPalette => self.check_palette(),
+            Message::CarryInto(level) | Message::CarryOut(level) => {
+                let into = matches!(message, Message::CarryInto(_));
+                let plan = self.engine.0.plan();
+                if let Some(drag) = self.drag.as_mut().filter(|drag| drag.moving) {
+                    match into {
+                        true => drag.point_into(Some(level)),
+                        // Only where it is still that lane's: the next one
+                        // may have said so already.
+                        false if drag.into == Some(level) => drag.point_into(None),
+                        false => {}
+                    }
+                    drag.aim_level(&plan);
+                }
+            }
             Message::CheckFiles => self.check_files(),
             Message::TakeIn(id) => {
                 let Some(file) = self
@@ -3447,6 +3466,20 @@ impl App {
                 return self.shelf_side(op == Op::In);
             }
             Op::Enter if !self.searching() && self.keys_in_library() && self.shelf_enter() => {}
+            // While a section is carried, → and ← take it a level in or
+            // out.
+            Op::In | Op::Out
+                if self
+                    .drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.moving && drag.is_section()) =>
+            {
+                let plan = engine.plan();
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.nudge(op == Op::In);
+                    drag.aim_level(&plan);
+                }
+            }
             // In the plan, → opens a section and then steps into it; ←
             // closes it, and from a step goes up to its heading.
             Op::In | Op::Out => {

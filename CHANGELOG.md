@@ -572,6 +572,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   down to them. With no plan open, the list is where Lantern starts, as
   before.
 - The Run pill starts the service, as "Start the service" does.
+- A section carried lands beside the section above where it lands;
+  over a bracket's lane it goes into that section (over the plan's own
+  bracket, out at the plan's level), and ← and → take it a level out or
+  in. Moving sideways no longer changes its level, and it never takes
+  in the sections after it. While one is carried, the pane's foot says
+  so.
 - The dashboard's panes are one card, in every mode: a thin line
   between two of them, short of the card's top and foot, where there
   were gaps. The line is still pulled to size the panes, and lights as
