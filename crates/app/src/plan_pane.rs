@@ -332,6 +332,30 @@ fn part_fill(budget: Option<Duration>, planned: Duration) -> (f32, bool) {
     }
 }
 
+impl App {
+    /// What a plan's steps come to, as its bracket's head says it.
+    fn takes(&self, plan: &Plan) -> String {
+        let sums = self.plan_sums(plan);
+        match sums.open {
+            true => format!("Σ {}+", length::clock(sums.filled)),
+            false => format!("Σ {}", length::clock(sums.filled)),
+        }
+    }
+
+    /// A saved plan's line in the list: how many steps, what they come
+    /// to, and `when` it was saved.
+    fn listed_detail(&self, entry: &Entry, when: String) -> String {
+        match &entry.summary {
+            Ok(summary) => format!(
+                "{} · {} · {when}",
+                count(summary.steps, "step"),
+                self.takes(&summary.plan)
+            ),
+            Err(_) => when,
+        }
+    }
+}
+
 /// How wide the plan's goal is on its card, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
 
@@ -1359,7 +1383,7 @@ impl App {
                 rows = rows.push(self.folded_plan_row(
                     summary.title.clone(),
                     summary.steps,
-                    when,
+                    format!("{} · {when}", self.takes(&summary.plan)),
                     false,
                     lanes.curl,
                     Message::OpenPlan(entry.path.clone()),
@@ -3968,7 +3992,12 @@ impl App {
         if !templates.is_empty() {
             list = list.push(heading("Templates"));
             for entry in templates {
-                list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
+                list = list.push(saved_plan(
+                    p,
+                    entry,
+                    self.listed_detail(entry, when(entry)),
+                    picked(entry),
+                ));
             }
             list = list.push(Space::new().height(10));
         }
@@ -3986,7 +4015,12 @@ impl App {
             tooltip::Position::Bottom,
         ));
         for entry in plans {
-            list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
+            list = list.push(saved_plan(
+                p,
+                entry,
+                self.listed_detail(entry, when(entry)),
+                picked(entry),
+            ));
         }
         // A plan made on another computer, brought here with its media.
         list = list.push(Space::new().height(10));
@@ -4416,11 +4450,11 @@ impl<Message> iced::widget::canvas::Program<Message> for Marked {
     }
 }
 
-fn saved_plan(p: Palette, entry: &Entry, when: String, picked: bool) -> Element<'_, Message> {
+fn saved_plan(p: Palette, entry: &Entry, detail: String, picked: bool) -> Element<'_, Message> {
     let (title, detail, color, template) = match &entry.summary {
         Ok(summary) => (
             summary.title.clone(),
-            format!("{} · {when}", count(summary.steps, "step")),
+            detail,
             p.on_surface,
             summary.template,
         ),

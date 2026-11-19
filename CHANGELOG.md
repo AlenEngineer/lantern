@@ -488,6 +488,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The other plans, folded under the open one and in the list of plans,
+  say what their steps come to beside how many there are.
 - In a service, the tube to what is next fills as far as what is on is
   through: a video or song by its time, slides by the slide, a picture
   by its length. A folded section's tube fills by its steps: each one

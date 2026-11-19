@@ -46,7 +46,7 @@ pub struct Entry {
 }
 
 /// A saved plan, as the list shows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
     pub title: String,
     /// Its steps, not counting section headings: what the plan's header
@@ -54,6 +54,9 @@ pub struct Summary {
     pub steps: usize,
     /// It's an order of service to start new plans from.
     pub template: bool,
+    /// The plan itself, to tell how long it takes by what has been
+    /// measured of its media.
+    pub plan: Plan,
 }
 
 impl Store {
@@ -133,6 +136,7 @@ impl Store {
                             title: plan.title.clone(),
                             steps: plan.steps().iter().filter(|s| !s.is_section()).count(),
                             template: plan.template,
+                            plan,
                         })
                         .map_err(|err| err.to_string()),
                     path,
