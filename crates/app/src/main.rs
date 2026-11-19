@@ -400,6 +400,14 @@ enum Message {
     StepSoundUntil(StepId, Option<StepId>),
     /// What a step's sound does under one with a sound of its own.
     StepSoundMeets(StepId, lantern_engine::Meets),
+    /// How a step lays out what it shows with a second thing.
+    StepLayout(StepId, sources::LayoutChoice),
+    /// The picture or text picked, laid out with a step.
+    LayoutPicked(StepId),
+    /// A quote typed into a step's card, so far.
+    LayoutTyping(StepId, String),
+    /// The quote typed is laid out with the step.
+    LayoutTyped(StepId),
     /// How a step's sound apart fades: with its picture (`None`), or on
     /// its own, one end longer or shorter by so many seconds.
     SoundFade(StepId, Option<(FadeEnd, i64)>),
@@ -826,6 +834,9 @@ struct App {
     pub(crate) in_library: bool,
     pub(crate) carried: Option<shelf::Carried>,
     pub(crate) shelf_pick: Option<ResourceId>,
+    /// A quote being typed into a picked step's card, to lay out with
+    /// what it shows.
+    pub(crate) layout_typed: Option<(StepId, String)>,
     /// Files of the library picked together, in its order.
     pub(crate) shelf_many: Vec<ResourceId>,
     /// The sections of the plan that are folded away.
@@ -1004,6 +1015,7 @@ impl App {
             in_library: false,
             carried: None,
             shelf_pick: None,
+            layout_typed: None,
             shelf_many: Vec::new(),
             scrub: None,
             balk: None,
@@ -3029,6 +3041,16 @@ impl App {
             }
             Message::StepSoundUntil(step, until) => self.set_until(step, until),
             Message::StepSoundMeets(step, meets) => self.set_meets(step, meets),
+            Message::StepLayout(step, choice) => {
+                self.set_layout(step, choice);
+                return self.preload();
+            }
+            Message::LayoutPicked(step) => {
+                self.second_picked(step);
+                return self.preload();
+            }
+            Message::LayoutTyping(step, typed) => self.layout_typed = Some((step, typed)),
+            Message::LayoutTyped(step) => self.second_typed(step),
             Message::SoundFade(step, change) => self.set_sound_fade(step, change),
             Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {

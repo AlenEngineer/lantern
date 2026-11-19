@@ -8,6 +8,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The picked step's card lays out what it shows: alone, side by side,
+  or with a lower third. What goes with it is the picture or text
+  picked in search or the library ("Use picked"), or a quote typed in
+  the card. A row laid out says so under its name ("Beside it: …",
+  "Lower third: …").
 - A step can lay out what it shows with a second thing, a picture or a
   text: side by side (a verse and a quote, two pictures), or in a band
   across its foot (a verse over a picture or a video). The stage draws
