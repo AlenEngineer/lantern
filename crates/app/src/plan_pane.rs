@@ -198,28 +198,37 @@ struct PlanSums {
     open: bool,
 }
 
+impl PlanSums {
+    /// What the plan is held against: its own goal, or else what its
+    /// sections' times come to, where they give it more than its steps.
+    fn against(&self, target: Option<Duration>) -> Option<Duration> {
+        target.or((self.total != self.filled).then_some(self.total))
+    }
+}
+
 /// What is written beside the plan's bracket, after its name, in the
-/// order a section's are: the time it is meant to take, what its steps
-/// come to (at least that, where something comes again with no end) and
-/// whether that is over it, and the time of day it starts.
+/// order a section's are: the time it is meant to take (with no goal of
+/// its own, what its sections' times come to), what its steps come to
+/// (at least that, where something comes again with no end) and whether
+/// that is over it, and the time of day it starts.
 fn plan_lines(
     target: Option<Duration>,
     starts: Option<lantern_engine::TimeOfDay>,
-    filled: Duration,
-    open: bool,
+    sums: &PlanSums,
 ) -> Vec<(track::Sign, String, bool)> {
     let mut lines = Vec::new();
-    if let Some(target) = target {
-        lines.push((track::Sign::Goal, length::clock(target), false));
+    let against = sums.against(target);
+    if let Some(against) = against {
+        lines.push((track::Sign::Goal, length::clock(against), false));
     }
-    let sum = match open {
-        true => format!("{}+", length::clock(filled)),
-        false => length::clock(filled),
+    let sum = match sums.open {
+        true => format!("{}+", length::clock(sums.filled)),
+        false => length::clock(sums.filled),
     };
     lines.push((
         track::Sign::Sum,
         sum,
-        target.is_some_and(|target| filled > target),
+        against.is_some_and(|against| sums.filled > against),
     ));
     if let Some(starts) = starts {
         lines.push((track::Sign::Start, starts.to_string(), false));
@@ -231,7 +240,7 @@ impl App {
     /// The head of the plan's bracket, over its rows: its name, goal,
     /// what it takes, and when it starts. Pressed, its card opens; a
     /// right click opens its ring.
-    fn plan_head(&self, plan: &Plan) -> Element<'_, Message> {
+    fn plan_head(&self, plan: &Plan, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
         let sums = self.plan_sums(plan);
         let mut line = row![
@@ -243,7 +252,7 @@ impl App {
         ]
         .spacing(10)
         .align_y(Alignment::Center);
-        for (sign, words, over) in plan_lines(plan.target, plan.starts, sums.filled, sums.open) {
+        for (sign, words, over) in plan_lines(plan.target, plan.starts, &sums) {
             let ink = match (sign, over) {
                 (_, true) => p.error,
                 (track::Sign::Sum, false) => p.on_surface,
@@ -257,10 +266,14 @@ impl App {
             };
             line = line.push(text(format!("{mark} {words}")).size(META).color(ink));
         }
+        let mut head = column![line].spacing(4);
+        if let Some(parts) = self.section_parts(plan, timing) {
+            head = head.push(parts);
+        }
         let line = track::seen(
             track::Key::Head,
             &self.places,
-            container(line).padding([2, 8]),
+            container(head).padding([2, 8]),
         );
         mouse_area(line)
             .on_press(Message::PickPlan)
@@ -270,6 +283,52 @@ impl App {
             )))
             .interaction(mouse::Interaction::Pointer)
             .into()
+    }
+}
+
+impl App {
+    /// A part for each of the plan's own sections, in its colour, as
+    /// wide as the time it is given (or else takes) and as full as its
+    /// steps make it; over its time, full in the colour of what is
+    /// wrong. `None` with no sections.
+    fn section_parts<'a>(&self, plan: &Plan, timing: &Timing) -> Option<Element<'a, Message>> {
+        let p = self.palette;
+        let colors = plan.section_colors();
+        let parts: Vec<Element<'a, Message>> = timing
+            .sections
+            .iter()
+            .filter(|section| {
+                plan.get(section.id)
+                    .is_some_and(|step| step.depth() == Some(0))
+            })
+            .map(|section| {
+                let planned = match section.phase {
+                    Phase::Coming { planned } => planned,
+                    Phase::Running { expected, .. } => expected,
+                    Phase::Done { took } => took.unwrap_or_default(),
+                };
+                let (full, over) = part_fill(section.budget, planned);
+                let color = match over {
+                    true => p.error,
+                    false => section_hue(p, &colors, section.id),
+                };
+                let wide = section.budget.unwrap_or(planned).as_secs().clamp(1, 60_000) as u16;
+                container(bar(p, full, color, 0.0))
+                    .width(Length::FillPortion(wide))
+                    .into()
+            })
+            .collect();
+        (!parts.is_empty()).then(|| row(parts).spacing(3).into())
+    }
+}
+
+/// How full a section's part is: its steps against its time, full where
+/// it has none; and whether they run over it.
+fn part_fill(budget: Option<Duration>, planned: Duration) -> (f32, bool) {
+    match budget {
+        Some(budget) if planned > budget => (1.0, true),
+        Some(budget) if !budget.is_zero() => (planned.as_secs_f32() / budget.as_secs_f32(), false),
+        _ => (1.0, false),
     }
 }
 
@@ -958,7 +1017,7 @@ impl App {
             rows = rows.push(plans_own(self.run_time_row(plan, timing), can));
         }
         if plan_lane.is_some() && !(running && !can) {
-            rows = rows.push(self.plan_head(plan));
+            rows = rows.push(self.plan_head(plan, timing));
         }
         // A service locked is watched, not changed: its rail is the road
         // it takes.
@@ -1926,7 +1985,7 @@ impl App {
                 beside,
                 color: p.primary,
                 name: plan.title.clone(),
-                lines: plan_lines(plan.target, plan.starts, sums.filled, sums.open)
+                lines: plan_lines(plan.target, plan.starts, &sums)
                     .into_iter()
                     .map(|(sign, words, over)| {
                         let ink = match (sign, over) {
@@ -2736,7 +2795,8 @@ impl App {
         }
         // What its steps come to, and how far from the time it is meant
         // to take: over in the colour of what is wrong, under quietly.
-        let over = plan.target.is_some_and(|target| sums.filled > target);
+        let against = sums.against(plan.target);
+        let over = against.is_some_and(|against| sums.filled > against);
         let filled = match sums.open {
             true => format!("Σ {}+", length::clock(sums.filled)),
             false => format!("Σ {}", length::clock(sums.filled)),
@@ -2748,7 +2808,7 @@ impl App {
         })]
         .spacing(8)
         .align_y(Alignment::Center);
-        if let Some(target) = plan.target.filter(|target| *target != sums.filled) {
+        if let Some(target) = against.filter(|against| *against != sums.filled) {
             let (sign, by, ink) = match over {
                 true => ("+", sums.filled - target, p.error),
                 false => ("−", target - sums.filled, quiet),
@@ -4590,27 +4650,47 @@ mod tests {
     #[test]
     fn the_plans_bracket_says_its_goal_its_sum_and_its_start() {
         use track::Sign;
+        let sums = |filled: Duration, total: Duration, open: bool| PlanSums {
+            filled,
+            total,
+            open,
+        };
         // Nothing set: only what its steps come to.
         assert_eq!(
-            plan_lines(None, None, 40 * MIN, false),
+            plan_lines(None, None, &sums(40 * MIN, 40 * MIN, false)),
             [(Sign::Sum, "40:00".to_string(), false)]
         );
         // Something comes again with no end: at least that.
         assert_eq!(
-            plan_lines(None, None, 40 * MIN, true)[0].1,
+            plan_lines(None, None, &sums(40 * MIN, 40 * MIN, true))[0].1,
             "40:00+".to_string()
         );
         // All of it, in a section's order; over its goal, the sum says so.
         let starts = lantern_engine::TimeOfDay::parse("10:30");
         assert_eq!(
-            plan_lines(Some(45 * MIN), starts, 50 * MIN, false),
+            plan_lines(Some(45 * MIN), starts, &sums(50 * MIN, 50 * MIN, false)),
             [
                 (Sign::Goal, "45:00".to_string(), false),
                 (Sign::Sum, "50:00".to_string(), true),
                 (Sign::Start, "10:30".to_string(), false),
             ]
         );
-        assert!(!plan_lines(Some(45 * MIN), None, 45 * MIN, false)[1].2);
+        assert!(!plan_lines(Some(45 * MIN), None, &sums(45 * MIN, 45 * MIN, false))[1].2);
+        // No goal of its own: what its sections' times come to.
+        assert_eq!(
+            plan_lines(None, None, &sums(20 * MIN, 60 * MIN, false)),
+            [
+                (Sign::Goal, "1:00:00".to_string(), false),
+                (Sign::Sum, "20:00".to_string(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_sections_part_fills_as_its_steps_take_its_time() {
+        assert_eq!(part_fill(Some(10 * MIN), 5 * MIN), (0.5, false));
+        assert_eq!(part_fill(Some(10 * MIN), 12 * MIN), (1.0, true));
+        assert_eq!(part_fill(None, 5 * MIN), (1.0, false));
     }
 
     #[test]

@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Under the plan's name, a bar with a part for each of its sections, in
+  the section's colour: as wide as its time, as full as its steps make it,
+  red when they run over. A plan with no goal of its own is held against
+  what its sections' times come to.
 - A search result added to the plan travels from the results to its row,
   which grows in to take it.
 - What is taken to the projector comes into the live monitor from the
