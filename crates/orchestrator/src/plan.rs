@@ -564,6 +564,36 @@ impl Picture {
     }
 }
 
+/// How a step lays out what it shows with a second thing, a picture or
+/// a text: a verse and a quote side by side, a verse over a video. What
+/// it shows may be a video; the second never is.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    /// What it shows fills the stage: as ever.
+    #[default]
+    One,
+    /// What it shows on the left half, this on the right.
+    Beside(Resource),
+    /// What it shows fills the stage, this in a band across its foot.
+    LowerThird(Resource),
+}
+
+impl Layout {
+    /// What it shows alone, as ever.
+    pub fn is_one(&self) -> bool {
+        *self == Layout::One
+    }
+
+    /// The second thing, laid out with what the step shows.
+    pub fn second(&self) -> Option<&Resource> {
+        match self {
+            Layout::One => None,
+            Layout::Beside(second) | Layout::LowerThird(second) => Some(second),
+        }
+    }
+}
+
 fn is_first(slide: &usize) -> bool {
     *slide == 0
 }
@@ -650,6 +680,9 @@ pub struct Step {
     /// Where what it shows comes from, when not from what it is.
     #[serde(default, skip_serializing_if = "Picture::is_own")]
     pub picture: Picture,
+    /// How what it shows is laid out with a second thing.
+    #[serde(default, skip_serializing_if = "Layout::is_one")]
+    pub layout: Layout,
     /// Its own sound is not heard.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub silent: bool,
@@ -2454,6 +2487,7 @@ impl Plan {
             silent: false,
             fade: Fade::default(),
             sound_fade: None,
+            layout: Layout::One,
             look: None,
             filled: false,
         }

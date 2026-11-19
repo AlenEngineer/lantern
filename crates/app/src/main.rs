@@ -4864,9 +4864,23 @@ impl App {
             .standby
             .iter()
             .cloned()
-            .chain(plan.steps().iter().filter_map(|step| match &step.action {
-                Action::Show { resource } => Some(resource.clone()),
-                _ => None,
+            .chain(plan.steps().iter().flat_map(|step| {
+                // What it shows, a picture shown in its place, and what it
+                // lays out with it.
+                let own = match &step.action {
+                    Action::Show { resource } => Some(resource.clone()),
+                    _ => None,
+                };
+                let instead = match &step.picture {
+                    lantern_engine::Picture::File(picture) => Some(picture.clone()),
+                    _ => None,
+                };
+                let second = step
+                    .layout
+                    .second()
+                    .filter(|second| second.location.as_text().is_none())
+                    .cloned();
+                [own, instead, second].into_iter().flatten()
             }));
         let keep = self.media.keep(stills).map(Message::Loaded);
         let upcoming = self
@@ -4898,6 +4912,28 @@ impl App {
             }
             return backdrop(look, Space::new(), Over::Nothing);
         };
+        let (content, over) = self.stage_content(scene);
+        let shown = backdrop(look, content, over);
+        // Fading, the stage with nothing on shows through what is on.
+        let through = 1.0 - self.media.levels(&self.stage).picture;
+        let shown = match through > 0.0 {
+            true => stack![shown, veil(look, through)].into(),
+            false => shown,
+        };
+        if self.stage.blackout {
+            stack![shown, black(Space::new())].into()
+        } else {
+            shown
+        }
+    }
+
+    /// What the stage shows of `scene`, laid out as its step says, and
+    /// what it stands over.
+    pub(crate) fn stage_content<'a>(
+        &'a self,
+        scene: &'a lantern_engine::Scene,
+    ) -> (Element<'a, Message>, Over) {
+        let look = &self.look;
         let kind = self.slide_kind(&scene.resource, scene.frame());
         let nothing = || (Space::new().into(), Over::Nothing);
         let (content, over): (Element<'_, Message>, Over) =
@@ -4923,17 +4959,96 @@ impl App {
                     ),
                 },
             };
-        let shown = backdrop(look, content, over);
-        // Fading, the stage with nothing on shows through what is on.
-        let through = 1.0 - self.media.levels(&self.stage).picture;
-        let shown = match through > 0.0 {
-            true => stack![shown, veil(look, through)].into(),
-            false => shown,
+        match self.layout_on(scene) {
+            Some(layout) => self.laid_out(look, content, over, &layout),
+            None => (content, over),
+        }
+    }
+
+    /// How the current step lays out what it shows, while `scene` is what
+    /// it puts on: something shown off the plan is never laid out.
+    pub(crate) fn layout_on(
+        &self,
+        scene: &lantern_engine::Scene,
+    ) -> Option<lantern_engine::Layout> {
+        let step = self.engine.0.current_step()?;
+        (!step.layout.is_one() && crate::dashboard::shows(&step, scene)).then_some(step.layout)
+    }
+
+    /// `content` laid out with the second thing `layout` says: beside
+    /// it, or in a band across its foot. A text is drawn as it would be on
+    /// its own, its reference too; a picture, as kept with the plan.
+    pub(crate) fn laid_out<'a>(
+        &'a self,
+        look: &Look,
+        content: Element<'a, Message>,
+        over: Over,
+        layout: &lantern_engine::Layout,
+    ) -> (Element<'a, Message>, Over) {
+        use iced::Length::FillPortion;
+        use lantern_engine::Layout;
+        let Some(second) = layout.second() else {
+            return (content, over);
         };
-        if self.stage.blackout {
-            stack![shown, black(Space::new())].into()
-        } else {
-            shown
+        let text = second.location.as_text().map(str::to_string);
+        let picture = || -> Element<'a, Message> {
+            match self.media.still(&second.id) {
+                Some(Content::Image(handle)) => fit(image(handle.clone())),
+                Some(Content::Pages(pages)) if !pages.is_empty() => fit(image(pages[0].clone())),
+                _ => Space::new().into(),
+            }
+        };
+        match layout {
+            Layout::One => (content, over),
+            Layout::Beside(_) => {
+                let second: Element<'a, Message> = match &text {
+                    Some(body) => slide(look, body.clone(), &self.slide_kind(second, usize::MAX)),
+                    None => picture(),
+                };
+                let half = |part: Element<'a, Message>| {
+                    container(part)
+                        .center(Fill)
+                        .width(FillPortion(1))
+                        .padding(12)
+                };
+                // Text beside text reads over the look's image; beside a
+                // picture, both stand on its colour.
+                let over = match (over, &text) {
+                    (Over::Text, Some(_)) => Over::Text,
+                    _ => Over::Media,
+                };
+                (iced::widget::row![half(content), half(second)].into(), over)
+            }
+            Layout::LowerThird(_) => {
+                let band: Element<'a, Message> = match &text {
+                    Some(body) => {
+                        let small = Look {
+                            min_size: 240,
+                            max_size: 900,
+                            ..look.clone()
+                        };
+                        let words = match self.slide_kind(second, usize::MAX) {
+                            Slide::Passage(reference) => format!("{reference}\n{body}"),
+                            _ => body.clone(),
+                        };
+                        fit::fit_text(words, &small).into()
+                    }
+                    None => picture(),
+                };
+                let band = container(band)
+                    .width(Fill)
+                    .height(FillPortion(1))
+                    .padding([8, 24])
+                    .style(|_| {
+                        container::Style::default()
+                            .background(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.65))
+                    });
+                let laid = stack![
+                    container(content).center(Fill),
+                    iced::widget::column![Space::new().height(FillPortion(3)), band],
+                ];
+                (laid.into(), over)
+            }
         }
     }
 

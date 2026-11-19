@@ -1101,6 +1101,12 @@ impl Stage {
 
     /// The content for the program scene, or for the picture under a
     /// sound, once it has loaded.
+    /// A picture or a page loaded already, by what it is: kept with the
+    /// open plan, or loaded ahead of time.
+    pub fn still(&self, id: &ResourceId) -> Option<&Content> {
+        self.kept.get(id).or_else(|| self.ready.get(id))
+    }
+
     pub fn content(&self, scene: SceneId) -> Option<&Content> {
         match (&self.program, &self.under) {
             (
