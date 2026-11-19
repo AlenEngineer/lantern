@@ -18,7 +18,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
   picture comes from (its own, the picture picked in search or the
   library, what was on, or nothing) and its sound (its own, the sound
   or video picked, or none); a row that mixes says so under its name.
-  Any step can have a sound set, a video too.
+  Any step can have a sound set, a video too. Its card sets how far that
+  sound keeps going and what it does under a step with a sound of its
+  own; a blue line beside the rail runs from its step to the last it
+  keeps going under, and the rows under it say so.
 - A presentation or a PDF in the plan opens into its pages: its ring
   says "Open it into its 18 pages", and it becomes a section of them,
   one step each, sharing the deck's time. A picture can then go between
