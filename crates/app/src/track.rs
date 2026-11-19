@@ -312,6 +312,9 @@ pub struct Picture {
     /// Steps can be picked together by a box pulled from where there is
     /// nothing: its colour, where they can.
     pub select: Option<Color>,
+    /// Shift is held: a box begins on a row too, so one can be pulled in
+    /// a pane full of rows.
+    pub band_anywhere: bool,
     /// Every row in sight: a press on one is not a press
     /// on nothing.
     pub rows: Vec<StepId>,
@@ -817,6 +820,9 @@ struct State {
     band: Option<(Point, Point, bool)>,
     /// The steps the box was last over.
     banded: Vec<StepId>,
+    /// The box was begun on a row, with Shift: let go without moving, it
+    /// was that row's click, not one on nothing.
+    band_on_row: bool,
     kept: Kept<Shown>,
     moves: Moves,
     /// Where across the pointer last was, and whether it last went left.
@@ -934,17 +940,19 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                 }) || (self.picture.filling
                     && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)))
                     || places.get(&Key::Head).is_some_and(|head| head.contains(at));
-                if !on_a_row {
+                if !on_a_row || self.picture.band_anywhere {
                     state.band = Some((at, at, false));
                     state.banded.clear();
+                    state.band_on_row = on_a_row;
                 }
                 None
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 let (_, _, moved) = state.band.take()?;
-                Some(match moved {
-                    true => canvas::Action::request_redraw(),
-                    false => canvas::Action::publish((self.pick)(Vec::new())),
+                Some(match (moved, state.band_on_row) {
+                    (true, _) => canvas::Action::request_redraw(),
+                    (false, true) => return None,
+                    (false, false) => canvas::Action::publish((self.pick)(Vec::new())),
                 })
             }
             // As the box is pulled, the steps it is over are picked.

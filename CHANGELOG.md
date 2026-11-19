@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- With Shift held, the box that picks steps can be pulled from a row
+  too, so it works in a plan pane full of rows.
 - Under the plan's name, a bar with a part for each of its sections, in
   the section's colour: as wide as its time, as full as its steps make it,
   red when they run over. A plan with no goal of its own is held against
