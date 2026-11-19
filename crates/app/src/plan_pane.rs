@@ -1356,27 +1356,22 @@ impl App {
             }
         }
         // Under the open plan, the other plans, each folded into one row
-        // as a bracket: pressed, it opens in this one's place.
+        // as a bracket: pressed, it opens in this one's place. Under
+        // them the templates, starred: pressed, a new plan starts from
+        // one.
         if tree && moving.is_none() {
-            let others: Vec<&Entry> = self
-                .plans
-                .entries
-                .iter()
-                .filter(|entry| {
-                    Some(entry.path.as_path()) != self.plans.file()
-                        && entry
-                            .summary
-                            .as_ref()
-                            .is_ok_and(|summary| !summary.template)
+            let saved = |template: bool| {
+                self.plans.entries.iter().filter_map(move |entry| {
+                    let summary = entry.summary.as_ref().ok()?;
+                    (Some(entry.path.as_path()) != self.plans.file()
+                        && summary.template == template)
+                        .then_some((entry, summary))
                 })
-                .collect();
-            if !others.is_empty() {
-                rows = rows.push(Space::new().height(14));
-            }
-            for entry in others {
-                let Ok(summary) = &entry.summary else {
-                    continue;
-                };
+            };
+            for (at, (entry, summary)) in saved(false).enumerate() {
+                if at == 0 {
+                    rows = rows.push(Space::new().height(14));
+                }
                 let when = ago(SystemTime::now()
                     .duration_since(entry.modified)
                     .unwrap_or_default());
@@ -1387,6 +1382,20 @@ impl App {
                     false,
                     lanes.curl,
                     Message::OpenPlan(entry.path.clone()),
+                    None,
+                ));
+            }
+            for (at, (entry, summary)) in saved(true).enumerate() {
+                if at == 0 {
+                    rows = rows.push(Space::new().height(14));
+                }
+                rows = rows.push(self.folded_plan_row(
+                    format!("★ {}", summary.title),
+                    summary.steps,
+                    self.takes(&summary.plan),
+                    false,
+                    lanes.curl,
+                    Message::FromTemplate(entry.path.clone()),
                     None,
                 ));
             }
@@ -4376,8 +4385,9 @@ impl App {
                 row![
                     single_line(count(steps, "step")).size(BODY).color(ink),
                     Space::new().width(Fill),
-                    text(detail).size(META).color(ink),
+                    single_line(detail).size(META).color(ink),
                 ]
+                .spacing(6)
                 .align_y(Alignment::Center),
             )
             .width(Fill)
