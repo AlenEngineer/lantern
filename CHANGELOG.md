@@ -729,6 +729,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A section carried in amongst the steps of a loop, a drawn order or a
+  join is refused, as steps are, instead of quietly taking it away. Its
+  card says so before it is let go.
+- Moving or making a section no longer changes the other sections'
+  colours: each keeps the one it was shown in. The card of a carried
+  section is square-bracketed too.
 - In a wide plan pane, the name of a section that holds only sections is
   no longer written over the bracket of the one outside it.
 - A step's ✕ under the pointer takes its length's place, so in a narrow

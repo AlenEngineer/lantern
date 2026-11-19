@@ -1990,8 +1990,19 @@ impl App {
                         }
                         return self.preload();
                     }
+                    // A section laid in amongst the steps of a loop, a
+                    // drawn order or a join would cut it: refused.
+                    let plan = self.engine.0.plan();
+                    let among = drag.among(&plan);
+                    let cuts = drag::section_cuts(&plan, &drag.carried, at, drag.level, among);
+                    if !cuts.is_empty() {
+                        self.alarm_pull = None;
+                        self.alarm = (drag.carried.clone(), cuts);
+                        self.motion
+                            .refuse("It would cut a loop, a drawn order or a join");
+                        return Task::none();
+                    }
                     self.remember(None);
-                    let among = drag.among(&self.engine.0.plan());
                     self.engine.0.edit_plan(|plan| match drag.is_section() {
                         true => drag::place_section(plan, &drag.carried, at, drag.level, among),
                         false => plan.move_steps(&drag.carried, at),
@@ -4337,11 +4348,12 @@ impl App {
         &self,
         plan: &Plan,
     ) -> Option<Result<lantern_engine::Carried, lantern_engine::CarryError>> {
-        let drag = self
-            .drag
-            .as_ref()
-            .filter(|drag| drag.moving && !drag.is_section())?;
+        let drag = self.drag.as_ref().filter(|drag| drag.moving)?;
         let at = drag.landing?;
+        if drag.is_section() {
+            let cuts = drag::section_cuts(plan, &drag.carried, at, drag.level, drag.among(plan));
+            return (!cuts.is_empty()).then_some(Err(lantern_engine::CarryError::Crosses(cuts)));
+        }
         Some(plan.would_carry(
             &drag.carried,
             self.carry_place(plan, drag, at),

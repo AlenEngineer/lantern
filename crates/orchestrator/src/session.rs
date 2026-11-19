@@ -97,7 +97,23 @@ impl Session {
     /// step before it, so the next [`next`](Self::next) lands on what followed.
     pub fn edit<R>(&mut self, f: impl FnOnce(&mut Plan) -> R) -> R {
         let before = self.current_index();
+        // Each section keeps the colour it is shown in, whatever the edit
+        // moves; an edit that changes nothing changes no colour either.
+        let was = self.plan.clone();
+        let kept = self.plan.keep_section_colors();
         let result = f(&mut self.plan);
+        if !kept.is_empty() {
+            let mut bare = self.plan.clone();
+            for id in kept {
+                if let Some(Action::Section { color, .. }) = bare.get_mut(id).map(|s| &mut s.action)
+                {
+                    *color = None;
+                }
+            }
+            if bare == was {
+                self.plan = was;
+            }
+        }
         if let (Some(index), None) = (before, self.current_index()) {
             let steps = self.plan.steps();
             self.cursor = steps[..index.min(steps.len())]
@@ -643,6 +659,19 @@ mod tests {
         plan.live("Worship", None);
         plan.push("Prayer", Action::Blank);
         Session::new(plan)
+    }
+
+    #[test]
+    fn an_edit_keeps_section_colours_unless_it_changes_nothing() {
+        let mut plan = Plan::new("Sunday");
+        plan.section("Music", None);
+        plan.show(resource("Song"));
+        let word = plan.section("Word", None);
+        let mut s = Session::new(plan.clone());
+        s.edit(|_| ());
+        assert_eq!(s.plan(), &plan);
+        s.edit(|plan| plan.show(resource("Reading")));
+        assert_eq!(s.plan().get(word).and_then(Step::color), Some(1));
     }
 
     #[test]
