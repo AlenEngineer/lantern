@@ -301,7 +301,10 @@ impl Drag {
         if !self.section {
             return Some(at + usize::from(half == Half::Lower));
         }
-        if heading(rest[at]).is_some() && half == Half::Upper {
+        // Over an empty section, either half: into it, as it shows.
+        let empty = heading(rest[at]).is_some()
+            && rest.get(at + 1).is_none_or(|next| heading(next).is_some());
+        if heading(rest[at]).is_some() && half == Half::Upper && !empty {
             return Some(at);
         }
         // Over a step it lands among the steps, before or after it: it is
@@ -510,6 +513,26 @@ mod tests {
         drag.aim_level(&plan);
         assert_eq!((drag.level, drag.levels), (0, (0, 0)));
         let _ = school;
+    }
+
+    #[test]
+    fn a_section_over_an_empty_one_goes_into_it() {
+        let mut plan = Plan::new("Sunday");
+        let empty = plan.section("Notices", None);
+        let word = plan.section("Word", None);
+        plan.show(resource("Reading"));
+        let mut drag = Drag::new(&plan, word);
+        drag.to(Point::new(100.0, 100.0));
+        drag.to(Point::new(100.0, 110.0));
+        // Rest: Notices. Either half of its place is inside it.
+        for half in [Half::Upper, Half::Lower] {
+            assert_eq!(drag.landing(&plan, empty, half), Some(1));
+        }
+        drag.landing = Some(1);
+        drag.point_into(Some(1));
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 1);
+        assert_eq!(host(&drag.rest(&plan), 1, 1), Some((0, 1)), "Notices");
     }
 
     #[test]

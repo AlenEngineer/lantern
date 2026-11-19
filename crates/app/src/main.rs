@@ -1872,8 +1872,11 @@ impl App {
                     if refused {
                         self.refuse("It can't start there");
                     }
-                    // Nothing changed: no step to undo.
-                    if self.engine.0.plan() == was {
+                    // Nothing changed: no step to undo. Colours said or
+                    // not, the same.
+                    let mut now = self.engine.0.plan();
+                    now.keep_section_colors();
+                    if now == was {
                         self.undo.pop();
                     } else {
                         self.motion.changed(section);
@@ -2491,7 +2494,11 @@ impl App {
                 self.drag = None;
                 self.grabbed = false;
                 self.remember(None);
-                self.head = Some((section, self.engine.0.plan(), false));
+                // Each section keeps the colour it has as the head moves:
+                // the plan it is pulled from has them all said.
+                let mut was = self.engine.0.plan();
+                was.keep_section_colors();
+                self.head = Some((section, was, false));
             }
             Message::PressFoot(section) => {
                 self.drag = None;
