@@ -856,9 +856,24 @@ struct Over<'a, Message> {
     /// What to say when the pointer comes into a lane of the brackets'
     /// room, or leaves it.
     point: Rc<dyn Fn(Option<Pointed>) -> Message + 'a>,
+    /// What to say when the foot of a sound's line is pressed, with the
+    /// step that set the sound.
+    sound_end: Rc<dyn Fn(StepId) -> Message + 'a>,
 }
 
 impl<Message> Over<'_, Message> {
+    /// The sound whose line ends under `at`, by the step that set it:
+    /// its foot is pulled to where it stops.
+    fn sound_foot(&self, at: Point) -> Option<StepId> {
+        let places = self.places.borrow();
+        self.picture.sounds.iter().find_map(|sound| {
+            let from = places.get(&Key::Dot(sound.first))?.center();
+            let foot = places.get(&Key::Dot(sound.last))?.center().y + 4.0;
+            let x = from.x + DOT + 5.0;
+            ((at.x - x).abs() <= 7.0 && (at.y - foot).abs() <= 6.0).then_some(sound.first)
+        })
+    }
+
     /// Where the pointer is in the brackets' room, as `state` last saw
     /// it go; or, while something is carried, the lane it would go into.
     fn pointing(&self, state: &State, cursor: mouse::Cursor) -> Option<Pointed> {
@@ -947,6 +962,9 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                 let at = cursor
                     .position()
                     .filter(|_| self.picture.select.is_some() && cursor.is_over(bounds))?;
+                if let Some(owner) = self.sound_foot(at) {
+                    return Some(canvas::Action::publish((self.sound_end)(owner)).and_capture());
+                }
                 let places = self.places.borrow();
                 let on_a_row = self.picture.rows.iter().any(|id| {
                     places
@@ -1113,12 +1131,14 @@ pub fn over<'a, Message: 'a>(
     places: &Places,
     pick: impl Fn(Vec<StepId>) -> Message + 'a,
     point: impl Fn(Option<Pointed>) -> Message + 'a,
+    sound_end: impl Fn(StepId) -> Message + 'a,
 ) -> Element<'a, Message> {
     iced::widget::canvas(Over {
         picture,
         places: places.clone(),
         pick: Rc::new(pick),
         point: Rc::new(point),
+        sound_end: Rc::new(sound_end),
     })
     .width(Fill)
     .height(Fill)
