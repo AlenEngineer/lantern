@@ -347,6 +347,10 @@ struct Drawn {
     places: Places,
     /// What is on, whose tube fills.
     on: Option<Who>,
+    /// The sounds that keep going: from the row of the step that set
+    /// one to the row of the last it keeps going under, and how much of
+    /// it has played while it plays.
+    sounds: Vec<(usize, usize, Option<f32>)>,
     /// Nothing moves.
     still: bool,
 }
@@ -740,7 +744,30 @@ impl App {
                 })
             })
             .collect();
+        // A sound that keeps going, from where its step is on the road
+        // (the last time, up to what is on) to where it stops.
+        let row_of = |id: StepId, from: usize| {
+            road.things[from..]
+                .iter()
+                .position(|thing| thing.what == What::Step(id))
+                .map(|n| n + from)
+        };
+        let sounds = plan
+            .steps()
+            .iter()
+            .filter_map(|step| {
+                let until = step.sound.as_ref()?.until?;
+                let first = (0..road.things.len())
+                    .rev()
+                    .filter(|n| on_at.is_none_or(|on| *n <= on))
+                    .find(|n| road.things[*n].what == What::Step(step.id))
+                    .or_else(|| row_of(step.id, 0))?;
+                let last = row_of(until, first + 1)?;
+                Some((first, last, self.apart_played(step.id)))
+            })
+            .collect();
         let drawn = Drawn {
+            sounds,
             marks,
             links,
             brackets,
@@ -1089,6 +1116,18 @@ impl canvas::Program<Message> for Drawn {
                         );
                     }
                 }
+            }
+        }
+        for (first, last, played) in &self.sounds {
+            if let (Some(from), Some(to)) = (middle(*first), middle(*last)) {
+                let from = Point::new(from.x + RING, from.y);
+                track::sound_line(
+                    &mut frame,
+                    from,
+                    to.y,
+                    crate::plan_pane::SOUND_LINE,
+                    *played,
+                );
             }
         }
         for Bracket {

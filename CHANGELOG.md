@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- In Run, a sound that keeps going has its line beside the rail too,
+  from its step to the last it keeps going under; while it plays the
+  line fills on the sound's own clock, the rest faint.
 - The dashboard says what plays apart from the program under what is
   on: its name, how far it has played, and whether it kept going from
   an earlier step or plays lowered. A step's own sound playing apart
