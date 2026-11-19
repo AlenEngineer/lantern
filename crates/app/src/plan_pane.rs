@@ -1747,7 +1747,7 @@ impl App {
                         .into_iter()
                         .map(|(_, n)| n)
                         .collect(),
-                        bulge: 0.0,
+                        bulge: self.motion.pulse(step.id),
                     });
                 }
                 let first = inside.next()?;
@@ -1863,7 +1863,8 @@ impl App {
                     bulge: self
                         .motion
                         .tipped(step.id)
-                        .map_or(0.0, |t| (t * std::f32::consts::PI).sin()),
+                        .map_or(0.0, |t| (t * std::f32::consts::PI).sin())
+                        .max(self.motion.pulse(step.id)),
                 })
             })
             .collect();

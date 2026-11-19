@@ -35,6 +35,9 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
+/// The bracket of what something carried would go into, standing out
+/// and back once as it becomes that.
+pub const PULSE: Duration = Duration::from_millis(420);
 /// How long a ring takes to open, all its buttons popped out.
 pub const BUBBLE: Duration = Duration::from_millis(420);
 
@@ -143,6 +146,9 @@ pub struct Motion {
     ringing: Option<Run>,
     /// The section what is carried would be a part of, lighting up.
     host: Option<(StepId, Run)>,
+    /// The section what is carried just came to be going into, its
+    /// bracket standing out and back.
+    pulse: Option<(StepId, Run)>,
     /// How wide each lane of the brackets' room is: from, to.
     lanes: Option<(Vec<f32>, Vec<f32>, Run)>,
     /// The plan was just saved: its Save is a tick for a moment.
@@ -193,6 +199,7 @@ impl Motion {
             picked: None,
             ringing: None,
             host: None,
+            pulse: None,
             lanes: None,
             saved: None,
             breath: None,
@@ -490,13 +497,25 @@ impl Motion {
         self.indent = None;
         self.picked = None;
         self.host = None;
+        self.pulse = None;
     }
 
     /// What is carried would be a part of `section` now, or of none.
     pub fn hosted_by(&mut self, section: Option<StepId>) {
         if section != self.host.as_ref().map(|(host, _)| *host) {
             self.host = section.map(|host| (host, self.run(LEVEL, Instant::now())));
+            self.pulse = section.map(|host| (host, self.run(PULSE, Instant::now())));
         }
+    }
+
+    /// How far `section`'s bracket stands out, 0 to 1 and back, having
+    /// just become what is carried would go into.
+    pub fn pulse(&self, section: StepId) -> f32 {
+        self.pulse
+            .as_ref()
+            .filter(|(host, _)| *host == section)
+            .and_then(|(_, run)| self.along(Some(run)))
+            .map_or(0.0, |t| (t * std::f32::consts::PI).sin())
     }
 
     /// How far the section it would be a part of has lit up: 1 when lit.
@@ -602,7 +621,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 21] = [
+        let runs: [Option<&Run>; 22] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
@@ -621,6 +640,7 @@ impl Motion {
             self.picked.as_ref(),
             self.ringing.as_ref(),
             self.host.as_ref().map(|(_, run)| run),
+            self.pulse.as_ref().map(|(_, run)| run),
             self.lanes.as_ref().map(|(_, _, run)| run),
             self.refused.as_ref().map(|(_, light, _)| light),
             self.changed.as_ref().map(|(_, run)| run),
