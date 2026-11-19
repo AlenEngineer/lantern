@@ -1339,6 +1339,21 @@ impl App {
             }
             // What the audience sees: under a sound, the picture it was
             // started over.
+            // Laid out with a second thing: a miniature of the stage.
+            Some(_)
+                if self
+                    .stage
+                    .picture()
+                    .is_some_and(|seen| self.layout_on(seen).is_some()) =>
+            {
+                let seen = self.stage.picture().expect("checked just above");
+                let (content, over) = self.stage_content(seen);
+                framed_with(
+                    crate::backdrop(&self.look, content, over),
+                    Some(p.tertiary),
+                    2,
+                )
+            }
             _ if self.stage.picture().is_some() => {
                 let seen = self.stage.picture().expect("checked just above");
                 match self.media.content(seen.id) {
