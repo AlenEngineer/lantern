@@ -470,41 +470,49 @@ fn a_steps_sound_plays_from_its_slide_and_stops_with_the_step() {
         });
         step
     });
+    // What is on program, the picture seen, and the sound playing apart
+    // from the program.
     let on = |engine: &Engine| {
         let stage = engine.stage();
-        let program = stage
-            .program
-            .as_ref()
-            .map(|scene| scene.resource.title.clone());
+        let title =
+            |scene: Option<&lantern_engine::Scene>| scene.map(|scene| scene.resource.title.clone());
         let picture = stage
             .picture()
             .map(|scene| (scene.resource.title.clone(), scene.frame()));
-        (program, picture)
+        (
+            title(stage.program.as_ref()),
+            picture,
+            title(stage.bed.as_ref()),
+        )
     };
     let hymn_at = |frame| Some(("Santo".to_string(), frame));
+    let santo = || Some("Santo".to_string());
+    let music = || Some("Instrumental".to_string());
 
     // The first slide: no sound yet.
     assert_eq!(engine.next(), Moved::Step(step));
-    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(0)));
+    assert_eq!(on(&engine), (santo(), hymn_at(0), None));
 
-    // The slide it starts from: the sound goes on over it, playing.
+    // The slide it starts from: the sound plays apart from the slides,
+    // in place of their own.
     assert_eq!(engine.next(), Moved::Frame(1));
-    assert_eq!(on(&engine), (Some("Instrumental".into()), hymn_at(1)));
-    let sound = engine.stage().program.unwrap();
-    assert_eq!(sound.timed().unwrap().playback, Playback::Playing);
+    assert_eq!(on(&engine), (santo(), hymn_at(1), music()));
+    assert!(engine.stage().muted);
+    let sound = engine.stage().bed.unwrap();
 
-    // The slides go on under the same sound.
+    // The slides go on over the same sound.
     assert_eq!(engine.next(), Moved::Frame(2));
-    assert_eq!(engine.stage().program.unwrap().id, sound.id);
+    assert_eq!(engine.stage().bed.unwrap().id, sound.id);
 
     // Back before its slide: it stops, and the slide is as it was.
     assert_eq!(engine.prev(), Moved::Frame(1));
     assert_eq!(engine.prev(), Moved::Frame(0));
-    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(0)));
+    assert_eq!(on(&engine), (santo(), hymn_at(0), None));
+    assert!(!engine.stage().muted);
 
     // On again: it starts over.
     assert_eq!(engine.next(), Moved::Frame(1));
-    let again = engine.stage().program.unwrap();
+    let again = engine.stage().bed.unwrap();
     assert_eq!(again.resource.title, "Instrumental");
     assert_ne!(again.id, sound.id);
 
@@ -517,26 +525,64 @@ fn a_steps_sound_plays_from_its_slide_and_stops_with_the_step() {
     );
     engine.show_now(Arc::new(other));
     assert_eq!(engine.next(), Moved::Frame(2));
-    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2)));
+    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2), None));
+    assert!(!engine.stage().muted, "the operator's sound is heard");
 
     // The step ends at a note, which leaves the stage as it is: the
     // slide stays. The operator's sound isn't the step's to stop.
     assert!(matches!(engine.next(), Moved::Step(_)));
-    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2)));
+    assert_eq!(on(&engine), (Some("Otra".into()), hymn_at(2), None));
 
     // Again, with the step's own sound: it stops with the step.
     engine.go_to(step).unwrap();
     assert_eq!(engine.next(), Moved::Frame(1));
     assert_eq!(engine.next(), Moved::Frame(2));
     assert!(matches!(engine.next(), Moved::Step(_)));
-    assert_eq!(on(&engine), (Some("Santo".into()), hymn_at(2)));
+    assert_eq!(on(&engine), (santo(), hymn_at(2), None));
 
     // And the next thing shown takes its place as ever.
     assert!(matches!(engine.next(), Moved::Step(_)));
     assert_eq!(
         on(&engine),
-        (Some("Grande".into()), Some(("Grande".into(), 0)))
+        (Some("Grande".into()), Some(("Grande".into(), 0)), None)
     );
+}
+
+#[test]
+fn a_videos_own_sound_gives_way_to_its_steps_sound() {
+    use lantern_engine::StepSound;
+
+    let source = SourceId::new("test").unwrap();
+    let file = |key: &str, kind| {
+        Resource::new(
+            ResourceId::new(&source, key),
+            key,
+            kind,
+            Location::File(format!("/{key}").into()),
+        )
+    };
+    let engine = Engine::new();
+    engine.edit_plan(|plan| {
+        let step = plan.show(file("hymn.mp4", Kind::Video));
+        plan.push("Oración", Action::Note);
+        plan.get_mut(step).unwrap().sound = Some(StepSound {
+            resource: file("track.mp3", Kind::Audio),
+            from: 0,
+        });
+    });
+    engine.next();
+    let stage = engine.stage();
+    assert_eq!(stage.program.unwrap().resource.title, "hymn.mp4");
+    assert_eq!(stage.bed.unwrap().resource.title, "track.mp3");
+    assert!(stage.muted, "the video plays without its own sound");
+    // On to a note, which leaves the stage as it is: the track goes, and
+    // the video stays as it was, silent.
+    engine.next();
+    assert_eq!(engine.stage().bed, None);
+    assert!(engine.stage().muted);
+    // Whatever comes on next is heard.
+    engine.show_now(Arc::new(file("other.mp4", Kind::Video)));
+    assert!(!engine.stage().muted);
 }
 
 #[test]
@@ -560,10 +606,7 @@ fn a_steps_sound_from_the_first_slide_starts_with_the_step() {
     });
     engine.next();
     let stage = engine.stage();
-    assert_eq!(
-        stage.program.as_ref().unwrap().resource.title,
-        "Instrumental"
-    );
+    assert_eq!(stage.bed.as_ref().unwrap().resource.title, "Instrumental");
     assert_eq!(stage.picture().unwrap().resource.title, "Santo");
 
     // Saved with the plan; the first slide goes without saying.

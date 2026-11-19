@@ -1303,7 +1303,11 @@ impl App {
         match message {
             Message::Feed(state) => {
                 self.stage = state;
-                return self.program_changed();
+                let bed = self
+                    .media
+                    .bed_changed(&self.stage, None, &self.engine.0)
+                    .map(Message::Loaded);
+                return Task::batch([self.program_changed(), bed]);
             }
             Message::Stage(event) => {
                 let task = self.stage_event(&event);
@@ -1354,6 +1358,16 @@ impl App {
                 match self.media.sound_event() {
                     Some((scene, Ok(()))) => return self.update(Message::Ended(scene)),
                     Some((scene, Err(why))) => self.media.broke(scene, &why, &self.engine.0),
+                    None => {}
+                }
+                // Nor does one playing apart from the program.
+                match self.media.bed_event() {
+                    Some((scene, Ok(()))) => {
+                        self.engine.0.report(scene, MediaReport::Ended);
+                    }
+                    Some((scene, Err(reason))) => {
+                        self.engine.0.report(scene, MediaReport::Failed { reason });
+                    }
                     None => {}
                 }
             }
@@ -4142,6 +4156,14 @@ impl App {
                 self.media.sync_fades(&self.stage);
             }
             StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
+            StageEvent::Bed { fade_out, .. } => {
+                return self
+                    .media
+                    .bed_changed(&self.stage, *fade_out, engine)
+                    .map(Message::Loaded);
+            }
+            // Heard again, or silenced: as loud as its fade says.
+            StageEvent::Muted { .. } => self.media.sync_fades(&self.stage),
         }
         Task::none()
     }
@@ -4863,7 +4885,8 @@ impl App {
             .as_ref()
             .and_then(|scene| scene.timed())
             .is_some_and(|timed| timed.playback == Playback::Playing);
-        if playing {
+        // A sound playing apart from the program is listened to as well.
+        if playing || self.stage.bed.is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
         }

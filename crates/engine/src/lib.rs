@@ -82,7 +82,7 @@ pub struct Engine {
     stage: Mutex<Showman>,
     /// The sound the current step is playing over what it shows
     /// ([`StepSound`]), while it is on program. Locked last.
-    accompanying: Mutex<Option<SceneId>>,
+    accompanying: Mutex<Option<(SceneId, StepId)>>,
 }
 
 impl Default for Engine {
@@ -678,16 +678,19 @@ fn still_on(scene: &Scene) -> bool {
 }
 
 /// Keeps the current step's sound ([`StepSound`]) with what the step
-/// shows, after anything the operator did: it goes on over the step's
-/// picture once that is at the slide the sound starts from, and comes off,
-/// leaving the picture, when the picture goes back before that slide or
-/// the plan moves to a step that leaves the stage as it is.
+/// shows, after anything the operator did: it plays apart from the
+/// program, in place of the step's own sound, once the step's picture is
+/// on at the slide the sound starts from; it goes, and the program's own
+/// sound is heard again, when the picture goes back before that slide,
+/// something else is put on program, or the plan moves on.
 ///
-/// `playing` is the sound this put on program. One the operator replaced
-/// or cleared is forgotten, and isn't started again over the same slides.
-fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<SceneId>) {
-    let program = stage.program().map(|scene| scene.id);
-    if playing.is_some() && *playing != program {
+/// `playing` is the sound this put on, and the step it is of. Going on
+/// from that step to one that leaves the stage as it is, what it showed
+/// stays as it was, silent; back before the slide the sound starts from,
+/// the step's own sound is heard again.
+fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<(SceneId, StepId)>) {
+    let bed = stage.state().bed.as_ref().map(|scene| scene.id);
+    if playing.is_some_and(|(sound, _)| Some(sound) != bed) {
         *playing = None;
     }
     let wanted = session.current().and_then(|step| {
@@ -695,20 +698,23 @@ fn accompany(session: &Session, stage: &mut Showman, playing: &mut Option<SceneI
         let Action::Show { resource } = &step.action else {
             return None;
         };
-        let picture = stage.state().picture()?;
-        let due = picture.resource.id == resource.id
-            && picture.timed().is_none()
-            && picture.frame() >= sound.from;
-        due.then(|| (sound.resource.clone(), step.fade.fade_in))
+        let program = stage.program()?;
+        let due = program.resource.id == resource.id && program.frame() >= sound.from;
+        due.then(|| (sound.resource.clone(), step.fade.fade_in, step.id))
     });
     match (wanted, *playing) {
-        // Over the picture itself: not over a sound the operator put on.
-        (Some((sound, fade_in)), None) if stage.program().is_some_and(|on| !on.sounds_only()) => {
-            stage.show_fading_in(Arc::new(sound), 0, fade_in);
-            *playing = stage.program().map(|scene| scene.id);
+        (Some((sound, fade_in, step)), None) => {
+            stage.bed(Arc::new(sound), fade_in, None);
+            stage.set_muted(true);
+            *playing = stage.state().bed.as_ref().map(|scene| (scene.id, step));
         }
-        (None, Some(_)) => {
-            stage.lift_sound();
+        (None, Some((_, step))) => {
+            // It goes as what it played with goes: over its fade out.
+            let fade = stage.state().fading_out.map(|fade| fade.over);
+            stage.lift_bed(fade);
+            if session.current().is_some_and(|current| current.id == step) {
+                stage.set_muted(false);
+            }
             *playing = None;
         }
         _ => {}
