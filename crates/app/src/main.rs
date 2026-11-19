@@ -319,6 +319,8 @@ enum Message {
     Type(String),
     /// Time to see whether the colours file changed.
     CheckPalette,
+    /// A new, empty plan in place of this one.
+    NewPlan,
     /// Time to see whether a file the plan opened into pages changed.
     CheckFiles,
     /// The file with this id, opened into pages, is taken in as it is now.
@@ -3255,6 +3257,7 @@ impl App {
                 self.plans.refresh();
             }
             Message::OpenPlan(path) => return self.switch_plan(Switch::Open(path)),
+            Message::NewPlan => return self.switch_plan(Switch::New),
             Message::LeavePlan => {
                 let replaced = self.plans.leave(&self.engine.0);
                 return self.switched(replaced);
@@ -3971,6 +3974,14 @@ impl App {
                     self.undo.push(engine.plan());
                     return self.put_back(after);
                 }
+            }
+            // With a plan open, the others are folded under it, at the
+            // foot of its list.
+            Op::Open if matches!(self.plans.mode, plans::Mode::Steps) => {
+                return iced::widget::operation::snap_to(
+                    plan_pane::ROWS,
+                    iced::widget::scrollable::RelativeOffset::END,
+                );
             }
             Op::Open => {
                 self.list_pick = None;

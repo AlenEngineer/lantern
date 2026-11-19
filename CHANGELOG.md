@@ -564,6 +564,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- With a plan open, the list of plans (‹ and Ctrl+O) is gone: the
+  other plans are folded under it, each with its ☆ to make it a
+  template, and under them "New plan" and "Import a plan". Ctrl+O goes
+  down to them. With no plan open, the list is where Lantern starts, as
+  before.
+- The Run pill starts the service, as "Start the service" does.
 - The dashboard's panes are one card, in every mode: a thin line
   between two of them, short of the card's top and foot, where there
   were gaps. The line is still pulled to size the panes, and lights as

@@ -558,18 +558,7 @@ impl App {
                 .align_y(Alignment::Center)
                 .into();
         }
-        // The way back to the list.
-        let plans_button = tooltip(
-            button(text("‹").size(HEADING).color(p.on_surface_variant))
-                .padding([2, 10])
-                .on_press(op(Op::Open))
-                .style(look::row(p, Tone::Plain)),
-            container(text(keys::with_key("All plans", Op::Open)).size(META))
-                .padding([4, 8])
-                .style(look::tip(p)),
-            tooltip::Position::Bottom,
-        )
-        .delay(look::TIP_DELAY);
+
         // A long name is cut at its edge, not drawn over the count. It
         // opens the plan's own settings, and is lit while they are open;
         // in a run it is only a name. It is renamed in the plan's card.
@@ -612,13 +601,8 @@ impl App {
             .0
             .current_step()
             .and_then(|current| items.iter().position(|s| s.id == current.id));
-        // In a run the plan can't be left or managed: the way back to the
-        // list and the plan's menu come back when the service ends.
-        let running = self.mode == crate::mode::Mode::Run;
-        let mut header = match running {
-            true => row![name],
-            false => row![plans_button, name],
-        };
+        // The other plans are under this one, folded, in its list.
+        let mut header = row![name];
         if let Some(at) = at {
             header = header.push(
                 text(format!("{} of {}", at + 1, items.len()))
@@ -1321,6 +1305,7 @@ impl App {
                 Some(Message::Rail(crate::rail::Act::Ring(
                     crate::rail::RingOn::All(None),
                 ))),
+                None,
             ));
         }
         rows = rows.push(list);
@@ -1407,6 +1392,7 @@ impl App {
                     lanes.curl,
                     Message::OpenPlan(entry.path.clone()),
                     None,
+                    Some(star(p, &entry.path, false)),
                 ));
             }
             for (at, (entry, summary)) in saved(true).enumerate() {
@@ -1414,14 +1400,38 @@ impl App {
                     rows = rows.push(Space::new().height(14));
                 }
                 rows = rows.push(self.folded_plan_row(
-                    format!("★ {}", summary.title),
+                    summary.title.clone(),
                     summary.steps,
                     self.takes(&summary.plan),
                     false,
                     lanes.curl,
                     Message::FromTemplate(entry.path.clone()),
                     None,
+                    Some(star(p, &entry.path, true)),
                 ));
+            }
+            // A new plan, or one brought from another computer.
+            rows = rows.push(Space::new().height(14));
+            rows = rows.push(
+                container(column![
+                    list_action(p, "+", "New plan".to_string(), Message::NewPlan),
+                    list_action(
+                        p,
+                        if self.importing.is_some() {
+                            "−"
+                        } else {
+                            "↓"
+                        },
+                        "Import a plan".into(),
+                        Message::ToggleImport,
+                    ),
+                ])
+                .padding(iced::Padding::default().left(lanes.curl)),
+            );
+            if let Some(import) = self.import_rows() {
+                rows = rows.push(
+                    container(import).padding(iced::Padding::default().left(lanes.curl + 24.0)),
+                );
             }
         }
         // The spans beside the line: each from the first to the last of
@@ -4084,7 +4094,64 @@ impl App {
         }
     }
 
-    fn saved_plans<'a>(&self, entries: &'a [Entry]) -> Element<'a, Message> {
+    /// Where a plan made on another computer is looked for, while that is
+    /// open: what was found, and a box to type where it is.
+    fn import_rows(&self) -> Option<Element<'_, Message>> {
+        let p = self.palette;
+        let (typed, found) = self.importing.as_ref()?;
+        let mut import = column![].spacing(2);
+        for bundle in found {
+            let name = bundle
+                .file_stem()
+                .map_or_else(|| file_name(bundle), |n| n.to_string_lossy().into_owned());
+            let place = bundle.parent().map_or(String::new(), |dir| {
+                match &self.home {
+                    Some(home) => crate::config::tilde(dir, home),
+                    None => dir.to_path_buf(),
+                }
+                .display()
+                .to_string()
+            });
+            import = import.push(
+                button(
+                    column![
+                        single_line(name)
+                            .size(BODY)
+                            .font(MEDIUM)
+                            .color(p.on_surface),
+                        single_line(place).size(META).color(p.on_surface_variant),
+                    ]
+                    .spacing(2),
+                )
+                .width(Fill)
+                .padding([8, 10])
+                .on_press_maybe((!self.copying).then(|| Message::Import(Some(bundle.clone()))))
+                .style(look::row(p, Tone::Plain)),
+            );
+        }
+        let hint = if found.is_empty() {
+            "No exported plan in Documents, Downloads or on a USB stick. Type where the file is:"
+        } else {
+            "Or type where the file is:"
+        };
+        import = import
+            .push(container(text(hint).size(META).color(p.on_surface_variant)).padding([4, 10]));
+        import = import.push(
+            container(
+                text_input("e.g. ~/Documents/Sábado.lantern", typed)
+                    .id(crate::dashboard::IMPORT_BOX)
+                    .on_input(Message::ImportPath)
+                    .on_submit(Message::Import(None))
+                    .size(BODY)
+                    .padding([6, 10])
+                    .style(look::input(p)),
+            )
+            .padding([0, 10]),
+        );
+        Some(import.into())
+    }
+
+    fn saved_plans<'a>(&'a self, entries: &'a [Entry]) -> Element<'a, Message> {
         let p = self.palette;
         // A heading is its name: the rows under it say what they are.
         let heading = |title: &'static str| {
@@ -4170,57 +4237,7 @@ impl App {
             "Import a plan".into(),
             Message::ToggleImport,
         ));
-        if let Some((typed, found)) = &self.importing {
-            let mut import = column![].spacing(2);
-            for bundle in found {
-                let name = bundle
-                    .file_stem()
-                    .map_or_else(|| file_name(bundle), |n| n.to_string_lossy().into_owned());
-                let place = bundle.parent().map_or(String::new(), |dir| {
-                    match &self.home {
-                        Some(home) => crate::config::tilde(dir, home),
-                        None => dir.to_path_buf(),
-                    }
-                    .display()
-                    .to_string()
-                });
-                import = import.push(
-                    button(
-                        column![
-                            single_line(name)
-                                .size(BODY)
-                                .font(MEDIUM)
-                                .color(p.on_surface),
-                            single_line(place).size(META).color(p.on_surface_variant),
-                        ]
-                        .spacing(2),
-                    )
-                    .width(Fill)
-                    .padding([8, 10])
-                    .on_press_maybe((!self.copying).then(|| Message::Import(Some(bundle.clone()))))
-                    .style(look::row(p, Tone::Plain)),
-                );
-            }
-            let hint = if found.is_empty() {
-                "No exported plan in Documents, Downloads or on a USB stick. Type where the file is:"
-            } else {
-                "Or type where the file is:"
-            };
-            import = import.push(
-                container(text(hint).size(META).color(p.on_surface_variant)).padding([4, 10]),
-            );
-            import = import.push(
-                container(
-                    text_input("e.g. ~/Documents/Sábado.lantern", typed)
-                        .id(crate::dashboard::IMPORT_BOX)
-                        .on_input(Message::ImportPath)
-                        .on_submit(Message::Import(None))
-                        .size(BODY)
-                        .padding([6, 10])
-                        .style(look::input(p)),
-                )
-                .padding([0, 10]),
-            );
+        if let Some(import) = self.import_rows() {
             list = list.push(container(import).padding(iced::Padding::default().left(24.0)));
         }
         scrolling(list).into()
@@ -4525,6 +4542,7 @@ impl App {
         curl: f32,
         opens: Message,
         ring: Option<Message>,
+        star: Option<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         let p = self.palette;
         let ink = match open {
@@ -4554,6 +4572,7 @@ impl App {
             container(single_line(title).size(META).font(BOLD).color(ink))
                 .width(track::LABEL)
                 .center_y(ROW_TALL),
+            star,
         ]
         .height(ROW_TALL)
         .align_y(Alignment::Center);
@@ -4839,6 +4858,32 @@ fn seconds_left(left: Duration) -> String {
     } else {
         format!("{}:{:02}", secs / 60, secs % 60)
     }
+}
+
+/// The star that makes the plan in `path` a template, or a plan again.
+fn star<'a>(p: Palette, path: &std::path::Path, template: bool) -> Element<'a, Message> {
+    tooltip(
+        button(
+            text(if template { "★" } else { "☆" })
+                .size(BODY)
+                .color(p.primary),
+        )
+        .padding([2, 6])
+        .on_press(Message::SetTemplate(path.to_path_buf(), !template))
+        .style(look::row(p, Tone::Plain)),
+        container(
+            text(match template {
+                true => "A template: new plans start from it. Make it a plan again",
+                false => "Make it a template",
+            })
+            .size(META),
+        )
+        .padding([4, 8])
+        .style(look::tip(p)),
+        tooltip::Position::Left,
+    )
+    .delay(look::TIP_DELAY)
+    .into()
 }
 
 #[cfg(test)]
