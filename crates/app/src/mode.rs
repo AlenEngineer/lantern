@@ -548,12 +548,21 @@ impl App {
         ]
         .width(shown.len() as f32 * (WIDE + GAP) - GAP)
         .height(TALL);
+        let plan_has_steps = self
+            .engine
+            .0
+            .plan()
+            .steps()
+            .iter()
+            .any(|step| !step.is_section());
         let buttons = shown.iter().map(|&mode| {
             let on = mode == self.mode;
-            // Run is reached by starting the service. The mode it is in
-            // is pressable too, to no effect: unpressable, it would look
+            // Run is reached by starting the service: pressed, it starts
+            // it, as its button beside does. The mode it is in is
+            // pressable too, to no effect: unpressable, it would look
             // switched off.
-            let reachable = on || mode != Mode::Run;
+            let starts = !on && mode == Mode::Run;
+            let can_start = plan_has_steps;
             let label = container(
                 text(mode.name())
                     .size(BODY)
@@ -566,7 +575,10 @@ impl App {
                 .width(WIDE)
                 .height(TALL)
                 .padding(0)
-                .on_press_maybe(reachable.then_some(Message::SetMode(mode)));
+                .on_press_maybe(match starts {
+                    true => can_start.then_some(Message::StartService),
+                    false => Some(Message::SetMode(mode)),
+                });
             let pill: Element<'_, Message> = match on {
                 true => pill.style(look::pill_clear(ink)).into(),
                 false => pill.style(look::pill(p, Tone::Plain)).into(),
