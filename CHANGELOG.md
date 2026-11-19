@@ -8,6 +8,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The line of a sound that keeps going is pulled by its foot, like a
+  section's bracket: let go over a later step, the sound keeps going to
+  there; over its own step, it plays for that step alone. Above its
+  step it is refused and says why.
 - What a step plays apart from its picture can fade on its own: its
   card sets it to fade with the picture, as before, or on its own with
   a fade in and a fade out of its own. Going on, it fades out over its
