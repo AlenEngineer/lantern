@@ -243,7 +243,7 @@ enum Message {
     /// The plan's bracket pressed twice: folded into one row, or opened.
     FoldPlan,
     /// The stage as it was when the feed started. Always the feed's first message.
-    Feed(StageState),
+    Feed(Box<StageState>),
     Stage(StageEvent),
     Loaded(Arc<Loaded>),
     /// The program's video reached its end.
@@ -1334,12 +1334,13 @@ impl App {
     fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Feed(state) => {
-                self.stage = state;
-                let bed = self
-                    .media
-                    .bed_changed(&self.stage, None, &self.engine.0)
-                    .map(Message::Loaded);
-                return Task::batch([self.program_changed(), bed]);
+                self.stage = *state;
+                let beds = [stage::Apart::Bed, stage::Apart::Track].map(|which| {
+                    self.media
+                        .bed_changed(&self.stage, which, None, &self.engine.0)
+                        .map(Message::Loaded)
+                });
+                return Task::batch([self.program_changed()].into_iter().chain(beds));
             }
             Message::Stage(event) => {
                 let task = self.stage_event(&event);
@@ -1383,24 +1384,26 @@ impl App {
                 self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
-                for (scene, position) in [self.media.playhead(), self.media.bed_playhead()]
+                for (scene, position) in self
+                    .media
+                    .playhead()
                     .into_iter()
-                    .flatten()
+                    .chain(self.media.bed_playheads())
                 {
                     self.engine.0.report(scene, MediaReport::Position(position));
                 }
                 let unknown = |scene: &lantern_engine::Scene| {
                     scene.timed().is_some_and(|timed| timed.duration.is_none())
                 };
-                if let Some((scene, length)) = self.media.bed_length()
-                    && self.stage.bed.as_ref().is_some_and(unknown)
-                {
-                    self.engine.0.report(
-                        scene,
-                        MediaReport::Timeline {
-                            duration: Some(length),
-                        },
-                    );
+                for (scene, length) in self.media.bed_lengths() {
+                    if self.stage.scene(scene).is_some_and(unknown) {
+                        self.engine.0.report(
+                            scene,
+                            MediaReport::Timeline {
+                                duration: Some(length),
+                            },
+                        );
+                    }
                 }
                 // A sound has no picture to say it ended or broke through.
                 match self.media.sound_event() {
@@ -1409,14 +1412,11 @@ impl App {
                     None => {}
                 }
                 // Nor does one playing apart from the program.
-                match self.media.bed_event() {
-                    Some((scene, Ok(()))) => {
-                        self.engine.0.report(scene, MediaReport::Ended);
-                    }
-                    Some((scene, Err(reason))) => {
-                        self.engine.0.report(scene, MediaReport::Failed { reason });
-                    }
-                    None => {}
+                for (scene, said) in self.media.bed_events() {
+                    match said {
+                        Ok(()) => self.engine.0.report(scene, MediaReport::Ended),
+                        Err(reason) => self.engine.0.report(scene, MediaReport::Failed { reason }),
+                    };
                 }
             }
             Message::Progress => return self.go_on(),
@@ -4269,7 +4269,13 @@ impl App {
             StageEvent::Bed { fade_out, .. } => {
                 return self
                     .media
-                    .bed_changed(&self.stage, *fade_out, engine)
+                    .bed_changed(&self.stage, stage::Apart::Bed, *fade_out, engine)
+                    .map(Message::Loaded);
+            }
+            StageEvent::Track { fade_out, .. } => {
+                return self
+                    .media
+                    .bed_changed(&self.stage, stage::Apart::Track, *fade_out, engine)
                     .map(Message::Loaded);
             }
             // Heard again, or silenced: as loud as its fade says.
@@ -5362,7 +5368,7 @@ fn stage_feed(engine: &Shared<Engine>) -> impl Stream<Item = Message> + use<> {
                 }
             }
         });
-        if out.send(Message::Feed(state)).await.is_err() {
+        if out.send(Message::Feed(Box::new(state))).await.is_err() {
             return;
         }
         while let Some(event) = received.next().await {

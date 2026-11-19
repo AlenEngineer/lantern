@@ -108,19 +108,61 @@ fn a_sound_keeps_going_under_the_steps_after_its_own() {
     engine.next();
     assert_eq!(on(&engine), (some("hymn.mp4"), None, false, false));
 
-    // Set to go under such a step, it plays on lowered.
+    // Set to go under such a step, it is a background track: it plays on
+    // lowered.
     let engine = Engine::new();
     engine.load_plan(plan(Meets::Under));
     engine.next();
     engine.next();
     engine.next();
-    assert_eq!(
-        on(&engine),
-        (some("hymn.mp4"), some("piano.mp3"), false, true)
-    );
+    let track = |engine: &Engine| engine.stage().track.map(|s| s.resource.title.clone());
+    assert_eq!(on(&engine), (some("hymn.mp4"), None, false, true));
+    assert_eq!(track(&engine), some("piano.mp3"));
     // Past where it keeps going to, it goes.
     engine.next();
     assert_eq!(on(&engine), (some("after.png"), None, false, false));
+    assert_eq!(track(&engine), None);
+}
+
+#[test]
+fn a_background_track_lowers_under_a_steps_own_sound_and_comes_back() {
+    let mut plan = Plan::new("Sunday");
+    let welcome = plan.show(file("welcome.png", Kind::Image));
+    let reading = plan.show(file("reading.png", Kind::Image));
+    plan.show(file("prayer.png", Kind::Image));
+    let last = plan.show(file("end.png", Kind::Image));
+    plan.get_mut(welcome).unwrap().sound = Some(StepSound {
+        until: Some(last),
+        meets: Meets::Under,
+        ..StepSound::new(file("piano.mp3", Kind::Audio))
+    });
+    // A reading with a song of its own, played apart from its picture.
+    plan.get_mut(reading).unwrap().sound = Some(StepSound::new(file("song.mp3", Kind::Audio)));
+    let engine = Engine::new();
+    engine.load_plan(plan);
+    let track = |engine: &Engine| engine.stage().track.map(|s| s.id);
+
+    engine.next();
+    let piano = track(&engine).unwrap();
+    assert_eq!(engine.background().map(|(_, of)| of), Some(welcome));
+    assert!(!engine.stage().lowered);
+    // Two sounds at once: the reading's own over the track, lowered.
+    engine.next();
+    assert_eq!(
+        on(&engine),
+        (some("reading.png"), some("song.mp3"), true, true)
+    );
+    assert_eq!(track(&engine), Some(piano), "the same track plays on");
+    // After it, the track comes back up.
+    engine.next();
+    assert_eq!(on(&engine), (some("prayer.png"), None, false, false));
+    assert_eq!(track(&engine), Some(piano));
+    engine.next();
+    assert_eq!(
+        track(&engine),
+        Some(piano),
+        "to the last step it goes under"
+    );
 }
 
 #[test]

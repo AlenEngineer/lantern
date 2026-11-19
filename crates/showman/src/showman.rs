@@ -27,14 +27,20 @@ pub struct StageState {
     pub fading_out: Option<FadeOut>,
     /// A sound playing apart from the program, whatever goes on and off
     /// it: a step's sound in place of its own, or one that keeps going
-    /// under several steps. It plays as soon as it is ready.
+    /// under the steps after its own. It plays as soon as it is ready.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bed: Option<Scene>,
     /// The program's own sound is not heard: something plays in its place.
     /// Heard again when something else comes on program.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
-    /// The sound apart from the program plays lowered, under another.
+    /// A background track: a sound that keeps going under the steps
+    /// after its own, apart from the program and from [`bed`](Self::bed),
+    /// lowered while something else is heard. It plays as soon as it is
+    /// ready.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track: Option<Scene>,
+    /// The background track plays lowered, under another sound.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lowered: bool,
 }
@@ -107,6 +113,7 @@ impl StageState {
                 self.program.is_some() && set_if_different(&mut self.fading_out, &Some(*fade))
             }
             StageEvent::Bed { scene, .. } => set_if_different(&mut self.bed, scene),
+            StageEvent::Track { scene, .. } => set_if_different(&mut self.track, scene),
             StageEvent::Muted { on } => set_if_different(&mut self.muted, on),
             StageEvent::Lowered { on } => set_if_different(&mut self.lowered, on),
         }
@@ -126,10 +133,16 @@ impl StageState {
     /// whether the scene is still on stage and what the operator did
     /// meanwhile.
     pub fn scene(&self, id: SceneId) -> Option<&Scene> {
-        [&self.program, &self.preview, &self.under, &self.bed]
-            .into_iter()
-            .flatten()
-            .find(|scene| scene.id == id)
+        [
+            &self.program,
+            &self.preview,
+            &self.under,
+            &self.bed,
+            &self.track,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|scene| scene.id == id)
     }
 
     fn scene_mut(&mut self, id: SceneId) -> Option<&mut Scene> {
@@ -138,6 +151,7 @@ impl StageState {
             &mut self.preview,
             &mut self.under,
             &mut self.bed,
+            &mut self.track,
         ]
         .into_iter()
         .flatten()
@@ -234,12 +248,22 @@ pub enum StageEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fade_out: Option<FadeTime>,
     },
+    /// Another background track, or none ([`StageState::track`]).
+    /// Always a new `SceneId`. The one it takes the place of goes out
+    /// over `fade_out`, or at once.
+    Track {
+        /// The new track.
+        scene: Option<Scene>,
+        /// How long the one before takes to go.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fade_out: Option<FadeTime>,
+    },
     /// The program's own sound is silenced, or heard again.
     Muted {
         /// Whether it is silenced.
         on: bool,
     },
-    /// The sound apart from the program goes under another, or back up.
+    /// The background track goes under another sound, or back up.
     Lowered {
         /// Whether it is lowered.
         on: bool,
@@ -391,7 +415,9 @@ impl Showman {
     pub fn clear(&mut self) {
         self.emit(StageEvent::Program { scene: None });
         self.lift_bed(None);
+        self.lift_track(None);
         self.set_muted(false);
+        self.set_lowered(false);
     }
 
     /// Plays `resource` apart from the program, coming up over `fade_in`;
@@ -425,13 +451,44 @@ impl Showman {
         true
     }
 
+    /// Plays `resource` as the background track, coming up over
+    /// `fade_in`; the track before goes out over `fade_out`.
+    pub fn track(
+        &mut self,
+        resource: Arc<Resource>,
+        fade_in: Option<FadeTime>,
+        fade_out: Option<FadeTime>,
+    ) {
+        let scene = Scene {
+            fade_in,
+            ..Scene::new(self.next_id(), resource)
+        };
+        self.emit(StageEvent::Track {
+            scene: Some(scene),
+            fade_out,
+        });
+    }
+
+    /// The background track goes, over `fade_out` or at once. Returns
+    /// `false` when none was.
+    pub fn lift_track(&mut self, fade_out: Option<FadeTime>) -> bool {
+        if self.state.track.is_none() {
+            return false;
+        }
+        self.emit(StageEvent::Track {
+            scene: None,
+            fade_out,
+        });
+        true
+    }
+
     /// Silences the program's own sound, or lets it be heard again.
     pub fn set_muted(&mut self, on: bool) {
         self.emit(StageEvent::Muted { on });
     }
 
-    /// Lowers the sound apart from the program under another, or brings
-    /// it back up.
+    /// Lowers the background track under another sound, or brings it
+    /// back up.
     pub fn set_lowered(&mut self, on: bool) {
         self.emit(StageEvent::Lowered { on });
     }
