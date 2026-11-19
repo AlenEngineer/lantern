@@ -3,8 +3,8 @@
 //! after its own.
 
 use lantern_engine::{
-    Action, Engine, Kind, Location, MediaReport, Meets, Picture, Plan, Resource, ResourceId, SourceId,
-    StepSound,
+    Action, Engine, Kind, Location, MediaReport, Meets, Picture, Plan, Resource, ResourceId,
+    SourceId, StepSound,
 };
 
 fn file(name: &str, kind: Kind) -> Resource {
@@ -161,7 +161,11 @@ fn a_still_goes_on_when_the_sound_it_plays_apart_ends() {
     let (bed, owner) = engine.plays_apart().unwrap();
     assert_eq!(owner, song);
     engine.report(bed, MediaReport::Ended);
-    assert_eq!(engine.current_step().map(|s| s.id), Some(after), "it went on");
+    assert_eq!(
+        engine.current_step().map(|s| s.id),
+        Some(after),
+        "it went on"
+    );
 
     // Under a video of its own, the video's end moves the plan, not the
     // sound's.
