@@ -106,6 +106,13 @@ const FAN: f32 = 22.0;
 
 /// How big a ring's buttons are, and the ones of its outer row.
 const PETAL: f32 = 34.0;
+/// How far out the buttons on a ring's left are (what is done to it,
+/// its note, its pages), 45° apart: far enough that two never touch.
+const LEFT: f32 = 58.0;
+/// How far a ring reaches out from its middle, its buttons and a
+/// little room: the middle is kept this far in from the window's sides
+/// and from the strip.
+const REACH: f32 = LEFT + PETAL / 2.0 + 8.0;
 /// How tall the pills are that say how often, and how far the card
 /// round the time stands off its pill.
 const PILL: f32 = 30.0;
@@ -399,14 +406,19 @@ impl App {
                 .on_right_press(close)
                 .into(),
         ];
-        // Kept on the window: near its top or foot the ring moves in.
-        let tall = self.dashboard_size.height;
+        // Kept on the window and under the strip: near an edge the ring
+        // moves in, all of its buttons in sight.
+        let (wide, tall) = (self.dashboard_size.width, self.dashboard_size.height);
+        let under_strip = crate::dashboard::EDGE + crate::dashboard::STRIP;
         // A section's colours fan out above it: further in from the top.
-        let top = match ring.on {
-            RingOn::All(Some(_)) => 150.0,
-            _ => 120.0,
+        let top = match ring.colors {
+            true => under_strip + SWATCH_FAR + FAN_FAR + FAN / 2.0 + 8.0,
+            false => under_strip + REACH,
         };
-        let middle = Point::new(ring.at.x, ring.at.y.clamp(top, (tall - 120.0).max(top)));
+        let middle = Point::new(
+            ring.at.x.clamp(REACH, (wide - REACH).max(REACH)),
+            ring.at.y.clamp(top, (tall - 120.0).max(top)),
+        );
         let mut petals: Vec<Petal> = Vec::new();
         let ink = |lit: bool| if lit { p.on_primary } else { p.on_surface };
         let glyph = |icon: Icon, lit: bool| -> Element<'static, Message> {
@@ -489,7 +501,7 @@ impl App {
                     layers.push(
                         pin(card)
                             .x((middle.x - FADES / 2.0).max(8.0))
-                            .y(middle.y + 46.0 + PETAL / 2.0)
+                            .y(middle.y + LEFT + PETAL / 2.0 + 4.0)
                             .into(),
                     );
                 }
@@ -639,7 +651,7 @@ impl App {
             layers.push(
                 pin(card)
                     .x((middle.x - CARD_WIDE / 2.0).max(8.0))
-                    .y(middle.y + 48.0 + PETAL / 2.0 + 6.0 + 16.0 * (1.0 - rise))
+                    .y(middle.y + LEFT + PETAL / 2.0 + 6.0 + 16.0 * (1.0 - rise))
                     .into(),
             );
         }
@@ -647,8 +659,8 @@ impl App {
             && self.mode == crate::mode::Mode::Plan
         {
             petals.push(petal(
-                100.0,
-                48.0,
+                90.0,
+                LEFT,
                 PETAL,
                 false,
                 glyph(Icon::Fill, false),
@@ -667,8 +679,8 @@ impl App {
                 None => "Its pages are still being read".to_string(),
             };
             petals.push(petal(
-                100.0,
-                48.0,
+                90.0,
+                LEFT,
                 PETAL,
                 false,
                 glyph(Icon::Document, false),
@@ -740,7 +752,7 @@ impl App {
                     crate::keys::Op::Rename,
                 ),
                 (
-                    -140.0,
+                    -135.0,
                     Icon::Copy,
                     match section {
                         true => "A copy of all of it, after it",
@@ -749,7 +761,7 @@ impl App {
                     crate::keys::Op::Duplicate,
                 ),
                 (
-                    140.0,
+                    135.0,
                     Icon::Close,
                     match section {
                         true => "Take the section away; its steps stay",
@@ -768,7 +780,7 @@ impl App {
                 };
                 petals.push(petal(
                     angle,
-                    48.0,
+                    LEFT,
                     PETAL,
                     false,
                     glyph(icon, false),
@@ -790,14 +802,14 @@ impl App {
                     Message::EditPlanName,
                 ),
                 (
-                    -140.0,
+                    -135.0,
                     Icon::Copy,
                     false,
                     "A copy of the plan",
                     Message::DuplicatePlan,
                 ),
                 (
-                    140.0,
+                    135.0,
                     Icon::Close,
                     deleting,
                     match deleting {
@@ -816,7 +828,7 @@ impl App {
             ] {
                 petals.push(petal(
                     angle,
-                    48.0,
+                    LEFT,
                     PETAL,
                     lit,
                     glyph(icon, lit),
@@ -841,7 +853,7 @@ impl App {
             let has = !plan.notes_on(on).is_empty();
             petals.push(petal(
                 180.0,
-                46.0,
+                LEFT,
                 PETAL,
                 has,
                 glyph(Icon::Note, has),
