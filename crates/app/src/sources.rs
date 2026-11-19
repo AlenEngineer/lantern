@@ -323,9 +323,10 @@ impl App {
     pub(crate) fn second_picked(&mut self, id: StepId) {
         match self.picked_second() {
             Some(file) => self.set_second(id, (*file).clone()),
-            None => self
-                .motion
-                .refuse("Pick a picture or a text in search or the library first"),
+            None => self.refuse_on(
+                id,
+                "Pick a picture or a text in search or the library first",
+            ),
         }
     }
 
@@ -394,8 +395,7 @@ impl App {
             PictureChoice::File(_) => match self.picked_picture() {
                 Some(file) => Picture::File((*file).clone()),
                 None => {
-                    self.motion
-                        .refuse("Pick a picture in search or the library first");
+                    self.refuse_on(id, "Pick a picture in search or the library first");
                     return;
                 }
             },
@@ -413,8 +413,7 @@ impl App {
     pub(crate) fn set_sound(&mut self, id: StepId, choice: SoundChoice) {
         let picked = self.picked_sound();
         if matches!(choice, SoundChoice::File(_)) && picked.is_none() {
-            self.motion
-                .refuse("Pick a sound or a video in search or the library first");
+            self.refuse_on(id, "Pick a sound or a video in search or the library first");
             return;
         }
         self.remember(None);

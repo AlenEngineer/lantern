@@ -2997,6 +2997,19 @@ impl Plan {
                 among.push(span.id);
                 continue;
             }
+            // Carried to beside its other steps, an end of it stays an
+            // end: from the same first to the same last it holds what it
+            // did, and nothing else, so it stays as it was.
+            if let Over::Steps { first, last } = span.over
+                && next.holds_the_same(first, last, &held)
+            {
+                match next.spans.iter_mut().find(|kept| kept.id == span.id) {
+                    Some(kept) => *kept = *span,
+                    // Left with one step as it was lifted, it went.
+                    None => next.spans.push(*span),
+                }
+                continue;
+            }
             let after = next.span_steps(span.id);
             if !moving.iter().all(|id| after.contains(id)) {
                 crossed.push(span.id);
@@ -3047,6 +3060,23 @@ impl Plan {
             .filter(|at| self.flow.joined || brought.iter().any(|span| self.joins_on(span, *at)))
             .map(|at| self.steps[at].id)
             .collect()
+    }
+
+    /// Whether the steps from `first` to `last` (headings aside) are
+    /// `held` and only those, in this plan.
+    fn holds_the_same(&self, first: StepId, last: StepId, held: &[StepId]) -> bool {
+        let (Some(from), Some(to)) = (self.position(first), self.position(last)) else {
+            return false;
+        };
+        if from > to {
+            return false;
+        }
+        let between: Vec<StepId> = self.steps[from..=to]
+            .iter()
+            .filter(|step| !step.is_section())
+            .map(|step| step.id)
+            .collect();
+        between.len() == held.len() && between.iter().all(|id| held.contains(id))
     }
 
     /// A span from step to step left with too few steps for what it
@@ -4557,6 +4587,29 @@ mod tests {
             back.get(music).unwrap().done_by(),
             TimeOfDay::parse("11:45")
         );
+    }
+
+    #[test]
+    fn the_end_of_a_join_carried_next_to_its_other_end_stays_joined() {
+        let mut plan = Plan::new("Sunday");
+        plan.section("Praise", None);
+        let light = plan.show(resource("Light"));
+        let readings = plan.section("Readings", None);
+        plan.section("End", None);
+        let goodbye = plan.show(resource("Goodbye"));
+        plan.join_over(light, goodbye).unwrap();
+        let joined = plan.spans()[0].id;
+        // Into the empty Readings, right after its heading: still after
+        // Light, with nothing between them but headings.
+        let without = plan.without(&[goodbye]).0;
+        let into = Place {
+            index: without.position(readings).unwrap() + 1,
+            section: Some(readings),
+        };
+        let carried = plan.carry(&[goodbye], into, Carry::Whole).unwrap();
+        assert!(carried.left.is_empty(), "nothing crossed");
+        assert_eq!(plan.span_steps(joined), [light, goodbye]);
+        assert_eq!(plan.within(plan.position(goodbye).unwrap()), [readings]);
     }
 
     #[test]

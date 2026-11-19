@@ -818,6 +818,15 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A section whose steps are all being carried keeps its bracket and
+  its empty place, instead of vanishing. Carried over an empty section,
+  its own place lights in its colour as where it lands, with no second
+  gap, so it no longer looks as if that section swallows the next.
+- The end of a join carried to beside its other end (into an empty
+  section between them) is no longer refused: the join holds the same
+  steps and stays.
+- A refusal shakes what it is about: the picked step when its card
+  refuses, nothing left over from an earlier refused carry.
 - A ring's buttons no longer overlap (those on its left were too close
   together), and a ring opened near the window's edge or the strip moves
   in so all of it is in sight.

@@ -1193,7 +1193,7 @@ impl App {
         let task = match self.refused(&message) {
             Some(why) => {
                 log(format!("mode: {why}"));
-                self.motion.refuse(why);
+                self.refuse(why);
                 Task::none()
             }
             None => self.handle(message),
@@ -1693,7 +1693,7 @@ impl App {
                     let from = *from.get_or_insert(at);
                     if !*pulled && from.distance(at) > 6.0 {
                         *pulled = true;
-                        self.motion.refuse(match self.unlocked {
+                        self.refuse(match self.unlocked {
                             Some(_) => "only what is still ahead can change",
                             None => "the plan is locked while it runs",
                         });
@@ -1865,7 +1865,7 @@ impl App {
                 self.grabbed = false;
                 if let Some((section, was, refused)) = self.head.take() {
                     if refused {
-                        self.motion.refuse("It can't start there");
+                        self.refuse("It can't start there");
                     }
                     // Nothing changed: no step to undo.
                     if self.engine.0.plan() == was {
@@ -1890,9 +1890,7 @@ impl App {
                     match to.map(|to| (to != owner).then_some(to)) {
                         Some(until) if until == was => {}
                         Some(until) => self.set_until(owner, until),
-                        None => self
-                            .motion
-                            .refuse("It keeps going only under the steps after its own"),
+                        None => self.refuse("It keeps going only under the steps after its own"),
                     }
                 }
             }
@@ -1904,7 +1902,7 @@ impl App {
                     self.remember(None);
                     match self.engine.0.reach_section(section, Some(last)) {
                         Ok(()) => self.motion.changed(section),
-                        Err(why) => self.motion.refuse(match why {
+                        Err(why) => self.refuse(match why {
                             lantern_engine::BracketError::HalfOver(_) => {
                                 "It would take in a part of another section"
                             }
@@ -1992,9 +1990,8 @@ impl App {
                     // What can't be: its line shakes and flashes where it
                     // was pulled, while why is said.
                     (true, Some(rail::Would::Not { why, first, last }), _) => {
-                        self.alarm = (Vec::new(), Vec::new());
+                        self.refuse(rail::why_not(why, pull.side));
                         self.alarm_pull = Some((pull.side, first, last));
-                        self.motion.refuse(rail::why_not(why, pull.side));
                     }
                     _ => {}
                 }
@@ -2088,17 +2085,15 @@ impl App {
                                 let _ = self.engine.0.carry(&drag.carried, place, how);
                             }
                             Err(lantern_engine::CarryError::Crosses(spans)) => {
-                                self.alarm_pull = None;
-                                self.alarm = (drag.carried.clone(), spans);
-                                self.motion.refuse(
+                                self.refuse(
                                     "It would cut a loop, a drawn order or a join. Ctrl cuts it loose, Alt strips its flows",
                                 );
+                                self.alarm = (drag.carried.clone(), spans);
                                 return Task::none();
                             }
                             Err(_) => {
-                                self.alarm_pull = None;
+                                self.refuse("It can't go there");
                                 self.alarm = (drag.carried.clone(), Vec::new());
-                                self.motion.refuse("It can't go there");
                                 return Task::none();
                             }
                         }
@@ -2113,10 +2108,8 @@ impl App {
                     let among = drag.among(&plan);
                     let cuts = drag::section_cuts(&plan, &drag.carried, at, drag.level, among);
                     if !cuts.is_empty() {
-                        self.alarm_pull = None;
+                        self.refuse("It would cut a loop, a drawn order or a join");
                         self.alarm = (drag.carried.clone(), cuts);
-                        self.motion
-                            .refuse("It would cut a loop, a drawn order or a join");
                         return Task::none();
                     }
                     self.remember(None);
@@ -2263,7 +2256,7 @@ impl App {
                     }
                     Err(why) => {
                         log(format!("plan: can't read {} again: {why}", file.title));
-                        self.motion.refuse("The file can't be read again");
+                        self.refuse("The file can't be read again");
                     }
                 }
             }
@@ -2690,7 +2683,7 @@ impl App {
                             self.update(Message::EditStep(Some((section, plan_edit::Part::Name)))),
                         ]);
                     }
-                    Err(why) => self.motion.refuse(match why {
+                    Err(why) => self.refuse(match why {
                         lantern_engine::BracketError::HalfOver(_) => {
                             "It would take in a part of another section"
                         }
@@ -3162,8 +3155,7 @@ impl App {
                     plan.set_flow(of, flow)
                 });
                 if drawn.is_err() {
-                    self.motion
-                        .refuse("a drawn order takes three steps or more, in one section");
+                    self.refuse("a drawn order takes three steps or more, in one section");
                 }
             }
             Message::SectionColor(id, slot) => {
@@ -3235,9 +3227,9 @@ impl App {
                 // nothing leaves nothing to take back.
                 let mut tried = self.engine.0.plan();
                 if tried.get(id).is_some_and(|step| !step.is_section()) {
-                    self.motion.refuse("only a section goes inside another");
+                    self.refuse("only a section goes inside another");
                 } else if !tried.nest(id, inward) {
-                    self.motion.refuse(match inward {
+                    self.refuse(match inward {
                         true => "it can't go further in",
                         false => "it is as far out as it goes",
                     });
@@ -3302,7 +3294,7 @@ impl App {
                     .is_some_and(|asked| asked.elapsed() < SURE_QUIT);
                 if showing && !sure {
                     self.quitting = Some(Instant::now());
-                    self.motion.refuse("close again to quit");
+                    self.refuse("close again to quit");
                     log("the dashboard was asked to close mid-service: asking again");
                 } else {
                     log("the dashboard closed, exiting");
@@ -3427,7 +3419,7 @@ impl App {
             Ok(op) => op,
             Err(why) => {
                 log(format!("mode: {why}"));
-                self.motion.refuse(why);
+                self.refuse(why);
                 return Task::none();
             }
         };
@@ -4610,9 +4602,21 @@ impl App {
         ))
     }
 
-    /// Closes the open note; one that says nothing is taken away.
-    /// Opens the deck or PDF of the step `step` into a section of its
-    /// pages. Not the one on the projector: its pages would start over.
+    /// Says why something can't be done: the mode's note shakes and says
+    /// so. What shook for a refusal before is let go; one about steps or
+    /// lines says which after this.
+    pub(crate) fn refuse(&mut self, why: &'static str) {
+        self.alarm = (Vec::new(), Vec::new());
+        self.alarm_pull = None;
+        self.motion.refuse(why);
+    }
+
+    /// The same, about the step `step`: it shakes with the note.
+    pub(crate) fn refuse_on(&mut self, step: StepId, why: &'static str) {
+        self.refuse(why);
+        self.alarm.0 = vec![step];
+    }
+
     /// Sees which files the plan opened into pages changed since they
     /// were: their pages remember them as they were then.
     fn check_files(&mut self) {
@@ -4642,6 +4646,8 @@ impl App {
         }
     }
 
+    /// Opens the deck or PDF of the step `step` into a section of its
+    /// pages. Not the one on the projector: its pages would start over.
     fn open_pages(&mut self, step: StepId) -> Task<Message> {
         let plan = self.engine.0.plan();
         let Some(pages) = plan_edit::paged(&plan, step)
@@ -4653,8 +4659,7 @@ impl App {
         if self.engine.0.current_step().is_some_and(|on| on.id == step)
             && self.engine.0.stage().program.is_some()
         {
-            self.motion
-                .refuse("It is on the projector: open it once it is off");
+            self.refuse("It is on the projector: open it once it is off");
             return Task::none();
         }
         // The deck's time shared out between its pages, a few seconds
@@ -4692,7 +4697,7 @@ impl App {
                 self.preload()
             }
             Err(why) => {
-                self.motion.refuse(match why {
+                self.refuse(match why {
                     lantern_engine::BracketError::TooDeep => {
                         "Sections go no more than three deep: it can't open here"
                     }
