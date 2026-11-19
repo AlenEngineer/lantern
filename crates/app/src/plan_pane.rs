@@ -1088,6 +1088,8 @@ impl App {
         // them.
         let mut hidden_to = 0;
         let mut rest = 0;
+        // What is carried would land in an empty section's own place.
+        let mut landed_in_place = false;
         // Folded, the open plan is one row, as the others are.
         let folded_plan = tree && self.plan_folded;
         let listed: &[Step] = match folded_plan {
@@ -1098,7 +1100,9 @@ impl App {
             if carried.contains(&step.id) {
                 continue;
             }
-            if landing == Some(rest) {
+            // Landing in an empty section, its own place is where: no
+            // gap of its own.
+            if landing == Some(rest) && !landed_in_place {
                 put!(gap(side.room(), lanes));
                 gap_at = Some(index);
             }
@@ -1159,10 +1163,17 @@ impl App {
                         next: after.map(|after| plan.steps()[after].id),
                         back: None,
                     });
-                } else if plan.group_end(index) == index + 1 {
+                } else if (index + 1..plan.group_end(index))
+                    .all(|at| carried.contains(&plan.steps()[at].id))
+                {
+                    // Empty, or all it holds is being carried: its place
+                    // shows, and its bracket stays beside it. Where what
+                    // is carried would land in it, its place is lit.
+                    let lands_here = landing == Some(rest) && host_id == Some(step.id);
+                    landed_in_place = lands_here;
                     whole.push(step.id);
                     placed.push(index);
-                    put!(self.empty_place(plan, step.id, lanes, side, &places));
+                    put!(self.empty_place(plan, step.id, lands_here, lanes, side, &places));
                 }
                 if selected && adds {
                     put!(insertion_mark(p, INDENT));
@@ -1281,7 +1292,7 @@ impl App {
         {
             put!(track::seen(track::Key::Fill, &places, proposed));
         }
-        if landing == Some(rest) {
+        if landing == Some(rest) && !landed_in_place {
             put!(gap(side.room(), lanes));
             gap_at = Some(plan.len());
         }
@@ -3412,11 +3423,21 @@ impl App {
         &self,
         plan: &Plan,
         section: StepId,
+        lit: bool,
         lanes: Lanes<'_>,
         side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        // Lit, where what is carried would land: in the section's colour.
+        let hue = section_hue(p, &plan.section_colors(), section);
+        let (ground, edge) = match lit {
+            true => (Palette::tint(hue, 0.22), hue),
+            false => (
+                Palette::tint(p.primary, 0.06),
+                Palette::tint(p.primary, 0.6),
+            ),
+        };
         let pick = Message::Click(Clicked::Step(section));
         let inside = row![
             look::icon(Icon::Plus, 14.0, p.on_surface_variant),
@@ -3430,14 +3451,14 @@ impl App {
             container(inside)
                 .width(Fill)
                 .style(move |_| container::Style {
-                    background: Some(Palette::tint(p.primary, 0.06).into()),
+                    background: Some(ground.into()),
                     border: iced::Border {
                         radius: 9.0.into(),
                         ..iced::Border::default()
                     },
                     ..container::Style::default()
                 }),
-            Palette::tint(p.primary, 0.6),
+            edge,
             9.0,
         ))
         .padding(0)
