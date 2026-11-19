@@ -45,6 +45,10 @@ const PANE_LEAST: f32 = 200.0;
 const PANE_MOST: f32 = 560.0;
 const MIDDLE_LEAST: f32 = 320.0;
 /// How wide the line between panes is to the pointer.
+/// How far short of a card's top and foot the line between two of its
+/// panes stops.
+const SEAM_INSET: f32 = 20.0;
+
 const SEAM_GRIP: f32 = 10.0;
 /// The window's padding, the gap between its cards, a card's padding, and
 /// the strip's height.
@@ -168,21 +172,27 @@ impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
         let glass = self.see_through();
-        // The gap between two cards is a handle: drag it to size the side
-        // it bounds, double-click it to let that size itself again. A line
-        // shows in it while it's held.
+        // The panes are one card, a thin line between two that stops short
+        // of its top and foot. The room round the line is a handle: drag
+        // it to size the side it bounds, double-click it to let that size
+        // itself again. The line lights while it's held.
         let seam = |side: Side, width: f32| {
             let held = self.resizing == Some(side);
             let line = container(Space::new())
-                .width(2)
+                .width(if held { 2 } else { 1 })
                 .height(Fill)
                 .style(move |_| match held {
                     true => container::Style::default().background(p.primary),
-                    false => container::Style::default(),
+                    false => container::Style::default().background(Color::WHITE.scale_alpha(0.10)),
                 });
-            iced::widget::mouse_area(container(line).center_x(width).height(Fill))
-                .on_press(Message::ResizePane(side))
-                .interaction(iced::mouse::Interaction::ResizingHorizontally)
+            iced::widget::mouse_area(
+                container(line)
+                    .center_x(width)
+                    .height(Fill)
+                    .padding(iced::Padding::default().top(SEAM_INSET).bottom(SEAM_INSET)),
+            )
+            .on_press(Message::ResizePane(side))
+            .interaction(iced::mouse::Interaction::ResizingHorizontally)
         };
         let timing = self.timing();
         // In Live there is no plan: its place lists what was shown.
@@ -190,8 +200,7 @@ impl App {
             crate::mode::Mode::Live => self.session_pane(),
             _ => self.plan_pane(&timing),
         })
-        .height(Fill)
-        .style(look::card(p, glass, look::CARD_RADIUS));
+        .height(Fill);
         // The settings take the stage's card while they're open.
         let middle: Element<'_, Message> = match &self.settings {
             Some(draft) => self.settings_view(draft),
@@ -213,10 +222,12 @@ impl App {
                 Space::new().height(STRIP),
                 // The settings are not the plan's: they have the window.
                 match self.settings {
-                    Some(_) => row![stage],
-                    None => row![plan, seam(Side::Plan, GAP), stage],
+                    Some(_) => Element::from(row![stage].height(Fill)),
+                    None => container(row![plan, seam(Side::Plan, GAP), stage].height(Fill))
+                        .height(Fill)
+                        .style(look::card(p, glass, look::CARD_RADIUS))
+                        .into(),
                 }
-                .height(Fill)
             ]
             .spacing(GAP),
         )
@@ -1258,13 +1269,9 @@ impl App {
                 .into();
             column(next).spacing(10).width(width).into()
         };
-        let glass = self.see_through();
-        let card = |content: Element<'a, Message>| {
-            container(content)
-                .height(Fill)
-                .padding(CARD_PADDING)
-                .style(look::card(p, glass, look::CARD_RADIUS))
-        };
+        // Each a pane of the one card the panes make.
+        let card =
+            |content: Element<'a, Message>| container(content).height(Fill).padding(CARD_PADDING);
         // Nothing beside it: the picture has the room.
         if !self.search_open
             && !planning

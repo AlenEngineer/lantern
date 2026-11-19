@@ -564,6 +564,10 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The dashboard's panes are one card, in every mode: a thin line
+  between two of them, short of the card's top and foot, where there
+  were gaps. The line is still pulled to size the panes, and lights as
+  it is.
 - A step's own sound set to another file (music under a passage, or
   under the last slides of a deck) plays apart from what the step
   shows, so it can go under a video too: the video plays without its
