@@ -1608,6 +1608,17 @@ impl Stage {
     /// everything the plan may show, in the order to load it. Videos aren't
     /// kept (a player each is too much); the next one is still preloaded.
     /// What left the plan is let go.
+    /// Lets go of what is kept of the pages of the file `file` is: they
+    /// load again, from the file as it is now.
+    pub fn forget_pages(&mut self, file: &Resource) {
+        let base = String::from(file.id.clone());
+        let ours = |id: &ResourceId| String::from(id.clone()).starts_with(&format!("{base}#page"));
+        self.kept.retain(|id, _| !ours(id));
+        self.unkept.retain(|id| !ours(id));
+        self.ready.retain(|id, _| !ours(id));
+        self.keeping.retain(|id| !ours(id));
+    }
+
     /// How many pages the paged file `id` has, once its pages are kept.
     pub fn pages(&self, id: &ResourceId) -> Option<usize> {
         match self.kept.get(id)? {
@@ -1879,6 +1890,44 @@ fn open_playbin(playbin: &str, uri: &url::Url, size: &str, patient: bool) -> Res
     video.set_paused(true);
     Ok(video)
 }
+
+/// How many pages the paged file `resource` has now, a PDF or a deck,
+/// by rendering it (cached, by its size and when it changed). Blocks.
+pub fn count_pages(resource: &Resource) -> Result<usize, String> {
+    let pdf = match Loader::for_resource(resource)? {
+        Some(Loader::Pdf(path, None)) => existing(&path)?.to_path_buf(),
+        Some(Loader::Deck(path, None)) => {
+            crate::deck::to_pdf(existing(&path)?, &cache_dir().join("decks"))?
+        }
+        _ => return Err("it is not a PDF or a presentation".to_string()),
+    };
+    render_pdf(&pdf, &cache_dir().join("pdf")).map(|pages| pages.len())
+}
+
+/// When the file `resource` is was last changed, and how big it is, in
+/// a few words: two that differ are two versions of it. `None` for what
+/// is not a file, or a file that can't be read.
+pub fn stamp(resource: &Resource) -> Option<String> {
+    let Location::File(path) = &resource.location else {
+        return None;
+    };
+    let meta = std::fs::metadata(path).ok()?;
+    let at = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(format!(
+        "{}.{:09}:{}",
+        at.as_secs(),
+        at.subsec_nanos(),
+        meta.len()
+    ))
+}
+
+/// The key a paged file's pages keep its [`stamp`] under, as it was when
+/// they were opened out of it.
+pub const STAMP: &str = "modified";
 
 /// `pages`, or only the one `page` names (counted from 0): a page opened
 /// out of its file into a step of its own.

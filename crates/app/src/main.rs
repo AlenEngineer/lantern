@@ -319,6 +319,12 @@ enum Message {
     Type(String),
     /// Time to see whether the colours file changed.
     CheckPalette,
+    /// Time to see whether a file the plan opened into pages changed.
+    CheckFiles,
+    /// The file with this id, opened into pages, is taken in as it is now.
+    TakeIn(ResourceId),
+    /// It was read again: how many pages it has now, or why it can't be.
+    TookIn(ResourceId, Result<usize, String>),
     /// A plan step was picked: it becomes the selection, where new steps
     /// go, and is lined up in the preview.
     Select(StepId),
@@ -837,6 +843,11 @@ struct App {
     /// A quote being typed into a picked step's card, to lay out with
     /// what it shows.
     pub(crate) layout_typed: Option<(StepId, String)>,
+    /// The files the plan opened into pages that changed since: each as
+    /// it is now, with its new stamp ([`stage::STAMP`]).
+    pub(crate) files_changed: Vec<lantern_engine::Resource>,
+    /// The changed file being read again, to take it in.
+    pub(crate) taking_in: Option<ResourceId>,
     /// Files of the library picked together, in its order.
     pub(crate) shelf_many: Vec<ResourceId>,
     /// The sections of the plan that are folded away.
@@ -1016,6 +1027,8 @@ impl App {
             carried: None,
             shelf_pick: None,
             layout_typed: None,
+            files_changed: Vec::new(),
+            taking_in: None,
             shelf_many: Vec::new(),
             scrub: None,
             balk: None,
@@ -2209,6 +2222,49 @@ impl App {
                 return self.complete(query);
             }
             Message::CheckPalette => self.check_palette(),
+            Message::CheckFiles => self.check_files(),
+            Message::TakeIn(id) => {
+                let Some(file) = self
+                    .files_changed
+                    .iter()
+                    .find(|file| file.id == id)
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                if !self.can_edit() {
+                    return Task::none();
+                }
+                self.taking_in = Some(id.clone());
+                return Task::perform(in_thread(move || stage::count_pages(&file)), move |pages| {
+                    Message::TookIn(id.clone(), pages)
+                });
+            }
+            Message::TookIn(id, pages) => {
+                self.taking_in = None;
+                let Some(file) = self
+                    .files_changed
+                    .iter()
+                    .find(|file| file.id == id)
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                match pages {
+                    Ok(pages) => {
+                        self.remember(None);
+                        self.engine.0.edit_plan(|plan| plan.repage(&file, pages));
+                        self.media.forget_pages(&file);
+                        self.files_changed.retain(|changed| changed.id != id);
+                        log(format!("plan: took in {} with {pages} pages", file.title));
+                        return self.preload();
+                    }
+                    Err(why) => {
+                        log(format!("plan: can't read {} again: {why}", file.title));
+                        self.motion.refuse("The file can't be read again");
+                    }
+                }
+            }
             Message::Settings(edit) => {
                 // Picking a screen moves the stage there at once.
                 if let settings::Edit::Output(Some(output)) = &edit {
@@ -4546,6 +4602,35 @@ impl App {
     /// Closes the open note; one that says nothing is taken away.
     /// Opens the deck or PDF of the step `step` into a section of its
     /// pages. Not the one on the projector: its pages would start over.
+    /// Sees which files the plan opened into pages changed since they
+    /// were: their pages remember them as they were then.
+    fn check_files(&mut self) {
+        let plan = self.engine.0.plan();
+        let mut changed: Vec<lantern_engine::Resource> = Vec::new();
+        for step in plan.steps() {
+            let Action::Show { resource } = &step.action else {
+                continue;
+            };
+            let Some(mut file) = resource.file_of_page() else {
+                continue;
+            };
+            if changed.iter().any(|seen| seen.id == file.id) {
+                continue;
+            }
+            let (Some(then), Some(now)) = (resource.meta.get(stage::STAMP), stage::stamp(&file))
+            else {
+                continue;
+            };
+            if *then != now {
+                file.meta.insert(stage::STAMP.to_string(), now);
+                changed.push(file);
+            }
+        }
+        if changed != self.files_changed {
+            self.files_changed = changed;
+        }
+    }
+
     fn open_pages(&mut self, step: StepId) -> Task<Message> {
         let plan = self.engine.0.plan();
         let Some(pages) = plan_edit::paged(&plan, step)
@@ -4567,11 +4652,18 @@ impl App {
             .get(step)
             .map(|deck| (self.estimate(deck).length / pages as u32).max(Duration::from_secs(5)));
         self.remember(None);
-        match self
-            .engine
-            .0
-            .edit_plan(|plan| plan.open_pages(step, pages, each))
-        {
+        match self.engine.0.edit_plan(|plan| {
+            // Its pages remember the file as it is, to tell when it changes.
+            if let Some(Step {
+                action: Action::Show { resource },
+                ..
+            }) = plan.get_mut(step)
+                && let Some(stamp) = stage::stamp(resource)
+            {
+                resource.meta.insert(stage::STAMP.to_string(), stamp);
+            }
+            plan.open_pages(step, pages, each)
+        }) {
             Ok(section) => {
                 self.ring = None;
                 let plan = self.engine.0.plan();
@@ -5123,6 +5215,7 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::CheckPalette));
         }
+        subscriptions.push(iced::time::every(Duration::from_secs(3)).map(|_| Message::CheckFiles));
         let playing = self
             .stage
             .program
