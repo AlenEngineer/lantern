@@ -564,6 +564,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The strip is part of the same card as the panes, a thin line under
+  it short of the card's sides; the cards cast no shadow.
 - With a plan open, the list of plans (‹ and Ctrl+O) is gone: the
   other plans are folded under it, each with its ☆ to make it a
   template, and under them "New plan" and "Import a plan". Ctrl+O goes

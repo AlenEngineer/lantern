@@ -214,30 +214,39 @@ impl App {
             Some(draft) => self.settings_view(draft),
             None => self.stage_centre(&seam),
         };
-        // The settings are one card. Otherwise the picture and what is
-        // beside it are a card each, made where they are laid out.
+        // The settings have the panes' room.
         let stage = container(middle).center_x(Fill).height(Fill);
         let stage = match self.settings {
-            Some(_) => stage
-                .padding(CARD_PADDING)
-                .style(look::card(p, glass, look::CARD_RADIUS)),
+            Some(_) => stage.padding(CARD_PADDING),
             None => stage,
         };
+        // Under the strip, across the card, a thin line short of its
+        // sides, as between the panes.
+        let rule = container(
+            container(Space::new())
+                .width(Fill)
+                .height(1)
+                .style(|_| container::Style::default().background(Color::WHITE.scale_alpha(0.10))),
+        )
+        .width(Fill)
+        .padding(iced::Padding::default().left(SEAM_INSET).right(SEAM_INSET));
+        // The strip and the panes are one card. The strip's room is kept
+        // here; the strip itself is drawn last, over what drops from it.
         let window = container(
-            // The strip's room: the strip itself is drawn last, over what
-            // drops from it.
-            column![
-                Space::new().height(STRIP),
-                // The settings are not the plan's: they have the window.
-                match self.settings {
-                    Some(_) => Element::from(row![stage].height(Fill)),
-                    None => container(row![plan, seam(Side::Plan, GAP), stage].height(Fill))
-                        .height(Fill)
-                        .style(look::card(p, glass, look::CARD_RADIUS))
-                        .into(),
-                }
-            ]
-            .spacing(GAP),
+            container(
+                column![
+                    Space::new().height(STRIP),
+                    rule,
+                    // The settings are not the plan's: they have the window.
+                    match self.settings {
+                        Some(_) => Element::from(row![stage].height(Fill)),
+                        None => row![plan, seam(Side::Plan, GAP), stage].height(Fill).into(),
+                    }
+                ]
+                .spacing(GAP / 2.0),
+            )
+            .height(Fill)
+            .style(look::card(p, glass, look::CARD_RADIUS)),
         )
         .width(Fill)
         .height(Fill)
@@ -956,7 +965,7 @@ impl App {
             .height(STRIP)
             .padding([0, 8])
             .align_y(Alignment::Center)
-            .style(look::strip(p, self.see_through()))
+            .style(look::strip(p))
             .into()
     }
 
