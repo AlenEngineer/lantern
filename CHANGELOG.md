@@ -810,6 +810,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The plan pane no longer keeps an empty strip right of the plan's
+  bracket: the plan writes its name at its head, so the rows get that
+  room for their names.
 - A step showing another picture in place of its own, or the picture
   kept from before, no longer reads as off the plan on the dashboard
   ("live · off the plan", "The plan is waiting"). A sound playing apart

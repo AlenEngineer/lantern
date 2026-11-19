@@ -494,7 +494,7 @@ impl App {
             .map(|brace| brace.lane + 1)
             .max()
             .unwrap_or(0);
-        let wide = track::side_room(lanes, false, true);
+        let wide = track::side_room(lanes, false, true, false);
         let colors = plan.section_colors();
         let hue = |id: StepId| crate::plan_pane::section_hue(p, &colors, id);
         let places = self.places.clone();
