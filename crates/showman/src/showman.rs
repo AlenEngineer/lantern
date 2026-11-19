@@ -34,6 +34,9 @@ pub struct StageState {
     /// Heard again when something else comes on program.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub muted: bool,
+    /// The sound apart from the program plays lowered, under another.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lowered: bool,
 }
 
 impl StageState {
@@ -105,6 +108,7 @@ impl StageState {
             }
             StageEvent::Bed { scene, .. } => set_if_different(&mut self.bed, scene),
             StageEvent::Muted { on } => set_if_different(&mut self.muted, on),
+            StageEvent::Lowered { on } => set_if_different(&mut self.lowered, on),
         }
     }
 
@@ -233,6 +237,11 @@ pub enum StageEvent {
     /// The program's own sound is silenced, or heard again.
     Muted {
         /// Whether it is silenced.
+        on: bool,
+    },
+    /// The sound apart from the program goes under another, or back up.
+    Lowered {
+        /// Whether it is lowered.
         on: bool,
     },
 }
@@ -419,6 +428,18 @@ impl Showman {
     /// Silences the program's own sound, or lets it be heard again.
     pub fn set_muted(&mut self, on: bool) {
         self.emit(StageEvent::Muted { on });
+    }
+
+    /// Lowers the sound apart from the program under another, or brings
+    /// it back up.
+    pub fn set_lowered(&mut self, on: bool) {
+        self.emit(StageEvent::Lowered { on });
+    }
+
+    /// Takes what is on program off and leaves nothing to see, while
+    /// what plays apart from it goes on.
+    pub fn blank(&mut self) {
+        self.emit(StageEvent::Program { scene: None });
     }
 
     /// Turns blackout on or off.

@@ -118,6 +118,8 @@ fn a_step_comes_up_over_its_fade_in_with_the_sound_it_plays() {
     plan.get_mut(psalm).unwrap().sound = Some(StepSound {
         resource: resource("Piano", Kind::Audio),
         from: 0,
+        until: None,
+        meets: lantern_engine::Meets::Fade,
     });
     let engine = Engine::new();
     engine.load_plan(plan);

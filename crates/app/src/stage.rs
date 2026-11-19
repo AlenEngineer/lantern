@@ -729,6 +729,10 @@ struct Going {
     over: Duration,
 }
 
+/// How far up a sound apart from the program is while it plays under
+/// another.
+const LOWERED: f32 = 0.55;
+
 /// How far up something is that comes up over `fade_in` and began at
 /// `since`.
 fn come_up(fade_in: Option<Duration>, since: Instant, now: Instant) -> f32 {
@@ -890,7 +894,12 @@ impl Stage {
     /// loud as their fades say at `now`; one gone out is let go. While
     /// what is on fades out, the sound apart fades with it.
     fn play_bed(&mut self, stage: &StageState, now: Instant) {
-        let with = self.fades.levels(stage, now).sound;
+        // Under another sound it plays lowered.
+        let lowered = match stage.lowered {
+            true => LOWERED,
+            false => 1.0,
+        };
+        let with = self.fades.levels(stage, now).sound * lowered;
         if let Some(Bed {
             playing: Some((sound, since)),
             fade_in,
