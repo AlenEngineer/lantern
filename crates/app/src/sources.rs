@@ -85,7 +85,7 @@ impl fmt::Display for MeetsChoice {
         f.write_str(match self.0 {
             Meets::Fade => "fades out under a sound",
             Meets::Cut => "stops at a sound",
-            Meets::Under => "plays lowered under a sound",
+            Meets::Under => "is a background track",
         })
     }
 }
@@ -554,7 +554,8 @@ pub fn mix_lines(plan: &Plan, step: &Step) -> Vec<(Icon, String)> {
             if keeps {
                 // Under a step with a sound of its own, as it is set to.
                 let words = match (sounds(step), sound.meets) {
-                    (false, _) | (true, Meets::Under) => "keeps going",
+                    (false, _) => "keeps going",
+                    (true, Meets::Under) => "plays lowered here",
                     (true, Meets::Fade) => "fades out here",
                     (true, Meets::Cut) => "stops here",
                 };

@@ -740,9 +740,68 @@ struct Going {
     over: Duration,
 }
 
-/// How far up a sound apart from the program is while it plays under
-/// another.
+/// How far up the background track is while it plays under another
+/// sound.
 const LOWERED: f32 = 0.55;
+
+/// How long the background track takes to go down under another sound,
+/// or back up.
+const DUCK: Duration = Duration::from_millis(800);
+
+/// Where a sound apart from the program plays: a step's sound in the
+/// bed ([`StageState::bed`]), or the background track
+/// ([`StageState::track`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Apart {
+    Bed = 0,
+    Track = 1,
+}
+
+impl Apart {
+    const BOTH: [Apart; 2] = [Apart::Bed, Apart::Track];
+
+    fn of(self, stage: &StageState) -> Option<&lantern_engine::Scene> {
+        match self {
+            Apart::Bed => stage.bed.as_ref(),
+            Apart::Track => stage.track.as_ref(),
+        }
+    }
+
+    /// What it is called, and what its file is loaded as.
+    fn part(self) -> &'static str {
+        match self {
+            Apart::Bed => "bed",
+            Apart::Track => "track",
+        }
+    }
+}
+
+/// The background track going down under another sound, or back up:
+/// from `from` of the way up, since `since`.
+#[derive(Debug, Clone, Copy)]
+struct Duck {
+    from: f32,
+    down: bool,
+    since: Instant,
+}
+
+impl Duck {
+    fn to(&self) -> f32 {
+        match self.down {
+            true => LOWERED,
+            false => 1.0,
+        }
+    }
+
+    fn level(&self, now: Instant) -> f32 {
+        let gone = now.saturating_duration_since(self.since).as_secs_f32() / DUCK.as_secs_f32();
+        self.from + (self.to() - self.from) * gone.min(1.0)
+    }
+
+    fn moving(&self, now: Instant) -> bool {
+        self.from != self.to() && now.saturating_duration_since(self.since) < DUCK
+    }
+}
 
 /// How far up something is that comes up over `fade_in` and began at
 /// `since`.
@@ -758,9 +817,12 @@ fn come_up(fade_in: Option<Duration>, since: Instant, now: Instant) -> f32 {
 /// The renderer's state. The engine's mirror ([`StageState`]) stays the
 /// authority on what is shown; this only holds what it takes to draw it.
 pub struct Stage {
-    /// The sound playing apart from the program, and those going out.
-    bed: Option<Bed>,
+    /// The sounds playing apart from the program, by [`Apart`], and
+    /// those going out.
+    apart: [Option<Bed>; 2],
     going: Vec<Going>,
+    /// The background track going down under another sound, or back up.
+    duck: Duck,
     program: Program,
     /// What is loaded for the picture a sound plays over
     /// ([`StageState::under`]): it was the program when the sound went on.
@@ -807,8 +869,13 @@ pub struct Stage {
 impl Stage {
     pub fn new(downloads: Arc<Downloads>) -> Self {
         Stage {
-            bed: None,
+            apart: [None, None],
             going: Vec::new(),
+            duck: Duck {
+                from: 1.0,
+                down: false,
+                since: Instant::now(),
+            },
             downloads,
             program: Program::Bare,
             under: None,
@@ -838,17 +905,20 @@ impl Stage {
         self.play_levels(stage, now);
     }
 
-    /// Follows the sound playing apart from the program: the one it takes
-    /// the place of goes out over `fade_out`, or at once, and a new one
-    /// starts loading. One that can't be played says why.
+    /// Follows a sound playing apart from the program, `which` of them:
+    /// the one it takes the place of goes out over `fade_out`, or at
+    /// once, and a new one starts loading. One that can't be played says
+    /// why.
     pub fn bed_changed(
         &mut self,
         stage: &StageState,
+        which: Apart,
         fade_out: Option<FadeTime>,
         engine: &Engine,
     ) -> iced::Task<Arc<Loaded>> {
-        let wanted = stage.bed.as_ref();
-        if self.bed.as_ref().map(|bed| bed.scene) == wanted.map(|scene| scene.id) {
+        let wanted = which.of(stage);
+        let slot = which as usize;
+        if self.apart[slot].as_ref().map(|bed| bed.scene) == wanted.map(|scene| scene.id) {
             return iced::Task::none();
         }
         let now = Instant::now();
@@ -857,9 +927,11 @@ impl Stage {
             fade_in,
             alone,
             ..
-        }) = self.bed.take()
+        }) = self.apart[slot].take()
         {
-            let from = come_up(fade_in, since, now) * self.with_seen(alone, stage, now);
+            let from = come_up(fade_in, since, now)
+                * self.with_seen(alone, stage, now)
+                * self.ducked(which, now);
             if let Some(over) = fade_out {
                 self.going.push(Going {
                     sound,
@@ -870,7 +942,7 @@ impl Stage {
             }
         }
         let Some(scene) = wanted else {
-            crate::log("stage: nothing plays apart");
+            crate::log(format!("stage: no {} plays", which.part()));
             return iced::Task::none();
         };
         let path = match &scene.resource.location {
@@ -885,20 +957,26 @@ impl Stage {
                 return iced::Task::none();
             }
         };
-        let key = scene.resource.id.part("bed");
-        let alone = engine
-            .plays_apart()
-            .filter(|(playing, _)| *playing == scene.id)
-            .and_then(|(_, owner)| engine.plan().get(owner).map(|step| step.sound_fade))
-            .is_some_and(|fade| fade.is_some());
-        self.bed = Some(Bed {
+        let key = scene.resource.id.part(which.part());
+        // A background track goes on from step to step, whatever fades;
+        // a step's sound apart fades with what it shows unless it fades
+        // on its own.
+        let alone = match which {
+            Apart::Track => true,
+            Apart::Bed => engine
+                .plays_apart()
+                .filter(|(playing, _)| *playing == scene.id)
+                .and_then(|(_, owner)| engine.plan().get(owner).map(|step| step.sound_fade))
+                .is_some_and(|fade| fade.is_some()),
+        };
+        self.apart[slot] = Some(Bed {
             scene: scene.id,
             key: key.clone(),
             playing: None,
             fade_in: scene.fade_in.map(FadeTime::duration),
             alone,
         });
-        crate::log(format!("stage: {} plays apart", scene.id));
+        crate::log(format!("stage: {} plays as the {}", scene.id, which.part()));
         spawn(
             key,
             Loader::Audio(path),
@@ -908,24 +986,30 @@ impl Stage {
         )
     }
 
-    /// Plays the sound apart from the program, and those going out, as
+    /// Plays the sounds apart from the program, and those going out, as
     /// loud as their fades say at `now`; one gone out is let go. While
-    /// what is on fades out, the sound apart fades with it.
+    /// what is on fades out, a step's sound apart fades with it. The
+    /// background track goes down under another sound, and back up,
+    /// over [`DUCK`].
     fn play_bed(&mut self, stage: &StageState, now: Instant) {
-        // Under another sound it plays lowered.
-        let lowered = match stage.lowered {
-            true => LOWERED,
-            false => 1.0,
-        };
-        if let Some(Bed {
-            playing: Some((sound, since)),
-            fade_in,
-            alone,
-            ..
-        }) = &self.bed
-        {
-            let with = self.with_seen(*alone, stage, now) * lowered;
-            sound.set_volume(loudness(come_up(*fade_in, *since, now) * with));
+        if stage.lowered != self.duck.down {
+            self.duck = Duck {
+                from: self.duck.level(now),
+                down: stage.lowered,
+                since: now,
+            };
+        }
+        for which in Apart::BOTH {
+            if let Some(Bed {
+                playing: Some((sound, since)),
+                fade_in,
+                alone,
+                ..
+            }) = &self.apart[which as usize]
+            {
+                let with = self.with_seen(*alone, stage, now) * self.ducked(which, now);
+                sound.set_volume(loudness(come_up(*fade_in, *since, now) * with));
+            }
         }
         self.going.retain(|going| {
             let gone = now.saturating_duration_since(going.since).as_secs_f32()
@@ -935,7 +1019,7 @@ impl Stage {
         });
     }
 
-    /// How far up what is seen lets the sound apart from the program be:
+    /// How far up what is seen lets a sound apart from the program be:
     /// as far as it is faded, unless the sound fades on its own.
     fn with_seen(&self, alone: bool, stage: &StageState, now: Instant) -> f32 {
         match alone {
@@ -944,69 +1028,94 @@ impl Stage {
         }
     }
 
-    /// Whether the sound apart from the program is coming up, or one is
-    /// going out.
+    /// How far down `which` is gone under another sound: the background
+    /// track only.
+    fn ducked(&self, which: Apart, now: Instant) -> f32 {
+        match which {
+            Apart::Bed => 1.0,
+            Apart::Track => self.duck.level(now),
+        }
+    }
+
+    /// Whether a sound apart from the program is coming up, going down or
+    /// back up, or one is going out.
     fn bed_moving(&self, now: Instant) -> bool {
         !self.going.is_empty()
-            || self.bed.as_ref().is_some_and(|bed| {
+            || self.duck.moving(now)
+            || self.apart.iter().flatten().any(|bed| {
                 bed.playing
                     .as_ref()
                     .is_some_and(|(_, since)| come_up(bed.fade_in, *since, now) < 1.0)
             })
     }
 
-    /// Where the sound apart from the program is now.
-    pub fn bed_playhead(&self) -> Option<(SceneId, Duration)> {
-        let bed = self.bed.as_ref()?;
-        let (sound, _) = bed.playing.as_ref()?;
-        Some((bed.scene, sound.position()?))
+    /// The sounds apart from the program that are playing.
+    fn beds(&self) -> impl Iterator<Item = (SceneId, &Sound)> {
+        self.apart
+            .iter()
+            .flatten()
+            .filter_map(|bed| Some((bed.scene, &bed.playing.as_ref()?.0)))
     }
 
-    /// How long the sound apart from the program is, once its player
+    /// Where each sound apart from the program is now.
+    pub fn bed_playheads(&self) -> Vec<(SceneId, Duration)> {
+        self.beds()
+            .filter_map(|(scene, sound)| Some((scene, sound.position()?)))
+            .collect()
+    }
+
+    /// How long each sound apart from the program is, once its player
     /// knows: a file may not say so as it starts.
-    pub fn bed_length(&self) -> Option<(SceneId, Duration)> {
-        let bed = self.bed.as_ref()?;
-        let (sound, _) = bed.playing.as_ref()?;
-        Some((bed.scene, sound.duration())).filter(|(_, length)| !length.is_zero())
+    pub fn bed_lengths(&self) -> Vec<(SceneId, Duration)> {
+        self.beds()
+            .map(|(scene, sound)| (scene, sound.duration()))
+            .filter(|(_, length)| !length.is_zero())
+            .collect()
     }
 
-    /// What the sound apart from the program has said since it was last
+    /// What each sound apart from the program has said since it was last
     /// asked: that it reached its end, or why it stopped.
-    pub fn bed_event(&self) -> Option<(SceneId, Result<(), String>)> {
-        let bed = self.bed.as_ref()?;
-        let (sound, _) = bed.playing.as_ref()?;
-        Some((bed.scene, sound.event()?))
+    pub fn bed_events(&self) -> Vec<(SceneId, Result<(), String>)> {
+        self.beds()
+            .filter_map(|(scene, sound)| Some((scene, sound.event()?)))
+            .collect()
     }
 
-    /// The sound apart from the program, loaded: it plays from silence or
-    /// at once. `true` when `loaded` was it.
+    /// A sound apart from the program, loaded: it plays from silence or
+    /// at once. `true` when `loaded` was one.
     fn bed_loaded(&mut self, loaded: &Loaded, stage: &StageState, engine: &Engine) -> bool {
-        let Some(bed) = self
-            .bed
-            .as_mut()
-            .filter(|bed| bed.key == loaded.resource && bed.playing.is_none())
-        else {
+        let Some(which) = Apart::BOTH.into_iter().find(|which| {
+            self.apart[*which as usize]
+                .as_ref()
+                .is_some_and(|bed| bed.key == loaded.resource && bed.playing.is_none())
+        }) else {
             return false;
         };
         self.loading.remove(&loaded.resource);
         let Some(result) = loaded.result.lock().ok().and_then(|mut slot| slot.take()) else {
             return true;
         };
+        let now = Instant::now();
+        let ducked = self.ducked(which, now);
+        let seen = self.fades.levels(stage, now).sound;
+        let Some(bed) = self.apart[which as usize].as_mut() else {
+            return true;
+        };
         match result {
             Ok(Content::Sound(sound)) => {
-                let now = Instant::now();
-                let seen = match bed.alone {
-                    true => 1.0,
-                    false => self.fades.levels(stage, now).sound,
-                };
-                let level = come_up(bed.fade_in, now, now) * seen;
+                let seen = if bed.alone { 1.0 } else { seen };
+                let level = come_up(bed.fade_in, now, now) * seen * ducked;
                 sound.set_volume(loudness(level));
                 sound.unmute();
                 sound.set_paused(false);
                 let duration = Some(sound.duration()).filter(|d| !d.is_zero());
                 engine.report(bed.scene, MediaReport::Timeline { duration });
                 bed.playing = Some((sound, now));
-                crate::log(format!("stage: {} playing apart", bed.scene));
+                crate::log(format!(
+                    "stage: {} playing as the {}",
+                    bed.scene,
+                    which.part()
+                ));
             }
             Ok(_) => {}
             Err(reason) => {
@@ -1830,6 +1939,36 @@ mod tests {
     use lantern_engine::SourceId;
 
     use super::*;
+
+    #[test]
+    fn the_background_track_goes_down_and_back_up_over_a_moment() {
+        let start = Instant::now();
+        let down = Duck {
+            from: 1.0,
+            down: true,
+            since: start,
+        };
+        assert_eq!(down.level(start), 1.0);
+        let half = down.level(start + DUCK / 2);
+        assert!((half - (1.0 + LOWERED) / 2.0).abs() < 0.01, "{half}");
+        assert_eq!(down.level(start + DUCK), LOWERED);
+        assert!(down.moving(start + DUCK / 2));
+        assert!(!down.moving(start + DUCK));
+        // Back up from wherever it got to.
+        let up = Duck {
+            from: half,
+            down: false,
+            since: start,
+        };
+        assert_eq!(up.level(start + DUCK * 2), 1.0);
+        // Already where it is going, nothing moves.
+        let still = Duck {
+            from: 1.0,
+            down: false,
+            since: start,
+        };
+        assert!(!still.moving(start));
+    }
 
     #[test]
     fn a_fade_runs_to_its_last_level_and_a_fade_out_moves_the_plan_on() {

@@ -519,6 +519,13 @@ impl StepSound {
             meets: Meets::Fade,
         }
     }
+
+    /// A background track: it keeps going under the steps after its own,
+    /// lowered under any with a sound of its own, apart from what they
+    /// play.
+    pub fn is_background(&self) -> bool {
+        self.until.is_some() && self.meets == Meets::Under
+    }
 }
 
 /// What a sound that keeps going under the steps after its own does under

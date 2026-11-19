@@ -1688,70 +1688,85 @@ impl App {
         }
     }
 
-    /// The sound playing apart from the program, when the step `id` put it
-    /// on: its own, playing with it.
+    /// A sound playing apart from the program that the step `id` set: in
+    /// the bed, or as the background track.
     pub(crate) fn apart_of(&self, id: StepId) -> Option<&Scene> {
-        let (scene, owner) = self.engine.0.plays_apart()?;
-        self.stage
-            .bed
-            .as_ref()
-            .filter(|bed| owner == id && bed.id == scene)
+        self.aparts()
+            .into_iter()
+            .find_map(|(scene, owner, _)| (owner == id).then_some(scene))
     }
 
     /// How much of the sound the step `id` set has played, 0 to 1, while
     /// it plays apart from the program, its own or kept going.
     pub(crate) fn apart_played(&self, id: StepId) -> Option<f32> {
-        let (scene, owner) = self.engine.0.plays_apart()?;
-        let bed = self
-            .stage
-            .bed
-            .as_ref()
-            .filter(|bed| owner == id && bed.id == scene)?;
-        crate::plan_pane::progress(&bed.media, &bed.resource).map(|(_, done)| done)
+        let scene = self.apart_of(id)?;
+        crate::plan_pane::progress(&scene.media, &scene.resource).map(|(_, done)| done)
     }
 
-    /// What plays apart from the program, said under what is on: its
-    /// name, how far it has played, and whether it came from an earlier
-    /// step or plays lowered.
+    /// The sounds playing apart from the program that the plan put on,
+    /// each with the step that set it and whether it is the background
+    /// track.
+    fn aparts(&self) -> Vec<(&Scene, StepId, bool)> {
+        let engine = &self.engine.0;
+        [
+            (self.stage.bed.as_ref(), engine.plays_apart(), false),
+            (self.stage.track.as_ref(), engine.background(), true),
+        ]
+        .into_iter()
+        .filter_map(|(scene, of, track)| {
+            let scene = scene?;
+            let (_, owner) = of.filter(|(playing, _)| *playing == scene.id)?;
+            Some((scene, owner, track))
+        })
+        .collect()
+    }
+
+    /// What plays apart from the program, said under what is on, one
+    /// line each: its name, how far it has played, and whether it is the
+    /// background track, came from an earlier step, or plays lowered.
     fn apart_line(&self) -> Option<Element<'_, Message>> {
         let p = self.palette;
-        let bed = self.stage.bed.as_ref()?;
         let plan = self.engine.0.plan();
-        let owner = self
-            .engine
-            .0
-            .plays_apart()
-            .filter(|(scene, _)| *scene == bed.id)
-            .and_then(|(_, owner)| plan.get(owner).cloned());
         let current = self.engine.0.current_step().map(|step| step.id);
-        let mut how = Vec::new();
-        if let Some(owner) = owner.filter(|owner| Some(owner.id) != current) {
-            how.push(format!("kept going from {}", owner.label));
+        let mut all = column![].spacing(8);
+        let aparts = self.aparts();
+        if aparts.is_empty() {
+            return None;
         }
-        if self.stage.lowered {
-            how.push("lowered".to_string());
+        for (scene, owner, track) in aparts {
+            let mut how = Vec::new();
+            if track {
+                how.push("background track".to_string());
+            }
+            if let Some(owner) = plan.get(owner).filter(|owner| Some(owner.id) != current) {
+                how.push(format!("from {}", owner.label));
+            }
+            if track && self.stage.lowered {
+                how.push("lowered".to_string());
+            }
+            let progress = crate::plan_pane::progress(&scene.media, &scene.resource);
+            let mut line = row![
+                look::icon(Icon::Music, 14.0, p.on_surface_variant),
+                single_line(scene.resource.title.clone())
+                    .size(BODY)
+                    .font(BOLD),
+                Space::new().width(Fill),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            if let Some((far, _)) = &progress {
+                line = line.push(text(far.clone()).size(META).color(p.on_surface_variant));
+            }
+            let mut lines = column![line].spacing(3);
+            if !how.is_empty() {
+                lines = lines.push(text(how.join(" · ")).size(META).color(p.on_surface_variant));
+            }
+            if let Some((_, done)) = progress {
+                lines = lines.push(crate::plan_pane::bar(p, done, p.tertiary, 0.0));
+            }
+            all = all.push(lines);
         }
-        let progress = crate::plan_pane::progress(&bed.media, &bed.resource);
-        let mut line = row![
-            look::icon(Icon::Music, 14.0, p.on_surface_variant),
-            single_line(bed.resource.title.clone())
-                .size(BODY)
-                .font(BOLD),
-            Space::new().width(Fill),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
-        if let Some((far, _)) = &progress {
-            line = line.push(text(far.clone()).size(META).color(p.on_surface_variant));
-        }
-        let mut lines = column![line].spacing(3);
-        if !how.is_empty() {
-            lines = lines.push(text(how.join(" · ")).size(META).color(p.on_surface_variant));
-        }
-        if let Some((_, done)) = progress {
-            lines = lines.push(crate::plan_pane::bar(p, done, p.tertiary, 0.0));
-        }
-        Some(lines.into())
+        Some(all.into())
     }
 
     /// What PgDn does now, for its button, and whether it does anything:
