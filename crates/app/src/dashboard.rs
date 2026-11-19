@@ -1497,7 +1497,15 @@ impl App {
                 tooltip::Position::Top,
             )
         };
+        let together = match self.searching() {
+            true => self.search.together().len(),
+            false => 0,
+        };
+        let add_together = format!("Add {together} to the plan");
         section.push(match (mode, self.can_edit()) {
+            (crate::mode::Mode::Plan, _) if together > 1 => {
+                adds(Tone::Selected, &add_together, Op::AddToPlan)
+            }
             (crate::mode::Mode::Plan, _) if in_plan => {
                 adds(Tone::Selected, "Add again", Op::AddToPlan)
             }
