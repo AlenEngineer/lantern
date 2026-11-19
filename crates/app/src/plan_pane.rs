@@ -332,6 +332,30 @@ fn part_fill(budget: Option<Duration>, planned: Duration) -> (f32, bool) {
     }
 }
 
+impl App {
+    /// What a plan's steps come to, as its bracket's head says it.
+    fn takes(&self, plan: &Plan) -> String {
+        let sums = self.plan_sums(plan);
+        match sums.open {
+            true => format!("Σ {}+", length::clock(sums.filled)),
+            false => format!("Σ {}", length::clock(sums.filled)),
+        }
+    }
+
+    /// A saved plan's line in the list: how many steps, what they come
+    /// to, and `when` it was saved.
+    fn listed_detail(&self, entry: &Entry, when: String) -> String {
+        match &entry.summary {
+            Ok(summary) => format!(
+                "{} · {} · {when}",
+                count(summary.steps, "step"),
+                self.takes(&summary.plan)
+            ),
+            Err(_) => when,
+        }
+    }
+}
+
 /// How wide the plan's goal is on its card, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
 
@@ -1334,37 +1358,46 @@ impl App {
             }
         }
         // Under the open plan, the other plans, each folded into one row
-        // as a bracket: pressed, it opens in this one's place.
+        // as a bracket: pressed, it opens in this one's place. Under
+        // them the templates, starred: pressed, a new plan starts from
+        // one.
         if tree && moving.is_none() {
-            let others: Vec<&Entry> = self
-                .plans
-                .entries
-                .iter()
-                .filter(|entry| {
-                    Some(entry.path.as_path()) != self.plans.file()
-                        && entry
-                            .summary
-                            .as_ref()
-                            .is_ok_and(|summary| !summary.template)
+            let saved = |template: bool| {
+                self.plans.entries.iter().filter_map(move |entry| {
+                    let summary = entry.summary.as_ref().ok()?;
+                    (Some(entry.path.as_path()) != self.plans.file()
+                        && summary.template == template)
+                        .then_some((entry, summary))
                 })
-                .collect();
-            if !others.is_empty() {
-                rows = rows.push(Space::new().height(14));
-            }
-            for entry in others {
-                let Ok(summary) = &entry.summary else {
-                    continue;
-                };
+            };
+            for (at, (entry, summary)) in saved(false).enumerate() {
+                if at == 0 {
+                    rows = rows.push(Space::new().height(14));
+                }
                 let when = ago(SystemTime::now()
                     .duration_since(entry.modified)
                     .unwrap_or_default());
                 rows = rows.push(self.folded_plan_row(
                     summary.title.clone(),
                     summary.steps,
-                    when,
+                    format!("{} · {when}", self.takes(&summary.plan)),
                     false,
                     lanes.curl,
                     Message::OpenPlan(entry.path.clone()),
+                    None,
+                ));
+            }
+            for (at, (entry, summary)) in saved(true).enumerate() {
+                if at == 0 {
+                    rows = rows.push(Space::new().height(14));
+                }
+                rows = rows.push(self.folded_plan_row(
+                    format!("★ {}", summary.title),
+                    summary.steps,
+                    self.takes(&summary.plan),
+                    false,
+                    lanes.curl,
+                    Message::FromTemplate(entry.path.clone()),
                     None,
                 ));
             }
@@ -3972,7 +4005,12 @@ impl App {
         if !templates.is_empty() {
             list = list.push(heading("Templates"));
             for entry in templates {
-                list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
+                list = list.push(saved_plan(
+                    p,
+                    entry,
+                    self.listed_detail(entry, when(entry)),
+                    picked(entry),
+                ));
             }
             list = list.push(Space::new().height(10));
         }
@@ -3990,7 +4028,12 @@ impl App {
             tooltip::Position::Bottom,
         ));
         for entry in plans {
-            list = list.push(saved_plan(p, entry, when(entry), picked(entry)));
+            list = list.push(saved_plan(
+                p,
+                entry,
+                self.listed_detail(entry, when(entry)),
+                picked(entry),
+            ));
         }
         // A plan made on another computer, brought here with its media.
         list = list.push(Space::new().height(10));
@@ -4346,8 +4389,9 @@ impl App {
                 row![
                     single_line(count(steps, "step")).size(BODY).color(ink),
                     Space::new().width(Fill),
-                    text(detail).size(META).color(ink),
+                    single_line(detail).size(META).color(ink),
                 ]
+                .spacing(6)
                 .align_y(Alignment::Center),
             )
             .width(Fill)
@@ -4420,11 +4464,11 @@ impl<Message> iced::widget::canvas::Program<Message> for Marked {
     }
 }
 
-fn saved_plan(p: Palette, entry: &Entry, when: String, picked: bool) -> Element<'_, Message> {
+fn saved_plan(p: Palette, entry: &Entry, detail: String, picked: bool) -> Element<'_, Message> {
     let (title, detail, color, template) = match &entry.summary {
         Ok(summary) => (
             summary.title.clone(),
-            format!("{} · {when}", count(summary.steps, "step")),
+            detail,
             p.on_surface,
             summary.template,
         ),
