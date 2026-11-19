@@ -476,7 +476,7 @@ fn bracket_box(
 /// one further out; with room right of those too (`wide`) where one of
 /// them has no steps of its own to write beside. Not `named`, a brace
 /// for each and nothing written.
-pub fn side_room(lanes: u8, wide: bool, named: bool) -> f32 {
+pub fn side_room(lanes: u8, wide: bool, named: bool, bare_outermost: bool) -> f32 {
     match lanes {
         0 => 0.0,
         lanes if !named => BRACE * f32::from(lanes),
@@ -486,8 +486,9 @@ pub fn side_room(lanes: u8, wide: bool, named: bool) -> f32 {
                 + BRACE * f32::from(lanes - 1)
                 + match wide {
                     // Right of each brace but the innermost, whose names
-                    // are written before the next.
-                    true => LABEL * f32::from(lanes - 1),
+                    // are written before the next, and the outermost
+                    // where it writes nothing beside it (the plan's).
+                    true => LABEL * f32::from((lanes - 1).saturating_sub(u8::from(bare_outermost))),
                     false => 0.0,
                 }
         }
@@ -2138,7 +2139,10 @@ mod tests {
             // The outermost's name is written past its brace, in the room
             // left right of them all.
             let outermost = brace_at(&widths, lanes - 1, true);
-            assert_eq!(outermost + BRACE + LABEL, side_room(lanes, true, true));
+            assert_eq!(
+                outermost + BRACE + LABEL,
+                side_room(lanes, true, true, false)
+            );
             for lane in 1..lanes.saturating_sub(1) {
                 let room = brace_at(&widths, lane + 1, true) - brace_at(&widths, lane, true);
                 assert_eq!(room, BRACE + LABEL);

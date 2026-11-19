@@ -138,7 +138,7 @@ struct Side<'a> {
 impl Side<'_> {
     /// How wide all of it is.
     fn room(&self) -> f32 {
-        track::side_room(self.lanes, self.wide, self.named)
+        track::side_room(self.lanes, self.wide, self.named, self.plan.is_some())
     }
 
     /// How wide the plan's part of it is, from its brace to the right.
@@ -992,15 +992,17 @@ impl App {
         let canvas = self.places.borrow().get(&track::Key::Canvas).copied();
         let leaves = |wide: bool, named: bool| {
             canvas.is_none_or(|canvas| {
-                canvas.width - track::side_room(side_lanes, wide, named) >= NAMES_ROOM
+                canvas.width - track::side_room(side_lanes, wide, named, plan_lane.is_some())
+                    >= NAMES_ROOM
             })
         };
         let named = leaves(false, true);
+        // The plan's bracket writes its words at its head, never beside
+        // its brace: it asks for no room there.
         let side_wide = leaves(true, true)
-            && (braced
+            && braced
                 .iter()
-                .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none())
-                || plan_lane.is_some_and(|lane| lane > 0 && plans_steps.is_none()));
+                .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none());
         // The plan's ring is open: its bracket is drawn strong.
         let plan_ringed = self
             .ring
