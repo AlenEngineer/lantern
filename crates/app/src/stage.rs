@@ -726,6 +726,9 @@ struct Bed {
     playing: Option<(Sound, Instant)>,
     /// How long it takes to come up from nothing.
     fade_in: Option<Duration>,
+    /// It fades on its own ([`lantern_engine::Step::sound_fade`]), not
+    /// with what is seen.
+    alone: bool,
 }
 
 /// A sound that played apart from the program, going out: from `from`
@@ -852,10 +855,11 @@ impl Stage {
         if let Some(Bed {
             playing: Some((sound, since)),
             fade_in,
+            alone,
             ..
         }) = self.bed.take()
         {
-            let from = come_up(fade_in, since, now) * self.fades.levels(stage, now).sound;
+            let from = come_up(fade_in, since, now) * self.with_seen(alone, stage, now);
             if let Some(over) = fade_out {
                 self.going.push(Going {
                     sound,
@@ -882,11 +886,17 @@ impl Stage {
             }
         };
         let key = scene.resource.id.part("bed");
+        let alone = engine
+            .plays_apart()
+            .filter(|(playing, _)| *playing == scene.id)
+            .and_then(|(_, owner)| engine.plan().get(owner).map(|step| step.sound_fade))
+            .is_some_and(|fade| fade.is_some());
         self.bed = Some(Bed {
             scene: scene.id,
             key: key.clone(),
             playing: None,
             fade_in: scene.fade_in.map(FadeTime::duration),
+            alone,
         });
         crate::log(format!("stage: {} plays apart", scene.id));
         spawn(
@@ -907,13 +917,14 @@ impl Stage {
             true => LOWERED,
             false => 1.0,
         };
-        let with = self.fades.levels(stage, now).sound * lowered;
         if let Some(Bed {
             playing: Some((sound, since)),
             fade_in,
+            alone,
             ..
         }) = &self.bed
         {
+            let with = self.with_seen(*alone, stage, now) * lowered;
             sound.set_volume(loudness(come_up(*fade_in, *since, now) * with));
         }
         self.going.retain(|going| {
@@ -922,6 +933,15 @@ impl Stage {
             going.sound.set_volume(loudness(going.from * (1.0 - gone)));
             gone < 1.0
         });
+    }
+
+    /// How far up what is seen lets the sound apart from the program be:
+    /// as far as it is faded, unless the sound fades on its own.
+    fn with_seen(&self, alone: bool, stage: &StageState, now: Instant) -> f32 {
+        match alone {
+            true => 1.0,
+            false => self.fades.levels(stage, now).sound,
+        }
     }
 
     /// Whether the sound apart from the program is coming up, or one is
@@ -975,7 +995,11 @@ impl Stage {
         match result {
             Ok(Content::Sound(sound)) => {
                 let now = Instant::now();
-                let level = come_up(bed.fade_in, now, now) * self.fades.levels(stage, now).sound;
+                let seen = match bed.alone {
+                    true => 1.0,
+                    false => self.fades.levels(stage, now).sound,
+                };
+                let level = come_up(bed.fade_in, now, now) * seen;
                 sound.set_volume(loudness(level));
                 sound.unmute();
                 sound.set_paused(false);

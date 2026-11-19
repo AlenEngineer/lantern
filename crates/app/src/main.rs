@@ -397,6 +397,9 @@ enum Message {
     StepSoundUntil(StepId, Option<StepId>),
     /// What a step's sound does under one with a sound of its own.
     StepSoundMeets(StepId, lantern_engine::Meets),
+    /// How a step's sound apart fades: with its picture (`None`), or on
+    /// its own, one end longer or shorter by so many seconds.
+    SoundFade(StepId, Option<(FadeEnd, i64)>),
     /// A change in the open plan's own panel.
     PlanPanel(plan_panel::PlanEdit),
     /// Something done on the rail beside the plan's steps.
@@ -2975,6 +2978,7 @@ impl App {
             }
             Message::StepSoundUntil(step, until) => self.set_until(step, until),
             Message::StepSoundMeets(step, meets) => self.set_meets(step, meets),
+            Message::SoundFade(step, change) => self.set_sound_fade(step, change),
             Message::PlanPanel(edit) => return self.plan_edit(edit),
             Message::Lens(lens) => {
                 self.lens = lens;

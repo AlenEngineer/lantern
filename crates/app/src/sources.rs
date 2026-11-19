@@ -8,8 +8,11 @@ use std::sync::Arc;
 
 use iced::widget::{column, pick_list, row};
 use iced::{Alignment, Element};
-use lantern_engine::{Action, Kind, Meets, Picture, Plan, Resource, Step, StepId, StepSound};
+use lantern_engine::{
+    Action, FadeTime, Kind, Meets, Picture, Plan, Resource, Step, StepId, StepSound,
+};
 
+use crate::FadeEnd;
 use crate::look::{self, Icon, META};
 use crate::palette::Palette;
 use crate::{App, Message};
@@ -225,6 +228,29 @@ impl App {
         });
     }
 
+    /// Sets how the step `id`'s sound apart fades: with its picture,
+    /// or on its own (starting from the picture's fade), one end
+    /// longer or shorter.
+    pub(crate) fn set_sound_fade(&mut self, id: StepId, change: Option<(FadeEnd, i64)>) {
+        self.remember(Some(id));
+        self.engine.0.edit_plan(|plan| {
+            let Some(step) = plan.get_mut(id) else {
+                return;
+            };
+            let Some((end, by)) = change else {
+                step.sound_fade = None;
+                return;
+            };
+            let fade = step.sound_fade.get_or_insert(step.fade);
+            let time = match end {
+                FadeEnd::In => &mut fade.fade_in,
+                FadeEnd::Out => &mut fade.fade_out,
+            };
+            let now = time.map_or(0, FadeTime::secs);
+            *time = FadeTime::from_secs(now.saturating_add_signed(by));
+        });
+    }
+
     /// Sets where the step `id`'s picture comes from. Another picture is
     /// the one picked; with none picked, nothing changes and the step
     /// says how.
@@ -374,4 +400,48 @@ pub fn mix_lines(plan: &Plan, step: &Step) -> Vec<(Icon, String)> {
         lines.push((Icon::Music, "Silent".to_string()));
     }
     lines
+}
+
+/// Whether `step` plays a sound apart from what it shows: a sound set in
+/// place of its own, or its own under another picture.
+pub fn plays_apart(step: &Step) -> bool {
+    step.sound.is_some() || (!step.picture.is_own() && sounds(step))
+}
+
+/// How a step's sound apart fades, in words.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SoundFadeChoice {
+    WithPicture,
+    Own,
+}
+
+impl fmt::Display for SoundFadeChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            SoundFadeChoice::WithPicture => "with the picture",
+            SoundFadeChoice::Own => "on its own",
+        })
+    }
+}
+
+/// The card's line that sets whether `step`'s sound apart fades with its
+/// picture or on its own.
+pub(crate) fn sound_fade_chooser<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
+    let id = step.id;
+    let now = match step.sound_fade {
+        None => SoundFadeChoice::WithPicture,
+        Some(_) => SoundFadeChoice::Own,
+    };
+    chooser(
+        p,
+        Icon::Music,
+        vec![SoundFadeChoice::WithPicture, SoundFadeChoice::Own],
+        now,
+        move |choice| {
+            Message::SoundFade(
+                id,
+                (choice == SoundFadeChoice::Own).then_some((FadeEnd::In, 0)),
+            )
+        },
+    )
 }
