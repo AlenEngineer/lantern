@@ -83,6 +83,27 @@ pub fn place_section(
     true
 }
 
+/// The loops, drawn orders and joins that putting the section `carried`
+/// at `at` (see [`place_section`]) would cut: those it would take away or
+/// change, as a section is laid in amongst their steps.
+pub fn section_cuts(
+    plan: &Plan,
+    carried: &[StepId],
+    at: usize,
+    level: u8,
+    among: bool,
+) -> Vec<lantern_engine::SpanId> {
+    let mut after = plan.clone();
+    if !place_section(&mut after, carried, at, level, among) {
+        return Vec::new();
+    }
+    plan.spans()
+        .iter()
+        .filter(|span| after.span(span.id).is_none_or(|now| now.flow != span.flow))
+        .map(|span| span.id)
+        .collect()
+}
+
 /// How far the pointer goes sideways for one level in or out.
 const LEVEL_STEP: f32 = 24.0;
 
@@ -296,6 +317,25 @@ mod tests {
 
     fn labels(plan: &Plan) -> Vec<&str> {
         plan.steps().iter().map(|s| s.label.as_str()).collect()
+    }
+
+    #[test]
+    fn a_section_laid_in_amongst_a_drawn_orders_steps_would_cut_it() {
+        let mut plan = Plan::new("Sunday");
+        plan.section("Worship", None);
+        let song = plan.show(resource("Song"));
+        plan.show(resource("Hymn"));
+        let psalm = plan.show(resource("Psalm"));
+        let word = plan.section("Word", None);
+        let reading = plan.show(resource("Reading"));
+        plan.shuffle_over(song, psalm).unwrap();
+        let word_at = plan.position(word).unwrap();
+        // Word with Reading, between Song and Hymn: the order is cut.
+        assert_eq!(section_cuts(&plan, &[word, reading], 3, 1, false).len(), 1);
+        // Back where it was, after them: nothing is.
+        assert!(section_cuts(&plan, &[word, reading], word_at, 0, false).is_empty());
+        // Before Worship, at the top: nothing is.
+        assert!(section_cuts(&plan, &[word, reading], 0, 0, false).is_empty());
     }
 
     #[test]

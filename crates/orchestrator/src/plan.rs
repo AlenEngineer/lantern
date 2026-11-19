@@ -973,6 +973,24 @@ impl Plan {
         found
     }
 
+    /// Gives every section with no colour of its own the one it is shown
+    /// in now, so moving one, or making one, does not change the others'.
+    /// Those it gave one.
+    pub fn keep_section_colors(&mut self) -> Vec<StepId> {
+        let mut kept = Vec::new();
+        for (id, slot) in self.section_colors() {
+            if let Some(Action::Section {
+                color: color @ None,
+                ..
+            }) = self.get_mut(id).map(|step| &mut step.action)
+            {
+                *color = Some(slot);
+                kept.push(id);
+            }
+        }
+        kept
+    }
+
     /// Gives the section `id` the colour `slot`; whether it is one.
     pub fn set_section_color(&mut self, id: StepId, slot: u8) -> bool {
         match self.get_mut(id).map(|step| &mut step.action) {
@@ -3046,6 +3064,33 @@ mod tests {
         // A step has none to set.
         let song = plan.steps()[1].id;
         assert!(!plan.set_section_color(song, 0));
+    }
+
+    #[test]
+    fn kept_colours_stay_with_their_sections_as_they_move() {
+        let mut plan = Plan::new("Sunday");
+        let music = plan.section("Music", None);
+        plan.show(resource("Song"));
+        let word = plan.section("Word", None);
+        plan.show(resource("Reading"));
+        let sermon = plan.section("Sermon", None);
+        plan.show(resource("Talk"));
+        let shown = plan.section_colors();
+        plan.keep_section_colors();
+        assert_eq!(plan.section_colors(), shown);
+        assert_eq!(plan.get(word).unwrap().color(), Some(1));
+        // The last carried to the top: each is still in its own colour.
+        let at = plan.position(sermon).unwrap();
+        let held: Vec<StepId> = plan.steps()[at..].iter().map(|step| step.id).collect();
+        plan.move_steps(&held, 0);
+        let colour = |id| {
+            plan.section_colors()
+                .into_iter()
+                .find(|(s, _)| *s == id)
+                .unwrap()
+                .1
+        };
+        assert_eq!((colour(music), colour(word), colour(sermon)), (0, 1, 2));
     }
 
     #[test]

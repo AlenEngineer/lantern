@@ -356,7 +356,7 @@ impl App {
             // What it is: a section has its bracket; steps that bring a
             // loop or a drawn order whole have its mark.
             if drag.is_section() {
-                said = said.push(text("}").size(BODY).font(BOLD).color(p.primary));
+                said = said.push(text("]").size(BODY).font(BOLD).color(p.primary));
             } else if self.carry_how() != lantern_engine::Carry::Stripped {
                 // Steps that go on into one another come joined.
                 let joined = drag.carried.len() > 1 && !plan.joined_along(&drag.carried).is_empty();
@@ -382,6 +382,10 @@ impl App {
             }
             if cuts {
                 said = said.push(look::icon(Icon::Warning, 14.0, p.error));
+            }
+            // Steps can be cut loose, or stripped of their flows; a
+            // section can't.
+            if cuts && !drag.is_section() {
                 for key in ["Ctrl", "Alt"] {
                     said = said.push(
                         container(text(key).size(META).font(BOLD).color(p.on_surface_variant))
