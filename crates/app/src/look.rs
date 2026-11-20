@@ -8,6 +8,15 @@ use iced::{Background, Border, Color, Font, font};
 use crate::palette::Palette;
 
 pub const UI: Font = Font::with_name("Inter");
+
+/// Inter, in the weights the dashboard uses, carried in the app: a
+/// computer without it (Windows) would pick another, even a symbol font.
+/// `fonts/Inter-LICENSE.txt` is its licence.
+pub const FONTS: [&[u8]; 3] = [
+    include_bytes!("../fonts/Inter-Regular.ttf"),
+    include_bytes!("../fonts/Inter-Medium.ttf"),
+    include_bytes!("../fonts/Inter-Bold.ttf"),
+];
 pub const MEDIUM: Font = Font {
     weight: font::Weight::Medium,
     ..UI

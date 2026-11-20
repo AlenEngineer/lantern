@@ -17,7 +17,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   it (GStreamer for video, poppler for PDFs), so nothing else has to be
   installed. Each release carries it as a zip. LibreOffice, for
   PowerPoint files, and yt-dlp, for YouTube, are still installed apart;
-  a yt-dlp.exe put in the folder is used.
+  a yt-dlp.exe put in the folder is used. The dashboard's font, Inter,
+  now comes with the app, so it looks the same where Inter isn't
+  installed.
 - A presentation or PDF opened into pages remembers its file as it was.
   When the file changes on disk (the deck saved again), its first page
   says so ("The file changed. Take it in"); pressed, the file is read

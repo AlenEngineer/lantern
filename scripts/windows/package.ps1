@@ -19,7 +19,7 @@ $pdftoppm = (Get-Command pdftoppm.exe).Source
 
 if (Test-Path $Name) { Remove-Item -Recurse -Force $Name }
 New-Item -ItemType Directory $Name | Out-Null
-Copy-Item target\release\lantern.exe, README.md, CHANGELOG.md, LICENSE-MIT, LICENSE-APACHE $Name
+Copy-Item target\release\lantern.exe, README.md, CHANGELOG.md, LICENSE-MIT, LICENSE-APACHE, crates\app\fonts\Inter-LICENSE.txt $Name
 
 Copy-Item "$gst\bin\*.dll" $Name
 foreach ($sub in "lib\gstreamer-1.0", "lib\gio\modules") {

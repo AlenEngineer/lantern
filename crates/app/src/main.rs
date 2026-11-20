@@ -149,6 +149,9 @@ fn main() -> ExitCode {
         background_color: Color::TRANSPARENT,
         text_color: app.palette.on_surface,
     })
+    .font(look::FONTS[0])
+    .font(look::FONTS[1])
+    .font(look::FONTS[2])
     .default_font(look::UI)
     .subscription(App::subscription)
     .run();
