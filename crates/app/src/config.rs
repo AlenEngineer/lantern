@@ -512,7 +512,13 @@ mod tests {
             &std::fs::read_to_string(&path).unwrap(),
             dir.path(),
             Some(home),
-        );
-        assert_eq!(back.unwrap(), config);
+        )
+        .unwrap();
+        // These are Unix paths: on Windows one with no drive is on the
+        // config's drive, as Windows reads it.
+        #[cfg(unix)]
+        assert_eq!(back, config);
+        #[cfg(windows)]
+        assert_eq!(back.folders[0].path, dir.path().join(home).join("Music"));
     }
 }
