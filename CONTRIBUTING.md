@@ -26,8 +26,11 @@ Thanks for helping. This is a small project, so the rules are few but they matte
    CI runs the same checks: the whole workspace on Linux, and the engine
    crates (everything but `lantern-app`, which needs GStreamer) on Windows
    and macOS.
-4. Update `CHANGELOG.md` under *Unreleased* if users or extension authors
-   would notice the change.
+4. Update `CHANGELOG.md` under *Unreleased*: CI requires a new line there
+   for any change under `crates/` or `sources/`. If users or extension
+   authors wouldn't notice it (a refactor, tests), add the `no-changelog`
+   label to the pull request instead; that re-runs only the changelog
+   check.
 5. Open a pull request describing *why*, not only what.
 
 ## Releasing
@@ -39,7 +42,8 @@ shares the one version in `[workspace.package]`.
 2. On an up-to-date `main`, run `scripts/release.sh X.Y.Z`. It sets the
    version, dates the changelog section, commits and tags `vX.Y.Z`.
 3. Push with the command it prints. The tag runs CI again, then publishes a
-   GitHub release with a Linux build and that version's changelog notes.
+   GitHub release with a Linux and a Windows build and that version's
+   changelog notes.
 
 ## Code guidelines
 

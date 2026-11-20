@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests scripts/next-version.sh and scripts/check-changelog.sh on small
-# made-up changelogs. CI runs it.
+# made-up changelogs and changes. CI runs it.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dir=$(mktemp -d)
@@ -36,14 +36,25 @@ git -C "$dir" add CHANGELOG.md
 git -C "$dir" -c user.name=t -c user.email=t@t commit -q -m changelog
 cp "$repo/scripts/check-changelog.sh" "$dir/"
 mkdir -p "$dir/scripts" && mv "$dir/check-changelog.sh" "$dir/scripts/"
-check() { (cd "$dir" && scripts/check-changelog.sh HEAD "$1" >/dev/null 2>&1) && echo pass || echo fail; }
+check() { (cd "$dir" && NO_CHANGELOG=${1:-} scripts/check-changelog.sh HEAD >/dev/null 2>&1) && echo pass || echo fail; }
 
-expect "docs need no entry" pass "$(check 'docs: a typo')"
-expect "a feat without an entry fails" fail "$(check 'feat(app): drag')"
-expect "a fix without an entry fails" fail "$(check 'fix: crash')"
+expect "nothing changed needs no entry" pass "$(check)"
+mkdir -p "$dir/docs" && echo x >"$dir/docs/a.md"
+git -C "$dir" add docs
+expect "docs need no entry" pass "$(check)"
+mkdir -p "$dir/crates/app" && echo x >"$dir/crates/app/a.rs"
+git -C "$dir" add crates
+expect "code without an entry fails" fail "$(check)"
+expect "code labelled no-changelog passes" pass "$(check 1)"
+git -C "$dir" rm -q --cached -r crates && rm -r "$dir/crates"
+mkdir -p "$dir/sources/bible" && echo x >"$dir/sources/bible/a.rs"
+git -C "$dir" add sources
+expect "a source without an entry fails" fail "$(check)"
+git -C "$dir" -c user.name=t -c user.email=t@t commit -q -m code
+git -C "$dir" mv sources/bible/a.rs a.rs
+expect "a file moved out of the code counts" fail "$(check)"
 changelog $'### Added\n\n- Drag to reorder.'
-expect "a feat with an entry passes" pass "$(check 'feat(app): drag')"
-expect "a breaking feat with an entry passes" pass "$(check 'feat!: drag')"
+expect "code with an entry passes" pass "$(check)"
 
 # The workflows that run all this, when actionlint is installed (it also
 # runs shellcheck on their scripts when that is).
