@@ -824,6 +824,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A section that holds only other sections, in a plan pane with no room
+  right of its bracket, wrote no name at all. It now writes its name up
+  its bracket, with its total where that fits, and a long name cut short.
 - A section carried over an empty section goes into it, as over its
   bracket; its place lights where it would land. A bracket's head and
   foot, pulled to stretch it, are thin bands at its ends, so a
