@@ -38,12 +38,14 @@ Thanks for helping. This is a small project, so the rules are few but they matte
 Versions follow [Semantic Versioning](https://semver.org/). Every crate
 shares the one version in `[workspace.package]`.
 
-1. Make sure `CHANGELOG.md`'s *Unreleased* section says what changed.
-2. On an up-to-date `main`, run `scripts/release.sh X.Y.Z`. It sets the
-   version, dates the changelog section, commits and tags `vX.Y.Z`.
-3. Push with the command it prints. The tag runs CI again, then publishes a
-   GitHub release with a Linux and a Windows build and that version's
-   changelog notes.
+1. On a new branch from an up-to-date `main`, run
+   `scripts/release.sh X.Y.Z`. It sets the version, moves the changelog's
+   *Unreleased* entries under `## [X.Y.Z] - date`, and commits.
+2. Open a PR from it. CI's *release check* makes sure the version goes up
+   and has its changelog section.
+3. Merge it. On `main`, `release.yml` sees the new version, runs CI, tags
+   `vX.Y.Z` and publishes a GitHub release with a Linux and a Windows
+   build and that version's changelog notes.
 
 ## Code guidelines
 

@@ -118,3 +118,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
+
+  # A PR that sets a new version (a release PR, scripts/release.sh) gives
+  # CHANGELOG.md its section and goes up from the last tag; merging it
+  # releases (release.yml). Any other PR passes.
+  release-check:
+    name: release check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/release-check.sh

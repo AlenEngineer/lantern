@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests scripts/next-version.sh and scripts/check-changelog.sh on small
+# Tests scripts/release-check.sh and scripts/check-changelog.sh on small
 # made-up changelogs and changes. CI runs it.
 set -euo pipefail
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -11,22 +11,29 @@ expect() { # NAME WANT GOT
     if [[ $2 == "$3" ]]; then echo "ok   $1"; else echo "FAIL $1: want '$2', got '$3'"; fails=1; fi
 }
 
+# release-check.sh reads tags, so it runs in a repo of its own.
+rel=$dir/rel
+mkdir -p "$rel/scripts"
+cp "$repo/scripts/release-check.sh" "$rel/scripts/"
+git -C "$rel" init -q
+git -C "$rel" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+git -C "$rel" tag v0.3.0
+release() { # VERSION CHANGELOG_BODY
+    printf '[workspace]\n\n[workspace.package]\nversion = "%s"\n' "$1" >"$rel/Cargo.toml"
+    printf '# Changelog\n\n## [Unreleased]\n\n%s\n## [0.3.0] - 2026-11-13\n\n### Added\n\n- Old.\n' "$2" >"$rel/CHANGELOG.md"
+    (cd "$rel" && scripts/release-check.sh 2>/dev/null) | sed -n 's/^release=//p' || true
+    (cd "$rel" && scripts/release-check.sh >/dev/null 2>&1) || echo fail
+}
+
+expect "a released version is no release" "false" "$(release 0.3.0 '')"
+expect "a new version with its section releases" "true" "$(release 0.4.0 $'## [0.4.0] - 2026-11-20\n\n### Added\n\n- New.\n')"
+expect "a new version without its section fails" "fail" "$(release 0.4.0 '')"
+expect "an undated section isn't enough" "fail" "$(release 0.4.0 $'## [0.4.0]\n')"
+expect "a version below the last tag fails" "fail" "$(release 0.2.9 $'## [0.2.9] - 2026-11-20\n')"
+
 changelog() { # BODY: the Unreleased section's contents
     printf '# Changelog\n\n## [Unreleased]\n\n%s\n\n## [0.3.0] - 2026-11-13\n\n### Added\n\n- Old.\n' "$1" >"$dir/CHANGELOG.md"
 }
-
-next() { "$repo/scripts/next-version.sh" "$dir/CHANGELOG.md" "$1"; }
-
-changelog ''
-expect "nothing unreleased, no version" "" "$(next 0.3.0)"
-changelog $'### Fixed\n\n- A crash.'
-expect "fixes only bump the patch" "0.3.1" "$(next 0.3.0)"
-changelog $'### Added\n\n- A thing.\n\n### Fixed\n\n- A crash.'
-expect "an addition bumps the minor" "0.4.0" "$(next 0.3.2)"
-changelog $'### Changed\n\n- Videos start on their own.'
-expect "a change bumps the minor" "1.3.0" "$(next 1.2.9)"
-changelog $'### Added\n\n### Fixed\n\n- A crash.'
-expect "an empty heading doesn't count" "0.3.1" "$(next 0.3.0)"
 
 # check-changelog.sh compares against a base commit, so it needs a repo.
 git -C "$dir" init -q
