@@ -1,0 +1,12 @@
+# The Windows download, tried in CI with nothing else installed (see
+# .github/actions/windows-package): a video plays, a PDF's pages show.
+show fixtures/video.mp4
+play
+wait 2500
+shot 1-video
+show fixtures/pages.pdf
+wait 2000
+frame 2
+wait 1000
+shot 2-pdf
+quit

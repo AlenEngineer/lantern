@@ -69,7 +69,7 @@ pub fn run(command: &str) {
         true => ("cmd", "/C"),
         false => ("sh", "-c"),
     };
-    match std::process::Command::new(shell)
+    match crate::programs::command(shell)
         .arg(flag)
         .arg(command)
         .spawn()

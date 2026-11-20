@@ -122,7 +122,7 @@ fn first_page(path: &Path) -> Result<Handle, String> {
     let mut key = DefaultHasher::new();
     path.hash(&mut key);
     let out = dir.join(format!("{:016x}", key.finish()));
-    let output = std::process::Command::new("pdftoppm")
+    let output = crate::programs::command("pdftoppm")
         .args(["-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to"])
         .arg((HEIGHT * 2).to_string())
         .arg(path)

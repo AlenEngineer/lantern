@@ -8,6 +8,8 @@
 //! after its last line (see [`script`]). `LANTERN_SHOT=<program>` is run
 //! for each `shot NAME` in it.
 
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod before;
 mod bundle;
 mod config;
@@ -37,6 +39,7 @@ mod plan_edit;
 mod plan_pane;
 mod plan_panel;
 mod plans;
+mod programs;
 mod rail;
 mod ready;
 mod rehearse;

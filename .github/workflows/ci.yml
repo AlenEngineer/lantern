@@ -42,6 +42,35 @@ jobs:
       - run: cargo clippy -p lantern-app --all-targets
       - run: cargo test -p lantern-app
 
+  # The Windows download: lantern.exe with GStreamer and poppler beside
+  # it, tried with neither installed. Its screenshots and log are kept
+  # next to it.
+  windows-download:
+    name: Windows download
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/windows-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - uses: ./.github/actions/windows-package
+        with:
+          name: lantern-x86_64-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lantern-windows
+          path: lantern-x86_64-windows
+          retention-days: 14
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lantern-windows-shots
+          path: windows-shots*
+          retention-days: 14
+
   # The engine stays portable, on macOS as well. The app needs GStreamer;
   # it is built on Linux and Windows.
   engine:

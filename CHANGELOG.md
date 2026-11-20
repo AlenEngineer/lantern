@@ -13,6 +13,11 @@ and the project uses [Semantic Versioning](https://semver.org/).
   a path starting with ~ means the user's folder.
 - Windows, a first step: the app builds and passes its tests on Windows,
   checked on every change. Running it there comes next.
+- A Windows download: lantern.exe in a folder with what it needs beside
+  it (GStreamer for video, poppler for PDFs), so nothing else has to be
+  installed. Each release carries it as a zip. LibreOffice, for
+  PowerPoint files, and yt-dlp, for YouTube, are still installed apart;
+  a yt-dlp.exe put in the folder is used.
 - A presentation or PDF opened into pages remembers its file as it was.
   When the file changes on disk (the deck saved again), its first page
   says so ("The file changed. Take it in"); pressed, the file is read
