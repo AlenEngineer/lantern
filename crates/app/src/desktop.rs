@@ -60,12 +60,17 @@ impl Desktop {
     }
 }
 
-/// Runs `command` in a shell, without waiting for it: a command that
-/// hangs holds nothing up, and one started as Lantern quits still ends.
+/// Runs `command` in a shell (`sh`, or `cmd` on Windows), without waiting
+/// for it: a command that hangs holds nothing up, and one started as
+/// Lantern quits still ends.
 pub fn run(command: &str) {
     crate::log(format!("desktop: running `{command}`"));
-    match std::process::Command::new("sh")
-        .arg("-c")
+    let (shell, flag) = match cfg!(windows) {
+        true => ("cmd", "/C"),
+        false => ("sh", "-c"),
+    };
+    match std::process::Command::new(shell)
+        .arg(flag)
         .arg(command)
         .spawn()
     {

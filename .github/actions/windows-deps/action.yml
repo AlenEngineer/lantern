@@ -1,0 +1,37 @@
+name: Windows system libraries
+description: What lantern-app builds and runs with on Windows, GStreamer (MSVC runtime and development files) and pkg-config to find it.
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v4
+      id: msi
+      with:
+        path: ${{ runner.temp }}/gstreamer-msi
+        key: gstreamer-msvc-x86_64-1.26.8
+    - if: steps.msi.outputs.cache-hit != 'true'
+      shell: pwsh
+      run: |
+        $dir = "${{ runner.temp }}/gstreamer-msi"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        $base = "https://gstreamer.freedesktop.org/data/pkg/windows/1.26.8/msvc"
+        foreach ($name in "gstreamer-1.0-msvc-x86_64-1.26.8.msi", "gstreamer-1.0-devel-msvc-x86_64-1.26.8.msi") {
+          Invoke-WebRequest "$base/$name" -OutFile "$dir/$name"
+        }
+    - shell: pwsh
+      run: |
+        $dir = "${{ runner.temp }}/gstreamer-msi"
+        foreach ($msi in Get-ChildItem "$dir/*.msi") {
+          $p = Start-Process msiexec -Wait -PassThru -ArgumentList "/i", "`"$($msi.FullName)`"", "/qn", "ADDLOCAL=ALL", "INSTALLDIR=C:\gstreamer"
+          if ($p.ExitCode -ne 0) { throw "msiexec $($msi.Name) failed: $($p.ExitCode)" }
+        }
+        # Wherever the installer put it, the folder that holds lib\pkgconfig.
+        $pc = Get-ChildItem -Recurse -Filter gstreamer-1.0.pc C:\gstreamer, "C:\Program Files\gstreamer" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $pc) { throw "gstreamer-1.0.pc not found after install" }
+        $root = $pc.Directory.Parent.Parent.FullName
+        Write-Host "GStreamer at $root"
+        "$root\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        "PKG_CONFIG_PATH=$root\lib\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "GSTREAMER_1_0_ROOT_MSVC_X86_64=$root\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        if (-not (Test-Path "$root\bin\pkg-config.exe") -and -not (Get-Command pkg-config -ErrorAction SilentlyContinue)) {
+          choco install pkgconfiglite --no-progress -y
+        }

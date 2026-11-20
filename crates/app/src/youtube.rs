@@ -658,13 +658,21 @@ mod tests {
 
     #[test]
     fn a_failure_is_the_last_error_line() {
-        use std::os::unix::process::ExitStatusExt;
-        let status = ExitStatus::from_raw(1 << 8);
+        #[cfg(unix)]
+        let status = {
+            use std::os::unix::process::ExitStatusExt;
+            ExitStatus::from_raw(1 << 8)
+        };
+        #[cfg(windows)]
+        let status = {
+            use std::os::windows::process::ExitStatusExt;
+            ExitStatus::from_raw(1)
+        };
         let stderr = "WARNING: slow\nERROR: first\nERROR: [youtube] x: Video unavailable\n";
         assert_eq!(
             failure(stderr.lines(), status),
             "yt-dlp: [youtube] x: Video unavailable"
         );
-        assert_eq!(failure(["no errors"], status), "yt-dlp: exit status: 1");
+        assert_eq!(failure(["no errors"], status), format!("yt-dlp: {status}"));
     }
 }

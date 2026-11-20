@@ -8,6 +8,8 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Windows, a first step: the app builds and passes its tests on Windows,
+  checked on every change. Running it there comes next.
 - A presentation or PDF opened into pages remembers its file as it was.
   When the file changes on disk (the deck saved again), its first page
   says so ("The file changed. Take it in"); pressed, the file is read
