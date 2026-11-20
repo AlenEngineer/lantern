@@ -8,6 +8,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- On Windows, settings and plans live in %APPDATA%\lantern and what can
+  be made again (thumbnails, converted decks) in %LOCALAPPDATA%\lantern;
+  a path starting with ~ means the user's folder.
 - Windows, a first step: the app builds and passes its tests on Windows,
   checked on every change. Running it there comes next.
 - A presentation or PDF opened into pages remembers its file as it was.

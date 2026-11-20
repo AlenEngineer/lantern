@@ -309,9 +309,26 @@ pub fn load(env: impl Fn(&str) -> Option<String>) -> (Config, Status) {
     }
 }
 
-/// The process environment, for [`load`] and [`xdg_dir`].
+/// The process environment, for [`load`] and [`xdg_dir`]. On Windows,
+/// which sets neither `HOME` nor the XDG folders, they fall back to its
+/// own: see [`windows_fallback`].
 pub fn env(key: &str) -> Option<String> {
-    std::env::var(key).ok()
+    std::env::var(key).ok().or_else(|| match cfg!(windows) {
+        true => windows_fallback(key).and_then(|other| std::env::var(other).ok()),
+        false => None,
+    })
+}
+
+/// The Windows variable that stands for `key` where `key` is unset: the
+/// user's folder for `HOME`, the roaming app data for settings and plans,
+/// the local one for what can be made again.
+pub fn windows_fallback(key: &str) -> Option<&'static str> {
+    match key {
+        "HOME" => Some("USERPROFILE"),
+        "XDG_CONFIG_HOME" | "XDG_DATA_HOME" => Some("APPDATA"),
+        "XDG_CACHE_HOME" => Some("LOCALAPPDATA"),
+        _ => None,
+    }
 }
 
 /// Lantern's folder in an XDG base directory: `$var/lantern`, else
@@ -337,6 +354,23 @@ mod tests {
 
     fn parse(source: &str) -> Result<Config, String> {
         Config::parse(source, Path::new("/etc/cq"), Some(Path::new("/home/ana")))
+    }
+
+    #[test]
+    fn on_windows_the_xdg_folders_are_its_app_data_and_home_its_user_folder() {
+        assert_eq!(windows_fallback("HOME"), Some("USERPROFILE"));
+        assert_eq!(windows_fallback("XDG_CONFIG_HOME"), Some("APPDATA"));
+        assert_eq!(windows_fallback("XDG_DATA_HOME"), Some("APPDATA"));
+        assert_eq!(windows_fallback("XDG_CACHE_HOME"), Some("LOCALAPPDATA"));
+        assert_eq!(windows_fallback("LANTERN_CONFIG"), None);
+        // What they stand for still ends in Lantern's own folder.
+        let env =
+            |key: &str| (key == "APPDATA").then(|| r"C:\Users\ana\AppData\Roaming".to_string());
+        let windows = |key: &str| env(key).or_else(|| windows_fallback(key).and_then(env));
+        assert_eq!(
+            xdg_dir(windows, "XDG_DATA_HOME", ".local/share"),
+            Path::new(r"C:\Users\ana\AppData\Roaming").join("lantern")
+        );
     }
 
     #[test]
