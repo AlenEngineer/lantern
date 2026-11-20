@@ -260,38 +260,9 @@ fn parse_layout(text: &str) -> (Option<f32>, Option<f32>) {
     (width("plan"), width("stage"))
 }
 
-/// Today's date, `2026-11-15`, in local time: the system's `date` when it
-/// has one, else UTC.
+/// Today's date, `2026-11-15`, in local time.
 pub fn today() -> String {
-    let local = std::process::Command::new("date")
-        .arg("+%F")
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .and_then(|out| String::from_utf8(out.stdout).ok())
-        .map(|day| day.trim().to_string())
-        .filter(|day| day.len() == 10);
-    local.unwrap_or_else(|| {
-        let secs = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let (year, month, day) = civil(i64::try_from(secs / 86_400).unwrap_or(0));
-        format!("{year:04}-{month:02}-{day:02}")
-    })
-}
-
-/// The calendar date `days` after 1970-01-01 (Howard Hinnant's algorithm).
-fn civil(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = u32::try_from(doy - (153 * mp + 2) / 5 + 1).unwrap_or(1);
-    let month = u32::try_from(if mp < 10 { mp + 3 } else { mp - 9 }).unwrap_or(1);
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+    chrono::Local::now().format("%F").to_string()
 }
 
 /// A file name from a title: lowercase letters and digits, dashes between
@@ -857,13 +828,6 @@ mod tests {
             "the template is untouched"
         );
         assert_eq!(today().len(), 10);
-    }
-
-    #[test]
-    fn dates_count_from_1970() {
-        assert_eq!(civil(0), (1970, 1, 1));
-        assert_eq!(civil(20_407), (2025, 11, 15));
-        assert_eq!(civil(11_016), (2000, 2, 29));
     }
 
     #[test]
