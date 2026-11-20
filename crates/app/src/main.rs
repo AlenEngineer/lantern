@@ -5496,11 +5496,19 @@ fn fit(image: image::Image<image::Handle>) -> Element<'static, Message> {
         .into()
 }
 
+/// The window's app id, which the compositor finds it by (Linux only;
+/// elsewhere windows have none).
+#[cfg(target_os = "linux")]
 fn platform(application_id: &str) -> window::settings::PlatformSpecific {
     window::settings::PlatformSpecific {
         application_id: application_id.into(),
         ..window::settings::PlatformSpecific::default()
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn platform(_application_id: &str) -> window::settings::PlatformSpecific {
+    window::settings::PlatformSpecific::default()
 }
 
 /// The engine's stage feed as messages: its snapshot, then every event. A
