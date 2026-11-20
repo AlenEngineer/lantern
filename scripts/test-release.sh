@@ -50,6 +50,9 @@ git -C "$dir" rm -q --cached -r crates && rm -r "$dir/crates"
 mkdir -p "$dir/sources/bible" && echo x >"$dir/sources/bible/a.rs"
 git -C "$dir" add sources
 expect "a source without an entry fails" fail "$(check)"
+git -C "$dir" -c user.name=t -c user.email=t@t commit -q -m code
+git -C "$dir" mv sources/bible/a.rs a.rs
+expect "a file moved out of the code counts" fail "$(check)"
 changelog $'### Added\n\n- Drag to reorder.'
 expect "code with an entry passes" pass "$(check)"
 

@@ -8,7 +8,13 @@ name: Changelog
 # notes from those lines (scripts/next-version.sh).
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    # edited: a stacked PR moved onto main is checked against main.
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# Labels flipped quickly: only the last run counts.
+concurrency:
+  group: changelog-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   changelog:

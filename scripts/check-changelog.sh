@@ -16,7 +16,8 @@ if [[ ${NO_CHANGELOG:-} == 1 ]]; then
     exit 0
 fi
 
-changed=$(git diff --name-only "$base" -- "${paths[@]}")
+# A file moved in or out counts on both sides.
+changed=$(git diff --no-renames --name-only "$base" -- "${paths[@]}")
 if [[ -z $changed ]]; then
     echo "Nothing under ${paths[*]} changed: no changelog entry needed."
     exit 0
@@ -30,15 +31,22 @@ after=$(unreleased CHANGELOG.md | sort)
 added=$(comm -13 <(echo "$before") <(echo "$after"))
 
 if [[ -z $added ]]; then
-    cat >&2 <<END
-These files changed, but CHANGELOG.md has no new entry:
-
-  ${changed//$'\n'/$'\n'  }
-
-Add one line under ## [Unreleased], under ### Added, Changed, Removed or
-Fixed, saying what changed for the operator. If nobody would notice (a
-refactor, tests), add the no-changelog label to the PR instead.
-END
+    shown=$(head -n 10 <<<"$changed")
+    more=$(($(wc -l <<<"$changed") - 10))
+    {
+        echo "These files changed, but CHANGELOG.md has no new entry:"
+        echo
+        echo "  ${shown//$'\n'/$'\n'  }"
+        if ((more > 0)); then echo "  ... and $more more"; fi
+        echo
+        echo "Add one line under ## [Unreleased], under ### Added, Changed, Removed"
+        echo "or Fixed, saying what changed for the operator. If nobody would"
+        echo "notice (a refactor, tests), add the no-changelog label to the PR"
+        echo "instead: the check runs again when it's added."
+    } >&2
+    if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+        echo "::error file=CHANGELOG.md::Code under ${paths[*]} changed but there is no new line under ## [Unreleased]. Add one, or the no-changelog label if nobody would notice."
+    fi
     exit 1
 fi
 echo "New changelog entries:"
