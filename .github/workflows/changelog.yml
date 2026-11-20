@@ -4,8 +4,8 @@ name: Changelog
 # CHANGELOG's ## [Unreleased], or carries the no-changelog label when
 # nobody would notice it (a refactor, tests). See
 # scripts/check-changelog.sh. Its own workflow, so adding or removing a
-# label re-runs only this check. The release PR works out the version and
-# notes from those lines (scripts/next-version.sh).
+# label re-runs only this check. A release PR (scripts/release.sh) moves
+# those lines under its version, and they become the release's notes.
 on:
   pull_request:
     # edited: a stacked PR moved onto main is checked against main.

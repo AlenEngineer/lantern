@@ -862,13 +862,16 @@ engine.next();                            // next stanza or next step
 Every PR that changes the code (`crates/`, `sources/`) adds a line under
 `## [Unreleased]` in `CHANGELOG.md`; CI fails it otherwise, naming the
 files (`scripts/check-changelog.sh`). One nobody would notice, a refactor
-or tests, carries the `no-changelog` label instead. On
-`main`, a **release PR** (`chore(release): vX.Y.Z`) keeps itself up to
-date with the next version and its notes: anything added, changed or
-removed bumps the minor version, fixes alone the patch
-(`scripts/next-version.sh`). Merging it tags the version and publishes a
-Linux and a Windows build on the releases page. A 1.0 or other major
-version is made by hand with `scripts/release.sh X.Y.Z`.
+or tests, carries the `no-changelog` label instead.
+
+A release is a PR of its own, made with `scripts/release.sh X.Y.Z` on a
+new branch: it sets the version in `Cargo.toml` and moves the Unreleased
+entries under `## [X.Y.Z] - date`. Before 1.0, a minor version for
+anything added or changed, a patch for fixes alone. CI checks the new
+version goes up and has its section (`scripts/release-check.sh`).
+Merging it releases: `release.yml` sees an untagged version on `main`,
+runs CI, tags `vX.Y.Z` and publishes a Linux and a Windows build with
+that section as the notes.
 
 ## Roadmap
 

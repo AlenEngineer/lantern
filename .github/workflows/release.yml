@@ -1,40 +1,53 @@
 name: Release
 
-# Publishes a GitHub release with a Linux and a Windows build and that
-# version's CHANGELOG section: when a tag like v0.2.0 is pushed (scripts/release.sh
-# by hand), or when the release PR's workflow calls it after tagging (a tag
-# pushed from a workflow doesn't start other workflows).
+# Releases on main whenever Cargo.toml's version has no tag yet: a release
+# PR (scripts/release.sh) set it and gave CHANGELOG.md its section. Then CI
+# runs again, the Linux and Windows builds are made, and the vX.Y.Z tag
+# and GitHub release are created on that commit, with that version's
+# CHANGELOG section as its notes. Any other push to main stops at plan.
+# (A tag made from a workflow starts no other workflow, so this one does
+# the whole release.)
 on:
   push:
-    tags: ["v*.*.*"]
-  workflow_call:
-    inputs:
-      tag:
-        description: The tag to publish, like v0.4.0.
-        required: true
-        type: string
+    branches: [main]
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: scripts/release-check.sh
+
   ci:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     uses: ./.github/workflows/ci.yml
 
   # lantern.exe with GStreamer and poppler beside it, zipped
   # (scripts/windows/package.ps1).
   windows:
-    needs: ci
+    needs: [plan, ci]
     runs-on: windows-latest
     env:
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: v${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
       - uses: ./.github/actions/windows-deps
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -49,19 +62,12 @@ jobs:
           path: lantern-*-x86_64-windows.zip*
 
   release:
-    needs: [ci, windows]
+    needs: [plan, ci, windows]
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ inputs.tag || github.ref_name }}
+      VERSION: v${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-      - name: The tag matches the workspace version
-        run: |
-          crate=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "lantern-app") | .version')
-          [[ "v$crate" == "$VERSION" ]] || { echo "tag $VERSION, Cargo.toml $crate" >&2; exit 1; }
       - uses: ./.github/actions/linux-deps
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -82,6 +88,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: windows-zip
+      # Creates the tag on this commit too.
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" --title "$VERSION" --notes-file notes.md lantern-*.tar.gz* lantern-*.zip*
+        run: |
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" \
+            --notes-file notes.md lantern-*.tar.gz* lantern-*.zip*
