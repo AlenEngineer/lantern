@@ -431,6 +431,10 @@ pub struct Bracket {
     /// Its name and times are not written: something open over them
     /// says them.
     pub bare: bool,
+    /// Its name, and its sum where that fits, run up its brace in the
+    /// lane right of it: it has no steps of its own to write beside, and
+    /// no room right of its brace.
+    pub upright: bool,
     /// The numbers of the notes on it.
     pub marks: Vec<usize>,
     /// Where a section that is being carried would land: dashed, and
@@ -596,6 +600,70 @@ fn name_lines(name: &str) -> Vec<String> {
             false => line,
         })
         .collect()
+}
+
+/// What a bracket with no room beside it writes up its brace: its name,
+/// with its sum after it where both fit in `tall`, else its name alone,
+/// cut short where even that does not.
+fn upright_words(name: &str, sum: Option<&str>, tall: f32) -> String {
+    let wide = |words: &str| crate::widgets::steady(words, UPRIGHT);
+    let room = tall - 8.0;
+    if let Some(sum) = sum {
+        let both = format!("{name} · Σ {sum}");
+        if wide(&both) <= room {
+            return both;
+        }
+    }
+    if wide(name) <= room {
+        return name.to_string();
+    }
+    let mut cut: String = name.to_string();
+    while !cut.is_empty() && wide(&format!("{cut}…")) > room {
+        cut.pop();
+    }
+    match cut.trim_end().is_empty() {
+        true => String::new(),
+        false => format!("{}…", cut.trim_end()),
+    }
+}
+
+/// How large what is written up a brace is.
+const UPRIGHT: f32 = 11.0;
+
+/// `bracket`'s name written up its brace, whose upright is at `upright`,
+/// reading from its foot to its top, in the middle of the lane right of
+/// it.
+fn upright_name(
+    frame: &mut canvas::Frame,
+    bracket: &Bracket,
+    upright: f32,
+    top: f32,
+    foot: f32,
+    color: Color,
+) {
+    let sum = bracket
+        .lines
+        .iter()
+        .find(|(sign, ..)| *sign == Sign::Sum)
+        .map(|(_, words, _)| words.as_str());
+    let words = upright_words(&bracket.name, sum, foot - top);
+    if words.is_empty() {
+        return;
+    }
+    frame.with_save(|frame| {
+        frame.translate(iced::Vector::new(upright + 7.5, (top + foot) / 2.0));
+        frame.rotate(-std::f32::consts::FRAC_PI_2);
+        frame.fill_text(canvas::Text {
+            content: words,
+            position: Point::ORIGIN,
+            color,
+            size: UPRIGHT.into(),
+            font: crate::look::BOLD,
+            align_x: iced::advanced::text::Alignment::Center,
+            align_y: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+    });
 }
 
 /// A dot's radius, and how much further out the ring of the one that is
@@ -1468,6 +1536,17 @@ fn paint(
         if bracket.bare {
             continue;
         }
+        if bracket.upright {
+            upright_name(
+                frame,
+                bracket,
+                x + TICK + 6.0 * bracket.bulge,
+                top,
+                foot,
+                color,
+            );
+            continue;
+        }
         // Beside it: its name, and as many of its times as there is
         // room for.
         const TALL: f32 = 14.0;
@@ -2296,6 +2375,19 @@ mod tests {
                 assert_eq!(lane_under(&leant, false, x), under, "at {x}");
             }
         }
+    }
+
+    #[test]
+    fn a_name_up_a_brace_takes_its_sum_where_it_fits_and_is_cut_short_where_not() {
+        assert_eq!(
+            upright_words("Culto", Some("8:00"), 160.0),
+            "Culto · Σ 8:00"
+        );
+        assert_eq!(upright_words("Culto", Some("8:00"), 60.0), "Culto");
+        let cut = upright_words("Servicio de Adoración Principal", Some("8:00"), 120.0);
+        assert!(cut.ends_with('…') && cut.starts_with("Servicio"), "{cut}");
+        assert!(crate::widgets::steady(&cut, UPRIGHT) <= 112.0, "{cut}");
+        assert_eq!(upright_words("Culto", None, 10.0), "");
     }
 
     #[test]

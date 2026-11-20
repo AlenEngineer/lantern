@@ -1846,6 +1846,7 @@ impl App {
                         lines,
                         strong: picked,
                         bare: !named,
+                        upright: false,
                         place: false,
                         lit: lit_as(Some(step.id)),
                         marks: crate::notes::numbers_on(
@@ -1889,6 +1890,7 @@ impl App {
                             || host_id == Some(step.id)
                             || into.first() == Some(&step.id),
                         bare: !named,
+                        upright: false,
                         place: false,
                         lit: lit_as(Some(step.id)),
                         marks: crate::notes::numbers_on(
@@ -2004,7 +2006,10 @@ impl App {
                         || host_id == Some(step.id)
                         || into.first() == Some(&step.id)
                         || footed == Some(step.id),
-                    bare: !named || (braced.lane > 0 && beside.is_none() && !side.wide),
+                    bare: !named,
+                    // With nothing of its own to write beside and no room
+                    // right of its brace, it writes up its brace.
+                    upright: braced.lane > 0 && beside.is_none() && !side.wide,
                     place: false,
                     lit: lit_as(Some(step.id)),
                     marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
@@ -2055,6 +2060,7 @@ impl App {
                     .collect(),
                 strong: false,
                 bare: !named,
+                upright: false,
                 place: true,
                 // It lands in the lit one.
                 lit: match lit {
@@ -2093,6 +2099,7 @@ impl App {
                 // Its words are at its head, over the rows: there is
                 // room there in the narrowest pane.
                 bare: true,
+                upright: false,
                 place: false,
                 lit: lit_as(None),
                 marks: Vec::new(),
