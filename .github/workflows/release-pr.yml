@@ -70,7 +70,7 @@ jobs:
           notes=$(awk -v v="$next" '
             /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
             on' CHANGELOG.md)
-          body=$(printf 'Merging this publishes **v%s**: it tags the version and builds the Linux release.\n\nThe version comes from the changelog: anything added or changed bumps the minor, fixes alone the patch. This PR updates itself as more lands on main.\n%s\n' "$next" "$notes")
+          body=$(printf 'Merging this publishes **v%s**: it tags the version and builds the Linux and Windows releases.\n\nThe version comes from the changelog: anything added or changed bumps the minor, fixes alone the patch. This PR updates itself as more lands on main.\n%s\n' "$next" "$notes")
           if [[ -n $open ]]; then
             gh pr edit "$open" --title "$title" --body "$body"
           else

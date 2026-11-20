@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -68,7 +68,7 @@ pub enum Stream {
 /// What to play `video` from without downloading it. Asks `yt-dlp`, which
 /// takes a few seconds.
 pub fn stream(video: &YoutubeVideo) -> Result<Stream, String> {
-    let output = Command::new("yt-dlp")
+    let output = crate::programs::command("yt-dlp")
         .args(["-f", &format!("{STREAM_FORMAT}/{LIVE_FORMAT}")])
         .args(["--print", STREAM_FACTS, "--print", "urls"])
         .args(["--no-playlist", "--no-warnings"])
@@ -394,7 +394,7 @@ fn download(
 ) -> Result<Option<PathBuf>, String> {
     std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     let partial = partial_path(dir, &video.id);
-    let mut child = Command::new("yt-dlp")
+    let mut child = crate::programs::command("yt-dlp")
         .args(["-f", FORMAT, "--merge-output-format", "mp4"])
         .args(["--newline", "--progress", "--no-playlist"])
         .args(["--match-filter", "!is_live"])

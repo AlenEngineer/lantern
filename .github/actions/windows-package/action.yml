@@ -1,0 +1,40 @@
+name: Windows download
+description: Builds lantern.exe for release, puts it in a folder with GStreamer and poppler beside it (scripts/windows/package.ps1), zips it, and tries that folder with GStreamer and poppler uninstalled. Runs after windows-deps and a Rust toolchain.
+inputs:
+  name:
+    description: The folder and zip's name, like lantern-v0.9.0-x86_64-windows.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: cargo build --release -p lantern-app
+    - shell: pwsh
+      run: scripts\windows\package.ps1 -Name "${{ inputs.name }}"
+    # The way it will be on a church's computer: nothing installed, so a
+    # video plays and a PDF shows only with what the folder carries.
+    - shell: pwsh
+      run: |
+        $gst = $env:GSTREAMER_1_0_ROOT_MSVC_X86_64.TrimEnd("\")
+        Move-Item $gst "$gst-away"
+        Move-Item C:\poppler C:\poppler-away
+        Remove-Item Env:GSTREAMER_1_0_ROOT_MSVC_X86_64, Env:PKG_CONFIG_PATH -ErrorAction SilentlyContinue
+        $env:PATH = "$env:SystemRoot\system32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+        $env:LANTERN_SCRIPT = "$pwd\scripts\e2e\windows.script"
+        $env:LANTERN_SHOT = "$pwd\scripts\windows\shot.cmd"
+        $env:SHOTS = "$pwd\windows-shots"
+        # Out of the way of the screenshots: the runner's own consoles.
+        (New-Object -ComObject Shell.Application).MinimizeAll()
+        $app = Start-Process "${{ inputs.name }}\lantern.exe" -PassThru -RedirectStandardError windows-shots-log.txt -RedirectStandardOutput windows-shots-out.txt
+        $null = $app.Handle
+        if (-not $app.WaitForExit(180000)) { $app.Kill(); $timedOut = $true }
+        Get-Content windows-shots-log.txt
+        if ($timedOut) { throw "lantern.exe was still running after 3 minutes" }
+        if ($app.ExitCode -ne 0) { throw "lantern.exe exited with $($app.ExitCode)" }
+        $log = Get-Content -Raw windows-shots-log.txt
+        $bad = Select-String -InputObject $log -AllMatches -Pattern "failed|can't|no element|missing plugin|pdftoppm" | ForEach-Object { $_.Matches.Value }
+        if ($bad) { throw "the log says: $($bad -join ', ')" }
+        if (([regex]::Matches($log, "ready")).Count -lt 2) { throw "the video and the PDF should both have got ready" }
+        # Back, for whatever runs after.
+        Move-Item "$gst-away" $gst
+        Move-Item C:\poppler-away C:\poppler

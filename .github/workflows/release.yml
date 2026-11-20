@@ -1,7 +1,7 @@
 name: Release
 
-# Publishes a GitHub release with a Linux build and that version's
-# CHANGELOG section: when a tag like v0.2.0 is pushed (scripts/release.sh
+# Publishes a GitHub release with a Linux and a Windows build and that
+# version's CHANGELOG section: when a tag like v0.2.0 is pushed (scripts/release.sh
 # by hand), or when the release PR's workflow calls it after tagging (a tag
 # pushed from a workflow doesn't start other workflows).
 on:
@@ -24,8 +24,32 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  release:
+  # lantern.exe with GStreamer and poppler beside it, zipped
+  # (scripts/windows/package.ps1).
+  windows:
     needs: ci
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/windows-deps
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+      - uses: ./.github/actions/windows-package
+        with:
+          name: lantern-${{ env.VERSION }}-x86_64-windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: lantern-*-x86_64-windows.zip*
+
+  release:
+    needs: [ci, windows]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.tag || github.ref_name }}
@@ -55,6 +79,9 @@ jobs:
             /^## \[/ { if (on) exit; on = index($0, "## [" v "]") == 1; next }
             on' CHANGELOG.md > notes.md
           [[ -s notes.md ]] || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-zip
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" --title "$VERSION" --notes-file notes.md lantern-*.tar.gz*
+        run: gh release create "$VERSION" --title "$VERSION" --notes-file notes.md lantern-*.tar.gz* lantern-*.zip*

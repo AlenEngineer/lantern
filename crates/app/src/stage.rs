@@ -1954,7 +1954,7 @@ fn render_pdf(path: &Path, cache: &Path) -> Result<Vec<Handle>, String> {
     if !done.exists() {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|err| fail(&err))?;
-        let output = std::process::Command::new("pdftoppm")
+        let output = crate::programs::command("pdftoppm")
             .args(["-png", "-scale-to", "1920"])
             .arg(path)
             .arg(dir.join("page"))

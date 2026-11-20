@@ -8,7 +8,7 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -61,7 +61,7 @@ pub fn to_pdf(path: &Path, cache: &Path) -> Result<PathBuf, String> {
     let profile = url::Url::from_file_path(cache.join("profile"))
         .map_err(|()| fail(&"the cache isn't an absolute path"))?;
     let mut office = office(|program| {
-        Command::new(program)
+        crate::programs::command(program)
             .arg(format!("-env:UserInstallation={profile}"))
             .args([
                 "--headless",
