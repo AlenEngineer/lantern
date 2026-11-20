@@ -23,6 +23,8 @@ runs:
         $env:LANTERN_SCRIPT = "$pwd\scripts\e2e\windows.script"
         $env:LANTERN_SHOT = "$pwd\scripts\windows\shot.cmd"
         $env:SHOTS = "$pwd\windows-shots"
+        # Out of the way of the screenshots: the runner's own consoles.
+        (New-Object -ComObject Shell.Application).MinimizeAll()
         $app = Start-Process "${{ inputs.name }}\lantern.exe" -PassThru -RedirectStandardError windows-shots-log.txt -RedirectStandardOutput windows-shots-out.txt
         $null = $app.Handle
         if (-not $app.WaitForExit(180000)) { $app.Kill(); $timedOut = $true }

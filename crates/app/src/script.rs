@@ -626,7 +626,10 @@ impl Script {
             ));
             return;
         };
-        match std::process::Command::new(shooter).arg(name).status() {
+        match crate::programs::quiet(std::process::Command::new(shooter))
+            .arg(name)
+            .status()
+        {
             Ok(status) if status.success() => log(format!("script: shot {name} saved")),
             Ok(status) => log(format!("script: shot {name} failed: {status}")),
             Err(err) => log(format!("script: shot {name}: {}: {err}", shooter.display())),

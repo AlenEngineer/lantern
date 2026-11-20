@@ -20,7 +20,14 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// one, else whatever the `PATH` finds.
 pub fn command(name: &str) -> Command {
     let here = std::env::current_exe().ok();
-    let command = Command::new(find(name, here.as_deref().and_then(Path::parent)));
+    quiet(Command::new(find(
+        name,
+        here.as_deref().and_then(Path::parent),
+    )))
+}
+
+/// `command`, with no console window of its own on Windows.
+pub fn quiet(command: Command) -> Command {
     #[cfg(windows)]
     let command = {
         use std::os::windows::process::CommandExt;
