@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-app"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "gstreamer",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-engine"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-orchestrator",
  "lantern-resource",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-orchestrator"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "lantern-showman",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-remote"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-resource"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-searcher"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "thiserror 2.0.21",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-showman"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "serde",
@@ -2389,7 +2389,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-source-bible"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "serde",
@@ -2401,7 +2401,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-source-brave"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "serde",
@@ -2411,14 +2411,14 @@ dependencies = [
 
 [[package]]
 name = "lantern-source-clock"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
 ]
 
 [[package]]
 name = "lantern-source-link"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "url",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "lantern-source-local"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "tempfile",
@@ -2435,14 +2435,14 @@ dependencies = [
 
 [[package]]
 name = "lantern-source-text"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
 ]
 
 [[package]]
 name = "lantern-source-youtube"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "lantern-resource",
  "lantern-source-link",
