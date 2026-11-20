@@ -1,0 +1,25 @@
+name: Changelog
+
+# A PR that changes the code (crates/, sources/) adds a line under the
+# CHANGELOG's ## [Unreleased], or carries the no-changelog label when
+# nobody would notice it (a refactor, tests). See
+# scripts/check-changelog.sh. Its own workflow, so adding or removing a
+# label re-runs only this check. The release PR works out the version and
+# notes from those lines (scripts/next-version.sh).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  changelog:
+    name: changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/test-release.sh
+      - env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          NO_CHANGELOG: ${{ contains(github.event.pull_request.labels.*.name, 'no-changelog') && '1' || '' }}
+        run: scripts/check-changelog.sh "$BASE"
