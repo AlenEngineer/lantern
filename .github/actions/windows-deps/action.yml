@@ -1,5 +1,5 @@
 name: Windows system libraries
-description: What lantern-app builds and runs with on Windows, GStreamer (MSVC runtime and development files) and pkg-config to find it.
+description: What lantern-app builds and runs with on Windows, GStreamer (MSVC runtime and development files) with pkg-config to find it, and poppler's pdftoppm for PDFs.
 runs:
   using: composite
   steps:
@@ -35,3 +35,11 @@ runs:
         if (-not (Test-Path "$root\bin\pkg-config.exe") -and -not (Get-Command pkg-config -ErrorAction SilentlyContinue)) {
           choco install pkgconfiglite --no-progress -y
         }
+    - shell: pwsh
+      run: |
+        $zip = "${{ runner.temp }}/poppler.zip"
+        Invoke-WebRequest "https://github.com/oschwartz10612/poppler-windows/releases/download/v26.09.0-0/Release-26.09.0-0.zip" -OutFile $zip
+        Expand-Archive $zip -DestinationPath C:\poppler
+        $exe = Get-ChildItem -Recurse -Filter pdftoppm.exe C:\poppler | Select-Object -First 1
+        if (-not $exe) { throw "pdftoppm.exe not found in poppler" }
+        $exe.Directory.FullName | Out-File -Append -Encoding utf8 $env:GITHUB_PATH

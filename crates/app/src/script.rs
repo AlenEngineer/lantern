@@ -859,7 +859,8 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../../sources/bible/fixtures/sample.tsv"
         );
-        let config = format!("[[bibles]]\nlang = \"es\"\npath = \"{bible}\"");
+        // A literal string: a Windows path's `\` is no escape.
+        let config = format!("[[bibles]]\nlang = \"es\"\npath = '{bible}'");
         let config = Config::parse(&config, Path::new("/"), None).unwrap();
         let engine = run_with(config, "search juan 3:16-17\nshow-hit 1");
         let program = engine.stage().program.unwrap();
