@@ -1,7 +1,7 @@
 # The Windows download, tried in CI with nothing else installed (see
 # .github/actions/windows-package): a video plays, a PDF's pages show.
 # Live opens the stage window, on the only screen there is.
-live
+mode live
 show fixtures/video.mp4
 play
 # The first start reads all of GStreamer's plugins, slowly on a CI machine.
