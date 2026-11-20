@@ -2,6 +2,9 @@
 # .github/actions/windows-package): a video plays, a PDF's pages show.
 # Live opens the stage window, on the only screen there is.
 mode live
+# The switch lands a moment later, with the stage empty: shown before
+# that, the video would be cleared.
+wait 4000
 show fixtures/video.mp4
 play
 # The first start reads all of GStreamer's plugins, slowly on a CI machine.
