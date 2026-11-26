@@ -53,6 +53,9 @@ pub enum Command {
     Browse {
         /// Which, as in [`Source::folder`].
         folder: Option<usize>,
+        /// Words its files' names must have; empty lists them all.
+        #[serde(default)]
+        filter: String,
     },
     /// Shows again something shown this session.
     Again {
@@ -202,7 +205,14 @@ pub struct Shown {
 pub struct Listed {
     /// Which folder, as in [`Source::folder`].
     pub folder: usize,
-    /// Its files.
+    /// The words asked for, as in [`Command::Browse`].
+    pub filter: String,
+    /// How many files the folder has.
+    pub files: usize,
+    /// How many of them have the words.
+    pub matching: usize,
+    /// The first of those, in name order: a big folder (a hymnal) is
+    /// narrowed by typing, not sent whole.
     pub hits: Vec<Hit>,
 }
 

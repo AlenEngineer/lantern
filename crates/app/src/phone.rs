@@ -44,6 +44,30 @@ const MOST_HITS: usize = 25;
 /// search or a listed folder shows. Each is a few kilobytes.
 const MOST_THUMBS: usize = 60;
 
+/// How many of a folder's files a phone is sent: a hymnal has hundreds,
+/// and each goes again with every snapshot, so the rest are found by
+/// typing in the folder's search box.
+const MOST_LISTED: usize = 60;
+
+/// A library folder a phone is listing, narrowed by what it typed.
+pub(crate) struct Listing {
+    folder: usize,
+    filter: String,
+    files: usize,
+    matching: usize,
+    shown: Vec<Arc<lantern_engine::Resource>>,
+}
+
+/// Whether `title` has every word of `filter`, each as the start of one
+/// of its words, without minding case or accents: "600" finds
+/// "Himno 600 · …", "cristo noche" finds "Cristo, ya la noche cierra".
+fn has_words(title: &str, filter: &[String]) -> bool {
+    let words = lantern_engine::tokens(title);
+    filter
+        .iter()
+        .all(|wanted| words.iter().any(|word| word.starts_with(wanted.as_str())))
+}
+
 /// How often this machine's Tailscale address is looked for again while
 /// the settings show it.
 const LOOK_FOR_TAILSCALE: Duration = Duration::from_secs(10);
@@ -471,7 +495,7 @@ impl App {
             .iter()
             .filter(|_| !self.phone_asked.trim().is_empty())
             .flat_map(|group| group.hits.iter().take(MOST_HITS));
-        found.chain(self.phone_listed.iter().flat_map(|(_, files)| files))
+        found.chain(self.phone_listed.iter().flat_map(|listing| &listing.shown))
     }
 
     /// Carries out what a phone asked for.
@@ -562,11 +586,12 @@ impl App {
                 self.stepping = true;
                 self.preload()
             }
-            Command::Browse { folder } => {
+            Command::Browse { folder, filter } => {
                 self.phone_listed = folder.and_then(|n| {
                     let entry = self.config.folders.get(n)?;
-                    let query =
-                        lantern_engine::Query::new("").with_source(library::folder_source(entry));
+                    let query = lantern_engine::Query::new("")
+                        .with_source(library::folder_source(entry))
+                        .with_limit(usize::MAX);
                     let mut files: Vec<_> = self
                         .engine
                         .0
@@ -579,8 +604,19 @@ impl App {
                                 .is_some_and(|path| path.starts_with(&entry.path))
                         })
                         .collect();
+                    let count = files.len();
+                    let wanted = lantern_engine::tokens(&filter);
+                    files.retain(|file| has_words(&file.title, &wanted));
                     files.sort_by(|a, b| lantern_engine::natural(&a.title, &b.title));
-                    Some((n, files))
+                    let matching = files.len();
+                    files.truncate(MOST_LISTED);
+                    Some(Listing {
+                        folder: n,
+                        filter,
+                        files: count,
+                        matching,
+                        shown: files,
+                    })
                 });
                 Task::none()
             }
@@ -630,7 +666,7 @@ impl App {
 
     /// The result a phone named, among what its search found.
     fn phone_found(&self, id: &str) -> Option<Arc<lantern_engine::Resource>> {
-        let listed = self.phone_listed.iter().flat_map(|(_, files)| files);
+        let listed = self.phone_listed.iter().flat_map(|listing| &listing.shown);
         self.phone_search
             .groups()
             .iter()
@@ -903,9 +939,16 @@ impl App {
             } else {
                 Vec::new()
             },
-            listed: self.phone_listed.as_ref().map(|(folder, files)| Listed {
-                folder: *folder,
-                hits: files.iter().map(|file| self.remote_hit(file)).collect(),
+            listed: self.phone_listed.as_ref().map(|listing| Listed {
+                folder: listing.folder,
+                filter: listing.filter.clone(),
+                files: listing.files,
+                matching: listing.matching,
+                hits: listing
+                    .shown
+                    .iter()
+                    .map(|file| self.remote_hit(file))
+                    .collect(),
             }),
             sound: self
                 .phone_sound
@@ -1187,6 +1230,21 @@ mod tests {
         );
         let edge = ip("100.127.255.255");
         assert_eq!(tailscale_address([edge]), Some(edge));
+    }
+
+    #[test]
+    fn a_folder_is_narrowed_by_the_start_of_its_files_words() {
+        let filter = |text: &str| lantern_engine::tokens(text);
+        assert!(has_words("Himno 600 · Ya sea en el valle", &filter("600")));
+        assert!(has_words("Himno 600 · Ya sea en el valle", &filter("60")));
+        assert!(!has_words("Himno 6 · Load", &filter("600")));
+        assert!(has_words(
+            "Cristo, ya la noche cierra",
+            &filter("noche cristo")
+        ));
+        assert!(has_words("Canción del Señor", &filter("senor")));
+        assert!(!has_words("Himno 1 · Cantad", &filter("cantad x")));
+        assert!(has_words("anything", &filter("")));
     }
 
     #[test]

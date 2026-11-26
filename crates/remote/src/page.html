@@ -724,6 +724,7 @@ function seek(text, enter) {
   if (state) drawLive();
 }
 function seekSoon(text) { clearTimeout(typed); typed = setTimeout(() => seek(text), 350); }
+function browseSoon() { clearTimeout(typed); typed = setTimeout(() => send({ do: "browse", folder: view.source.folder, filter: view.filter || "" }, true), 250); }
 function answer() { const found = state.search; return found && found.text === asked ? found : null; }
 function answers() { const found = answer(); return found ? found.groups.flatMap(group => group.hits) : []; }
 
@@ -968,19 +969,22 @@ const SCREENS = {
     top() {
       const bar = head(view.source.name, " ");
       view.count = bar.lastChild;
-      return [bar, field("Search " + view.source.name, view.filter, text => { view.filter = text; drawLive(); })];
+      return [bar, field("Search " + view.source.name, view.filter, text => { view.filter = text; browseSoon(); drawLive(); })];
     },
     body() {
-      const listed = state.listed && state.listed.folder === view.source.folder ? state.listed.hits : null;
-      const key = text => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-      const words = key(view.filter || "").split(/\s+/).filter(Boolean);
-      const hits = (listed || []).filter(result => words.every(word => key(result.title).includes(word)));
+      // The computer narrows the folder by what was typed and sends the
+      // first of what's left: a hymnal is too big to send whole.
+      const listed = state.listed && state.listed.folder === view.source.folder ? state.listed : null;
+      view.count.textContent = listed ? `${listed.files} files` : "";
+      if (!listed) return [el("div", "hint", "Listing…")];
+      if (listed.filter !== (view.filter || "")) return [el("div", "hint", "Searching…")];
+      if (!listed.hits.length) return [el("div", "hint", listed.files ? "Nothing matches." : "This folder is empty.")];
       const layout = "folder:" + view.source.name;
       const card = el("div", "card results");
-      card.append(results(hits, layout));
-      view.count.textContent = listed ? `${listed.length} files` : "";
-      if (!listed) return [el("div", "hint", "Listing…")];
-      return hits.length ? [resultsHead(layout, hits.length), card] : [el("div", "hint", listed.length ? "Nothing matches." : "This folder is empty.")];
+      card.append(results(listed.hits, layout));
+      const parts = [resultsHead(layout, listed.matching), card];
+      if (listed.matching > listed.hits.length) parts.push(el("div", "hint", `The first ${listed.hits.length} of ${listed.matching}. Type a number or a word to find the rest.`));
+      return parts;
     },
   },
   text: {
@@ -1060,7 +1064,7 @@ const textQuery = text => "!x " + textSlides(text).map(slide => slide.split("\n"
 
 function open(source) {
   if (source.kind === "bible") go("bible", { book: null, chapter: null, first: null, last: null, nt: true });
-  else if (source.kind === "folder") { go("folder", { source, filter: "" }); send({ do: "browse", folder: source.folder }, true); }
+  else if (source.kind === "folder") { go("folder", { source, filter: "" }); send({ do: "browse", folder: source.folder, filter: "" }, true); }
   else if (source.kind === "text") go("text", { text: "" });
   else if (source.kind === "time") go("time", {});
   else go("find", { title: source.name, bang: source.bang, text: "" });

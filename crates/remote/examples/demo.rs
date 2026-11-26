@@ -247,6 +247,7 @@ const ROWS: [(StepKind, &str, &str); 12] = [
 
 struct Demo {
     listed: bool,
+    filter: String,
     mode: Mode,
     at: usize,
     blackout: bool,
@@ -394,6 +395,9 @@ fn snapshot(demo: &Demo) -> Snapshot {
         .collect(),
         listed: demo.listed.then(|| Listed {
             folder: 1,
+            filter: demo.filter.clone(),
+            files: 14,
+            matching: 14,
             hits: (1..=14)
                 .map(|n| {
                     let title = format!("{n:03} Himno {n}");
@@ -448,6 +452,7 @@ fn main() -> std::io::Result<()> {
     println!("http://localhost:{}/?t=demo", server.port());
     let mut demo = Demo {
         listed: false,
+        filter: String::new(),
         mode,
         at: 0,
         blackout: false,
@@ -480,7 +485,10 @@ fn main() -> std::io::Result<()> {
             Command::Blackout => demo.blackout = !demo.blackout,
             Command::PlayPause => demo.playing = !demo.playing,
             Command::Search { text, .. } => demo.text = text,
-            Command::Browse { folder } => demo.listed = folder.is_some(),
+            Command::Browse { folder, filter } => {
+                demo.listed = folder.is_some();
+                demo.filter = filter;
+            }
             Command::Volume { level } => {
                 demo.sound.volume = level.clamp(0.0, 1.0);
                 demo.sound.muted = false;

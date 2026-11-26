@@ -659,7 +659,9 @@ and the project uses [Semantic Versioning](https://semver.org/).
   (Old and New Testament grids), a chapter, then a verse, each grid
   sized from the translation; a second verse makes a passage, and its
   words show under the grid before it goes up. A folder lists its files
-  in natural order (`004` before `010`) under a search of them. Time
+  in natural order (`004` before `010`) under a search of them; the
+  computer does the searching and sends the first 60 that match, so a
+  hymnal of hundreds finds hymn 600 by typing `600`. Time
   offers the clock, a timer, the usual countdowns and the next quarter
   hours; Text takes typed lines, a blank line starting a new slide.
   Nothing has a Next button: a tapped result opens **Send to the stage**

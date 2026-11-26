@@ -761,7 +761,7 @@ struct App {
     phone_search: Search,
     phone_asked: String,
     /// The library folder a phone asked to list, and its files.
-    phone_listed: Option<(usize, Vec<Arc<lantern_engine::Resource>>)>,
+    phone_listed: Option<phone::Listing>,
     /// The selected plan step: where new steps go, and what Enter puts on
     /// stage while the search box is empty.
     selected: Option<StepId>,
