@@ -1,0 +1,8 @@
+# scripts/e2e/youtube-key.script's config with a key Google doesn't know:
+# the check says it isn't valid. Made up; not anyone's key.
+colors = "fixtures/colors.json"
+youtube_api_key = "AIzaSyFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE00"
+
+[[folders]]
+path = "fixtures"
+label = "Fixtures"

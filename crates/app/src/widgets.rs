@@ -131,9 +131,11 @@ pub(crate) fn rule<'a>(p: Palette) -> Element<'a, Message> {
         .into()
 }
 
-/// The name over a group of things, small and in capitals.
+/// The name over a group of things, small, in capitals and spaced out.
 pub(crate) fn caption<'a>(p: Palette, words: &'a str) -> iced::widget::Text<'a> {
-    text(words)
+    // iced has no letter spacing: a hair space between letters stands in.
+    let spaced = words.chars().map(String::from).collect::<Vec<_>>();
+    text(spaced.join("\u{200A}"))
         .size(11.0)
         .font(BOLD)
         .color(p.on_surface_variant)

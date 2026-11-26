@@ -1,0 +1,5 @@
+wait 2500
+type juan 3
+wait 2500
+shot search
+quit

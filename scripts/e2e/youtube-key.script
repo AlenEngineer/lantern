@@ -1,0 +1,10 @@
+# Setting up a YouTube Data API key, in Settings → Library → YouTube. Run
+# it with the usual config (no key: the steps to make one), with
+# LANTERN_CONFIG=scripts/e2e/youtube-bad-key.toml ("That isn't a valid
+# key"), and with a copy of that config holding a real key ("Works"). Run
+# it with E2E_DASHBOARD_SCALE=1 so the whole section shows. Needs the
+# network; a check spends 1 unit of the key's quota.
+wait 1500
+check-key
+wait 5000
+shot 1-key

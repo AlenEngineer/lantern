@@ -108,6 +108,15 @@ impl Bible {
         self.books[book.index()].len()
     }
 
+    /// How many verses each chapter of `book` has, in order: the
+    /// highest verse number this translation has in it.
+    pub fn verse_counts(&self, book: Book) -> Vec<u16> {
+        self.books[book.index()]
+            .iter()
+            .map(|verses| u16::try_from(verses.len()).unwrap_or(u16::MAX))
+            .collect()
+    }
+
     /// The text of a verse, if present.
     pub fn verse(&self, book: Book, chapter: u16, verse: u16) -> Option<&str> {
         let chapters = &self.books[book.index()];

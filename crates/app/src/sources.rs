@@ -2,13 +2,14 @@
 //! own, another file (the one picked in search or the library), what was
 //! on kept, or nothing. And the lines under a row that says so, on the
 //! rows that mix. And how it lays out what it shows with a second
-//! thing.
+//! thing. And where the card is open: under the preview while planning,
+//! under its row in a run ([`App::card_open`]).
 
 use std::fmt;
 use std::sync::Arc;
 
-use iced::widget::{button, column, pick_list, row, text, text_input};
-use iced::{Alignment, Element, Fill};
+use iced::widget::{button, column, container, pick_list, row, text, text_input};
+use iced::{Alignment, Element, Fill, Length};
 use lantern_engine::{
     Action, FadeTime, Kind, Layout, Location, Meets, Picture, Plan, Resource, ResourceId, SourceId,
     Step, StepId, StepSound,
@@ -16,8 +17,19 @@ use lantern_engine::{
 
 use crate::FadeEnd;
 use crate::look::{self, BOLD, Icon, META, Tone};
+use crate::mode::Mode;
 use crate::palette::Palette;
+use crate::widgets::caption;
 use crate::{App, Message};
+
+/// Where a step's look and timing are open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CardAt {
+    /// In a card under its row.
+    Row,
+    /// Under the preview, a group of their own.
+    Preview,
+}
 
 /// What a step's picture can be set to.
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +143,59 @@ fn sound_now(step: &Step) -> SoundChoice {
 }
 
 impl App {
+    /// The step whose look and timing are open, and where. While
+    /// planning, the one whose Look & timing was pressed, under the
+    /// preview; in a run unlocked, the selected step while it is still
+    /// ahead, under its row. Only a step that shows something has them.
+    pub(crate) fn card_open(&self) -> Option<(StepId, CardAt)> {
+        if !self.can_edit() {
+            return None;
+        }
+        let (id, at) = match self.mode {
+            Mode::Plan => (self.look_and_timing?, CardAt::Preview),
+            Mode::Run => (self.selected?, CardAt::Row),
+            Mode::Live => return None,
+        };
+        let plan = self.engine.0.plan();
+        let shows = plan
+            .get(id)
+            .is_some_and(|step| matches!(step.action, Action::Show { .. }));
+        // In a run, only a step still ahead can change.
+        let changes = self.mode != Mode::Run || self.ahead(&plan, id);
+        (shows && changes).then_some((id, at))
+    }
+
+    /// `step`'s look and timing as they show `at`: where its picture and
+    /// its sound come from, how it is laid out, and how it fades. Under
+    /// its row they are a card. Under the preview they are a group of
+    /// their own, set apart by space and their name, each chooser as wide
+    /// as the preview.
+    pub(crate) fn look_and_timing_card<'a>(&self, step: &Step, at: CardAt) -> Element<'a, Message> {
+        let p = self.palette;
+        let width = match at {
+            CardAt::Row => Length::Shrink,
+            CardAt::Preview => Length::Fill,
+        };
+        let lines = column![
+            self.sources_card(p, step, width),
+            crate::plan_pane::fade_steppers(p, step, width),
+        ]
+        .spacing(6);
+        match at {
+            CardAt::Row => container(
+                container(lines)
+                    .padding([4, 5])
+                    .style(look::card(p, 0.0, 10.0)),
+            )
+            .padding(iced::Padding::default().top(6.0))
+            .into(),
+            CardAt::Preview => column![caption(p, "LOOK & TIMING"), lines]
+                .spacing(8)
+                .padding(iced::Padding::default().top(6.0))
+                .into(),
+        }
+    }
+
     /// The file picked in search or in the library, if one is.
     fn picked_file(&self) -> Option<Arc<Resource>> {
         self.search
@@ -151,9 +216,14 @@ impl App {
             .filter(|file| matches!(file.kind, Kind::Audio | Kind::Video))
     }
 
-    /// The two lines of a picked step's card that set where its picture
-    /// and its sound come from.
-    pub(crate) fn sources_card<'a>(&self, p: Palette, step: &Step) -> Element<'a, Message> {
+    /// The lines of a picked step's card that set where its picture and
+    /// its sound come from, each chooser `width` wide.
+    pub(crate) fn sources_card<'a>(
+        &self,
+        p: Palette,
+        step: &Step,
+        width: Length,
+    ) -> Element<'a, Message> {
         let id = step.id;
         let picture = {
             let mut choices = vec![PictureChoice::Own];
@@ -161,9 +231,14 @@ impl App {
                 self.picked_picture().map(|file| file.title.clone()),
             ));
             choices.extend([PictureChoice::Keep, PictureChoice::Black]);
-            chooser(p, Icon::Image, choices, picture_now(step), move |choice| {
-                Message::StepPicture(id, choice)
-            })
+            chooser(
+                p,
+                Icon::Image,
+                choices,
+                picture_now(step),
+                width,
+                move |choice| Message::StepPicture(id, choice),
+            )
         };
         let sound = {
             let choices = vec![
@@ -171,11 +246,16 @@ impl App {
                 SoundChoice::File(self.picked_sound().map(|file| file.title.clone())),
                 SoundChoice::None,
             ];
-            chooser(p, Icon::Music, choices, sound_now(step), move |choice| {
-                Message::StepSoundFrom(id, choice)
-            })
+            chooser(
+                p,
+                Icon::Music,
+                choices,
+                sound_now(step),
+                width,
+                move |choice| Message::StepSoundFrom(id, choice),
+            )
         };
-        let mut card = column![picture, self.layout_card(p, step), sound].spacing(4);
+        let mut card = column![picture, self.layout_card(p, step, width), sound].spacing(4);
         // A sound of its own can keep going under the steps after it.
         if let Some(set) = &step.sound {
             let plan = self.engine.0.plan();
@@ -190,6 +270,7 @@ impl App {
                 Icon::Joined,
                 choices,
                 now,
+                width,
                 move |choice: Until| Message::StepSoundUntil(id, choice.to),
             ));
             if set.until.is_some() {
@@ -202,6 +283,7 @@ impl App {
                         MeetsChoice(Meets::Under),
                     ],
                     MeetsChoice(set.meets),
+                    width,
                     move |choice: MeetsChoice| Message::StepSoundMeets(id, choice.0),
                 ));
             }
@@ -217,8 +299,9 @@ impl App {
     }
 
     /// The card's lines that lay out what the step shows with a second
-    /// thing: which layout, what the second is, and a quote typed in.
-    fn layout_card<'a>(&self, p: Palette, step: &Step) -> Element<'a, Message> {
+    /// thing: which layout (its chooser `width` wide), what the second is,
+    /// and a quote typed in.
+    fn layout_card<'a>(&self, p: Palette, step: &Step, width: Length) -> Element<'a, Message> {
         let id = step.id;
         let now = match &step.layout {
             Layout::One => LayoutChoice::Alone,
@@ -234,6 +317,7 @@ impl App {
                 LayoutChoice::LowerThird
             ],
             now,
+            width,
             move |choice| Message::StepLayout(id, choice),
         )]
         .spacing(4);
@@ -484,13 +568,14 @@ fn typed(id: StepId, words: &str) -> Resource {
     )
 }
 
-/// One line of the card: its icon, and what it is set to, to pick
-/// another.
+/// One line of the card: its icon, and what it is set to, `width` wide,
+/// to pick another.
 fn chooser<'a, T>(
     p: Palette,
     icon: Icon,
     choices: Vec<T>,
     now: T,
+    width: Length,
     on: impl Fn(T) -> Message + 'a,
 ) -> Element<'a, Message>
 where
@@ -501,6 +586,7 @@ where
         ..iced::Border::default()
     };
     let list = pick_list(choices, Some(now), on)
+        .width(width)
         .text_size(META)
         .padding([2, 6])
         .style(move |_, _| pick_list::Style {
@@ -609,8 +695,12 @@ impl fmt::Display for SoundFadeChoice {
 }
 
 /// The card's line that sets whether `step`'s sound apart fades with its
-/// picture or on its own.
-pub(crate) fn sound_fade_chooser<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
+/// picture or on its own, `width` wide.
+pub(crate) fn sound_fade_chooser<'a>(
+    p: Palette,
+    step: &Step,
+    width: Length,
+) -> Element<'a, Message> {
     let id = step.id;
     let now = match step.sound_fade {
         None => SoundFadeChoice::WithPicture,
@@ -621,6 +711,7 @@ pub(crate) fn sound_fade_chooser<'a>(p: Palette, step: &Step) -> Element<'a, Mes
         Icon::Music,
         vec![SoundFadeChoice::WithPicture, SoundFadeChoice::Own],
         now,
+        width,
         move |choice| {
             Message::SoundFade(
                 id,

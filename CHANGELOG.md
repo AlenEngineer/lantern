@@ -8,6 +8,64 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Pictures and videos say their size in the corner of their picture
+  ("1920×1080"), and the preview says it too. One that the stage has
+  to blow up to fill the screen it shows on says so in amber, with a ⚠:
+  "Smaller than the screen (1920×1080): it will look soft".
+- A library folder shows as a list, a grid of even pictures, or tiles
+  at their real shapes packed edge to edge (a PDF page tall, a photo
+  wide), picked with three icons beside YOUR FOLDERS and kept for each
+  folder.
+- The phone remote sets the computer's volume. A slider over its
+  buttons moves the volume the desktop's own control moves, and the
+  speaker beside it mutes and unmutes; moving the slider unmutes. It
+  follows changes made at the computer within a couple of seconds. It
+  needs PipeWire (`wpctl`), so it isn't on the phone on Windows yet.
+- The phone remote works over Tailscale, for a phone that isn't on the
+  computer's Wi-Fi: on mobile data, on another Wi-Fi, or on a guest
+  Wi-Fi that keeps devices apart. When the computer is on Tailscale,
+  Settings › Phone shows a second QR code, "Away from this Wi-Fi: over
+  Tailscale", with the computer's Tailscale address; the phone needs
+  Tailscale on and signed in. Without Tailscale, Settings › Phone is as
+  before.
+- Picking YouTube videos without a key: with neither a key nor yt-dlp,
+  `!yt` offers "Pick on YouTube", which opens YouTube's own search for
+  what was typed in a window of lantern's, on the dashboard's screen. A
+  video clicked there isn't opened: it lists under YouTube in lantern,
+  with its title, to preview, take or add to the plan like any result.
+  A strip over the page says what was picked; Done closes it. The window
+  stays on YouTube (and Google's sign-in), keeps its cookies, and
+  lantern draws nothing on YouTube's page.
+- Setting up a YouTube Data API key is easier, in Settings → Library →
+  YouTube. "Check key" asks YouTube once (1 unit of the key's quota)
+  and says what it found: it works; the key doesn't have the YouTube
+  Data API turned on (with a button to the page that turns it on);
+  it isn't a valid key; it's limited to other APIs or apps; today's
+  searches are used up; or YouTube can't be reached. A key pasted whole
+  is checked at once. Under it, three steps to make a key, each with a
+  button to its Google Cloud page. `!yt` searches say the same when the
+  API refuses them.
+- `!yt` with nothing set up offers "Search on YouTube in your browser":
+  YouTube's own search for what was typed, to paste a video's link back
+  from.
+- YouTube videos play in YouTube's own player, which lantern-web, a
+  program beside lantern, shows full screen over the stage while the
+  stage is open. Play, pause, jumps, fades, blackout and the plan going
+  on at a video's end work as with any video; the dashboard shows its
+  still, marked "in YouTube's player". It needs the internet while it
+  plays, shows YouTube's own controls for a moment after a jump and any
+  ads YouTube plays, and isn't laid out beside or under another thing
+  yet. A video YouTube won't play outside its site says so, or goes
+  through yt-dlp with "YouTube first, then yt-dlp". A link's start time
+  (`t=`) is kept.
+- A pasted YouTube link in a plan gets the video's title and channel,
+  where it used to say "YouTube video <id>". A step still named after
+  the video follows its title; one you named keeps your name.
+- YouTube's titles in plans are kept no longer than YouTube's terms
+  allow: one more than 30 days old is fetched again, as a plan opens and
+  for every saved plan as Lantern starts, and one that can't be fetched
+  goes back to "YouTube video <id>". This doesn't count as a change to
+  save.
 - On Windows, settings and plans live in %APPDATA%\lantern and what can
   be made again (thumbnails, converted decks) in %LOCALAPPDATA%\lantern;
   a path starting with ~ means the user's folder.
@@ -46,7 +104,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   shown in a step's place, or laid out with it, is kept loaded with the
   plan. Saved plans open as they were.
 - The line of a sound that keeps going is pulled by its foot, like a
-  section's bracket: let go over a later step, the sound keeps going to
+  section's foot: let go over a later step, the sound keeps going to
   there; over its own step, it plays for that step alone. Above its
   step it is refused and says why.
 - What a step plays apart from its picture can fade on its own: its
@@ -104,12 +162,12 @@ and the project uses [Semantic Versioning](https://semver.org/).
   side of Up next, a little smaller, and settles.
 - What a fill proposes drops in, one after another; accepted, the new
   rows' dashed outlines fade into plain rows.
-- An edit that puts a section over its time shows it: the section's
-  bracket bulges out and settles, and its time turns red as it goes.
+- An edit that puts a section over its time shows it: the time on the
+  section's header turns red.
 - When a service goes back round a loop, a light runs back along the
   loop's line and its round count lights up as it changes.
-- The bracket of the section something carried would go into stands out
-  and back once as it comes to be that section.
+- The section something carried would go into is lit, from its header
+  to its last step.
 - Rows taken away close up where they were, and rows Ctrl+Z (or redo)
   puts back grow in.
 - A step can fade in and fade out. The card under a picked step, or the
@@ -132,21 +190,24 @@ and the project uses [Semantic Versioning](https://semver.org/).
   given, a minute less or more with − and + (or typed); a time of day it
   should be over by; and the time it takes, with how far that is from its
   time, and when it is expected to end, in red where that is past its
-  time of day. The time of day shows beside the bracket too.
-- A bracket's head can be pulled too: up, it takes in what comes before
+  time of day. The time of day shows on the section's header too.
+- A section's head (the top of its header) can be pulled too: up, it
+  takes in what comes before
   it, a section whole; down, it lets go of its first steps, which stay in
   the section round it. It shows what it would make as it is pulled, and
   goes back where it can't start there.
 - Delete takes away what is selected, whatever it is: the steps picked
-  together, the selected step, a bracket (its steps stay; with Shift they
+  together, the selected step, a section's header (its steps stay; with Shift they
   go too), or a loop or drawn order whose line was pressed (its steps
   stay). Ctrl+Z brings it back.
 - Ctrl+D copies what is selected right after it, and selects the copy:
   a step, steps picked together, or a section with all it holds; a loop
   or a drawn order wholly among them comes with them. Ctrl and a click on
-  a bracket adds its section to what is picked, so several can be copied.
-- A bracket's foot can be pulled: down, it takes in what comes after it,
-  a section whole; up, it lets go. As it is pulled the brackets show what
+  a section's header adds the section to what is picked, so several can
+  be copied.
+- A section's foot (the strip under its last step) can be pulled: down,
+  it takes in what comes after it, a section whole; up, it lets go. As
+  it is pulled the plan shows what
   letting go would make, in the colour of what is wrong where it can't
   end there. A grip at the foot shows where to take it.
 - Notes for the operator, on what they are about: a step, steps picked
@@ -576,21 +637,105 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- The strip is part of the same card as the panes, a thin line under
-  it short of the card's sides; the cards cast no shadow.
-- With a plan open, the list of plans (‹ and Ctrl+O) is gone: the
-  other plans are folded under it, each with its ☆ to make it a
-  template, and under them "New plan" and "Import a plan". Ctrl+O goes
-  down to them. With no plan open, the list is where Lantern starts, as
-  before.
+- The phone remote looks like the dashboard and is for Run and Live.
+  In Plan mode it says the computer is planning, with the plan's name
+  and its start time counting down, and offers nothing to press. In Run
+  the stage comes first: a picture of the stage with ● live (or
+  blackout), its title, its timeline with play, or its slides as a row
+  of numbers, then what is next with its length. Under them sit only
+  Prev and a wide Next. The section's pace sits under the strip in its
+  tint ("tight", "over"). Swiping up from Next, or tapping the handle
+  over it, raises the menu: Blackout and Clear, then the plan with ●
+  on stage, ○ next, done steps dimmed and each section's budget or
+  pace. Tap a step, then **Show now**. While the stage is blacked out,
+  "Blackout on · Lift" over Next lifts it in one tap. The volume moved
+  into a panel that drops from the strip's volume pill, with − and +
+  in steps of 5% and Mute, and the pill says "muted" in red while it
+  is. The page uses Inter, served by Lantern itself.
+- Live on the phone starts from sources, not bangs. It opens on a tile
+  for the Bible, each library folder under its own name, YouTube, Text,
+  Time and Images, under a search of everything, with "Shown this
+  session" below to show any of it again. The Bible tile picks a book
+  (Old and New Testament grids), a chapter, then a verse, each grid
+  sized from the translation; a second verse makes a passage, and its
+  words show under the grid before it goes up. A folder lists its files
+  in natural order (`004` before `010`) under a search of them. Time
+  offers the clock, a timer, the usual countdowns and the next quarter
+  hours; Text takes typed lines, a blank line starting a new slide.
+  Nothing has a Next button: a tapped result opens **Send to the stage**
+  under it, a second tap sends it too, and holding it lines it up on
+  the computer instead. ˄ and ˅ beside the small stage card step
+  through the slides on stage.
+- Plan mode puts the plan in the middle. The library is on the left and
+  the preview on the right, on the window's own background; the plan is
+  the one brighter surface on it, with no frame, and the strip floats
+  over it. With glass on, the plan lets the least of the desktop through.
+- The plan has its name large at its top, with its steps, its length,
+  its goal and when it starts and ends; under it, the sections as
+  coloured bars with their names and lengths.
+- Each step in the plan shows its clock time, a picture with its length
+  or size in one corner and what it is doing in the other (downloading,
+  too small), where it comes from and what it is ("Fixtures ·
+  picture"), and its length with whether it goes on by itself or waits.
+  The legend under the plan is gone.
+- A text step's picture is its first slide drawn small, as the stage
+  shows it, in the plan's rows and the search's results; the
+  filmstrip under the preview draws each slide so too, its stanza's or
+  verse's name on hover.
+- The preview's picture or page fills its frame, as a slide or a video
+  already did.
+- In the library, a picture that would look soft on the screen says so
+  with the ⚠ on its picture only, its words on hover; the line under
+  its name stays what it is.
+- Sections are header rows in every mode, with the section's name in its
+  colour, its time against its budget and a line down its steps in its
+  colour. What the brackets on the right did is done on the header:
+  click to pick, press and move to carry, double-click or ▸ to fold,
+  right-click for the ring. The brackets are gone, and so are the
+  plan's own bracket, its fold and its ring. In a service a finished
+  section folds into its header.
+- In Plan mode the strip has the plan's name with its ▾, its settings and
+  Save on the left, and Start the service on the right, apart from Plan,
+  Run and Live. Blackout shows only in Run and Live. F2 with nothing
+  picked opens the plan's settings on its name.
+- The library starts with Lantern's own sources (the Bible, YouTube,
+  Images, Text, Time, Live, Black screen), each opening the search on
+  itself, then your folders. One box at its top finds something to add;
+  Look and Check are the two icons beside it.
+- The preview shows what is picked with its slides or pages under it,
+  and a table of where it is from, how it plays, how it looks and its
+  section. Look & timing there holds what the card under a picked step
+  held; in a run the card stays under the row.
+- `scripts/e2e.sh` runs in a headless sway of its own when sway is
+  installed, so nothing shows on the screen, and scripts can point,
+  click and drag with a mouse there (`pointer`, `click-at`, `drag-at`,
+  `pointer-at-row`). `scripts/e2e/sections.script` goes through what a
+  section's header does.
+- YouTube is set up in Settings → Library → YouTube. Videos play through
+  YouTube's own player by default; yt-dlp, which downloads them ahead but
+  goes against YouTube's terms, plays them only when chosen there: "yt-dlp
+  first" (YouTube's player when yt-dlp fails) or "YouTube first, then
+  yt-dlp" (yt-dlp for a video YouTube won't play outside its site). A
+  config that says nothing plays through YouTube's player, so set one of
+  those to keep using yt-dlp (`youtube = "yt-dlp-first"`).
+- `!yt` searches through the YouTube Data API with a key set in the same
+  place (`youtube_api_key`), or through yt-dlp when chosen; with neither
+  it says how to set one up. It now finds a yt-dlp.exe beside lantern.exe.
+- In Run and Live the strip is part of the same card as the panes, a
+  thin line under it short of the card's sides; the cards cast no
+  shadow.
+- With a plan open, the list of plans opens from the plan's name (▾)
+  or Ctrl+O: templates, your plans with their ☆, "New plan" and "Import
+  a plan". Nothing of the other plans shows under the open one. With no
+  plan open, the list is where Lantern starts, as before.
 - The Run pill starts the service, as "Start the service" does.
 - A section carried lands beside the section above where it lands;
-  over a bracket's lane it goes into that section (over the plan's own
-  bracket, out at the plan's level), and ← and → take it a level out or
+  over the lower half of a section's header it goes into that section,
+  first, and ← and → take it a level out or
   in. Moving sideways no longer changes its level, and it never takes
   in the sections after it. While one is carried, the pane's foot says
   so.
-- The dashboard's panes are one card, in every mode: a thin line
+- In Run and Live the dashboard's panes are one card: a thin line
   between two of them, short of the card's top and foot, where there
   were gaps. The line is still pulled to size the panes, and lights as
   it is.
@@ -836,6 +981,18 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The ready check doesn't wait on YouTube downloads when videos play in
+  YouTube's player, and only downloads ahead with "yt-dlp first"; a
+  failed download there says YouTube's player plays it instead.
+- The end-to-end screenshots work again while planning, when the stage
+  window is closed: those shots are of the dashboard alone.
+- The Windows download now says what of it is others' software, under
+  which licence (GStreamer is LGPL, poppler GPL) and where to get its
+  source: THIRD-PARTY-NOTICES.txt, with the licences in licenses\. The
+  Linux download now carries Inter's licence, as the font is built in.
+- The README says what is up to whoever runs lantern: the right to show
+  songs, videos and pictures to an audience, and YouTube's and Brave's
+  terms for what comes from them.
 - A section that holds only other sections, in a plan pane with no room
   right of its bracket, wrote no name at all. It now writes its name up
   its bracket, with its total where that fits, and a long name cut short.

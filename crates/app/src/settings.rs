@@ -11,7 +11,7 @@ use iced::{Alignment, Element, Fill};
 
 use lantern_engine::{Look, Rgb, fold};
 
-use crate::config::{self, BibleEntry, Config, FolderEntry, Lang};
+use crate::config::{self, BibleEntry, Config, FolderEntry, Lang, YoutubeMode};
 use crate::fit;
 use crate::keys::{self, Keymap, Op};
 use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
@@ -20,6 +20,7 @@ use crate::palette::Palette;
 use crate::paths::{self, Suggestion, Want};
 use crate::widgets::{self, chip, hinted, pill, scrolling, wide};
 use crate::{App, Message};
+use lantern_source_youtube::key::{self as yt_key, KeyCheck};
 
 const LABEL_FIELD: f32 = 160.0;
 /// The side of the remote's QR code.
@@ -35,12 +36,25 @@ const PART_WIDTH: f32 = 760.0;
 /// How tall the small picture of what's on stage is, in the header.
 const LIVE_HEIGHT: f32 = 54.0;
 
+/// Where checking the YouTube key stands.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyState {
+    Checking,
+    Done(KeyCheck),
+}
+
 /// The settings as they're being edited.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Draft {
     folders: Vec<Folder>,
     bibles: Vec<Bible>,
     brave_key: String,
+    /// How YouTube videos play, and the key `!yt` searches with.
+    pub youtube: YoutubeMode,
+    youtube_key: String,
+    /// What checking the YouTube key found, or that it's being checked.
+    /// Not saved: it's about the key as typed now.
+    pub key_check: Option<KeyState>,
     colors: String,
     /// How see-through the dashboard is, in percent, and whether what
     /// shows through is blurred.
@@ -280,6 +294,11 @@ pub enum Edit {
     AddBible,
     RemoveBible(usize),
     BraveKey(String),
+    /// Check the YouTube key as typed (the app runs the check).
+    CheckKey,
+    /// Play YouTube through its own player, or also through yt-dlp.
+    Youtube(YoutubeMode),
+    YoutubeKey(String),
     Colors(String),
     /// How see-through the dashboard is, in percent.
     SeeThrough(u8),
@@ -351,6 +370,9 @@ impl Draft {
                 })
                 .collect(),
             brave_key: config.brave_api_key.clone().unwrap_or_default(),
+            youtube: config.youtube,
+            youtube_key: config.youtube_api_key.clone().unwrap_or_default(),
+            key_check: None,
             colors: config.colors.as_deref().map(shown).unwrap_or_default(),
             see_through: config.see_through.min(config::MOST_SEE_THROUGH),
             blur: !config.no_blur,
@@ -404,6 +426,7 @@ impl Draft {
                 &self.folders,
                 &self.bibles,
                 &self.brave_key,
+                (self.youtube, &self.youtube_key),
                 &self.colors,
                 (
                     self.see_through,
@@ -419,6 +442,19 @@ impl Draft {
                 &self.keys
             )
         )
+    }
+
+    /// The YouTube key as typed, trimmed: what a check checks.
+    pub fn youtube_key(&self) -> &str {
+        self.youtube_key.trim()
+    }
+
+    /// Whether `text`, just put in the key field, is a whole key: one
+    /// pasted, to check at once. Google's keys are 39 characters from
+    /// `AIza`.
+    pub fn is_whole_key(text: &str) -> bool {
+        let key = text.trim();
+        key.len() == 39 && key.starts_with("AIza")
     }
 
     /// The fields are as saved (or as opened) now.
@@ -554,6 +590,16 @@ impl Draft {
                 }
             }
             Edit::BraveKey(text) => self.brave_key = text,
+            Edit::Youtube(mode) => self.youtube = mode,
+            Edit::YoutubeKey(text) => {
+                self.youtube_key = text;
+                self.key_check = None;
+            }
+            Edit::CheckKey => {
+                if !self.youtube_key.trim().is_empty() {
+                    self.key_check = Some(KeyState::Checking);
+                }
+            }
             Edit::Colors(text) => self.colors = text,
             Edit::Key(at, text) => {
                 if let Some(key) = self.keys.get_mut(at) {
@@ -659,6 +705,8 @@ impl Draft {
         Ok(Config {
             keys,
             brave_api_key: optional(&self.brave_key),
+            youtube: self.youtube,
+            youtube_api_key: optional(&self.youtube_key),
             colors: optional(&self.colors).map(|c| path(&c)),
             stage_output: self.output.clone(),
             see_through: self.see_through,
@@ -788,7 +836,7 @@ impl App {
                         iced::widget::container(self.monitor(
                             scene,
                             self.media.content(scene.id),
-                            None,
+                            crate::look::Edge::None,
                         ))
                         .width(LIVE_HEIGHT * 16.0 / 9.0)
                         .height(LIVE_HEIGHT),
@@ -924,34 +972,171 @@ impl App {
             field(p, "Brave Search API key", &draft.brave_key, Edit::BraveKey).secure(true),
         ]
         .spacing(6);
-        // The plan's videos are always downloaded; this is for the rest.
-        let youtube = column![
+        let mode = |label: &'static str, mode: YoutubeMode| {
+            let on = draft.youtube == mode;
+            pill(
+                p,
+                &if on {
+                    format!("✓ {label}")
+                } else {
+                    label.to_string()
+                },
+                if on { Tone::Selected } else { Tone::Plain },
+                look::PILL_SMALL,
+                Some(settings(Edit::Youtube(mode))),
+            )
+        };
+        let mut youtube = column![
             section(
                 p,
                 "YouTube",
-                "The plan's videos download ahead of time. One shown outside the plan can play straight from YouTube, leaving nothing on disk."
+                "Videos play in YouTube's own player, which needs the internet while they play. yt-dlp downloads them ahead instead, but YouTube's terms don't allow that: it's your choice. !yt search needs a YouTube Data API key (console.cloud.google.com, free for about 100 searches a day) or yt-dlp."
             ),
             row![
-                text("Outside the plan").size(BODY).font(MEDIUM).width(LABEL_FIELD),
-                pill(
-                    p,
-                    if draft.stream { "✓ Streamed" } else { "Streamed" },
-                    if draft.stream { Tone::Selected } else { Tone::Plain },
-                    look::PILL_SMALL,
-                    Some(settings(Edit::Stream(true))),
-                ),
-                pill(
-                    p,
-                    if draft.stream { "Downloaded" } else { "✓ Downloaded" },
-                    if draft.stream { Tone::Plain } else { Tone::Selected },
-                    look::PILL_SMALL,
-                    Some(settings(Edit::Stream(false))),
-                ),
+                text("Plays through").size(BODY).font(MEDIUM).width(LABEL_FIELD),
+                mode("YouTube's player", YoutubeMode::Official),
+                mode("yt-dlp first", YoutubeMode::YtDlpFirst),
+                mode("YouTube first, then yt-dlp", YoutubeMode::OfficialFirst),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
         ]
         .spacing(8);
+        if draft.youtube.uses_yt_dlp() {
+            youtube = youtube.push(
+                text("yt-dlp goes against YouTube's terms. Lantern uses it because you chose it here.")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+            // The plan's videos are always downloaded; this is for the rest.
+            youtube = youtube.push(
+                row![
+                    text("Outside the plan")
+                        .size(BODY)
+                        .font(MEDIUM)
+                        .width(LABEL_FIELD),
+                    pill(
+                        p,
+                        if draft.stream {
+                            "✓ Streamed"
+                        } else {
+                            "Streamed"
+                        },
+                        if draft.stream {
+                            Tone::Selected
+                        } else {
+                            Tone::Plain
+                        },
+                        look::PILL_SMALL,
+                        Some(settings(Edit::Stream(true))),
+                    ),
+                    pill(
+                        p,
+                        if draft.stream {
+                            "Downloaded"
+                        } else {
+                            "✓ Downloaded"
+                        },
+                        if draft.stream {
+                            Tone::Plain
+                        } else {
+                            Tone::Selected
+                        },
+                        look::PILL_SMALL,
+                        Some(settings(Edit::Stream(false))),
+                    ),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
+        let has_key = !draft.youtube_key.trim().is_empty();
+        let checking = matches!(draft.key_check, Some(KeyState::Checking));
+        youtube = youtube.push(
+            row![
+                field(
+                    p,
+                    "YouTube Data API key, for !yt search",
+                    &draft.youtube_key,
+                    Edit::YoutubeKey,
+                )
+                .secure(true)
+                .width(Fill),
+                pill(
+                    p,
+                    "Check key",
+                    Tone::Plain,
+                    look::PILL_SMALL,
+                    (has_key && !checking).then(|| settings(Edit::CheckKey)),
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+        match &draft.key_check {
+            Some(KeyState::Checking) => {
+                youtube = youtube.push(
+                    text("Checking the key with YouTube…")
+                        .size(META)
+                        .color(p.on_surface_variant),
+                );
+            }
+            Some(KeyState::Done(check)) => {
+                let colour = match check {
+                    KeyCheck::Works => p.primary,
+                    _ => p.error,
+                };
+                let mut said = row![text(check.says()).size(BODY).font(MEDIUM).color(colour)]
+                    .spacing(10)
+                    .align_y(Alignment::Center);
+                if let KeyCheck::ApiOff { turn_on } = check {
+                    said = said.push(pill(
+                        p,
+                        "Turn it on",
+                        Tone::Selected,
+                        look::PILL_SMALL,
+                        Some(Message::OpenLink(turn_on.clone())),
+                    ));
+                }
+                youtube = youtube.push(said);
+            }
+            None => {}
+        }
+        // How to get a key, a page each, until one works.
+        if !matches!(draft.key_check, Some(KeyState::Done(KeyCheck::Works))) {
+            youtube = youtube.push(
+                text("No key yet? It's free, in three steps on Google Cloud:")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            );
+            let steps = [
+                ("1. Make a project", yt_key::CREATE_PROJECT),
+                (
+                    "2. Turn on the YouTube Data API v3 for it",
+                    yt_key::TURN_ON_API,
+                ),
+                (
+                    "3. Make an API key, then paste it above",
+                    yt_key::CREATE_KEY,
+                ),
+            ];
+            for (step, page) in steps {
+                youtube = youtube.push(
+                    row![
+                        text(step).size(BODY).width(Fill),
+                        pill(
+                            p,
+                            "Open",
+                            Tone::Plain,
+                            look::PILL_SMALL,
+                            Some(Message::OpenLink(page.into())),
+                        ),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                );
+            }
+        }
         let colors = column![
             section(
                 p,
@@ -1443,7 +1628,8 @@ impl App {
     /// it, and deleting it. These act on the plan at once; its Save keeps
     /// the name and the template mark.
     /// The remote for a phone: its switch and, while it is on, the address
-    /// to open, as text and as a code for the phone's camera.
+    /// to open, as text and as a code for the phone's camera, and the same
+    /// over Tailscale when this computer is on it.
     fn phone_section(&self, on: bool) -> Element<'_, Message> {
         let p = self.palette;
         let note = |words: String| text(words).size(META).color(p.on_surface_variant);
@@ -1488,7 +1674,7 @@ impl App {
                 } else {
                     ("No phone has reached this computer yet. If the page won't open on the phone, the network is keeping the two apart: a guest Wi-Fi, a VPN on the phone, or a router that isolates devices. This computer's hotspot gets around it.".to_string(), p.on_surface_variant)
                 };
-                let code = iced::widget::svg(remote.code.clone())
+                let code = iced::widget::svg(remote.lan.code.clone())
                     .width(QR_SIDE)
                     .height(QR_SIDE);
                 section = section
@@ -1499,7 +1685,7 @@ impl App {
                             column![
                                 text("Scan this with the phone's camera.").size(BODY).font(MEDIUM),
                                 note("The phone and this computer must be on the same Wi-Fi. Anyone with this code can run the stage, so show it only to who should.".into()),
-                                text(remote.address.clone()).size(META).color(p.on_surface),
+                                text(remote.lan.address.clone()).size(META).color(p.on_surface),
                                 text(reach).size(META).color(reach_colour),
                                 note("Save to keep the remote on the next time Lantern starts.".into()),
                             ]
@@ -1509,6 +1695,25 @@ impl App {
                         .spacing(16)
                         .align_y(Alignment::Center),
                     );
+                if let Some(tailscale) = &remote.tailscale {
+                    let code = iced::widget::svg(tailscale.code.clone())
+                        .width(QR_SIDE)
+                        .height(QR_SIDE);
+                    section = section.push(Space::new().height(6)).push(
+                        row![
+                            code,
+                            column![
+                                text("Away from this Wi-Fi: over Tailscale").size(BODY).font(MEDIUM),
+                                note("For a phone on mobile data, on another Wi-Fi, or on a guest Wi-Fi that keeps devices apart. Tailscale must be on and signed in on the phone.".into()),
+                                text(tailscale.address.clone()).size(META).color(p.on_surface),
+                            ]
+                            .spacing(8)
+                            .width(Fill),
+                        ]
+                        .spacing(16)
+                        .align_y(Alignment::Center),
+                    );
+                }
             }
             (None, Some(why)) => {
                 section = section.push(
@@ -1863,6 +2068,61 @@ mod tests {
         assert_eq!(draft.colors, "~/.config/amane/colors.json");
         let dir = Path::new("/home/ana/.config/lantern");
         assert_eq!(draft.config(dir, home()).unwrap(), sample());
+    }
+
+    #[test]
+    fn the_youtube_choice_and_key_are_kept_and_count_as_a_change() {
+        let dir = Path::new("/home/ana/.config/lantern");
+        let mut draft = Draft::of(&sample(), home());
+        assert_eq!(
+            draft.youtube,
+            YoutubeMode::Official,
+            "YouTube's own player is the usual"
+        );
+        let before = draft.held();
+        draft.edit(Edit::Youtube(YoutubeMode::YtDlpFirst));
+        draft.edit(Edit::YoutubeKey(" yt-key ".into()));
+        assert_ne!(draft.held(), before, "choosing yt-dlp is something to save");
+        let config = draft.config(dir, home()).unwrap();
+        assert_eq!(config.youtube, YoutubeMode::YtDlpFirst);
+        assert!(config.youtube.uses_yt_dlp());
+        assert_eq!(config.youtube_api_key.as_deref(), Some("yt-key"));
+
+        draft.edit(Edit::YoutubeKey("  ".into()));
+        assert_eq!(draft.config(dir, home()).unwrap().youtube_api_key, None);
+    }
+
+    #[test]
+    fn a_whole_key_is_checked_and_a_new_one_forgets_the_last_check() {
+        let key = "AIzaSyA-0123456789abcdefghijklmnopqrstu";
+        assert_eq!(key.len(), 39);
+        assert!(Draft::is_whole_key(key));
+        assert!(
+            Draft::is_whole_key(&format!("  {key}\n")),
+            "pasted with spaces"
+        );
+        assert!(
+            !Draft::is_whole_key("AIzaSyA-0123"),
+            "typed part of the way"
+        );
+        assert!(!Draft::is_whole_key(&"x".repeat(39)));
+
+        let mut draft = Draft::of(&sample(), home());
+        draft.edit(Edit::CheckKey);
+        assert_eq!(draft.key_check, None, "no key, nothing to check");
+        let before = draft.held();
+        draft.edit(Edit::YoutubeKey(format!(" {key} ")));
+        assert_eq!(draft.youtube_key(), key);
+        draft.edit(Edit::CheckKey);
+        assert_eq!(draft.key_check, Some(KeyState::Checking));
+        draft.key_check = Some(KeyState::Done(KeyCheck::BadKey));
+        let checked = draft.held();
+        draft.key_check = None;
+        assert_eq!(checked, draft.held(), "a check isn't anything to save");
+        assert_ne!(checked, before, "the key is");
+        draft.key_check = Some(KeyState::Done(KeyCheck::BadKey));
+        draft.edit(Edit::YoutubeKey("AIza".into()));
+        assert_eq!(draft.key_check, None, "the check was of the other key");
     }
 
     #[test]

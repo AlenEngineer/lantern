@@ -1,0 +1,13 @@
+# The config every e2e run uses. Relative paths are relative to this file.
+# The colours are a copy of a Matugen palette, so screenshots show roles.
+colors = "fixtures/colors.json"
+see_through = 60
+
+[[folders]]
+path = "fixtures"
+label = "Fixtures"
+
+[[bibles]]
+lang = "es"
+path = "../../sources/bible/fixtures/sample.tsv"
+name = "RV1909"

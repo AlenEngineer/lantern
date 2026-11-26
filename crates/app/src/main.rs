@@ -23,6 +23,7 @@ mod fading;
 mod fill;
 mod fill_panel;
 mod fit;
+mod gallery;
 mod keys;
 mod length;
 mod lengths;
@@ -35,6 +36,7 @@ mod outputs;
 mod palette;
 mod paths;
 mod phone;
+mod pixels;
 mod plan_edit;
 mod plan_pane;
 mod plan_panel;
@@ -54,13 +56,15 @@ mod side;
 mod sources;
 mod stage;
 mod thumbs;
+mod titles;
 mod track;
 mod usage;
 mod watch;
+mod web_player;
 mod widgets;
 mod youtube;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -72,11 +76,11 @@ use iced::widget::{Space, container, image, operation, scrollable, stack};
 use iced::{Color, ContentFit, Element, Fill, Subscription, Task, window};
 use lantern_engine::{
     Action, Engine, Look, Media, MediaReport, Plan, Playback, Query, ResourceId, SceneId,
-    SearchEvent, SearchStream, StageEvent, StageFeed, StageState, Step, StepId,
+    SearchEvent, SearchStream, SourceId, StageEvent, StageFeed, StageState, Step, StepId,
 };
 
 use crate::config::Config;
-use crate::dashboard::{NAME_BOX, RESULTS, SEARCH_BOX};
+use crate::dashboard::{NAME_BOX, PREVIEW, RESULTS, SEARCH_BOX};
 use crate::drag::{Drag, Half};
 use crate::keys::Op;
 use crate::library::Library;
@@ -93,7 +97,7 @@ const LIVE_SEARCH_PAUSE: Duration = Duration::from_millis(250);
 /// The Wayland app id of the audience window. A Hyprland rule matches it to
 /// send the window to the projector.
 const STAGE_APP_ID: &str = "lantern-stage";
-const DASHBOARD_APP_ID: &str = "lantern-dashboard";
+pub(crate) const DASHBOARD_APP_ID: &str = "lantern-dashboard";
 
 fn main() -> ExitCode {
     log("starting");
@@ -173,9 +177,12 @@ fn load_script() -> Result<Option<Script>, String> {
         std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
     let shooter = std::env::var_os("LANTERN_SHOT").map(PathBuf::from);
     let dir = path.parent().unwrap_or(std::path::Path::new("."));
-    Script::parse(&source, dir, shooter)
-        .map(Some)
-        .map_err(|err| format!("{}: {err}", path.display()))
+    let script =
+        Script::parse(&source, dir, shooter).map_err(|err| format!("{}: {err}", path.display()))?;
+    if script.points() {
+        script::pointer_ready().map_err(|err| format!("{}: {err}", path.display()))?;
+    }
+    Ok(Some(script))
 }
 
 /// Writes one timestamped line to stderr, which the e2e harness keeps as `app.log`.
@@ -244,10 +251,6 @@ pub(crate) enum FadeEnd {
 
 #[derive(Debug, Clone)]
 enum Message {
-    /// The plan's bracket pressed: the plan is picked, as a section is.
-    PickPlan,
-    /// The plan's bracket pressed twice: folded into one row, or opened.
-    FoldPlan,
     /// The stage as it was when the feed started. Always the feed's first message.
     Feed(Box<StageState>),
     Stage(StageEvent),
@@ -260,6 +263,10 @@ enum Message {
     Snap,
     /// The picture, as a JPEG, or why there is none.
     Snapped(Result<Arc<Vec<u8>>, String>),
+    /// Time to ask how the computer's sound stands, for the phones.
+    HearSound,
+    /// How the computer's sound stands, or why it couldn't be changed.
+    Heard(Result<Option<before::Sound>, String>),
     /// The program's video stopped on an error, which this says.
     Broke(SceneId, String),
     /// Time to report the playing video's position.
@@ -277,7 +284,28 @@ enum Message {
     ScriptDone,
     /// A dashboard command from the script.
     Script(Ui),
+    /// The script asks where something is on the dashboard.
+    PlaceOf(script::Aim, std::sync::mpsc::Sender<Option<iced::Point>>),
+    /// The plan's rows were scrolled this far down.
+    PlanScrolled(f32),
+    /// The library's rows were scrolled this far down.
+    ShelfScrolled(f32),
     Closed(window::Id),
+    /// Open this page in the operator's browser.
+    OpenLink(String),
+    /// Open the picker on YouTube's search for what's typed.
+    PickOnYoutube,
+    /// A video picked on YouTube's site, by id (from the picker, or a script).
+    Picked(String),
+    /// What YouTube says a picked video is called.
+    PickTitled(String, Result<titles::Title, String>),
+    /// What checking this YouTube key found.
+    KeyChecked(
+        String,
+        Result<lantern_source_youtube::key::KeyCheck, String>,
+    ),
+    /// A window was put here, as it says (not on Wayland).
+    Placed(window::Id, iced::Point),
     /// A window was asked to close: by its button, or by the desktop.
     CloseAsked(window::Id),
     /// A window's size, at the start and on every resize.
@@ -325,13 +353,6 @@ enum Message {
     Type(String),
     /// Time to see whether the colours file changed.
     CheckPalette,
-    /// A new, empty plan in place of this one.
-    NewPlan,
-    /// The pointer came over a bracket's lane while a section is carried:
-    /// it would go into that section, at this level.
-    CarryInto(u8),
-    /// It left that lane.
-    CarryOut(u8),
     /// Time to see whether a file the plan opened into pages changed.
     CheckFiles,
     /// The file with this id, opened into pages, is taken in as it is now.
@@ -355,8 +376,6 @@ enum Message {
     NoteGone(lantern_engine::NoteId),
     /// A section's time made longer or shorter by so many seconds.
     SectionGoal(StepId, i64),
-    /// The plan's bracket was pressed: the plan is picked, and its card
-    /// shows what it is set to.
     /// The plan's target made longer or shorter by so many seconds.
     PlanGoal(i64),
     /// How long a step fades in, or out, made longer or shorter by so
@@ -364,23 +383,21 @@ enum Message {
     SetFade(StepId, FadeEnd, i64),
     /// Typed in a section's time of day to be over by.
     DoneBy(StepId, String),
-    /// A section's bracket was pressed: it is picked, and held and moved
-    /// it is carried with all it holds.
+    /// A section's header was pressed with Ctrl: it is added to what is
+    /// picked, or dropped from it.
     Grab(StepId),
-    /// The foot of a section's bracket was pressed: pulled, it ends the
-    /// section somewhere else.
+    /// The foot of a section was pressed: pulled, it ends the section
+    /// somewhere else.
     PressFoot(StepId),
     /// The foot of the line of a sound that keeps going was pressed, the
     /// step that set it named: pulled, it stops somewhere else.
     PressSoundEnd(StepId),
-    /// The head of a section's bracket was pressed: pulled, it starts the
-    /// section somewhere else.
+    /// The head of a section was pressed: pulled, it starts the section
+    /// somewhere else.
     PressHead(StepId),
     /// A box pulled over the plan picked these steps; none, for a press
     /// where there is nothing, which lets go of whatever was picked.
     Marquee(Vec<StepId>),
-    /// The pointer came into a lane of the brackets' room, or left it.
-    BracketOver(Option<track::Pointed>),
     Remove(StepId),
     /// Takes this off the plan's standby shelf.
     Unstandby(ResourceId),
@@ -544,6 +561,8 @@ enum Message {
     Scrubbed,
     /// Puts what is picked in a step's place.
     ReplaceStep(StepId),
+    /// Opens how a step looks and fades under the preview, or closes it.
+    LookAndTiming(StepId),
     /// A line inside a step was clicked: go to the slide it is on. In a
     /// run, on the projector; while planning, in the preview.
     StepSlide(StepId, usize),
@@ -555,8 +574,18 @@ enum Message {
     ShelfFold(String),
     /// What is typed in the library's filter.
     ShelfFilter(String),
-    /// The pointer is over this of the library, or over none of it.
-    ShelfHover(Option<shelf::Grip>),
+    /// The pointer came onto this of the library.
+    ShelfHover(shelf::Grip),
+    /// The pointer left this of the library. When it has come onto
+    /// another already, that one stays.
+    ShelfLeft(shelf::Grip),
+    /// Lays out the library's open folder ([`App::shelf_here`]) so.
+    ShelfLayout(shelf::Layout),
+    /// A file's row of the library came near sight.
+    ShelfSeen(ResourceId),
+    /// Goes to this slide or page of what the preview holds, on this
+    /// screen.
+    PreviewFrame(usize),
     /// The Plan or Live button of the mode switch.
     SetMode(mode::Mode),
     /// From planning to running the plan.
@@ -620,6 +649,9 @@ struct App {
     /// Where the stage goes with the screens connected now; `None` until
     /// they have been listed, or where they can't be.
     place: Option<outputs::Place>,
+    /// The size of the screen the stage shows on, which pictures are
+    /// judged against.
+    stage_screen: pixels::Pixels,
     /// The screens connected at the last look, as one name.
     setup: String,
     /// The screen the stage window was on at the last look.
@@ -630,13 +662,24 @@ struct App {
     index_changes: u64,
     /// Thumbnails for results and plan steps.
     thumbs: thumbs::Thumbs,
+    /// YouTube titles being asked for, for the open plan.
+    titles: Arc<titles::Titles>,
+    /// The picker, YouTube's own site in a window, while it's open, and
+    /// whether its window is on the dashboard's screen yet.
+    picker: Option<web_player::WebPlayer>,
+    picker_placed: bool,
     /// How long each library file plays, measured once and kept.
     pub(crate) lengths: lengths::Lengths,
     /// What has been shown in services and in Live, and when.
     pub(crate) usage: usage::Usage,
-    /// Where the plan's dots and brackets were when last drawn: what is
+    /// Where the plan's dots and rows were when last drawn: what is
     /// laid over the list beside one of them is put there.
     pub(crate) places: track::Places,
+    /// How far down the plan's rows are scrolled: the places are where
+    /// the rows would be at the top.
+    pub(crate) plan_scrolled: f32,
+    /// How far down the library's rows are scrolled.
+    shelf_scrolled: f32,
     /// Run's rail's rows, as they move while the service goes on.
     pub(crate) road_rows: road::Rows,
     /// The steps picked together, with the selected one: Ctrl and a
@@ -665,17 +708,14 @@ struct App {
     /// The line that was pulled where none can be, the same way: which
     /// side it was on, and from which row to which.
     pub(crate) alarm_pull: Option<(rail::Side, usize, usize)>,
-    /// A bracket was pressed just now: what is carried is its section,
-    /// not the row the pointer is on.
-    pub(crate) grabbed: bool,
-    /// The foot of a section's bracket held: the section, and the row it
+    /// The foot of a section held: the section, and the row it
     /// would end at if let go now.
     pub(crate) foot: Option<(StepId, Option<StepId>)>,
     /// The end of a sound's line being pulled: the step that set the
     /// sound, and the row it would stop at (that step itself for its
     /// step alone), while over one it can.
     pub(crate) sound_end: Option<(StepId, Option<StepId>)>,
-    /// The head of a section's bracket held: the section, the plan as it
+    /// The head of a section held: the section, the plan as it
     /// was when it was taken hold of (it is changed as it is pulled, and
     /// put back where it can't start), and whether it can't start where
     /// it is now.
@@ -720,16 +760,20 @@ struct App {
     /// there. What it was sent is kept to say back with the results.
     phone_search: Search,
     phone_asked: String,
+    /// The library folder a phone asked to list, and its files.
+    phone_listed: Option<(usize, Vec<Arc<lantern_engine::Resource>>)>,
     /// The selected plan step: where new steps go, and what Enter puts on
     /// stage while the search box is empty.
     selected: Option<StepId>,
+    /// While planning, the step whose look and timing are open under the
+    /// preview, from its Look & timing: only ever the step looked at, so
+    /// picking another closes them. In a run the selected step's are open
+    /// under its row ([`App::card_open`]).
+    look_and_timing: Option<StepId>,
     /// The last click on a result or step, to tell a double click.
     last_click: Option<(Clicked, Instant)>,
     /// The plan row (and its half) under the pointer.
     hovered: Option<(StepId, Half)>,
-    /// Where the pointer is in the room right of the plan's rows, for
-    /// the brackets there.
-    bracket_over: Option<track::Pointed>,
     /// The plan row the button went down on, while it's held.
     drag: Option<Drag>,
     /// A step's dot held down on the rail, and the step whose rail the
@@ -754,9 +798,9 @@ struct App {
     /// (its own folders, its Bibles), to notice when another plan or an
     /// edit asks for something else.
     plan_needs: library::PlanNeeds,
-    /// The side panes' widths as dragged; `None` sizes one for the window.
-    pub(crate) plan_dragged: Option<f32>,
-    pub(crate) stage_dragged: Option<f32>,
+    /// The side panes' widths as dragged, by the name each pane keeps its
+    /// width under. A pane not here sizes itself for the window.
+    pub(crate) dragged: BTreeMap<String, f32>,
     /// The side pane whose edge is held, and when it was last pressed, to
     /// tell a double click.
     pub(crate) resizing: Option<dashboard::Side>,
@@ -788,6 +832,9 @@ struct App {
     pub(crate) look_typed: Option<(Option<StepId>, side::Field, String)>,
     /// Where sound went when the Check lens was last opened.
     pub(crate) sound_now: Option<before::Sound>,
+    /// The computer's sound as the phones are shown it, asked again every
+    /// few seconds while one looks.
+    pub(crate) phone_sound: Option<before::Sound>,
     /// Delete was pressed once in the plan's settings: again deletes.
     pub(crate) deleting_plan: bool,
     /// The part of a step being edited in its row.
@@ -863,12 +910,13 @@ struct App {
     pub(crate) taking_in: Option<ResourceId>,
     /// Files of the library picked together, in its order.
     pub(crate) shelf_many: Vec<ResourceId>,
+    /// The library's files whose rows have come near sight: only theirs
+    /// have their pictures and lengths asked for.
+    pub(crate) shelf_seen: std::collections::HashSet<ResourceId>,
+    /// How each folder of the library lays out its files.
+    pub(crate) shelf_layouts: shelf::Layouts,
     /// The sections of the plan that are folded away.
     pub(crate) folded: std::collections::HashSet<StepId>,
-    /// The open plan's bracket is picked: keys act on the plan.
-    pub(crate) plan_picked: bool,
-    /// The open plan is folded into one row, as the others are.
-    pub(crate) plan_folded: bool,
     /// Sections over in this service that the operator opened again.
     pub(crate) opened: std::collections::HashSet<StepId>,
     /// How much had been shown when Live was entered: its session is what
@@ -910,11 +958,16 @@ impl App {
         });
         // The stage feed's first message preloads the reopened plan.
         let layout = store.layout();
+        let shelf_layouts = shelf::Layouts::read(&store.data());
         let screens = outputs::Memory::new(&store.data());
         let last_sound = outputs::Memory::named(&store.data(), "sound-output");
         let lengths = lengths::Lengths::start(&store.data());
         let usage = usage::Usage::read(&store.data());
         let plans = Plans::start(store, &engine.0);
+        // YouTube's titles in saved plans are kept no longer than YouTube
+        // allows: the old ones are fetched again, off to the side.
+        let (saved, open) = (plans.store().clone(), plans.file().map(Path::to_path_buf));
+        std::thread::spawn(move || titles::refresh_saved(&saved, open.as_deref()));
         let mut app = App {
             media: Stage::new(downloads.0.clone()),
             plans,
@@ -934,14 +987,20 @@ impl App {
             output_watch: outputs::Watch::default(),
             screens,
             place: None,
+            stage_screen: outputs::stage_screen(&[], None),
             setup: String::new(),
             stage_seen_on: None,
             stage_lost: false,
             index_changes: 0,
             thumbs: thumbs::Thumbs::start(),
+            titles: Arc::default(),
+            picker: None,
+            picker_placed: false,
             lengths,
             usage,
             places: track::Places::default(),
+            plan_scrolled: 0.0,
+            shelf_scrolled: 0.0,
             road_rows: road::Rows::default(),
             picked: Vec::new(),
             note_open: None,
@@ -953,7 +1012,6 @@ impl App {
             mods: iced::keyboard::Modifiers::default(),
             alarm: (Vec::new(), Vec::new()),
             alarm_pull: None,
-            grabbed: false,
             foot: None,
             sound_end: None,
             head: None,
@@ -977,10 +1035,11 @@ impl App {
             search: Search::default(),
             phone_search: Search::default(),
             phone_asked: String::new(),
+            phone_listed: None,
             selected: None,
+            look_and_timing: None,
             last_click: None,
             hovered: None,
-            bracket_over: None,
             drag: None,
             pull: None,
             rail_over: None,
@@ -990,8 +1049,7 @@ impl App {
             spent: false,
             search_open: false,
             plan_needs: library::PlanNeeds::default(),
-            plan_dragged: layout.0,
-            stage_dragged: layout.1,
+            dragged: layout,
             resizing: None,
             seam_pressed: None,
             copying: false,
@@ -1006,6 +1064,7 @@ impl App {
             lens: side::Lens::default(),
             look_typed: None,
             sound_now: None,
+            phone_sound: None,
             deleting_plan: false,
             editing: None,
             list_pick: None,
@@ -1026,8 +1085,6 @@ impl App {
             kept: None,
             live_from: 0,
             folded: std::collections::HashSet::new(),
-            plan_picked: false,
-            plan_folded: false,
             opened: std::collections::HashSet::new(),
             parts: HashMap::new(),
             shelf: Vec::new(),
@@ -1043,6 +1100,8 @@ impl App {
             files_changed: Vec::new(),
             taking_in: None,
             shelf_many: Vec::new(),
+            shelf_seen: std::collections::HashSet::new(),
+            shelf_layouts,
             scrub: None,
             balk: None,
             seen: (None, HashMap::new()),
@@ -1134,6 +1193,7 @@ impl App {
                 });
                 self.stage_window = Some(stage);
                 self.stage_lost = false;
+                self.media.set_stage_open(true);
                 log("stage: the window opens");
                 // Once it is there, it is put on its screen at once, not
                 // at the next look round.
@@ -1144,6 +1204,7 @@ impl App {
             }
             (false, Some(stage)) => {
                 self.stage_window = None;
+                self.media.set_stage_open(false);
                 // Closed because its screen went, mid-service: that is
                 // worth an alarm, where closing it for planning is not.
                 self.stage_lost = self.stage_wish.is_none() && self.mode != mode::Mode::Plan;
@@ -1209,9 +1270,11 @@ impl App {
             }
             None => self.handle(message),
         };
-        // Whatever else is picked, the plan is not.
-        if self.selected.is_some() || !self.picked.is_empty() || self.line_picked.is_some() {
-            self.plan_picked = false;
+        // Picking another step closes Look & timing: it belongs to the
+        // step looked at, which for a picked section is its first step.
+        if self.look_and_timing.is_some() && self.look_and_timing != self.cued().map(|step| step.id)
+        {
+            self.look_and_timing = None;
         }
         // An edit that put a section over its time shows it tipping.
         if self.edits != edits
@@ -1268,25 +1331,9 @@ impl App {
         }
         // The gap is as far in as what is held would land, and the
         // section it would be a part of lights up.
-        let plan = self.engine.0.plan();
-        let lands = match (&self.drag, &self.carried) {
-            (Some(drag), _) if drag.moving => {
-                drag.landing.map(|at| (drag.rest(&plan), at, drag.level))
-            }
-            (_, Some(held)) if held.moving => self.carry_landing(&plan).map(|at| {
-                let rest: Vec<_> = plan.steps().iter().collect();
-                let level = drag::level_at(&rest, at);
-                (rest, at, level)
-            }),
-            _ => None,
-        };
-        if let Some((rest, at, level)) = lands {
+        if let Some((_, level, section)) = self.carry_target(&self.engine.0.plan()) {
             self.motion.gap_is_in(plan_pane::INDENT * f32::from(level));
-            self.motion
-                .hosted_by(drag::host(&rest, at, level).map(|(start, _)| rest[start].id));
-        }
-        if self.mode == mode::Mode::Plan {
-            self.plans.relist();
+            self.motion.hosted_by(section);
         }
         self.sync_parts();
         self.sync_changed();
@@ -1406,10 +1453,24 @@ impl App {
                 }
             }
             Message::Snapped(Err(err)) => log(format!("remote: no picture: {err}")),
+            Message::HearSound => {
+                return Task::perform(in_thread(|| Ok(before::sound())), Message::Heard);
+            }
+            Message::Heard(Ok(sound)) => self.phone_sound = sound,
+            Message::Heard(Err(err)) => log(format!("remote: sound: {err}")),
             Message::Broke(scene, why) => {
                 self.media.broke(scene, &why, &self.engine.0);
             }
             Message::Tick => {
+                // What YouTube's own player said: it ended, or it couldn't
+                // play and yt-dlp takes over.
+                let (ended, again) = self.media.web_events(&self.stage, &self.engine.0);
+                if let Some(again) = again {
+                    return again.map(Message::Loaded);
+                }
+                if let Some(scene) = ended.into_iter().next() {
+                    return self.update(Message::Ended(scene));
+                }
                 for (scene, position) in self
                     .media
                     .playhead()
@@ -1445,7 +1506,53 @@ impl App {
                     };
                 }
             }
-            Message::Progress => return self.go_on(),
+            Message::Progress => {
+                self.take_titles();
+                let picks = self.take_picks();
+                return Task::batch([picks, self.go_on()]);
+            }
+            Message::PickOnYoutube => {
+                if self
+                    .picker
+                    .as_mut()
+                    .is_some_and(web_player::WebPlayer::alive)
+                {
+                    return Task::none();
+                }
+                let address = lantern_source_youtube::key::browser_search(self.search.text());
+                let profile = stage::cache_dir().join("youtube-picker");
+                match web_player::WebPlayer::pick(&address, &profile) {
+                    Ok(picker) => {
+                        self.picker = Some(picker);
+                        self.picker_placed = false;
+                    }
+                    Err(err) => log(format!("picker: {err}")),
+                }
+            }
+            Message::Picked(id) => {
+                let source = SourceId::new("youtube").expect("a valid source id");
+                let video = Arc::new(lantern_source_link::youtube_video(&source, &id));
+                self.search.add_pick(video, &self.engine.0);
+                self.tell_picker(None);
+                let asked = id.clone();
+                return Task::perform(in_thread(move || Ok(titles::fetch(&asked))), move |found| {
+                    Message::PickTitled(id.clone(), found.and_then(|found| found))
+                });
+            }
+            Message::PickTitled(id, Ok(title)) => {
+                let source = SourceId::new("youtube").expect("a valid source id");
+                let mut video = lantern_source_link::youtube_video(&source, &id);
+                video.title = title.title.clone();
+                if let Some(channel) = &title.channel {
+                    video.subtitle = Some(channel.clone());
+                }
+                let video =
+                    video.with_meta(lantern_source_youtube::FETCHED, titles::now().to_string());
+                if self.search.replace(Arc::new(video)) {
+                    self.tell_picker(Some(&title.title));
+                }
+            }
+            Message::PickTitled(_, Err(err)) => log(format!("picker: {err}")),
             Message::Frame => {}
             Message::Fading => {
                 // What faded out has gone, and the plan with it.
@@ -1454,6 +1561,11 @@ impl App {
                 }
             }
             Message::Acted => return self.preload(),
+            Message::PlaceOf(aim, reply) => {
+                let _ = reply.send(self.place_of(aim));
+            }
+            Message::PlanScrolled(down) => self.plan_scrolled = down,
+            Message::ShelfScrolled(down) => self.shelf_scrolled = down,
             Message::ScriptDone => {
                 log("script finished, exiting");
                 return self.leave();
@@ -1529,6 +1641,7 @@ impl App {
                         _ => Task::none(),
                     },
                     Ui::Slide(n) => self.update(Message::GotoFrame(n)),
+                    Ui::Film(n) => self.update(Message::PreviewFrame(n)),
                     Ui::Output(name) => {
                         let output = (name != "automatic").then_some(name);
                         self.update(Message::Settings(settings::Edit::Output(output)))
@@ -1555,6 +1668,31 @@ impl App {
                             Task::none()
                         }
                     },
+                    Ui::Fold(n) => match self.engine.0.plan().steps().get(n) {
+                        Some(step) if step.is_section() => self.update(Message::Fold(step.id)),
+                        _ => {
+                            log(format!("dashboard: plan entry {} is no section", n + 1));
+                            Task::none()
+                        }
+                    },
+                    Ui::Library(name) => match self.library_press(&name) {
+                        Some(press) => self.update(press),
+                        None => {
+                            log(format!("dashboard: no row {name:?} in the library"));
+                            Task::none()
+                        }
+                    },
+                    Ui::LibraryLayout(layout) => self.update(Message::ShelfLayout(layout)),
+                    Ui::PickOnYoutube => self.update(Message::PickOnYoutube),
+                    Ui::Picked(id) => self.update(Message::Picked(id)),
+                    Ui::CheckKey => {
+                        if self.settings.is_none() {
+                            let _ = self.op(Op::Settings);
+                        }
+                        let library = settings::Edit::Category(settings::Category::Library);
+                        let _ = self.update(Message::Settings(library));
+                        self.update(Message::Settings(settings::Edit::CheckKey))
+                    }
                     Ui::Path(text) => {
                         let library = settings::Edit::Category(settings::Category::Library);
                         let _ = self.update(Message::Settings(library));
@@ -1586,6 +1724,7 @@ impl App {
                         let opened = self.plans.open_named(&self.engine.0, &name);
                         self.preload_if(opened)
                     }
+                    Ui::Mods(mods) => self.update(Message::Mods(mods)),
                     Ui::Rename(name) => Task::batch([
                         self.update(Message::EditPlanName),
                         self.update(Message::PlanName(name)),
@@ -1610,10 +1749,11 @@ impl App {
             }
             Message::Hover(row) => {
                 self.hovered = row;
-                // A bracket's head pulled over a row: the section starts
-                // there, or where it was if it can't.
+                // A section's head pulled over a row: the section starts
+                // there, or where it was if it can't. Its header moves as it
+                // goes, so the header coming under the pointer is no row.
                 if let Some((section, was, refused)) = &mut self.head
-                    && let Some((over, _)) = row
+                    && let Some((over, _)) = row.filter(|(over, _)| *over != *section)
                 {
                     let pulled = pull_head(was, *section, over);
                     *refused = pulled.is_none();
@@ -1631,7 +1771,7 @@ impl App {
                         && at(over).zip(at(*owner)).is_some_and(|(o, w)| o >= w);
                     *to = can.then_some(over);
                 }
-                // A bracket's foot pulled over a row: where it would end.
+                // A section's foot pulled over a row: where it would end.
                 if let Some((section, last)) = &mut self.foot
                     && let Some((over, _)) = row
                 {
@@ -1654,10 +1794,6 @@ impl App {
                 }
             }
             Message::LeftPlan => {
-                // Off the list, no bracket is under the pointer.
-                if self.bracket_over.take().is_some() {
-                    self.motion.lanes_to(None);
-                }
                 if let Some(drag) = &mut self.drag {
                     drag.landing = None;
                 }
@@ -1674,10 +1810,7 @@ impl App {
                 });
                 if double {
                     // Back to sizing itself for the window.
-                    match side {
-                        dashboard::Side::Plan => self.plan_dragged = None,
-                        dashboard::Side::Stage => self.stage_dragged = None,
-                    }
+                    self.drag_side(side, None);
                     self.keep_layout();
                 } else {
                     self.seam_pressed = Some((side, now));
@@ -1686,11 +1819,7 @@ impl App {
             }
             Message::Cursor(_, at) if self.resizing.is_some() => {
                 let side = self.resizing.expect("checked above");
-                let width = Some(self.dragged_to(side, at.x));
-                match side {
-                    dashboard::Side::Plan => self.plan_dragged = width,
-                    dashboard::Side::Stage => self.stage_dragged = width,
-                }
+                self.drag_side(side, Some(at.x));
             }
             Message::Pointer(_, false) if self.resizing.is_some() => {
                 self.resizing = None;
@@ -1818,7 +1947,6 @@ impl App {
             }
             Message::Rail(rail::Act::RingClose) => {
                 self.ring = None;
-                self.deleting_plan = false;
                 self.repeat_until.clear();
             }
             Message::Rail(rail::Act::Do(id, op)) => {
@@ -1870,10 +1998,9 @@ impl App {
             // A dot let go: where it was pressed it is a click, and the
             // step goes on or waits. Pulled to another step's, a loop is
             // drawn back up to it, or the steps down to it are joined.
-            // A bracket's head let go: the section starts where it was
+            // A section's head let go: it starts where it was
             // pulled to, as it is shown already.
             Message::Pointer(_, false) if self.head.is_some() => {
-                self.grabbed = false;
                 if let Some((section, was, refused)) = self.head.take() {
                     if refused {
                         self.refuse("It can't start there");
@@ -1893,7 +2020,6 @@ impl App {
             // A sound's line let go: it keeps going to where it was pulled,
             // or plays for its step alone, pulled back up to it.
             Message::Pointer(_, false) if self.sound_end.is_some() => {
-                self.grabbed = false;
                 if let Some((owner, to)) = self.sound_end.take() {
                     let was = self
                         .engine
@@ -1908,10 +2034,9 @@ impl App {
                     }
                 }
             }
-            // A bracket's foot let go: the section ends where it was
+            // A section's foot let go: it ends where it was
             // pulled to.
             Message::Pointer(_, false) if self.foot.is_some() => {
-                self.grabbed = false;
                 if let Some((section, Some(last))) = self.foot.take() {
                     self.remember(None);
                     match self.engine.0.reach_section(section, Some(last)) {
@@ -1933,7 +2058,6 @@ impl App {
                 }
             }
             Message::Pointer(_, false) if self.pull.is_some() => {
-                self.grabbed = false;
                 let pull = self.pull.take().expect("checked above");
                 match (pull.moving, pull.would, pull.toggle) {
                     (false, _, Some(on)) => {
@@ -2013,15 +2137,14 @@ impl App {
             Message::Pointer(_, true) => {
                 let plan = self.engine.0.plan();
                 // Only a step the mode lets change is picked up: in a run,
-                // one still ahead, once the plan is unlocked.
+                // one still ahead, once the plan is unlocked. A section, by
+                // its header, only while planning.
                 let running = self.mode == mode::Mode::Run;
+                let section = |step: StepId| plan.get(step).is_some_and(Step::is_section);
                 // Not from the rail: a dot pressed there is its own thing.
-                // A bracket pressed just now carries its section: that
-                // stays, whichever of the two is heard first.
                 // With Shift held a press on a row begins a box, not a
                 // carry.
-                if !std::mem::take(&mut self.grabbed)
-                    && self.foot.is_none()
+                if self.foot.is_none()
                     && self.sound_end.is_none()
                     && self.head.is_none()
                     && !self.mods.shift()
@@ -2030,7 +2153,8 @@ impl App {
                         .hovered
                         .filter(|_| self.rail_over.is_none() && self.pull.is_none())
                         .filter(|(step, _)| {
-                            self.can_edit() && (!running || self.ahead(&plan, *step))
+                            self.can_edit()
+                                && (!running || (self.ahead(&plan, *step) && !section(*step)))
                         })
                         .map(|(step, _)| Drag::new(&plan, step));
                 }
@@ -2069,7 +2193,6 @@ impl App {
                 }
             }
             Message::Pointer(_, false) => {
-                self.grabbed = false;
                 let dropped = self.drag.take().filter(|drag| drag.moving);
                 // In a run it lands after the step the service is at, or
                 // not at all.
@@ -2148,10 +2271,9 @@ impl App {
                 // Twice on a section folds it; in a service it must not
                 // also go live.
                 let section = match &target {
-                    Clicked::Step(id) => {
-                        self.engine.0.plan().get(*id).is_some_and(Step::is_section)
-                    }
-                    _ => false,
+                    Clicked::Step(id) => Some(*id)
+                        .filter(|id| self.engine.0.plan().get(*id).is_some_and(Step::is_section)),
+                    _ => None,
                 };
                 let lined_up = match target {
                     Clicked::Result(id) => {
@@ -2184,11 +2306,10 @@ impl App {
                         self.preload()
                     }
                 };
-                if double
-                    && !section
-                    && self.shelf_many.len() < 2
-                    && self.search.together().is_empty()
-                {
+                if double && let Some(section) = section {
+                    return Task::batch([lined_up, self.update(Message::Fold(section))]);
+                }
+                if double && self.shelf_many.len() < 2 && self.search.together().is_empty() {
                     return Task::batch([lined_up, self.op(Op::Take)]);
                 }
                 return lined_up;
@@ -2231,20 +2352,6 @@ impl App {
                 return self.complete(query);
             }
             Message::CheckPalette => self.check_palette(),
-            Message::CarryInto(level) | Message::CarryOut(level) => {
-                let into = matches!(message, Message::CarryInto(_));
-                let plan = self.engine.0.plan();
-                if let Some(drag) = self.drag.as_mut().filter(|drag| drag.moving) {
-                    match into {
-                        true => drag.point_into(Some(level)),
-                        // Only where it is still that lane's: the next one
-                        // may have said so already.
-                        false if drag.into == Some(level) => drag.point_into(None),
-                        false => {}
-                    }
-                    drag.aim_level(&plan);
-                }
-            }
             Message::CheckFiles => self.check_files(),
             Message::TakeIn(id) => {
                 let Some(file) = self
@@ -2288,12 +2395,45 @@ impl App {
                     }
                 }
             }
+            Message::OpenLink(url) => {
+                if let Err(err) = programs::open_url(&url) {
+                    log(format!("browser: {err}"));
+                }
+            }
+            Message::KeyChecked(key, found) => {
+                // Only for the key still in the field: it may have changed.
+                if let Some(draft) = &mut self.settings
+                    && draft.youtube_key() == key
+                {
+                    let found =
+                        found.unwrap_or_else(lantern_source_youtube::key::KeyCheck::Unreachable);
+                    draft.key_check = Some(settings::KeyState::Done(found));
+                }
+            }
             Message::Settings(edit) => {
                 // Picking a screen moves the stage there at once.
                 if let settings::Edit::Output(Some(output)) = &edit {
                     move_stage(output);
                 }
+                // A key pasted whole is checked at once, as one asked for.
+                let check = match &edit {
+                    settings::Edit::CheckKey => true,
+                    settings::Edit::YoutubeKey(text) => settings::Draft::is_whole_key(text),
+                    _ => false,
+                };
                 let chosen = self.settings.as_mut().and_then(|draft| draft.edit(edit));
+                if check && let Some(draft) = &mut self.settings {
+                    let _ = draft.edit(settings::Edit::CheckKey);
+                    let key = draft.youtube_key().to_string();
+                    if !key.is_empty() {
+                        // Never logged: the key is the operator's secret.
+                        let asked = key.clone();
+                        return Task::perform(
+                            in_thread(move || Ok(lantern_source_youtube::key::check(&asked))),
+                            move |found| Message::KeyChecked(key.clone(), found),
+                        );
+                    }
+                }
                 // A key waiting to be pressed takes the next key press.
                 keys::record(
                     self.settings
@@ -2378,9 +2518,40 @@ impl App {
                 self.shelf_pick = None;
                 self.in_library = true;
             }
-            Message::ShelfHover(file) => self.shelf_hover = file,
+            Message::ShelfHover(grip) => self.shelf_hover = Some(grip),
+            Message::ShelfLeft(grip) => {
+                if self.shelf_hover.as_ref() == Some(&grip) {
+                    self.shelf_hover = None;
+                }
+            }
+            Message::ShelfLayout(layout) => {
+                if let Some(folder) = self.shelf_here()
+                    && let Err(err) = self.shelf_layouts.set(&folder, layout)
+                {
+                    log(format!("library: keeping {folder}'s layout: {err}"));
+                }
+            }
+            Message::ShelfSeen(file) => {
+                self.shelf_seen.insert(file);
+            }
+            Message::PreviewFrame(frame) => {
+                if let Some(scene) = &self.stage.preview {
+                    self.engine.0.preview_at(scene.resource.clone(), frame);
+                }
+                return self.preload();
+            }
             Message::ShelfFilter(typed) => {
                 self.shelf_filter = typed;
+                if self.lens != side::Lens::Add {
+                    return self.update(Message::Lens(side::Lens::Add));
+                }
+            }
+            Message::LookAndTiming(id) => {
+                self.look_and_timing = (self.look_and_timing != Some(id)).then_some(id);
+                // Opened at the preview's foot, it is scrolled into sight.
+                if self.look_and_timing.is_some() {
+                    return operation::snap_to_end(PREVIEW);
+                }
             }
             Message::ReplaceStep(id) => {
                 let Some((step, pick)) = self.replaceable_at(id) else {
@@ -2455,27 +2626,26 @@ impl App {
                     marked.remove(&section);
                 }
                 let closed = added != over;
-                // Its rows close up into its one row, or grow out of it.
+                // Its rows close up under its header, or grow out of it.
                 let plan = self.engine.0.plan();
                 if let Some(at) = plan.position(section) {
                     let end = plan.group_end(at);
-                    let steps: Vec<StepId> = plan.steps()[at + 1..end]
+                    let held: Vec<StepId> = plan.steps()[at + 1..end]
                         .iter()
-                        .filter(|step| !step.is_section())
                         .map(|step| step.id)
                         .collect();
                     match closed {
-                        true if steps.len() > 1 => {
-                            let after = plan.steps()[end..]
-                                .iter()
-                                .find(|step| !step.is_section())
-                                .map(|step| step.id);
-                            // All but the one row it folds into.
-                            let tall = self.rows_tall(&steps[1..]);
+                        true if !held.is_empty() => {
+                            let after = plan.steps().get(end).map(|step| step.id);
+                            let tall = self.rows_tall(&held);
                             self.motion.rows_gone(after, tall);
                         }
                         true => {}
-                        false => self.motion.rows_came(steps),
+                        false => self.motion.rows_came(
+                            held.into_iter()
+                                .filter(|id| plan.get(*id).is_some_and(|step| !step.is_section()))
+                                .collect(),
+                        ),
                     }
                 }
             }
@@ -2498,7 +2668,6 @@ impl App {
             Message::Mods(mods) => self.mods = mods,
             Message::PressHead(section) => {
                 self.drag = None;
-                self.grabbed = false;
                 self.remember(None);
                 // Each section keeps the colour it has as the head moves:
                 // the plan it is pulled from has them all said.
@@ -2508,12 +2677,10 @@ impl App {
             }
             Message::PressFoot(section) => {
                 self.drag = None;
-                self.grabbed = false;
                 self.foot = Some((section, None));
             }
             Message::PressSoundEnd(owner) => {
                 self.drag = None;
-                self.grabbed = false;
                 let until = self
                     .engine
                     .0
@@ -2572,17 +2739,6 @@ impl App {
                         .0
                         .edit_plan(|plan| plan.set_note_text(id, words));
                 }
-            }
-            Message::PickPlan => {
-                self.selected = None;
-                self.picked.clear();
-                self.line_picked = None;
-                self.editing = None;
-                self.plan_picked = true;
-            }
-            Message::FoldPlan => {
-                self.plan_folded = !self.plan_folded;
-                self.plan_picked = true;
             }
             Message::PlanGoal(by) => {
                 self.remember(None);
@@ -2645,8 +2801,8 @@ impl App {
                 self.engine.0.edit_plan(|plan| plan.remove_note(id));
                 self.note_open = None;
             }
-            // With Ctrl, a bracket is added to what is picked, or dropped.
-            Message::Grab(section) if self.mods.control() => {
+            // With Ctrl, a section is added to what is picked, or dropped.
+            Message::Grab(section) => {
                 if self.picked.is_empty()
                     && let Some(first) = self.selected
                 {
@@ -2659,19 +2815,6 @@ impl App {
                     None => self.picked.push(section),
                 }
                 self.selected = self.picked.first().copied();
-            }
-            Message::Grab(section) => {
-                if self.can_edit() && self.mode != mode::Mode::Run {
-                    self.grabbed = true;
-                    self.drag = Some(Drag::new(&self.engine.0.plan(), section));
-                }
-                return self.update(Message::Click(Clicked::Step(section)));
-            }
-            Message::BracketOver(pointed) => {
-                self.bracket_over = pointed;
-                self.motion.lanes_to(pointed.map(|pointed| {
-                    track::lane_widths(pointed.lanes, Some(pointed.lane), pointed.from_right)
-                }));
             }
             Message::Marquee(steps) => {
                 // A press on nothing closes what is open: the note and
@@ -2699,7 +2842,7 @@ impl App {
                 let (Some(first), Some(last)) = (picked.first(), picked.last()) else {
                     return Task::none();
                 };
-                // A picked bracket is taken in whole: to the last of what
+                // A picked section is taken in whole: to the last of what
                 // is in it.
                 let last = (*last..plan.group_end(*last)).last().unwrap_or(*last);
                 let (first, last) = (plan.steps()[*first].id, plan.steps()[last].id);
@@ -2727,7 +2870,7 @@ impl App {
                     }),
                 }
             }
-            // Ctrl on a bracket's name picks the bracket, as on its line.
+            // Ctrl on a section's header picks the section, as on its line.
             Message::Select(step)
                 if self.mods.control()
                     && self.mode == mode::Mode::Plan
@@ -3281,7 +3424,6 @@ impl App {
                 self.plans.refresh();
             }
             Message::OpenPlan(path) => return self.switch_plan(Switch::Open(path)),
-            Message::NewPlan => return self.switch_plan(Switch::New),
             Message::LeavePlan => {
                 let replaced = self.plans.leave(&self.engine.0);
                 return self.switched(replaced);
@@ -3294,7 +3436,7 @@ impl App {
                 self.plans.cancel();
                 return operation::focus(SEARCH_BOX);
             }
-            // The name is typed in the plan's card.
+            // The name is typed in the plan's settings.
             Message::EditPlanName => {
                 self.selected = None;
                 self.picked.clear();
@@ -3337,6 +3479,12 @@ impl App {
             // The dashboard closing ends Lantern. The stage closing ends
             // only the stage: closed from outside, it stays closed until
             // it is opened again, like one closed by hand.
+            Message::Placed(window, at) => {
+                if Some(window) == self.stage_window {
+                    self.media
+                        .set_stage_seen(Some((at.x as i32 + 1, at.y as i32 + 1)));
+                }
+            }
             Message::Closed(window) if window == self.dashboard_window => {
                 log("the dashboard closed, exiting");
                 return self.leave();
@@ -3345,6 +3493,7 @@ impl App {
                 if Some(window) == self.stage_window {
                     log("stage: the window was closed");
                     self.stage_window = None;
+                    self.media.set_stage_open(false);
                     self.stage_wish = Some(false);
                 }
             }
@@ -3469,18 +3618,9 @@ impl App {
             // By hand: it holds until the mode changes.
             Op::Stage => self.stage_wish = Some(self.stage_window.is_none()),
             Op::Pane => return self.switch_pane(),
-            // The library has the arrows: they walk its tree.
-            Op::PickNext | Op::PickPrev | Op::PickFirst | Op::PickLast
-                if !self.searching() && self.keys_in_library() =>
-            {
-                return self.shelf_move(go(op));
-            }
-            Op::In | Op::Out if !self.searching() && self.keys_in_library() => {
-                return self.shelf_side(op == Op::In);
-            }
-            Op::Enter if !self.searching() && self.keys_in_library() && self.shelf_enter() => {}
             // While a section is carried, → and ← take it a level in or
-            // out.
+            // out, even with the keys in the library: a header carried
+            // off is never let go over, so it was never pressed.
             Op::In | Op::Out
                 if self
                     .drag
@@ -3493,6 +3633,16 @@ impl App {
                     drag.aim_level(&plan);
                 }
             }
+            // The library has the arrows: they walk its tree.
+            Op::PickNext | Op::PickPrev | Op::PickFirst | Op::PickLast
+                if !self.searching() && self.keys_in_library() =>
+            {
+                return self.shelf_move(go(op));
+            }
+            Op::In | Op::Out if !self.searching() && self.keys_in_library() => {
+                return self.shelf_side(op == Op::In);
+            }
+            Op::Enter if !self.searching() && self.keys_in_library() && self.shelf_enter() => {}
             // In the plan, → opens a section and then steps into it; ←
             // closes it, and from a step goes up to its heading.
             Op::In | Op::Out => {
@@ -3813,7 +3963,6 @@ impl App {
                 self.ring = None;
                 self.repeat_until.clear();
             }
-            Op::ClearSearch if self.plan_picked => self.plan_picked = false,
             Op::ClearSearch => {
                 // Esc also lets go of a name being typed, and of Add step.
                 if matches!(self.plans.mode, plans::Mode::Renaming(_)) {
@@ -3894,22 +4043,18 @@ impl App {
                     operation::move_cursor_to_end(SEARCH_BOX),
                 ]);
             }
-            // The plan's name is typed in its card, under its ring.
-            Op::Rename if self.plan_picked && !self.searching() => {
-                let ring = self.update(Message::Rail(rail::Act::Ring(rail::RingOn::All(None))));
-                return Task::batch([ring, self.update(Message::EditPlanName)]);
-            }
-            Op::Rename => {
-                let in_plan = !matches!(self.plans.mode, plans::Mode::Browsing(_));
-                if let Some(step) = self.selected.filter(|_| in_plan && !self.searching()) {
+            Op::Rename
+                if self.searching() || matches!(self.plans.mode, plans::Mode::Browsing(_)) => {}
+            Op::Rename => match self.selected {
+                Some(step) => {
                     return self.update(Message::EditStep(Some((step, plan_edit::Part::Name))));
                 }
-            }
+                // With nothing selected, the plan's own name.
+                None if self.mode == mode::Mode::Plan => return self.name_plan(),
+                None => {}
+            },
             // A copy of what is selected, right after it: the steps picked
             // together, or the selected step or section; and selected.
-            Op::Duplicate if self.plan_picked && !self.searching() => {
-                return self.update(Message::DuplicatePlan);
-            }
             Op::Duplicate if !self.searching() => {
                 let ids: Vec<StepId> = match self.picked.len() > 1 {
                     true => self.picked.clone(),
@@ -3933,13 +4078,9 @@ impl App {
             Op::Duplicate => {}
             // Delete takes away what is selected, whatever it is: the loop
             // or drawn order whose line was pressed (its steps stay); the
-            // steps picked together; the selected step; a bracket (its
+            // steps picked together; the selected step; a section (its
             // steps stay, and with Shift they go too). One undo brings it
             // all back.
-            // The plan picked: deleted as from its ring, pressed twice.
-            Op::RemoveStep if self.plan_picked && !self.searching() => {
-                return self.update(Message::DeletePlan);
-            }
             Op::RemoveStep if !self.searching() => {
                 if let Some(line) = self.line_picked.take() {
                     self.remember(None);
@@ -4012,14 +4153,6 @@ impl App {
                     self.undo.push(engine.plan());
                     return self.put_back(after);
                 }
-            }
-            // With a plan open, the others are folded under it, at the
-            // foot of its list.
-            Op::Open if matches!(self.plans.mode, plans::Mode::Steps) => {
-                return iced::widget::operation::snap_to(
-                    plan_pane::ROWS,
-                    iced::widget::scrollable::RelativeOffset::END,
-                );
             }
             Op::Open => {
                 self.list_pick = None;
@@ -4120,6 +4253,7 @@ impl App {
             }
         }
         self.stage_seen_on = stage.clone();
+        self.media.set_web_at(outputs::stage_point().ok().flatten());
         let remembered = self.screens.of(&self.setup);
         let dashboard = outputs::dashboard_on().ok().flatten();
         let place = outputs::choose(
@@ -4132,6 +4266,7 @@ impl App {
             log(format!("outputs: the stage goes {place:?}"));
         }
         let wanted = place.output().map(str::to_string);
+        self.stage_screen = outputs::stage_screen(&connected, Some(&place));
         self.place = Some(place);
         let names = connected.into_iter().map(|o| o.name);
         if self
@@ -4282,27 +4417,26 @@ impl App {
         if replaced {
             self.folded.clear();
             self.opened.clear();
-            self.plan_folded = false;
-            self.plan_picked = false;
         }
         let preload = self.preload_if(replaced);
         if replaced && self.plans.is_blank(&self.engine.0.plan()) {
-            self.plans.edit_name(&self.engine.0);
-            return Task::batch([
-                preload,
-                operation::focus(NAME_BOX),
-                operation::select_all(NAME_BOX),
-            ]);
+            return Task::batch([preload, self.name_plan()]);
         }
         preload
     }
 
+    /// The plan's name, to be typed in its settings, which open for it.
+    fn name_plan(&mut self) -> Task<Message> {
+        let open = match self.plan_panel {
+            true => Task::none(),
+            false => self.update(Message::PlanSettings),
+        };
+        Task::batch([open, self.update(Message::EditPlanName)])
+    }
+
     /// Keeps the side panes' widths for the next start.
     fn keep_layout(&self) {
-        let kept = self
-            .plans
-            .store()
-            .set_layout(self.plan_dragged, self.stage_dragged);
+        let kept = self.plans.store().set_layout(&self.dragged);
         if let Err(err) = kept {
             log(format!("layout: {err}"));
         }
@@ -4370,7 +4504,8 @@ impl App {
             StageEvent::FadingOut { .. } | StageEvent::Frame { .. } => {
                 self.media.sync_fades(&self.stage);
             }
-            StageEvent::Blackout { .. } | StageEvent::Media { .. } => {}
+            StageEvent::Blackout { .. } => self.media.sync_web(&self.stage),
+            StageEvent::Media { .. } => {}
             StageEvent::Bed { fade_out, .. } => {
                 return self
                     .media
@@ -4616,6 +4751,37 @@ impl App {
             .copied()
             .flatten();
         lantern_engine::Place { index: at, section }
+    }
+
+    /// Where what is held would land if let go now, as the plan has it:
+    /// the index among the rows that stay, how far in, and the section it
+    /// would be a part of. Steps land as [`App::carry_place`] puts them, a
+    /// section as a dry run of its drop has it, and a file from the
+    /// library in the section that holds where it goes in; a section that
+    /// ends shut takes nothing at its end.
+    pub(crate) fn carry_target(&self, plan: &Plan) -> Option<(usize, u8, Option<StepId>)> {
+        let level = |section: Option<StepId>| {
+            section
+                .and_then(|id| plan.get(id))
+                .and_then(Step::depth)
+                .map_or(0, |depth| depth + 1)
+        };
+        let Some(drag) = self.drag.as_ref().filter(|drag| drag.moving) else {
+            let at = self.carry_landing(plan)?;
+            let (level, section) = plan.level_put_at(at);
+            return Some((at, level, section));
+        };
+        let at = drag.landing?;
+        if !drag.is_section() {
+            let section = self.carry_place(plan, drag, at).section;
+            return Some((at, level(section), section));
+        }
+        let mut after = plan.clone();
+        let section =
+            drag::place_section(&mut after, &drag.carried, at, drag.level, drag.among(plan))
+                .then(|| after.within(after.position(drag.step)?).last().copied())
+                .flatten();
+        Some((at, drag.level, section))
     }
 
     /// How steps are carried, by the keys held: as they are, cut loose
@@ -4918,6 +5084,64 @@ impl App {
 
     /// On each tick of a running service: moves a still step that goes on
     /// by itself once its time is up.
+    /// Takes in what the picker said: a video picked, or that it's done.
+    fn take_picks(&mut self) -> Task<Message> {
+        let Some(picker) = &mut self.picker else {
+            return Task::none();
+        };
+        let alive = picker.alive();
+        // On the operator's screen, by the dashboard, once it appears. A
+        // desktop that can't be asked places it itself.
+        if !self.picker_placed {
+            self.picker_placed = outputs::put_beside_dashboard(picker.pid()).unwrap_or(true);
+        }
+        let mut tasks = Vec::new();
+        for event in picker.events() {
+            match event {
+                web_player::Event::Picked { id } => tasks.push(Task::done(Message::Picked(id))),
+                web_player::Event::Done => self.picker = None,
+                _ => {}
+            }
+        }
+        if !alive {
+            self.picker = None;
+        }
+        Task::batch(tasks)
+    }
+
+    /// Says in the picker's strip how many videos are picked, and the one
+    /// just named.
+    fn tell_picker(&mut self, added: Option<&str>) {
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        let picked = self
+            .search
+            .groups()
+            .iter()
+            .filter(|group| group.picked)
+            .map(|group| group.hits.len())
+            .sum::<usize>();
+        let text = match added {
+            Some(title) => format!("{picked} picked · added “{title}”"),
+            None => format!("{picked} picked"),
+        };
+        picker.send(web_player::Command::Strip { text });
+    }
+
+    /// Puts the YouTube titles that came into the open plan.
+    fn take_titles(&mut self) {
+        let now = titles::now();
+        for (id, answer) in self.titles.take() {
+            if let Err(err) = &answer {
+                log(format!("titles: {err}"));
+            }
+            self.plans.amend(&self.engine.0, |plan| {
+                titles::apply(plan, &id, &answer, now)
+            });
+        }
+    }
+
     fn go_on(&mut self) -> Task<Message> {
         self.mark_shown();
         // What comes again until a time and ends there and then is cut
@@ -4939,20 +5163,21 @@ impl App {
         }
     }
 
-    /// Points a moving drag at the row half under the pointer. Over the
-    /// gap (no row) it keeps aiming where it was, so the gap stays put.
+    /// Points a moving drag at the row half under the pointer, at the
+    /// level that row asks for. Over the gap (no row) it keeps aiming
+    /// where it was, so the gap stays put.
     fn aim(&mut self) {
         let Some(drag) = self.drag.as_mut().filter(|drag| drag.moving) else {
             return;
         };
         let plan = self.engine.0.plan();
-        if let Some(landing) = self
+        if let Some((landing, level)) = self
             .hovered
             .and_then(|(over, half)| drag.landing(&plan, over, half))
         {
             drag.landing = Some(landing);
+            drag.point_into(level);
         }
-        // Sideways, a section goes in or out a level.
         drag.aim_level(&plan);
     }
 
@@ -5022,15 +5247,20 @@ impl App {
             Action::Show { resource } => Some(resource),
             _ => None,
         });
-        // What's on standby must be as ready as the steps. The plan's
-        // videos are downloaded; one shown outside it is streamed.
+        // What's on standby must be as ready as the steps. With yt-dlp, the
+        // plan's videos are downloaded; one shown outside it is streamed.
         let planned: Vec<YoutubeVideo> = shown
             .chain(&plan.standby)
             .filter_map(YoutubeVideo::of)
             .collect();
-        for video in &planned {
-            self.downloads.0.fetch(video);
+        // Only with yt-dlp first: YouTube's own player downloads nothing.
+        if self.config.youtube == config::YoutubeMode::YtDlpFirst {
+            for video in &planned {
+                self.downloads.0.fetch(video);
+            }
         }
+        self.titles.ask(titles::due(&plan, titles::now(), true));
+        self.media.set_youtube(self.config.youtube);
         self.media.plan_videos(
             planned.into_iter().map(|video| video.id).collect(),
             !self.config.always_download,
@@ -5130,6 +5360,13 @@ impl App {
                         (fit(image(page.clone())), Over::Media)
                     }
                     Some(Content::Sound(_)) => nothing(),
+                    // YouTube's player covers the stage in a window of its
+                    // own; under it, for the phone and the dashboard, its
+                    // still.
+                    Some(Content::Official { .. }) => match self.thumbs.get(&scene.resource) {
+                        Some(handle) => (fit(image(handle)), Over::Media),
+                        None => nothing(),
+                    },
                     Some(Content::Video { player, .. }) => (
                         {
                             let id = scene.id;
@@ -5141,7 +5378,10 @@ impl App {
                     ),
                 },
             };
-        match self.layout_on(scene) {
+        // YouTube's player can't be laid out with something else yet: it
+        // fills the stage.
+        let official = self.media.official() == Some(scene.id);
+        match self.layout_on(scene).filter(|_| !official) {
             Some(layout) => self.laid_out(look, content, over, &layout),
             None => (content, over),
         }
@@ -5248,6 +5488,15 @@ impl App {
                 _ => None,
             }),
             iced::event::listen_with(pointer_event),
+            iced::event::listen_with(|event, _, window| match event {
+                iced::Event::Window(window::Event::Opened {
+                    position: Some(at), ..
+                })
+                | iced::Event::Window(window::Event::Moved(at)) => {
+                    Some(Message::Placed(window, at))
+                }
+                _ => None,
+            }),
         ];
         // The pointer is followed only while it holds a row, a dot of the
         // rail or a pane's edge.
@@ -5284,8 +5533,9 @@ impl App {
             .as_ref()
             .and_then(|scene| scene.timed())
             .is_some_and(|timed| timed.playback == Playback::Playing);
-        // A sound playing apart from the program is listened to as well.
-        if playing || self.stage.bed.is_some() {
+        // A sound playing apart from the program is listened to as well,
+        // and YouTube's player, which says its length and errors paused too.
+        if playing || self.stage.bed.is_some() || self.media.official().is_some() {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick));
         }
@@ -5335,7 +5585,12 @@ impl App {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(200)).map(|_| Message::Progress));
         }
-        if self.downloads.0.busy() || self.library.0.indexing() || self.thumbs.busy() {
+        if self.downloads.0.busy()
+            || self.library.0.indexing()
+            || self.thumbs.busy()
+            || self.titles.busy()
+            || self.picker.is_some()
+        {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(250)).map(|_| Message::Progress));
         }
@@ -5357,6 +5612,12 @@ impl App {
             if remote.watched() {
                 subscriptions
                     .push(iced::time::every(Duration::from_secs(1)).map(|_| Message::Progress));
+            }
+            // The computer's volume, which the desktop or another phone
+            // may have moved.
+            if remote.watched() {
+                subscriptions
+                    .push(iced::time::every(Duration::from_secs(2)).map(|_| Message::HearSound));
             }
             // A picture of the stage, while a phone is showing it.
             if remote.wants_picture() {
@@ -5621,12 +5882,18 @@ fn run_script(
         let (acted, mut received) = iced::futures::channel::mpsc::unbounded();
         std::thread::spawn(move || {
             let ui = acted.clone();
+            let asks = acted.clone();
             script.run(
                 &engine,
                 &library,
                 &downloads,
                 |command| {
                     let _ = ui.unbounded_send(Message::Script(command));
+                },
+                |aim| {
+                    let (reply, answer) = std::sync::mpsc::channel();
+                    let _ = asks.unbounded_send(Message::PlaceOf(aim, reply));
+                    answer.recv_timeout(Duration::from_secs(5)).ok().flatten()
                 },
                 || {
                     let _ = acted.unbounded_send(Message::Acted);
@@ -5777,7 +6044,7 @@ fn move_stage(output: &str) {
     }
 }
 
-/// Where the section `section` would end with its bracket's foot pulled
+/// Where the section `section` would end with its foot pulled
 /// to the row `over`: at that row; or, where the row is in a section that
 /// starts after this one and is not round it, at the end of all of that
 /// section, so that a section is taken in whole. `None` at or above its
@@ -5846,7 +6113,7 @@ mod tests {
     use super::{reference, typed_into};
 
     #[test]
-    fn a_brackets_head_pulled_up_takes_in_and_down_lets_go() {
+    fn a_sections_head_pulled_up_takes_in_and_down_lets_go() {
         use super::pull_head;
         use lantern_engine::{Action, Plan};
         let mut plan = Plan::new("Sabbath");
@@ -5876,7 +6143,7 @@ mod tests {
     }
 
     #[test]
-    fn a_brackets_foot_pulled_down_takes_in_a_section_whole() {
+    fn a_sections_foot_pulled_down_takes_in_a_section_whole() {
         use super::foot_end;
         use lantern_engine::{Action, Plan};
         let mut plan = Plan::new("Sabbath");

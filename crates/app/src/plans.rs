@@ -6,6 +6,7 @@
 //! `last-plan` next to it holds the path of the plan last opened or saved,
 //! which the app reopens at startup.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -101,21 +102,22 @@ impl Store {
         }
     }
 
-    /// The side panes' widths as the operator dragged them, plan then
-    /// stage; `None` for one left as it comes.
-    pub fn layout(&self) -> (Option<f32>, Option<f32>) {
+    /// The side panes' widths as the operator dragged them, by the name
+    /// each pane keeps its width under. One left as it comes isn't there.
+    pub fn layout(&self) -> BTreeMap<String, f32> {
         parse_layout(&std::fs::read_to_string(&self.layout).unwrap_or_default())
     }
 
     /// Keeps the side panes' widths for the next start.
-    pub fn set_layout(&self, plan: Option<f32>, stage: Option<f32>) -> io::Result<()> {
+    pub fn set_layout(&self, widths: &BTreeMap<String, f32>) -> io::Result<()> {
         if let Some(dir) = self.layout.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let line = |name: &str, width: Option<f32>| {
-            width.map_or(String::new(), |w| format!("{name}={}\n", w.round()))
-        };
-        std::fs::write(&self.layout, line("plan", plan) + &line("stage", stage))
+        let lines: String = widths
+            .iter()
+            .map(|(name, width)| format!("{name}={}\n", width.round()))
+            .collect();
+        std::fs::write(&self.layout, lines)
     }
 
     /// Every `.json` file in the folder, newest first. A missing folder is empty.
@@ -229,7 +231,7 @@ impl Store {
 
     /// Writes beside the file and renames over it, so a crash mid-write
     /// never leaves half a plan.
-    fn write(&self, path: &Path, plan: &Plan) -> io::Result<()> {
+    pub(crate) fn write(&self, path: &Path, plan: &Plan) -> io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let partial = path.with_extension("json.partial");
         std::fs::write(&partial, plan.to_json())?;
@@ -247,17 +249,18 @@ impl Store {
     }
 }
 
-/// `plan=320` and `stage=300` lines, either or neither; anything else is
+/// `plan=320` lines, a pane's name and its width each; anything else is
 /// skipped.
-fn parse_layout(text: &str) -> (Option<f32>, Option<f32>) {
-    let width = |name: &str| {
-        text.lines()
-            .filter_map(|line| line.split_once('='))
-            .find(|(key, _)| key.trim() == name)
-            .and_then(|(_, value)| value.trim().parse::<f32>().ok())
-            .filter(|width| width.is_finite() && *width > 0.0)
-    };
-    (width("plan"), width("stage"))
+fn parse_layout(text: &str) -> BTreeMap<String, f32> {
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .filter_map(|(name, value)| {
+            let width = value.trim().parse::<f32>().ok()?;
+            let name = name.trim();
+            (!name.is_empty() && width.is_finite() && width > 0.0)
+                .then(|| (name.to_string(), width))
+        })
+        .collect()
 }
 
 /// Today's date, `2026-11-15`, in local time.
@@ -324,10 +327,6 @@ pub struct Plans {
     saved: Plan,
     pub mode: Mode,
     pub notice: Option<Notice>,
-    /// The saved plans, for the tree that lists them under the open one,
-    /// and when they were last read.
-    pub entries: Vec<Entry>,
-    listed: Option<std::time::Instant>,
     /// The plan just deleted and the file it had, until another plan is
     /// opened or saved: what Ctrl+Z brings back.
     deleted: Option<(PathBuf, Plan)>,
@@ -343,8 +342,6 @@ impl Plans {
             saved: engine.plan(),
             mode: Mode::Steps,
             notice: None,
-            entries: Vec::new(),
-            listed: None,
             deleted: None,
         };
         // Media of imported plans that no saved plan uses any more: a
@@ -396,6 +393,25 @@ impl Plans {
         *plan != self.saved
     }
 
+    /// Applies `edit`, a change nobody asked for that keeps what the plan
+    /// is (such as a video's title fetched again), to the open plan
+    /// without making it look edited: to what was saved as well, and to
+    /// its file when it had no other changes. Returns whether it changed.
+    pub fn amend(&mut self, engine: &Engine, edit: impl Fn(&mut Plan) -> bool) -> bool {
+        let clean = !self.is_dirty(&engine.plan());
+        if !engine.edit_plan(&edit) {
+            return false;
+        }
+        edit(&mut self.saved);
+        if clean && let Some(file) = &self.file {
+            let plan = engine.plan();
+            if self.store.write(file, &plan).is_ok() {
+                self.saved = plan;
+            }
+        }
+        true
+    }
+
     /// Saves to the plan's file, or to a new one named after its title.
     /// A name being edited is applied first. Returns whether it saved.
     pub fn save(&mut self, engine: &Engine) -> bool {
@@ -415,19 +431,6 @@ impl Plans {
         self.saved = plan;
         self.deleted = None;
         true
-    }
-
-    /// Reads the saved plans for the tree, unless that was just done: a
-    /// plan saved, renamed or deleted shows within a moment.
-    pub fn relist(&mut self) {
-        const FRESH: std::time::Duration = std::time::Duration::from_secs(1);
-        if self.listed.is_some_and(|at| at.elapsed() < FRESH) {
-            return;
-        }
-        self.listed = Some(std::time::Instant::now());
-        if let Ok(entries) = self.store.list() {
-            self.entries = entries;
-        }
     }
 
     /// Reads the list of saved plans again, when it's showing.
@@ -776,14 +779,20 @@ mod tests {
     #[test]
     fn dragged_pane_widths_are_kept_for_the_next_start() {
         let (_data, store, _engine) = setup();
-        assert_eq!(store.layout(), (None, None));
-        store.set_layout(Some(300.4), None).unwrap();
-        assert_eq!(store.layout(), (Some(300.0), None));
-        store.set_layout(Some(260.0), Some(312.0)).unwrap();
-        assert_eq!(store.layout(), (Some(260.0), Some(312.0)));
+        let widths = |kept: &[(&str, f32)]| -> BTreeMap<String, f32> {
+            kept.iter()
+                .map(|(name, w)| (name.to_string(), *w))
+                .collect()
+        };
+        assert_eq!(store.layout(), widths(&[]));
+        store.set_layout(&widths(&[("plan", 300.4)])).unwrap();
+        assert_eq!(store.layout(), widths(&[("plan", 300.0)]));
+        let each = widths(&[("library", 250.0), ("plan", 260.0), ("stage", 312.0)]);
+        store.set_layout(&each).unwrap();
+        assert_eq!(store.layout(), each, "each pane keeps its own");
         assert_eq!(
-            parse_layout("stage = 280\nnonsense\nplan=-4"),
-            (None, Some(280.0))
+            parse_layout("stage = 280\nnonsense\nplan=-4\n=30"),
+            widths(&[("stage", 280.0)])
         );
     }
 
@@ -858,6 +867,49 @@ mod tests {
             "an opened plan saves over its own file"
         );
         assert_eq!(store.list().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn an_amend_leaves_a_saved_plan_saved_and_an_edited_one_edited() {
+        let (_data, store, engine) = setup();
+        let mut plans = Plans::start(store.clone(), &engine);
+        add_step(&engine);
+        plans.save(&engine);
+        let retitle = |plan: &mut Plan| {
+            let id = plan.steps()[0].id;
+            let step = plan.get_mut(id).unwrap();
+            let changed = step.label != "Prayer (fetched)";
+            step.label = "Prayer (fetched)".into();
+            changed
+        };
+        assert!(plans.amend(&engine, retitle));
+        assert!(!plans.is_dirty(&engine.plan()), "nobody edited it");
+        let file = plans.file().unwrap().to_path_buf();
+        assert_eq!(
+            Plan::load(&file).unwrap().steps()[0].label,
+            "Prayer (fetched)",
+            "its file has it too"
+        );
+        assert!(!plans.amend(&engine, retitle), "nothing more to change");
+
+        engine.edit_plan(|plan| plan.push("Offering", Action::Blank));
+        let back = |plan: &mut Plan| {
+            let id = plan.steps()[0].id;
+            plan.get_mut(id).unwrap().label = "Prayer".into();
+            true
+        };
+        plans.amend(&engine, back);
+        assert!(
+            plans.is_dirty(&engine.plan()),
+            "the operator's edit is still to save"
+        );
+        assert_eq!(
+            Plan::load(&file).unwrap().steps()[0].label,
+            "Prayer (fetched)",
+            "an edited plan's file waits for Save"
+        );
+        plans.save(&engine);
+        assert_eq!(Plan::load(&file).unwrap().steps()[0].label, "Prayer");
     }
 
     #[test]

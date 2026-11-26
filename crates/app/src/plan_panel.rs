@@ -1,10 +1,11 @@
-//! The open plan's own settings, beside the plan: whether it is a
+//! The open plan's own settings, beside the plan: its name, how long it
+//! should take, when it starts and how it plays; whether it is a
 //! template; the media only it needs; its look where that differs from
-//! the look for all plans; a copy of it, and deleting it. Its name, when
-//! it starts and how long it should take are on its card, by its bracket.
+//! the look for all plans; a copy of it, and deleting it.
 //!
-//! They sit where the side panel is, opened from the plan's name. What
-//! holds for this computer and for every plan is in Settings.
+//! They sit where the side panel is, opened by the sliders beside the
+//! plan's name, or by F2 with nothing selected, on the name. What holds
+//! for this computer and for every plan is in Settings.
 
 use std::path::Path;
 
@@ -174,9 +175,19 @@ impl App {
             .padding(0)
             .on_press(Message::PlanTemplate(!plan.template))
             .style(look::row(p, Tone::Plain));
-        let about = row![name("Template"), template]
-            .spacing(10)
-            .align_y(Alignment::Center);
+        let mut about = column![].spacing(8);
+        for (called, field) in self.plan_fields(&plan) {
+            about = about.push(
+                row![name(called), container(field).width(Fill)]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+            );
+        }
+        let about = about.push(
+            row![name("Template"), template]
+                .spacing(10)
+                .align_y(Alignment::Center),
+        );
 
         // Its own folders, each as typed; the one being typed in may not
         // be in the plan yet.

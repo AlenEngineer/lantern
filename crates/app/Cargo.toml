@@ -20,6 +20,7 @@ lantern-source-text.workspace = true
 lantern-source-local.workspace = true
 lantern-source-bible.workspace = true
 lantern-source-youtube.workspace = true
+lantern-web-protocol.workspace = true
 lantern-source-brave.workspace = true
 iced.workspace = true
 iced_video_player.workspace = true
@@ -36,6 +37,7 @@ ureq.workspace = true
 chrono.workspace = true
 zip.workspace = true
 qrcode.workspace = true
+if-addrs.workspace = true
 roxmltree.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]

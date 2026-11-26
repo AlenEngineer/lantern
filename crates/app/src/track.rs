@@ -33,23 +33,36 @@ use crate::motion::ease;
 pub enum Key {
     /// A step's dot.
     Dot(StepId),
-    /// The room beside a step for its dot and the lines either side.
+    /// The room beside a step for its dot and the lines either side; by
+    /// a section's header, from the middle of its line down, where its
+    /// own line starts.
     Row(StepId),
-    /// The room right of a step for the brackets of the sections it is
-    /// in.
-    Side(StepId),
+    /// The room under a section's last row, where its line is capped.
+    Foot(StepId),
+    /// The place of a section with nothing in it.
+    Place(StepId),
     /// The canvas itself: where what is laid over the list starts.
     Canvas,
     /// All of a row: a press outside every row is on nothing.
     Whole(StepId),
     /// What a fill proposes, with its buttons: not nothing either.
     Fill,
-    /// The head of the plan's bracket: not nothing.
-    Head,
-    /// Run's rail: the room for the dot of its `n`th row, and right of
-    /// that row for the brackets.
+    /// Run's rail: the room for the dot of its `n`th row, and its `n`th
+    /// section header.
     Road(usize),
-    RoadSide(usize),
+    RoadHead(usize),
+    /// The plan's title over its rows, while planning.
+    Title,
+    /// The arrow on a section's header that folds it.
+    Chevron(StepId),
+    /// The note's button of the ring that is open.
+    RingNote,
+    /// The library's `n`th row in sight, from the top.
+    Shelf(usize),
+    /// The library's list as far as it shows, and all of its rows: how
+    /// far it can scroll.
+    ShelfView,
+    ShelfRows,
 }
 
 /// Where each of them is, as last laid out.
@@ -315,23 +328,18 @@ pub struct Picture {
     /// Shift is held: a box begins on a row too, so one can be pulled in
     /// a pane full of rows.
     pub band_anywhere: bool,
-    /// Every row in sight: a press on one is not a press
-    /// on nothing.
-    pub rows: Vec<StepId>,
+    /// Where every row in sight says it is: a press on one is not a
+    /// press on nothing.
+    pub rows: Vec<Key>,
     /// A fill is open: a press on what it proposes is not on nothing.
     pub filling: bool,
-    /// The sections, each a bracket beside the steps it holds.
-    pub brackets: Vec<Bracket>,
+    /// Each section's line beside its rows, in its colour.
+    pub stretches: Vec<Stretch>,
+    /// The section that is lit, where one is.
+    pub band: Option<Band>,
     /// The open note's threads: from its card to each thing it is on.
     pub threads: Vec<(Point, Point)>,
-    /// How wide each lane's brace is now, the innermost first: the
-    /// brackets are drawn, and pressed, where these put them.
-    pub lanes: Vec<f32>,
-    /// The innermost lane has the brackets' names beside it.
-    pub named: bool,
-    /// Which lane the lanes make room for.
-    pub lean: Lean,
-    /// How far the lit bracket has come up, 0 to 1.
+    /// How far the lit section has come up, 0 to 1.
     pub lit: f32,
     /// Something is carried.
     pub carrying: bool,
@@ -352,319 +360,45 @@ pub struct SoundLine {
     pub played: Option<f32>,
 }
 
-/// How a bracket stands while one of them is pointed at, or would take
-/// in what is carried.
+/// How a section's line stands while one of them is lit, pointed at or
+/// taking in what is carried.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Light {
     /// None is.
     #[default]
     Plain,
-    /// It is the one: its rows take its colour, and it is drawn thick.
+    /// It is the one: its line is drawn strong.
     Lit,
-    /// Inside the one: its rows take a lighter shade of its own colour.
+    /// Inside the one: as it is.
     Within,
     /// Neither: it steps back.
     Back,
 }
 
-/// Which lane the brackets make room for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Lean {
-    /// The one under the pointer.
-    #[default]
-    Pointer,
-    /// While something is carried: the lane of the bracket it would go
-    /// into, where there is one.
-    Carried(Option<u8>),
-}
-
-/// Where the pointer is in the brackets' room: beside which row, in
-/// which lane of how many, and whether it came from the right.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Pointed {
-    /// `None` while something is carried: the lane is then the one of the
-    /// bracket it would go into.
-    pub row: Option<StepId>,
-    pub lane: u8,
-    pub lanes: u8,
-    pub from_right: bool,
-}
-
-/// What a line beside a bracket is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sign {
-    /// The time it is given.
-    Goal,
-    /// The time it takes, or has taken so far.
-    Sum,
-    /// A time of day.
-    Clock,
-    /// The time of day it starts.
-    Start,
-}
-
-/// A section: a square bracket to the right of the steps it holds, from
-/// the first of them in sight to the last, in its own colour, with its
-/// name and its times beside it. The plan is one too, round all of them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Bracket {
-    /// The section's heading; `None` for the plan's own, which has none.
-    pub id: Option<StepId>,
-    /// How far out it stands, 0 to 1: it just took in what put it over
-    /// its time.
-    pub bulge: f32,
-    pub first: StepId,
-    pub last: StepId,
-    /// How far right of where the brackets start its brace is: further
-    /// out the more sections it holds, one in another.
-    pub offset: f32,
-    /// The steps its name and times are written beside, left of its
-    /// brace, in the room the innermost brackets write theirs in: the
-    /// first run of its steps that are in no section inside it. `None`
-    /// writes them right of its brace.
-    pub beside: Option<(StepId, StepId)>,
+/// A section's line beside its rows, at half strength, under the lines
+/// from dot to dot: from `from`, its header or the dot of its first row
+/// after a section inside it ended, down to `to`, the dot of its last
+/// row before the next section inside it, or its foot, where it is
+/// capped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stretch {
+    pub from: Key,
+    pub to: Key,
     pub color: Color,
-    pub name: String,
-    pub lines: Vec<(Sign, String, Color)>,
-    /// Picked, or what something carried would go into.
-    pub strong: bool,
-    /// Its name and times are not written: something open over them
-    /// says them.
-    pub bare: bool,
-    /// Its name, and its sum where that fits, run up its brace in the
-    /// lane right of it: it has no steps of its own to write beside, and
-    /// no room right of its brace.
-    pub upright: bool,
-    /// The numbers of the notes on it.
-    pub marks: Vec<usize>,
-    /// Where a section that is being carried would land: dashed, and
-    /// what is written beside it faint.
-    pub place: bool,
-    pub lit: Light,
+    pub light: Light,
 }
 
-/// How much room a bracket takes, and what is written beside it.
-pub const BRACE: f32 = 18.0;
-pub const LABEL: f32 = 86.0;
-/// How far a square bracket's ends reach back towards the rows.
-pub const TICK: f32 = 6.0;
-
-/// A square bracket from `top` to `foot`, its ends reaching back to `x`
-/// and its upright `out` further right of them.
-pub fn square(x: f32, top: f32, foot: f32, out: f32) -> Path {
-    let upright = x + TICK + out;
-    Path::new(|path| {
-        path.move_to(Point::new(x, top));
-        path.line_to(Point::new(upright, top));
-        path.line_to(Point::new(upright, foot));
-        path.line_to(Point::new(x, foot));
-    })
+/// A section lit from its header down to `last`, the last of its rows:
+/// the one the pointer is on, or that what is carried would go into.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Band {
+    pub section: StepId,
+    pub last: Key,
+    pub color: Color,
 }
 
-/// Where a bracket's brace is: across, and from its top to its foot.
-fn bracket_box(
-    bracket: &Bracket,
-    at: &dyn Fn(Key) -> Option<Rectangle>,
-) -> Option<(f32, f32, f32)> {
-    let first = at(Key::Side(bracket.first))?;
-    let last = at(Key::Side(bracket.last))?;
-    Some((
-        first.x + bracket.offset + 3.0,
-        first.y + 2.0,
-        last.y + last.height - 4.0,
-    ))
-}
-
-/// How much room right of the steps the brackets need, `lanes` deep:
-/// the innermost and what is written beside it, and a brace for each
-/// one further out; with room right of those too (`wide`) where one of
-/// them has no steps of its own to write beside. Not `named`, a brace
-/// for each and nothing written.
-pub fn side_room(lanes: u8, wide: bool, named: bool, bare_outermost: bool) -> f32 {
-    match lanes {
-        0 => 0.0,
-        lanes if !named => BRACE * f32::from(lanes),
-        lanes => {
-            BRACE
-                + LABEL
-                + BRACE * f32::from(lanes - 1)
-                + match wide {
-                    // Right of each brace but the innermost, whose names
-                    // are written before the next, and the outermost
-                    // where it writes nothing beside it (the plan's).
-                    true => LABEL * f32::from((lanes - 1).saturating_sub(u8::from(bare_outermost))),
-                    false => 0.0,
-                }
-        }
-    }
-}
-
-/// The lanes' `widths` with room right of each brace but the innermost
-/// and the outermost for what is written there, where that is (`wide`):
-/// a bracket's name right of its brace keeps clear of the next one out.
-pub fn written_right(mut widths: Vec<f32>, wide: bool) -> Vec<f32> {
-    let lanes = widths.len();
-    if wide && lanes > 2 {
-        for width in &mut widths[1..lanes - 1] {
-            *width += LABEL;
-        }
-    }
-    widths
-}
-
-/// How far right of where the brackets start the brace in `lane` is,
-/// each lane's brace as wide as `widths` says, with the innermost's
-/// words beside it where they are `named`.
-pub fn brace_at(widths: &[f32], lane: u8, named: bool) -> f32 {
-    let braces: f32 = widths.iter().take(usize::from(lane)).sum();
-    match lane > 0 && named {
-        true => braces + LABEL,
-        false => braces,
-    }
-}
-
-/// How wide the lane under the pointer gets, and the lanes it came past.
-const LEANT: f32 = 30.0;
-const PASSED: f32 = 10.0;
-
-/// How wide each of `lanes` lanes' braces is, with the pointer `under`
-/// one of them, `from_right` or from the rows. The one under it widens,
-/// so it is easy to stay on; those it came past narrow, and the rest
-/// take what is left: all of them are as wide together as at rest, so
-/// the rows keep their width.
-pub fn lane_widths(lanes: u8, under: Option<u8>, from_right: bool) -> Vec<f32> {
-    let n = usize::from(lanes);
-    let Some(under) = under.map(usize::from).filter(|under| *under < n && n > 1) else {
-        return vec![BRACE; n];
-    };
-    let total = BRACE * n as f32;
-    let leant = LEANT.min(total - PASSED * (n - 1) as f32);
-    let passed = |lane: usize| match from_right {
-        true => lane > under,
-        false => lane < under,
-    };
-    let behind = (0..n).filter(|lane| passed(*lane)).count();
-    let ahead = n - 1 - behind;
-    let (behind_wide, ahead_wide) = match ahead {
-        0 => ((total - leant) / behind as f32, 0.0),
-        ahead => (
-            PASSED,
-            (total - leant - PASSED * behind as f32) / ahead as f32,
-        ),
-    };
-    (0..n)
-        .map(|lane| match lane {
-            lane if lane == under => leant,
-            lane if passed(lane) => behind_wide,
-            _ => ahead_wide,
-        })
-        .collect()
-}
-
-/// The lane `x` right of where the brackets start is in, each lane's
-/// brace as wide as `widths` says: the innermost's takes its names'
-/// room too where they are `named`, and the room right of them all is
-/// the outermost's.
-pub fn lane_under(widths: &[f32], named: bool, x: f32) -> Option<u8> {
-    let lanes = u8::try_from(widths.len()).ok()?;
-    let last = lanes.checked_sub(1).filter(|_| x >= 0.0)?;
-    Some(
-        (0..lanes)
-            .find(|lane| x < brace_at(widths, lane + 1, named))
-            .unwrap_or(last),
-    )
-}
-
-/// `name` on as few lines as it takes, two at most, each about as wide
-/// as there is room for beside a bracket.
-fn name_lines(name: &str) -> Vec<String> {
-    const WIDE: usize = 13;
-    let mut lines: Vec<String> = Vec::new();
-    for word in name.split_whitespace() {
-        match lines.last_mut() {
-            Some(line) if line.chars().count() + 1 + word.chars().count() <= WIDE => {
-                line.push(' ');
-                line.push_str(word);
-            }
-            _ => lines.push(word.to_string()),
-        }
-    }
-    if lines.len() > 2 {
-        let rest = lines.split_off(1).join(" ");
-        lines.push(rest);
-    }
-    lines
-        .into_iter()
-        .map(|line| match line.chars().count() > WIDE {
-            true => line.chars().take(WIDE - 1).chain(['…']).collect(),
-            false => line,
-        })
-        .collect()
-}
-
-/// What a bracket with no room beside it writes up its brace: its name,
-/// with its sum after it where both fit in `tall`, else its name alone,
-/// cut short where even that does not.
-fn upright_words(name: &str, sum: Option<&str>, tall: f32) -> String {
-    let wide = |words: &str| crate::widgets::steady(words, UPRIGHT);
-    let room = tall - 8.0;
-    if let Some(sum) = sum {
-        let both = format!("{name} · Σ {sum}");
-        if wide(&both) <= room {
-            return both;
-        }
-    }
-    if wide(name) <= room {
-        return name.to_string();
-    }
-    let mut cut: String = name.to_string();
-    while !cut.is_empty() && wide(&format!("{cut}…")) > room {
-        cut.pop();
-    }
-    match cut.trim_end().is_empty() {
-        true => String::new(),
-        false => format!("{}…", cut.trim_end()),
-    }
-}
-
-/// How large what is written up a brace is.
-const UPRIGHT: f32 = 11.0;
-
-/// `bracket`'s name written up its brace, whose upright is at `upright`,
-/// reading from its foot to its top, in the middle of the lane right of
-/// it.
-fn upright_name(
-    frame: &mut canvas::Frame,
-    bracket: &Bracket,
-    upright: f32,
-    top: f32,
-    foot: f32,
-    color: Color,
-) {
-    let sum = bracket
-        .lines
-        .iter()
-        .find(|(sign, ..)| *sign == Sign::Sum)
-        .map(|(_, words, _)| words.as_str());
-    let words = upright_words(&bracket.name, sum, foot - top);
-    if words.is_empty() {
-        return;
-    }
-    frame.with_save(|frame| {
-        frame.translate(iced::Vector::new(upright + 7.5, (top + foot) / 2.0));
-        frame.rotate(-std::f32::consts::FRAC_PI_2);
-        frame.fill_text(canvas::Text {
-            content: words,
-            position: Point::ORIGIN,
-            color,
-            size: UPRIGHT.into(),
-            font: crate::look::BOLD,
-            align_x: iced::advanced::text::Alignment::Center,
-            align_y: iced::alignment::Vertical::Center,
-            ..canvas::Text::default()
-        });
-    });
-}
+/// How far right the cap at a section's foot reaches from its line.
+const TICK: f32 = 6.0;
 
 /// A dot's radius, and how much further out the ring of the one that is
 /// on is.
@@ -697,8 +431,6 @@ const WAVE_OUT: f32 = 3.5;
 const DRAW: f32 = 0.26;
 const OPEN: f32 = 0.3;
 const CATCH_UP: f32 = 0.12;
-/// How fast a bracket slides to where it should be (seconds).
-const SLIDE: f32 = 0.07;
 
 /// How much room left of the dots' middle the loops need, the deepest of
 /// them `lanes` deep (0 for none), with what they say of themselves.
@@ -725,7 +457,6 @@ enum Thing {
     Line(StepId, Option<StepId>),
     Loop(StepId, StepId),
     Order(StepId, StepId),
-    Bracket(Option<StepId>),
 }
 
 /// What is under way.
@@ -744,8 +475,6 @@ struct Moves {
     drawn: HashMap<Thing, f32>,
     /// The dot under the pointer.
     over: Option<StepId>,
-    /// Where each bracket is shown, on its way to where it should be.
-    boxes: HashMap<Option<StepId>, (f32, f32, f32)>,
 }
 
 /// How far the step that is playing has come, if one is.
@@ -763,12 +492,7 @@ fn playing(picture: &Picture) -> Option<(StepId, f32)> {
 impl Moves {
     /// Moves everything on by `passed` seconds towards what `picture`
     /// shows; whether anything is still on its way.
-    fn on(
-        &mut self,
-        picture: &Picture,
-        passed: f32,
-        at: &dyn Fn(Key) -> Option<Rectangle>,
-    ) -> bool {
+    fn on(&mut self, picture: &Picture, passed: f32) -> bool {
         let fresh = !self.begun || picture.still;
         self.begun = true;
         let mut moving = false;
@@ -841,31 +565,7 @@ impl Moves {
         for span in &picture.orders {
             draw(Thing::Order(span.first, span.last), span.pulled);
         }
-        for bracket in &picture.brackets {
-            draw(Thing::Bracket(bracket.id), false);
-        }
         self.drawn = drawn;
-        // The brackets slide to where they should be.
-        let near = 1.0 - (-passed / SLIDE).exp();
-        let mut boxes = HashMap::new();
-        for bracket in &picture.brackets {
-            let Some(to) = bracket_box(bracket, at) else {
-                continue;
-            };
-            let shown = match self.boxes.get(&bracket.id) {
-                Some(was) if !fresh => {
-                    let step = |a: f32, b: f32| match (b - a).abs() < 0.5 {
-                        true => b,
-                        false => a + (b - a) * near,
-                    };
-                    (step(was.0, to.0), step(was.1, to.1), step(was.2, to.2))
-                }
-                _ => to,
-            };
-            moving |= shown != to;
-            boxes.insert(bracket.id, shown);
-        }
-        self.boxes = boxes;
         moving
     }
 
@@ -893,7 +593,6 @@ type Shown = (
     Vec<(Thing, f32)>,
     Option<StepId>,
     Option<Rectangle>,
-    Vec<(Option<StepId>, i32, i32, i32)>,
 );
 
 #[derive(Default)]
@@ -909,11 +608,6 @@ struct State {
     band_on_row: bool,
     kept: Kept<Shown>,
     moves: Moves,
-    /// Where across the pointer last was, and whether it last went left.
-    across: Option<f32>,
-    leftward: bool,
-    /// What was last said of the pointer in the brackets' room.
-    pointed: Option<Pointed>,
 }
 
 struct Over<'a, Message> {
@@ -922,9 +616,6 @@ struct Over<'a, Message> {
     /// What to say when a box has picked some steps, or a click on
     /// nothing has let go of them all.
     pick: Rc<dyn Fn(Vec<StepId>) -> Message + 'a>,
-    /// What to say when the pointer comes into a lane of the brackets'
-    /// room, or leaves it.
-    point: Rc<dyn Fn(Option<Pointed>) -> Message + 'a>,
     /// What to say when the foot of a sound's line is pressed, with the
     /// step that set the sound.
     sound_end: Rc<dyn Fn(StepId) -> Message + 'a>,
@@ -940,42 +631,6 @@ impl<Message> Over<'_, Message> {
             let foot = places.get(&Key::Dot(sound.last))?.center().y + 4.0;
             let x = from.x + DOT + 5.0;
             ((at.x - x).abs() <= 7.0 && (at.y - foot).abs() <= 6.0).then_some(sound.first)
-        })
-    }
-
-    /// Where the pointer is in the brackets' room, as `state` last saw
-    /// it go; or, while something is carried, the lane it would go into.
-    fn pointing(&self, state: &State, cursor: mouse::Cursor) -> Option<Pointed> {
-        let lanes = u8::try_from(self.picture.lanes.len()).ok()?;
-        if let Lean::Carried(lane) = self.picture.lean {
-            return lane.map(|lane| Pointed {
-                row: None,
-                lane,
-                lanes,
-                from_right: state.leftward,
-            });
-        }
-        let at = cursor.position()?;
-        let places = self.places.borrow();
-        self.picture.rows.iter().find_map(|row| {
-            let side = places
-                .get(&Key::Side(*row))
-                .filter(|side| side.contains(at))?;
-            Some(Pointed {
-                row: Some(*row),
-                lane: lane_under(&self.picture.lanes, self.picture.named, at.x - side.x)?,
-                lanes,
-                from_right: state.leftward,
-            })
-        })
-    }
-
-    /// Says where the pointer is in the brackets' room, if that changed.
-    fn repoint(&self, state: &mut State, cursor: mouse::Cursor) -> Option<Message> {
-        let pointed = self.pointing(state, cursor);
-        (pointed != state.pointed).then(|| {
-            state.pointed = pointed;
-            (self.point)(pointed)
         })
     }
 }
@@ -1004,25 +659,8 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                     .moves
                     .last
                     .map_or(0.0, |last| now.duration_since(last).as_secs_f32().min(0.1));
-                let places = self.places.borrow().clone();
-                let at = |key: Key| {
-                    places.get(&key).map(|place| Rectangle {
-                        x: place.x - bounds.x,
-                        y: place.y - bounds.y,
-                        ..*place
-                    })
-                };
-                let moving = state.moves.on(&self.picture, passed, &at);
+                let moving = state.moves.on(&self.picture, passed);
                 state.moves.last = moving.then_some(*now);
-                // Something carried may have moved on to another bracket.
-                // Only then: a redraw comes before the rows have said where
-                // they are this time, so a pointer at rest would read as on
-                // none of them.
-                if matches!(self.picture.lean, Lean::Carried(_))
-                    && let Some(said) = self.repoint(state, cursor)
-                {
-                    return Some(canvas::Action::publish(said));
-                }
                 moving.then(canvas::Action::request_redraw)
             }
             // A press where there is no row begins a box; let go there,
@@ -1035,13 +673,13 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                     return Some(canvas::Action::publish((self.sound_end)(owner)).and_capture());
                 }
                 let places = self.places.borrow();
-                let on_a_row = self.picture.rows.iter().any(|id| {
-                    places
-                        .get(&Key::Whole(*id))
-                        .is_some_and(|row| row.contains(at))
-                }) || (self.picture.filling
-                    && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)))
-                    || places.get(&Key::Head).is_some_and(|head| head.contains(at));
+                let on_a_row = self
+                    .picture
+                    .rows
+                    .iter()
+                    .any(|row| places.get(row).is_some_and(|row| row.contains(at)))
+                    || (self.picture.filling
+                        && places.get(&Key::Fill).is_some_and(|fill| fill.contains(at)));
                 if !on_a_row || self.picture.band_anywhere {
                     state.band = Some((at, at, false));
                     state.banded.clear();
@@ -1100,24 +738,9 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
                                 .map(|_| stop.id)
                         })
                     });
-                if let Some(x) = cursor.position().map(|at| at.x) {
-                    if let Some(was) = state.across.filter(|was| *was != x) {
-                        state.leftward = x < was;
-                    }
-                    state.across = Some(x);
-                }
                 let redraw = over != state.moves.over;
                 state.moves.over = over;
-                // A tip that comes up over the list takes the pointer from
-                // the canvas, which hears it leave: what it was on still
-                // holds. Leaving the list itself lets go of it.
-                if cursor.position().is_none() {
-                    return redraw.then(canvas::Action::request_redraw);
-                }
-                match self.repoint(state, cursor) {
-                    Some(said) => Some(canvas::Action::publish(said)),
-                    None => redraw.then(canvas::Action::request_redraw),
-                }
+                redraw.then(canvas::Action::request_redraw)
             }
             _ => None,
         }
@@ -1160,15 +783,6 @@ impl<Message> canvas::Program<Message> for Over<'_, Message> {
             drawn,
             moves.over,
             band,
-            {
-                let mut boxes: Vec<(Option<StepId>, i32, i32, i32)> = moves
-                    .boxes
-                    .iter()
-                    .map(|(id, (x, top, foot))| (*id, *x as i32, *top as i32, *foot as i32))
-                    .collect();
-                boxes.sort_unstable();
-                boxes
-            },
         );
         vec![state.kept.draw(shown, renderer, bounds.size(), |frame| {
             // Where each is, from the canvas's own corner.
@@ -1199,14 +813,12 @@ pub fn over<'a, Message: 'a>(
     picture: Picture,
     places: &Places,
     pick: impl Fn(Vec<StepId>) -> Message + 'a,
-    point: impl Fn(Option<Pointed>) -> Message + 'a,
     sound_end: impl Fn(StepId) -> Message + 'a,
 ) -> Element<'a, Message> {
     iced::widget::canvas(Over {
         picture,
         places: places.clone(),
         pick: Rc::new(pick),
-        point: Rc::new(point),
         sound_end: Rc::new(sound_end),
     })
     .width(Fill)
@@ -1362,38 +974,54 @@ fn paint(
     at: &dyn Fn(Key) -> Option<Rectangle>,
     moves: &Moves,
 ) {
-    // The rows of the bracket that is lit take its colour, and those of
-    // each inside it a lighter shade of their own: the outer first, so
-    // the inner are on top.
-    let mut banded: Vec<&Bracket> = picture
-        .brackets
-        .iter()
-        .filter(|bracket| matches!(bracket.lit, Light::Lit | Light::Within))
-        .collect();
-    banded.sort_by(|a, b| b.offset.total_cmp(&a.offset));
-    for bracket in banded {
-        let Some((x, top, foot)) = moves
-            .boxes
-            .get(&bracket.id)
-            .copied()
-            .or_else(|| bracket_box(bracket, at))
-        else {
-            continue;
-        };
-        let strength = match (bracket.lit, bracket.id) {
-            (Light::Lit, Some(_)) => 0.16,
-            // The plan's are all the rows: lightly.
-            (Light::Lit, None) => 0.1,
-            _ => 0.08,
-        };
+    // The section lit, from its header down to its last row.
+    if let Some(band) = &picture.band
+        && let (Some(head), Some(last)) = (at(Key::Whole(band.section)), at(band.last))
+        && last.y + last.height > head.y
+    {
         frame.fill(
             &Path::rounded_rectangle(
-                Point::new(0.0, top - 2.0),
-                Size::new(x + TICK, foot - top + 6.0),
-                6.0.into(),
+                head.position(),
+                Size::new(head.width, last.y + last.height - head.y),
+                12.0.into(),
             ),
-            faded(bracket.color, strength * picture.lit),
+            faded(band.color, 0.12 * picture.lit),
         );
+    }
+    // Each section's line, at half strength under the lines from dot to
+    // dot: strong while it is lit, and stepping back while another is.
+    for stretch in &picture.stretches {
+        let (Some(from), Some(to)) = (at(stretch.from), at(stretch.to)) else {
+            continue;
+        };
+        let x = from.center_x();
+        let top = match stretch.from {
+            Key::Dot(_) => from.center_y(),
+            _ => from.y,
+        };
+        let foot = to.center_y();
+        if foot <= top {
+            continue;
+        }
+        let strength = match stretch.light {
+            Light::Lit => 0.5 + 0.4 * picture.lit,
+            Light::Back => 0.5 * (1.0 - 0.65 * picture.lit),
+            Light::Plain | Light::Within => 0.5,
+        };
+        let color = faded(stretch.color, strength);
+        frame.fill_rectangle(
+            Point::new(x - LINE / 2.0, top),
+            Size::new(LINE, foot - top),
+            color,
+        );
+        // Its foot is capped, where it is pulled.
+        if let Key::Foot(_) = stretch.to {
+            frame.fill_rectangle(
+                Point::new(x - LINE / 2.0, foot - LINE / 2.0),
+                Size::new(TICK, LINE),
+                color,
+            );
+        }
     }
     // The line from dot to dot.
     for (n, stop) in picture.stops.iter().enumerate() {
@@ -1473,172 +1101,6 @@ fn paint(
             false => span.color,
         };
         wander(frame, span, color, far, at);
-    }
-    // The sections' brackets.
-    for bracket in &picture.brackets {
-        let Some(first) = at(Key::Side(bracket.first)) else {
-            continue;
-        };
-        let far = moves.drawn(Thing::Bracket(bracket.id));
-        // Where it is on its way to where it should be: it slides out a
-        // lane, and stretches to take in what comes into it.
-        let Some((x, top, foot)) = moves
-            .boxes
-            .get(&bracket.id)
-            .copied()
-            .or_else(|| bracket_box(bracket, at))
-        else {
-            continue;
-        };
-        if foot - top < 12.0 {
-            continue;
-        }
-        let middle = (top + foot) / 2.0;
-        // It opens out from its middle as it is made.
-        let (top, foot) = (
-            middle - (middle - top) * far,
-            middle + (foot - middle) * far,
-        );
-        // One that is not the lit one, nor inside it, steps back.
-        let back = match bracket.lit {
-            Light::Back => 1.0 - 0.65 * picture.lit,
-            _ => 1.0,
-        };
-        let color = faded(
-            bracket.color,
-            back * match bracket.place {
-                true => far * 0.6,
-                false => far,
-            },
-        );
-        let brace = square(x, top, foot, 6.0 * bracket.bulge);
-        frame.stroke(
-            &brace,
-            Stroke {
-                line_cap: canvas::LineCap::Round,
-                line_join: canvas::LineJoin::Round,
-                line_dash: canvas::LineDash {
-                    segments: match bracket.place {
-                        true => &[4.0, 4.0],
-                        false => &[],
-                    },
-                    offset: 0,
-                },
-                ..Stroke::default().with_color(color).with_width(
-                    match (bracket.lit, bracket.strong) {
-                        (Light::Lit, _) => 3.2,
-                        (_, true) => 2.6,
-                        (_, false) => 1.6,
-                    },
-                )
-            },
-        );
-        if bracket.bare {
-            continue;
-        }
-        if bracket.upright {
-            upright_name(
-                frame,
-                bracket,
-                x + TICK + 6.0 * bracket.bulge,
-                top,
-                foot,
-                color,
-            );
-            continue;
-        }
-        // Beside it: its name, and as many of its times as there is
-        // room for.
-        const TALL: f32 = 14.0;
-        let names = name_lines(&bracket.name);
-        // Right of its brace; or left of it, beside the steps that are
-        // its own, where the innermost write theirs.
-        let own = bracket
-            .beside
-            .and_then(|(from, to)| at(Key::Side(from)).zip(at(Key::Side(to))));
-        let (left, middle, tall) = match own {
-            Some((from, to)) => (
-                first.x + 3.0 + 7.0 + 12.0,
-                (from.y + to.y + to.height) / 2.0,
-                to.y + to.height - from.y,
-            ),
-            None => (x + TICK + 12.0, middle, foot - top),
-        };
-        let room = ((tall + 10.0) / TALL).floor().max(1.0) as usize;
-        let names = &names[..names.len().min(room)];
-        let lines = &bracket.lines[..bracket.lines.len().min(room - names.len())];
-        let tall = TALL * (names.len() + lines.len()) as f32;
-        let mut y = middle - tall / 2.0 + TALL / 2.0;
-        for name in names {
-            frame.fill_text(canvas::Text {
-                content: name.clone(),
-                position: Point::new(left, y),
-                color,
-                size: 11.5.into(),
-                font: crate::look::BOLD,
-                align_y: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
-            y += TALL;
-        }
-        for (sign, words, ink) in lines {
-            let ink = faded(*ink, far);
-            let stroke = Stroke {
-                line_cap: canvas::LineCap::Round,
-                line_join: canvas::LineJoin::Round,
-                ..Stroke::default().with_color(ink).with_width(1.2)
-            };
-            let c = Point::new(left + 4.5, y);
-            match sign {
-                Sign::Goal => {
-                    frame.stroke(&Path::circle(c, 4.0), stroke);
-                    frame.fill(&Path::circle(c, 1.3), ink);
-                }
-                Sign::Clock => {
-                    frame.stroke(&Path::circle(c, 4.0), stroke);
-                    frame.stroke(
-                        &Path::new(|path| {
-                            path.move_to(Point::new(c.x, c.y - 2.4));
-                            path.line_to(c);
-                            path.line_to(Point::new(c.x + 2.0, c.y));
-                        }),
-                        stroke,
-                    );
-                }
-                Sign::Sum => frame.stroke(
-                    &Path::new(|path| {
-                        path.move_to(Point::new(c.x + 3.5, c.y - 4.0));
-                        path.line_to(Point::new(c.x - 3.5, c.y - 4.0));
-                        path.line_to(Point::new(c.x + 0.5, c.y));
-                        path.line_to(Point::new(c.x - 3.5, c.y + 4.0));
-                        path.line_to(Point::new(c.x + 3.5, c.y + 4.0));
-                    }),
-                    stroke,
-                ),
-                Sign::Start => frame.fill(
-                    &Path::new(|path| {
-                        path.move_to(Point::new(c.x - 3.0, c.y - 4.0));
-                        path.line_to(Point::new(c.x + 4.0, c.y));
-                        path.line_to(Point::new(c.x - 3.0, c.y + 4.0));
-                        path.close();
-                    }),
-                    ink,
-                ),
-            }
-            frame.fill_text(canvas::Text {
-                content: words.clone(),
-                position: Point::new(left + 13.0, y),
-                color: ink,
-                size: 10.5.into(),
-                align_y: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
-            y += TALL;
-        }
-        // Its notes' marks, under what is written.
-        for (n, number) in bracket.marks.iter().enumerate() {
-            note_mark(frame, Point::new(left + 6.5 + 16.0 * n as f32, y), *number);
-        }
     }
     // The open note's threads, from its card to what it is on.
     for (from, to) in &picture.threads {
@@ -2212,24 +1674,6 @@ mod tests {
     }
 
     #[test]
-    fn a_name_right_of_a_brace_has_room_before_the_next() {
-        for lanes in 1..5u8 {
-            let widths = written_right(lane_widths(lanes, None, false), true);
-            // The outermost's name is written past its brace, in the room
-            // left right of them all.
-            let outermost = brace_at(&widths, lanes - 1, true);
-            assert_eq!(
-                outermost + BRACE + LABEL,
-                side_room(lanes, true, true, false)
-            );
-            for lane in 1..lanes.saturating_sub(1) {
-                let room = brace_at(&widths, lane + 1, true) - brace_at(&widths, lane, true);
-                assert_eq!(room, BRACE + LABEL);
-            }
-        }
-    }
-
-    #[test]
     fn each_span_that_holds_another_takes_more_room() {
         assert!(loop_room(0) < loop_room(1));
         assert_eq!(loop_room(2) - loop_room(1), LOOP_STEP);
@@ -2253,28 +1697,28 @@ mod tests {
         };
         let mut moves = Moves::default();
         // What is there at first is there.
-        assert!(!moves.on(&playing(0.25), 0.0, &|_| None));
+        assert!(!moves.on(&playing(0.25), 0.0));
         assert_eq!(moves.played, Some((id(1), 0.25)));
         assert_eq!(moves.drawn(Thing::Line(id(1), None)), 1.0);
         // A jump is caught up with, not made at once.
-        assert!(moves.on(&playing(0.75), 0.05, &|_| None));
+        assert!(moves.on(&playing(0.75), 0.05));
         let shown = moves.shown(id(1), 0.75);
         assert!(shown > 0.25 && shown < 0.75);
         for _ in 0..100 {
-            moves.on(&playing(0.75), 0.05, &|_| None);
+            moves.on(&playing(0.75), 0.05);
         }
         assert_eq!(moves.played, Some((id(1), 0.75)));
         // A line that was not there is drawn in.
         let mut two = playing(0.75);
         two.stops
             .push(stop(2, Some(Line::Plain(Color::WHITE)), None));
-        assert!(moves.on(&two, 0.05, &|_| None));
+        assert!(moves.on(&two, 0.05));
         assert!(moves.drawn(Thing::Line(id(2), None)) < 1.0);
         // With motion off it is there at once.
         two.still = true;
         two.stops
             .push(stop(3, Some(Line::Plain(Color::WHITE)), None));
-        assert!(!moves.on(&two, 0.05, &|_| None));
+        assert!(!moves.on(&two, 0.05));
         assert_eq!(moves.drawn(Thing::Line(id(3), None)), 1.0);
     }
 
@@ -2286,20 +1730,20 @@ mod tests {
             ..Picture::default()
         };
         let mut moves = Moves::default();
-        moves.on(&joined(2, false), 0.0, &|_| None);
+        moves.on(&joined(2, false), 0.0);
         assert_eq!(moves.drawn(Thing::Line(id(1), Some(id(2)))), 1.0);
         // Carried, where it would land comes and goes: no line is drawn in.
-        assert!(!moves.on(&joined(3, true), 0.05, &|_| None));
+        assert!(!moves.on(&joined(3, true), 0.05));
         assert_eq!(moves.drawn(Thing::Line(id(1), Some(id(3)))), 1.0);
         // Let go there, the step it now goes on into is new to it.
-        assert!(moves.on(&joined(3, false), 0.05, &|_| None));
+        assert!(moves.on(&joined(3, false), 0.05));
         assert!(moves.drawn(Thing::Line(id(1), Some(id(3)))) < 1.0);
         // A line there before it was picked up is not.
         for _ in 0..20 {
-            moves.on(&joined(3, false), 0.05, &|_| None);
+            moves.on(&joined(3, false), 0.05);
         }
-        moves.on(&joined(3, true), 0.05, &|_| None);
-        assert!(!moves.on(&joined(3, false), 0.05, &|_| None));
+        moves.on(&joined(3, true), 0.05);
+        assert!(!moves.on(&joined(3, false), 0.05));
     }
 
     #[test]
@@ -2310,96 +1754,8 @@ mod tests {
         };
         picture.stops[1].back = Some((0, 0.5, Color::WHITE));
         let mut moves = Moves::default();
-        moves.on(&picture, 0.0, &|_| None);
+        moves.on(&picture, 0.0);
         assert_eq!(moves.played, Some((id(2), 0.5)));
         assert_eq!(moves.shown(id(2), 0.5), 0.5);
-    }
-
-    #[test]
-    fn the_lane_under_the_pointer_widens_and_the_room_keeps_its_width() {
-        let whole = |widths: &[f32]| widths.iter().sum::<f32>();
-        assert_eq!(lane_widths(3, None, false), vec![BRACE; 3]);
-        // From the rows: the innermost comes to meet it.
-        assert_eq!(lane_widths(3, Some(0), false), vec![LEANT, 12.0, 12.0]);
-        // Further out, what it came past steps back.
-        assert_eq!(lane_widths(3, Some(1), false), vec![PASSED, LEANT, 14.0]);
-        // From the edge: the outermost comes forward, the rest step back.
-        assert_eq!(lane_widths(3, Some(2), true), vec![12.0, 12.0, LEANT]);
-        assert_eq!(lane_widths(3, Some(1), true), vec![14.0, LEANT, PASSED]);
-        // Two lanes leave the other room enough for its brace.
-        assert_eq!(lane_widths(2, Some(0), false), vec![26.0, PASSED]);
-        // One lane has nothing to make room for.
-        assert_eq!(lane_widths(1, Some(0), false), vec![BRACE]);
-        for lanes in 1..6 {
-            for under in 0..lanes {
-                for from_right in [false, true] {
-                    let widths = lane_widths(lanes, Some(under), from_right);
-                    assert!((whole(&widths) - BRACE * f32::from(lanes)).abs() < 0.01);
-                    assert!(widths.iter().all(|wide| *wide >= PASSED));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn a_lane_is_pressed_where_its_brace_is_drawn() {
-        for named in [false, true] {
-            for under in 0..4 {
-                for from_right in [false, true] {
-                    let widths = lane_widths(4, Some(under), from_right);
-                    for lane in 0..4 {
-                        let x = brace_at(&widths, lane, named) + 3.0;
-                        assert_eq!(lane_under(&widths, named, x), Some(lane));
-                    }
-                }
-            }
-        }
-        // The innermost's names are its own, and the room right of them
-        // all is the outermost's.
-        let rest = lane_widths(2, None, false);
-        assert_eq!(lane_under(&rest, true, BRACE + LABEL - 1.0), Some(0));
-        assert_eq!(lane_under(&rest, true, 500.0), Some(1));
-        assert_eq!(lane_under(&rest, true, -1.0), None);
-        assert_eq!(lane_under(&[], true, 5.0), None);
-    }
-
-    #[test]
-    fn the_pointer_stays_in_the_lane_that_widened_for_it() {
-        // Lanes at rest, the pointer come into one going either way: with
-        // the lanes leaning to it, it is in the same one.
-        let rest = lane_widths(3, None, false);
-        for x in [1.0, 17.0, 19.0, 35.0, 37.0, 53.0] {
-            for from_right in [false, true] {
-                let under = lane_under(&rest, false, x);
-                let leant = lane_widths(3, under, from_right);
-                assert_eq!(lane_under(&leant, false, x), under, "at {x}");
-            }
-        }
-    }
-
-    #[test]
-    fn a_name_up_a_brace_takes_its_sum_where_it_fits_and_is_cut_short_where_not() {
-        assert_eq!(
-            upright_words("Culto", Some("8:00"), 160.0),
-            "Culto · Σ 8:00"
-        );
-        assert_eq!(upright_words("Culto", Some("8:00"), 60.0), "Culto");
-        let cut = upright_words("Servicio de Adoración Principal", Some("8:00"), 120.0);
-        assert!(cut.ends_with('…') && cut.starts_with("Servicio"), "{cut}");
-        assert!(crate::widgets::steady(&cut, UPRIGHT) <= 112.0, "{cut}");
-        assert_eq!(upright_words("Culto", None, 10.0), "");
-    }
-
-    #[test]
-    fn a_name_beside_a_bracket_takes_two_lines_at_most() {
-        assert_eq!(name_lines("Culto"), vec!["Culto"]);
-        assert_eq!(
-            name_lines("Servicio de Canto"),
-            vec!["Servicio de", "Canto"]
-        );
-        assert_eq!(
-            name_lines("Escuela Sabática de los menores"),
-            vec!["Escuela", "Sabática de …"]
-        );
     }
 }

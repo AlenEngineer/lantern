@@ -45,6 +45,68 @@ pub fn sound() -> Option<Sound> {
     })
 }
 
+/// A change to the default sound output, as a phone asks for it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SoundChange {
+    /// How loud, 0 to 1, and heard: moving the volume up from muted
+    /// means to hear it.
+    Volume(f32),
+    Muted(bool),
+}
+
+/// Makes `change` with `wpctl`, then says how the sound stands. Changes
+/// run on threads of their own; one asked for after another that hasn't
+/// run yet makes the older one moot, so a slider dragged fast ends where
+/// it was let go, whichever thread runs first.
+pub fn change_sound(change: SoundChange) -> Result<Option<Sound>, String> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static ASKED: AtomicU64 = AtomicU64::new(0);
+    static DONE: Mutex<u64> = Mutex::new(0);
+    let mine = ASKED.fetch_add(1, Ordering::SeqCst) + 1;
+    {
+        let mut done = DONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *done < mine {
+            *done = mine;
+            for args in wpctl_args(change) {
+                let out = Command::new("wpctl")
+                    .args(&args)
+                    .output()
+                    .map_err(|err| format!("wpctl: {err}"))?;
+                if !out.status.success() {
+                    return Err(format!(
+                        "wpctl {}: {}",
+                        args.join(" "),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(sound())
+}
+
+/// What `wpctl` is run with to make `change`.
+fn wpctl_args(change: SoundChange) -> Vec<Vec<String>> {
+    const SINK: &str = "@DEFAULT_AUDIO_SINK@";
+    let run =
+        |words: &[&str]| -> Vec<String> { words.iter().map(|word| word.to_string()).collect() };
+    match change {
+        SoundChange::Volume(level) => {
+            let level = if level.is_finite() {
+                level.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            vec![
+                run(&["set-volume", SINK, &format!("{level:.2}")]),
+                run(&["set-mute", SINK, "0"]),
+            ]
+        }
+        SoundChange::Muted(on) => vec![run(&["set-mute", SINK, if on { "1" } else { "0" }])],
+    }
+}
+
 /// `Volume: 0.56 [MUTED]` as its level and whether it is muted.
 fn volume(line: &str) -> Option<(f32, bool)> {
     let mut words = line.split_whitespace().skip(1);
@@ -136,6 +198,36 @@ mod tests {
         assert_eq!(volume("nonsense"), None);
         let inspect = "id 55, type PipeWire:Interface:Node\n  * node.description = \"HD Audio Speaker\"\n  * node.name = \"alsa_output.x\"\n";
         assert_eq!(described(inspect).as_deref(), Some("HD Audio Speaker"));
+    }
+
+    #[test]
+    fn a_phone_sets_the_volume_with_wpctl() {
+        let said = |change| {
+            wpctl_args(change)
+                .into_iter()
+                .map(|args| args.join(" "))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            said(SoundChange::Volume(0.456)),
+            [
+                "set-volume @DEFAULT_AUDIO_SINK@ 0.46",
+                "set-mute @DEFAULT_AUDIO_SINK@ 0"
+            ]
+        );
+        // Never past full, nor below nothing.
+        assert_eq!(
+            said(SoundChange::Volume(3.0))[0],
+            "set-volume @DEFAULT_AUDIO_SINK@ 1.00"
+        );
+        assert_eq!(
+            said(SoundChange::Volume(f32::NAN))[0],
+            "set-volume @DEFAULT_AUDIO_SINK@ 0.00"
+        );
+        assert_eq!(
+            said(SoundChange::Muted(true)),
+            ["set-mute @DEFAULT_AUDIO_SINK@ 1"]
+        );
     }
 
     #[test]

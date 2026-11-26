@@ -17,6 +17,7 @@ lantern-orchestrator = { path = "crates/orchestrator" }
 lantern-showman = { path = "crates/showman" }
 lantern-engine = { path = "crates/engine" }
 lantern-remote = { path = "crates/remote" }
+lantern-web-protocol = { path = "crates/web-protocol" }
 lantern-source-local = { path = "sources/local" }
 lantern-source-link = { path = "sources/link" }
 lantern-source-clock = { path = "sources/clock" }
@@ -58,6 +59,12 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 qrcode = { version = "0.14", default-features = false }
 # Reads what a PowerPoint file's slides point to.
 roxmltree = "0.20"
+# This machine's network addresses, on Linux and Windows: how the phone
+# remote finds a Tailscale address.
+if-addrs = "0.15"
+# The phone remote's IPv6 listener, which must be IPv6-only to sit beside
+# the IPv4 one on the same port.
+socket2 = "0.6"
 
 # Dev-only
 tempfile = "3"

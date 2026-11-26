@@ -391,8 +391,9 @@ impl App {
         });
     }
 
-    /// The panel: its three lenses, and what the one in use shows.
-    pub(crate) fn side_panel(&self) -> Element<'_, Message> {
+    /// The panel, `wide` inside its padding: the library's find box with
+    /// the two other lenses beside it, then what the one in use shows.
+    pub(crate) fn side_panel(&self, wide: f32) -> Element<'_, Message> {
         // A fill under way has the panel to itself.
         if let Some(fill) = self.fill_card() {
             return fill;
@@ -404,38 +405,48 @@ impl App {
         let p = self.palette;
         let plan = self.engine.0.plan();
         let waiting = self.issues(&plan).len();
+        // Look and Check are small buttons, lit while in use: pressed
+        // again, the library is back.
         let lens = |lens: Lens, icon: Icon, about: &str, count: usize| {
             let on = self.lens == lens;
-            let ink = widgets::place_ink(p, on);
-            let mut content = row![look::icon(icon, 16.0, ink)]
-                .spacing(6)
+            let ink = if on { p.primary } else { p.on_surface_variant };
+            let mut content = row![look::icon(icon, 15.0, ink)]
+                .spacing(4)
                 .align_y(Alignment::Center);
             if count > 0 {
                 content = content.push(text(count.to_string()).size(META).font(BOLD).color(ink));
             }
-            widgets::place(p, content, on, 6, about, Message::Lens(lens))
+            hinted(
+                p,
+                button(content)
+                    .padding([9, 8])
+                    .on_press(Message::Lens(if on { Lens::Add } else { lens }))
+                    .style(look::strip_item(
+                        p,
+                        if on { Tone::Selected } else { Tone::Plain },
+                    )),
+                about.to_string(),
+                tooltip::Position::Bottom,
+            )
         };
-        // One switch with three places, not three buttons.
-        let lenses = widgets::places(
-            p,
-            [
-                lens(Lens::Add, Icon::Plus, "Add: the library", 0),
-                lens(
-                    Lens::Look,
-                    Icon::Tune,
-                    "Look: how what is selected looks",
-                    0,
-                ),
-                lens(Lens::Check, Icon::Check, "Check: what isn't ready", waiting),
-            ],
-            16.0,
-        );
+        let top = row![
+            self.find_box(wide),
+            lens(
+                Lens::Look,
+                Icon::Tune,
+                "Look: how what is selected looks",
+                0
+            ),
+            lens(Lens::Check, Icon::Check, "Check: what isn't ready", waiting),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center);
         let body: Element<'_, Message> = match self.lens {
             Lens::Add => self.shelf_pane(),
             Lens::Look => scrollable(self.look_lens(&plan)).height(Fill).into(),
             Lens::Check => scrollable(self.check_lens(&plan)).height(Fill).into(),
         };
-        column![lenses, body].spacing(12).height(Fill).into()
+        column![top, body].spacing(10).height(Fill).into()
     }
 
     fn look_lens<'a>(&self, plan: &Plan) -> Element<'a, Message> {

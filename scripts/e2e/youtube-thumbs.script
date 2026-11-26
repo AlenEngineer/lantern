@@ -1,5 +1,7 @@
 # YouTube results show the video's still, fetched from i.ytimg.com and
-# cached without an extension. Needs the network.
+# cached without an extension. Needs the network. Searches through yt-dlp:
+# run with LANTERN_CONFIG=scripts/e2e/yt-dlp.toml (or a config with a
+# youtube_api_key).
 type !yt himno 436
 press enter
 wait 12000

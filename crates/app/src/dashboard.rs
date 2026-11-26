@@ -1,7 +1,9 @@
-//! The operator's window: three cards on one ground. A strip across the
-//! top (the plan, the service's time, the tools), the plan on the left, and
-//! the stage in the middle: what the audience sees, and beside it what's
-//! next or lined up. The search drops from the strip as a panel.
+//! The operator's window: a strip across the top (the plan, the service's
+//! time, the tools), and under it three panes that each mode lays out (see
+//! [`Layout::of`]). While planning: the library, the plan and the preview,
+//! told apart by brightness. In a run: the plan, the stage (what the
+//! audience sees) and beside it what's next, as panes of one card. The
+//! search drops from the strip as a panel.
 
 use std::time::{Duration, SystemTime};
 
@@ -16,34 +18,33 @@ use lantern_engine::{
 
 use crate::keys::{self, Op};
 use crate::length;
-use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL, Tone};
+use crate::look::{self, BODY, BOLD, Edge, HEADING, Icon, MEDIUM, META, PILL, PILL_SMALL, Tone};
 use crate::palette::Palette;
-use crate::plan_pane::section_status;
+use crate::plan_pane::{
+    Facts, Says, Under, item_facts, section_hue, section_status, step_facts, under_name,
+};
 use crate::ready::{self, Issue, Level};
 use crate::search::{Group, Live, supported};
+use crate::sources::CardAt;
 use crate::stage;
 use crate::stage::Content;
-use crate::widgets::{chip, hinted, pill, scrolling, single_line, wide};
+use crate::widgets::{caption, chip, hinted, pill, rule, scrolling, single_line, wide};
 use crate::youtube::YoutubeVideo;
 use crate::{App, Clicked, Message};
 
 pub const SEARCH_BOX: &str = "search";
 pub const RESULTS: &str = "results";
+/// The id of the preview while planning, to scroll it.
+pub const PREVIEW: &str = "plan-preview";
 pub const NAME_BOX: &str = "plan-name";
 /// The field for the path of a plan to import.
 pub const IMPORT_BOX: &str = "plan-import";
 
-/// The plan pane's and the next column's widths with room to spare, and
-/// the least they shrink to in a narrow window.
-const PLAN_WIDTH: (f32, f32) = (340.0, 280.0);
-const STAGE_WIDTH: (f32, f32) = (280.0, 220.0);
-/// What the live picture keeps before the side columns start to shrink.
-const LAUNCHER_ROOM: f32 = 560.0;
-/// A side column dragged to a width stays between these, and leaves the
-/// live picture at least its own.
+/// A side pane dragged to a width stays between these, and leaves the
+/// centre at least its own.
 const PANE_LEAST: f32 = 200.0;
 const PANE_MOST: f32 = 560.0;
-const MIDDLE_LEAST: f32 = 320.0;
+const CENTRE_LEAST: f32 = 320.0;
 /// How wide the line between panes is to the pointer.
 /// How far short of a card's top and foot the line between two of its
 /// panes stops.
@@ -51,9 +52,14 @@ const MIDDLE_LEAST: f32 = 320.0;
 /// blackout, settings and what isn't ready): the plan's part of the strip
 /// leaves it this.
 const STRIP_RIGHT: f32 = 380.0;
-/// About how wide the modes and starting the service are, beside the
-/// plan's part of the strip.
+/// The same while planning, where the way into a service, wider, has
+/// Blackout's place. The bangs are counted apart.
+const STRIP_RIGHT_PLANNING: f32 = 460.0;
+/// About how wide the middle of the strip is while the stage is in use:
+/// the modes, and in a run the way out of it.
 const STRIP_MIDDLE: f32 = 340.0;
+/// About how wide a bang's button in the strip is, with the room after it.
+const STRIP_BANG: f32 = 40.0;
 
 const SEAM_INSET: f32 = 20.0;
 
@@ -67,40 +73,210 @@ pub(crate) const STRIP: f32 = 48.0;
 /// How wide the search panel is, where the window has the room.
 const SEARCH_PANEL: f32 = 460.0;
 
-/// The bangs Lantern's own sources answer, in the order the strip shows
-/// their buttons; a folder's own comes after them.
-const BANG_ORDER: [&str; 6] = ["b", "yt", "f", "gi", "t", "x"];
+/// Lantern's own sources, by the bang each answers, with their pictures
+/// and names, in the order the strip and the library show them. A
+/// folder's own bang comes after them, shown as it's typed.
+pub(crate) const OWN_SOURCES: [(&str, Icon, &str); 6] = [
+    ("b", Icon::Book, "Bible"),
+    ("yt", Icon::Play, "YouTube"),
+    ("f", Icon::Folder, "Folders"),
+    ("gi", Icon::Image, "Images"),
+    ("x", Icon::Pencil, "Text"),
+    ("t", Icon::Clock, "Time"),
+];
 
-/// The picture for one of Lantern's own bangs; none for a folder's.
-fn bang_icon(bang: &str) -> Option<Icon> {
-    Some(match bang {
-        "b" => Icon::Book,
-        "yt" => Icon::Play,
-        "f" => Icon::Folder,
-        "gi" => Icon::Image,
-        "t" => Icon::Clock,
-        "x" => Icon::Pencil,
-        _ => return None,
-    })
+/// What a bang's tip says: who answers it, and how to type it.
+pub(crate) fn bang_about(bang: &Bang) -> String {
+    format!("{} · !{}", bang.sources.join(", "), bang.bang)
 }
 
-/// A side pane, by the edge that sizes it.
+/// A side pane, by the side it's on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    Plan,
-    Stage,
+    Left,
+    Right,
 }
 
-/// The plan and stage panes' widths in a window `width` wide: their full
-/// widths while the launcher has room, then both narrower by the same
-/// share, down to their least.
-pub(crate) fn pane_widths(width: f32) -> (f32, f32) {
-    let (plan, stage) = (PLAN_WIDTH.0, STAGE_WIDTH.0);
-    let share = ((width - LAUNCHER_ROOM) / (plan + stage)).min(1.0);
-    (
-        (plan * share).max(PLAN_WIDTH.1).round(),
-        (stage * share).max(STAGE_WIDTH.1).round(),
-    )
+/// What a pane under the strip shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    /// The plan's steps.
+    Plan,
+    /// In Live, where the plan would be: what was shown.
+    Session,
+    /// What the audience sees, large.
+    Stage,
+    /// In a run, beside the stage: what is picked, else what comes next.
+    Next,
+    /// In Live, beside the stage: what is picked, while something is.
+    Picked,
+    /// The library, and the lenses on what is selected.
+    Library,
+    /// While planning: what is selected or picked, as it will look.
+    Preview,
+}
+
+impl Pane {
+    /// The room round what it shows. The plan and the session list pad
+    /// their own rows.
+    fn padding(self) -> f32 {
+        match self {
+            Pane::Plan | Pane::Session => 0.0,
+            _ => CARD_PADDING,
+        }
+    }
+}
+
+/// A pane at one side: how wide it is with room to spare, the least it
+/// narrows to, and the name a width it's dragged to is kept under.
+#[derive(Debug, Clone, Copy)]
+struct Beside {
+    pane: Pane,
+    full: f32,
+    least: f32,
+    kept: &'static str,
+}
+
+/// What tells the panes apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Apart {
+    /// They are panes of one card, with a line under the strip and
+    /// between each two.
+    Lines,
+    /// The sides are the window's own ground, run to its edges, and the
+    /// centre the one brighter surface on it: no card, line or frame, and
+    /// the strip floats on the ground.
+    Brightness,
+}
+
+impl Apart {
+    /// How far the panes are kept in from the window's edges.
+    fn frame(self) -> f32 {
+        match self {
+            Apart::Lines => EDGE,
+            Apart::Brightness => 0.0,
+        }
+    }
+
+    /// The window's ground.
+    fn window(self, p: Palette, see_through: f32) -> Color {
+        match self {
+            Apart::Lines => look::window_colour(p, see_through),
+            Apart::Brightness => look::margin_colour(p, see_through),
+        }
+    }
+
+    /// The centre's own ground. On a card it has none.
+    fn page(self, p: Palette, see_through: f32) -> Option<Color> {
+        match self {
+            Apart::Lines => None,
+            Apart::Brightness => Some(look::page_colour(p, see_through)),
+        }
+    }
+}
+
+/// What the strip holds round the modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Strip {
+    /// Planning. Nothing reaches the projector, so there is no Blackout:
+    /// the way into a service ends the tools. The plan's name opens the
+    /// list of plans and has the plan's facts beside it, and the modes are
+    /// over the middle of the plan.
+    Planning,
+    /// The stage is in use: Blackout ends the tools. The modes start over
+    /// the stage, and the plan's name, or Lantern's, is over the pane
+    /// beside it.
+    Showing,
+}
+
+/// The panes under the strip in one mode, left to right: one at each side
+/// with its own width, and the centre with what they leave.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    left: Beside,
+    centre: Pane,
+    right: Beside,
+    /// What the centre keeps before the sides narrow.
+    room: f32,
+    apart: Apart,
+    strip: Strip,
+}
+
+impl Layout {
+    /// Each mode's panes. While planning, things come from the library on
+    /// the left, go into the plan, and come out on the stage on the right.
+    /// In a run the plan is beside the stage it drives.
+    fn of(mode: crate::mode::Mode) -> Layout {
+        // "plan" and "stage" are the names layouts were kept under before
+        // each pane had its own.
+        let running = |left: Pane, right: Pane| Layout {
+            left: Beside {
+                pane: left,
+                full: 340.0,
+                least: 280.0,
+                kept: "plan",
+            },
+            centre: Pane::Stage,
+            right: Beside {
+                pane: right,
+                full: 280.0,
+                least: 220.0,
+                kept: "stage",
+            },
+            room: 560.0,
+            apart: Apart::Lines,
+            strip: Strip::Showing,
+        };
+        match mode {
+            crate::mode::Mode::Plan => Layout {
+                left: Beside {
+                    pane: Pane::Library,
+                    full: 264.0,
+                    least: 244.0,
+                    kept: "library",
+                },
+                centre: Pane::Plan,
+                right: Beside {
+                    pane: Pane::Preview,
+                    full: 252.0,
+                    least: 212.0,
+                    kept: "preview",
+                },
+                room: 720.0,
+                apart: Apart::Brightness,
+                strip: Strip::Planning,
+            },
+            crate::mode::Mode::Run => running(Pane::Plan, Pane::Next),
+            // What was shown has the plan's place, and its width.
+            crate::mode::Mode::Live => running(Pane::Session, Pane::Picked),
+        }
+    }
+
+    /// The side panes' widths inside their padding in a window `width`
+    /// wide: their full widths while the centre has its room, then both
+    /// narrower by the same share, down to their least.
+    fn widths(&self, width: f32) -> (f32, f32) {
+        let (left, right) = (self.left, self.right);
+        let share = ((width - self.room) / (left.full + right.full)).min(1.0);
+        (
+            (left.full * share).max(left.least).round(),
+            (right.full * share).max(right.least).round(),
+        )
+    }
+
+    /// The centre's width inside its padding in a window `width` wide,
+    /// with the sides `left` and `right` wide inside theirs.
+    fn centre_width(&self, width: f32, left: f32, right: f32) -> f32 {
+        let taken = 2.0 * self.apart.frame()
+            + left
+            + 2.0 * self.left.pane.padding()
+            + GAP
+            + 2.0 * self.centre.padding()
+            + SEAM_GRIP
+            + right
+            + 2.0 * self.right.pane.padding();
+        (width - taken).max(120.0)
+    }
 }
 /// What the stage pane's estimate of its own height may be short by.
 const FIT_SLACK: f32 = 24.0;
@@ -108,28 +284,36 @@ const FIT_SLACK: f32 = 24.0;
 const RESULT_THUMB: f32 = 96.0;
 
 impl App {
-    /// The plan pane's and the next column's widths: as dragged, else as
-    /// they come for the window, and never so wide that the live picture
-    /// loses its room.
+    /// The panes this mode has.
+    fn layout(&self) -> Layout {
+        Layout::of(self.mode)
+    }
+
+    /// The side panes' widths inside their padding: as dragged, else as
+    /// they come for the window, and never so wide that the centre loses
+    /// its room.
     fn side_widths(&self) -> (f32, f32) {
         let window = self.dashboard_size.width;
-        let (plan, stage) = pane_widths(window);
-        let most = |other: f32| (window - other - MIDDLE_LEAST).max(PANE_LEAST);
-        let plan = self
-            .plan_dragged
-            .map_or(plan, |w| w.clamp(PANE_LEAST, PANE_MOST));
-        let stage = self
-            .stage_dragged
-            .map_or(stage, |w| w.clamp(PANE_LEAST, PANE_MOST));
-        (plan.min(most(stage)), stage.min(most(plan)))
+        let layout = self.layout();
+        let (left, right) = layout.widths(window);
+        let dragged = |side: Beside, width: f32| {
+            self.dragged
+                .get(side.kept)
+                .map_or(width, |w| w.clamp(PANE_LEAST, PANE_MOST))
+        };
+        let (left, right) = (dragged(layout.left, left), dragged(layout.right, right));
+        let most = |other: f32| (window - other - CENTRE_LEAST).max(PANE_LEAST);
+        (left.min(most(right)), right.min(most(left)))
     }
 
-    pub(crate) fn plan_width(&self) -> f32 {
-        self.side_widths().0
+    /// How wide the left pane is, its padding and all. The strip's part
+    /// over it is as wide.
+    fn left_width(&self) -> f32 {
+        self.side_widths().0 + 2.0 * self.layout().left.pane.padding()
     }
 
-    /// The column beside the live picture: what's next, or the search
-    /// while it's open.
+    /// The right pane's width: what it shows, or the search while it's
+    /// open.
     fn side_width(&self) -> f32 {
         if self.search_open {
             self.search_width()
@@ -139,32 +323,56 @@ impl App {
     }
 
     /// The search panel's width: its own, less in a narrow window so the
-    /// live picture keeps some room.
+    /// centre keeps some room.
     fn search_width(&self) -> f32 {
-        let room = self.dashboard_size.width - self.plan_width() - MIDDLE_LEAST;
+        let room = self.dashboard_size.width - self.left_width() - CENTRE_LEAST;
         SEARCH_PANEL.min(room).max(PANE_LEAST)
     }
 
-    /// Where the pointer has dragged the edge of a side pane to.
-    pub(crate) fn dragged_to(&self, side: Side, x: f32) -> f32 {
-        let width = match side {
-            Side::Plan => x - EDGE,
-            Side::Stage => self.dashboard_size.width - x - EDGE - CARD_PADDING,
+    /// Drags the edge of the pane at `side` to `x`, or with `None` lets
+    /// it size itself for the window again. The width is kept under the
+    /// pane's own name, so one mode's panes don't size another's.
+    pub(crate) fn drag_side(&mut self, side: Side, x: Option<f32>) {
+        let layout = self.layout();
+        let window = self.dashboard_size.width;
+        let (pane, width) = match side {
+            Side::Left => (
+                layout.left,
+                x.map(|x| x - layout.apart.frame() - 2.0 * layout.left.pane.padding()),
+            ),
+            Side::Right => (
+                layout.right,
+                x.map(|x| window - x - layout.apart.frame() - layout.right.pane.padding()),
+            ),
         };
-        width.clamp(PANE_LEAST, PANE_MOST)
+        match width {
+            Some(width) => {
+                let width = width.clamp(PANE_LEAST, PANE_MOST);
+                self.dragged.insert(pane.kept.to_string(), width);
+            }
+            None => {
+                self.dragged.remove(pane.kept);
+            }
+        }
     }
 
-    /// The live picture's room: what the plan, the side column and the
-    /// gaps leave of the window's width.
-    fn live_width(&self) -> f32 {
-        let taken = 2.0 * EDGE
-            + self.plan_width()
-            + GAP
-            // The picture's card and the card beside it.
-            + 4.0 * CARD_PADDING
-            + SEAM_GRIP
-            + self.side_width();
-        (self.dashboard_size.width - taken).max(120.0)
+    /// The centre's width inside its padding: what the side panes and the
+    /// handles between leave of the window's.
+    fn centre_width(&self) -> f32 {
+        let left = self.side_widths().0;
+        self.layout()
+            .centre_width(self.dashboard_size.width, left, self.side_width())
+    }
+
+    /// How far the middle of the centre pane is from the window's left
+    /// edge with the search closed, so what is over it stays put as the
+    /// search opens.
+    fn centre_middle(&self) -> f32 {
+        let layout = self.layout();
+        let (left, right) = self.side_widths();
+        let centre = layout.centre_width(self.dashboard_size.width, left, right)
+            + 2.0 * layout.centre.padding();
+        layout.apart.frame() + self.left_width() + GAP + centre / 2.0
     }
 
     /// How see-through the dashboard is now, from 0 (solid) to 1: as the
@@ -180,46 +388,8 @@ impl App {
     pub(crate) fn dashboard_view(&self) -> Element<'_, Message> {
         let p = self.palette;
         let glass = self.see_through();
-        // The panes are one card, a thin line between two that stops short
-        // of its top and foot. The room round the line is a handle: drag
-        // it to size the side it bounds, double-click it to let that size
-        // itself again. The line lights while it's held.
-        let seam = |side: Side, width: f32| {
-            let held = self.resizing == Some(side);
-            let line = container(Space::new())
-                .width(if held { 2 } else { 1 })
-                .height(Fill)
-                .style(move |_| match held {
-                    true => container::Style::default().background(p.primary),
-                    false => container::Style::default().background(Color::WHITE.scale_alpha(0.10)),
-                });
-            iced::widget::mouse_area(
-                container(line)
-                    .center_x(width)
-                    .height(Fill)
-                    .padding(iced::Padding::default().top(SEAM_INSET).bottom(SEAM_INSET)),
-            )
-            .on_press(Message::ResizePane(side))
-            .interaction(iced::mouse::Interaction::ResizingHorizontally)
-        };
+        let layout = self.layout();
         let timing = self.timing();
-        // In Live there is no plan: its place lists what was shown.
-        let plan = container(match self.mode {
-            crate::mode::Mode::Live => self.session_pane(),
-            _ => self.plan_pane(&timing),
-        })
-        .height(Fill);
-        // The settings take the stage's card while they're open.
-        let middle: Element<'_, Message> = match &self.settings {
-            Some(draft) => self.settings_view(draft),
-            None => self.stage_centre(&seam),
-        };
-        // The settings have the panes' room.
-        let stage = container(middle).center_x(Fill).height(Fill);
-        let stage = match self.settings {
-            Some(_) => stage.padding(CARD_PADDING),
-            None => stage,
-        };
         // Under the strip, across the card, a thin line short of its
         // sides, as between the panes.
         let rule = container(
@@ -230,28 +400,52 @@ impl App {
         )
         .width(Fill)
         .padding(iced::Padding::default().left(SEAM_INSET).right(SEAM_INSET));
-        // The strip and the panes are one card. The strip's room is kept
-        // here; the strip itself is drawn last, over what drops from it.
-        let window = container(
-            container(
-                column![
-                    Space::new().height(STRIP),
-                    rule,
-                    // The settings are not the plan's: they have the window.
-                    match self.settings {
-                        Some(_) => Element::from(row![stage].height(Fill)),
-                        None => row![plan, seam(Side::Plan, GAP), stage].height(Fill).into(),
-                    }
-                ]
-                .spacing(GAP / 2.0),
-            )
+        let (inside, frame, floats) = match (&self.settings, layout.apart) {
+            // Panes told apart by brightness are on the window's ground,
+            // under the strip floating on it.
+            (None, Apart::Brightness) => (
+                Element::from(column![
+                    Space::new().height(EDGE + STRIP + GAP),
+                    self.panes(layout, &timing),
+                ]),
+                layout.apart.frame(),
+                true,
+            ),
+            // The strip and the panes are one card. The strip's room is kept
+            // here; the strip itself is drawn last, over what drops from it.
+            (settings, _) => (
+                container(
+                    column![
+                        Space::new().height(STRIP),
+                        rule,
+                        match settings {
+                            // The settings are not the plan's: they have the window.
+                            Some(draft) => Element::from(
+                                row![
+                                    container(self.settings_view(draft))
+                                        .center_x(Fill)
+                                        .height(Fill)
+                                        .padding(CARD_PADDING)
+                                ]
+                                .height(Fill),
+                            ),
+                            None => self.panes(layout, &timing),
+                        }
+                    ]
+                    .spacing(GAP / 2.0),
+                )
+                .height(Fill)
+                .style(look::card(p, glass, look::CARD_RADIUS))
+                .into(),
+                EDGE,
+                false,
+            ),
+        };
+        let window = container(inside)
+            .width(Fill)
             .height(Fill)
-            .style(look::card(p, glass, look::CARD_RADIUS)),
-        )
-        .width(Fill)
-        .height(Fill)
-        .padding(EDGE)
-        .style(look::window(p, glass));
+            .padding(frame)
+            .style(look::window(p, layout.apart.window(p, glass)));
         let mut layers = stack![window];
         // The search drops from the strip, over the room the stage's card
         // leaves it beside the live picture.
@@ -283,11 +477,17 @@ impl App {
         }
         // The strip, over all of that: what drops from it comes out from
         // under its edge.
-        layers = layers.push(
-            pin(container(self.strip(&timing)).width(self.dashboard_size.width - 2.0 * EDGE))
-                .x(EDGE)
-                .y(EDGE),
-        );
+        let mut strip =
+            container(self.strip(&timing)).width(self.dashboard_size.width - 2.0 * EDGE);
+        if floats {
+            strip = strip.style(look::floating_strip(
+                p,
+                glass,
+                STRIP / 2.0,
+                self.search_open,
+            ));
+        }
+        layers = layers.push(pin(strip).x(EDGE).y(EDGE));
         // What is carried from the library follows the pointer the same
         // way, until it is let go over the plan.
         if let Some(carried) = self.carried.as_ref().filter(|carried| carried.moving) {
@@ -373,19 +573,21 @@ impl App {
                 self.carry_check(&plan),
                 Some(Err(lantern_engine::CarryError::Crosses(_)))
             );
+            // What it is: a section is in its colour, as on its header;
+            // steps that bring a loop or a drawn order whole have its mark.
+            let ink = match drag.is_section() {
+                true => crate::plan_pane::section_hue(p, &plan.section_colors(), drag.step),
+                false => p.primary,
+            };
             let mut said = row![
                 single_line(drag.label(&plan))
                     .size(BODY)
                     .font(BOLD)
-                    .color(p.primary.scale_alpha(lift)),
+                    .color(ink.scale_alpha(lift)),
             ]
             .spacing(8)
             .align_y(Alignment::Center);
-            // What it is: a section has its bracket; steps that bring a
-            // loop or a drawn order whole have its mark.
-            if drag.is_section() {
-                said = said.push(text("]").size(BODY).font(BOLD).color(p.primary));
-            } else if self.carry_how() != lantern_engine::Carry::Stripped {
+            if !drag.is_section() && self.carry_how() != lantern_engine::Carry::Stripped {
                 // Steps that go on into one another come joined.
                 let joined = drag.carried.len() > 1 && !plan.joined_along(&drag.carried).is_empty();
                 if joined {
@@ -543,6 +745,7 @@ impl App {
     pub(crate) fn issues(&self, plan: &lantern_engine::Plan) -> Vec<Issue> {
         ready::check(
             plan,
+            self.config.youtube,
             |video| self.downloads.0.state(&video.id),
             stage::image_cached,
         )
@@ -562,14 +765,17 @@ impl App {
     /// A step's media length, once the stage has loaded it.
     pub(crate) fn loaded_length(&self, step: &Step) -> Option<Duration> {
         match &step.action {
-            // What the stage has loaded says first; before that, what
-            // the file was measured at.
-            Action::Show { resource } => self
-                .media
-                .length(&resource.id)
-                .or_else(|| self.file_length(resource)),
+            Action::Show { resource } => self.resource_length(resource),
             _ => None,
         }
+    }
+
+    /// How long `resource` plays: what the stage has loaded says first;
+    /// before that, what the file was measured at.
+    pub(crate) fn resource_length(&self, resource: &Resource) -> Option<Duration> {
+        self.media
+            .length(&resource.id)
+            .or_else(|| self.file_length(resource))
     }
 
     /// How long a video or sound file plays, measured once and kept.
@@ -591,6 +797,7 @@ impl App {
     fn strip(&self, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
         let wide = self.dashboard_size.width;
+        let layout = self.layout();
         let plan = self.engine.0.plan();
         let tool = |icon: Icon, label: &str, tone: Tone, message: Message| {
             let colour = match tone {
@@ -614,25 +821,6 @@ impl App {
                 .on_press(message)
                 .style(look::strip_item(p, tone))
         };
-        // Over the plan pane: the plan's name and buttons, or in Live,
-        // where there is none, the app's.
-        let header: Element<'_, Message> = match self.mode {
-            crate::mode::Mode::Live => container(
-                text("Lantern")
-                    .size(HEADING)
-                    .font(BOLD)
-                    .color(p.on_surface_variant),
-            )
-            .padding([4, 8])
-            .into(),
-            _ => self.plan_header(&plan),
-        };
-        // The modes start over the stage's pane, where there is room for
-        // them and for what is right of them; else the plan's name and
-        // buttons give way.
-        let header_room = (self.plan_width() - 8.0)
-            .min(wide - 2.0 * EDGE - 16.0 - STRIP_RIGHT - STRIP_MIDDLE)
-            .max(120.0);
         let mut strip = row![self.mode_switch()]
             .spacing(4)
             .align_y(Alignment::Center);
@@ -795,7 +983,8 @@ impl App {
             }
         }
         // The time of day, where there's room for it.
-        if wide >= 1100.0 {
+        let clock_shown = wide >= 1100.0;
+        if clock_shown {
             strip = strip.push(
                 container({
                     let clock = length::clock_of_day(length::now_of_day());
@@ -817,30 +1006,33 @@ impl App {
         // Each only opens the search on its bang, as typing `!b ` would;
         // a folder's own bang, which has no picture, shows as it's typed.
         // The one being searched is lit.
+        let mut bangs_shown = 0;
         if wide >= 1280.0 && self.settings.is_none() {
             let mut bangs = self.engine.0.searcher().bangs();
             bangs.sort_by_key(|bang| {
-                let place = BANG_ORDER.iter().position(|known| *known == bang.bang);
-                (place.unwrap_or(BANG_ORDER.len()), bang.bang.clone())
+                let place = OWN_SOURCES.iter().position(|(own, ..)| *own == bang.bang);
+                (place.unwrap_or(OWN_SOURCES.len()), bang.bang.clone())
             });
             // Only as many as the strip has room for beside the rest.
             // The mode switch, the service's time and the stage's button
             // come first.
             let room = ((wide - 1280.0).max(0.0) / 40.0) as usize + 1;
+            bangs_shown = bangs.len().min(room);
             for bang in bangs.into_iter().take(room) {
                 let lit = self.search_open && self.search.bang() == Some(bang.bang.as_str());
                 let tone = if lit { Tone::Selected } else { Tone::Plain };
                 let colour = if lit { p.primary } else { p.on_surface_variant };
-                let face: Element<'_, Message> = match bang_icon(&bang.bang) {
-                    Some(icon) => look::icon(icon, 16.0, colour).into(),
-                    None => text(format!("!{}", bang.bang))
-                        .size(META)
-                        .font(BOLD)
-                        .color(colour)
-                        .wrapping(text::Wrapping::None)
-                        .into(),
-                };
-                let about = format!("{} · !{}", bang.sources.join(", "), bang.bang);
+                let face: Element<'_, Message> =
+                    match OWN_SOURCES.iter().find(|(own, ..)| *own == bang.bang) {
+                        Some((_, icon, _)) => look::icon(*icon, 16.0, colour).into(),
+                        None => text(format!("!{}", bang.bang))
+                            .size(META)
+                            .font(BOLD)
+                            .color(colour)
+                            .wrapping(text::Wrapping::None)
+                            .into(),
+                    };
+                let about = bang_about(&bang);
                 right = right.push(
                     iced::widget::tooltip(
                         button(face)
@@ -861,11 +1053,12 @@ impl App {
         } else {
             Tone::Plain
         };
+        let search_named = wide >= 1000.0;
         right = right.push(hinted(
             p,
             tool(
                 Icon::Search,
-                if wide >= 1000.0 { "Search" } else { "" },
+                if search_named { "Search" } else { "" },
                 search_tone,
                 op(Op::Search),
             ),
@@ -906,39 +1099,71 @@ impl App {
             ),
             tooltip::Position::Bottom,
         ));
-        // Blackout: solid while the projector is black.
-        let blackout = self.stage.blackout;
-        right = right.push(hinted(
-            p,
-            button(
-                text(if blackout {
-                    "● Blackout ON"
-                } else {
-                    "Blackout"
-                })
-                .size(BODY)
-                .font(MEDIUM)
-                .wrapping(text::Wrapping::None),
-            )
-            .padding([9, 14])
-            .on_press(Message::Key {
-                op: Op::Blackout,
-                only_if_empty: false,
-            })
-            .style(look::pill(
-                p,
-                if blackout { Tone::Alarm } else { Tone::Danger },
-            )),
-            keys::with_key(
-                if blackout {
-                    "Bring the projector back"
-                } else {
-                    "Make the projector black"
-                },
-                Op::Blackout,
-            ),
-            tooltip::Position::Bottom,
-        ));
+        right = right.push(match layout.strip {
+            // The way into a service, in the stage's colour: an act, not
+            // a fourth mode.
+            Strip::Planning => {
+                let starts = self.op_in_mode(Op::Mode(crate::mode::Mode::Run)).is_ok();
+                let ink = match starts {
+                    true => p.tertiary,
+                    false => crate::palette::Palette::tint(p.tertiary, 0.38),
+                };
+                hinted(
+                    p,
+                    button(
+                        row![
+                            look::icon(Icon::Play, 15.0, ink),
+                            text("Start the service")
+                                .size(BODY)
+                                .font(BOLD)
+                                .wrapping(text::Wrapping::None),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([9, 14])
+                    .on_press_maybe(starts.then_some(Message::StartService))
+                    .style(look::pill(p, Tone::Live)),
+                    keys::with_key("From its first step", Op::Mode(crate::mode::Mode::Run)),
+                    tooltip::Position::Bottom,
+                )
+            }
+            // Blackout: solid while the projector is black.
+            Strip::Showing => {
+                let blackout = self.stage.blackout;
+                hinted(
+                    p,
+                    button(
+                        text(if blackout {
+                            "● Blackout ON"
+                        } else {
+                            "Blackout"
+                        })
+                        .size(BODY)
+                        .font(MEDIUM)
+                        .wrapping(text::Wrapping::None),
+                    )
+                    .padding([9, 14])
+                    .on_press(Message::Key {
+                        op: Op::Blackout,
+                        only_if_empty: false,
+                    })
+                    .style(look::pill(
+                        p,
+                        if blackout { Tone::Alarm } else { Tone::Danger },
+                    )),
+                    keys::with_key(
+                        if blackout {
+                            "Bring the projector back"
+                        } else {
+                            "Make the projector black"
+                        },
+                        Op::Blackout,
+                    ),
+                    tooltip::Position::Bottom,
+                )
+            }
+        });
         right = right.push(hinted(
             p,
             tool(
@@ -954,6 +1179,47 @@ impl App {
             keys::with_key("Settings", Op::Settings),
             tooltip::Position::Bottom,
         ));
+        // The modes start over the stage, with the plan's name and buttons,
+        // or Lantern's, over the pane beside it. While planning the plan is
+        // the centre: the modes are over its middle, and the plan's name
+        // and facts have the room left of them. Either way the name gives
+        // way to the modes and to what is right of them.
+        let header_room = match layout.strip {
+            Strip::Planning => {
+                let clock = match clock_shown {
+                    true => crate::widgets::steady("00:00", BODY) + 24.0,
+                    false => 0.0,
+                };
+                let unnamed = match search_named {
+                    true => 0.0,
+                    false => crate::widgets::steady("Search", BODY) + 8.0,
+                };
+                let beside = crate::mode::SWITCH
+                    + 12.0
+                    + clock
+                    + STRIP_RIGHT_PLANNING
+                    + STRIP_BANG * bangs_shown as f32
+                    - unnamed;
+                (self.centre_middle() - crate::mode::SWITCH / 2.0 - EDGE - 12.0)
+                    .min(wide - 2.0 * EDGE - 24.0 - beside)
+            }
+            Strip::Showing => (self.left_width() + layout.apart.frame() - EDGE - 8.0)
+                .min(wide - 2.0 * EDGE - 16.0 - STRIP_RIGHT - STRIP_MIDDLE),
+        }
+        .max(120.0);
+        // The plan's name and buttons, or in Live, where there is none,
+        // the app's.
+        let header: Element<'_, Message> = match self.mode {
+            crate::mode::Mode::Live => container(
+                text("Lantern")
+                    .size(HEADING)
+                    .font(BOLD)
+                    .color(p.on_surface_variant),
+            )
+            .padding([4, 8])
+            .into(),
+            _ => self.plan_header(&plan, layout.strip == Strip::Planning, header_room),
+        };
         let strip = row![
             container(header).width(header_room).clip(true),
             container(strip).width(Fill).clip(true),
@@ -1123,8 +1389,81 @@ impl App {
 
     fn group<'a>(&'a self, group: &'a Group) -> Element<'a, Message> {
         let p = self.palette;
+        let setup = group.source() == "youtube"
+            && group
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains(lantern_source_youtube::key::NEEDS_SETUP));
+        // Videos picked on YouTube's own site: listed like results.
+        if group.picked {
+            let mut rows = column![
+                container(
+                    text(format!("{} · {} picked", group.name, group.hits.len()))
+                        .size(META)
+                        .color(p.on_surface_variant),
+                )
+                .padding([4, 12])
+            ]
+            .spacing(2);
+            for resource in &group.hits {
+                rows = rows.push(self.result_row(resource));
+            }
+            return rows
+                .push(
+                    container(crate::widgets::pill(
+                        p,
+                        "+ Pick more on YouTube",
+                        Tone::Plain,
+                        look::PILL_SMALL,
+                        Some(Message::PickOnYoutube),
+                    ))
+                    .padding([6, 12]),
+                )
+                .into();
+        }
         let mut rows = column![group_heading(p, &group.name, group.hits.len())].spacing(2);
-        if let Some(error) = &group.error {
+        // YouTube search with nothing set up: pick on YouTube's own site,
+        // in a window of lantern's, or search it in the browser. A link
+        // pasted back from there plays like any other.
+        let typed = self.search.text().trim();
+        if setup && !typed.is_empty() {
+            let browser = lantern_source_youtube::key::browser_search(typed);
+            rows = rows.push(
+                column![
+                    text(
+                        "YouTube search inside lantern needs a key or yt-dlp (Settings → YouTube). Without one, pick videos on YouTube itself:"
+                    )
+                    .size(BODY)
+                    .color(p.on_surface),
+                    button(
+                        row![
+                            look::icon(Icon::Play, 16.0, p.on_primary),
+                            text("Pick on YouTube").size(BODY).font(BOLD).color(p.on_primary),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([10, 18])
+                    .style(look::pill(p, Tone::Solid))
+                    .on_press(Message::PickOnYoutube),
+                    text(format!(
+                        "Opens YouTube's search for “{typed}” in a lantern window. Click videos to add them here."
+                    ))
+                    .size(META)
+                    .color(p.on_surface_variant),
+                    button(
+                        text("Or search in your browser and paste a link")
+                            .size(META)
+                            .color(p.primary),
+                    )
+                    .padding(0)
+                    .style(look::pill_clear(p.primary))
+                    .on_press(Message::OpenLink(browser)),
+                ]
+                .spacing(8)
+                .padding([4, 12]),
+            );
+        } else if let Some(error) = &group.error {
             rows = rows.push(
                 container(text(format!("Failed: {error}")).size(BODY).color(p.error))
                     .padding([4, 12]),
@@ -1136,6 +1475,9 @@ impl App {
         rows.into()
     }
 
+    /// A search result's row: its picture with its size and state in its
+    /// corners, its title, and where it's from or the one warning that
+    /// matters, as a planned step's row has them.
     fn result_row<'a>(&'a self, resource: &'a Resource) -> Element<'a, Message> {
         let p = self.palette;
         let ok = supported(resource);
@@ -1144,28 +1486,33 @@ impl App {
         } else {
             Tone::Plain
         };
-        let mut meta: Vec<String> = resource.subtitle.iter().cloned().collect();
-        // A passage says how it starts: that's what tells two verses apart.
-        meta.extend(resource.location.as_text().and_then(opening));
-        meta.extend(self.download_state(resource));
-        if !ok {
-            meta.push("can't be shown yet".into());
-        }
+        let facts = self.result_facts(resource);
+        let under = match facts.under {
+            // A passage says how it starts: that's what tells two verses
+            // apart.
+            Under::What(what) => Under::What(
+                Some(what)
+                    .filter(|what| !what.is_empty())
+                    .into_iter()
+                    .chain(resource.location.as_text().and_then(opening))
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            ),
+            under => under,
+        };
         let title_color = match (ok, tone) {
             (false, _) => p.outline,
             (true, Tone::Selected) => p.primary,
             (true, _) => p.on_surface,
         };
         let line = row![
-            self.thumbnail(resource, RESULT_THUMB),
+            self.row_picture(&facts.thumb, RESULT_THUMB),
             column![
                 single_line(&resource.title)
                     .size(BODY)
                     .font(if tone == Tone::Selected { BOLD } else { MEDIUM })
                     .color(title_color),
-                single_line(meta.join(" · "))
-                    .size(META)
-                    .color(p.on_surface_variant),
+                under_name(p, &under),
             ]
             .spacing(2),
         ]
@@ -1184,60 +1531,249 @@ impl App {
     /// when there's none. A text has the icon: its slide at this size is
     /// unreadable, so every passage looked the same.
     pub(crate) fn thumbnail<'a>(&self, resource: &Resource, width: f32) -> Element<'a, Message> {
-        let p = self.palette;
         let height = width * 9.0 / 16.0;
         let made = match resource.location.as_text() {
-            Some(_) => None,
+            Some(body) => {
+                // Text has no picture made of it: its first slide, drawn
+                // small as the stage would show it. A clock's time moves,
+                // so it keeps its icon.
+                let first = self.slides.slides(body).first().cloned();
+                if let Some(first) =
+                    first.filter(|_| lantern_source_clock::Clock::of(resource).is_none())
+                {
+                    return self.slide_thumbnail(
+                        first,
+                        self.slide_kind(resource, 0),
+                        width,
+                        height,
+                    );
+                }
+                None
+            }
             None => self.thumbs.get(resource),
         };
-        let picture: Element<'a, Message> = match made {
-            Some(handle) => container(
-                image(handle)
+        self.thumbnail_frame(resource, made, width, height)
+    }
+
+    /// `body`, a slide of `kind`, drawn `width` by `height` on the stage's
+    /// look, its colour and picture, with a thumbnail's rounded corners.
+    fn slide_thumbnail<'a>(
+        &self,
+        body: String,
+        kind: crate::Slide,
+        width: f32,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let look = &self.look;
+        let colour = crate::fit::color(look.background);
+        let mut layers = stack![];
+        if let Some(path) = &look.image {
+            layers = layers.push(
+                image(image::Handle::from_path(path))
                     .width(Fill)
                     .height(Fill)
-                    .content_fit(iced::ContentFit::Cover),
-            )
-            .style(|_| container::Style::default().background(Color::BLACK))
-            .into(),
-            None => container(look::icon(
-                // What shows time has a clock, not a passage's book.
+                    .content_fit(iced::ContentFit::Cover)
+                    .border_radius(look::THUMB_RADIUS),
+            );
+            let dim = colour.scale_alpha(look.dimming());
+            layers = layers.push(container(Space::new()).width(Fill).height(Fill).style(
+                move |_| container::Style {
+                    background: Some(dim.into()),
+                    border: iced::border::rounded(look::THUMB_RADIUS),
+                    ..container::Style::default()
+                },
+            ));
+        }
+        layers = layers.push(container(crate::slide(look, body, &kind)).center(Fill));
+        container(layers)
+            .width(width)
+            .height(height)
+            .clip(true)
+            .style(move |_| container::Style {
+                background: Some(colour.into()),
+                border: iced::border::rounded(look::THUMB_RADIUS),
+                ..container::Style::default()
+            })
+            .into()
+    }
+
+    /// The same picture of `resource` whole, `width` by `height`, which is
+    /// its own shape: a tile of the library's Shapes.
+    pub(crate) fn whole_thumbnail<'a>(
+        &self,
+        resource: &Resource,
+        width: f32,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let made = self.thumbs.whole(resource).map(|(handle, _)| handle);
+        self.thumbnail_frame(resource, made, width, height)
+    }
+
+    /// `made`, a picture of `resource`, framed `width` by `height`; the
+    /// kind's icon while there is none.
+    fn thumbnail_frame<'a>(
+        &self,
+        resource: &Resource,
+        made: Option<iced::widget::image::Handle>,
+        width: f32,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let Some(handle) = made else {
+            // What shows time has a clock, not a passage's book.
+            return self.icon_thumbnail(
                 match lantern_source_clock::Clock::of(resource) {
                     Some(_) => Icon::Clock,
                     None => Icon::of(&resource.kind),
                 },
-                height * 0.4,
-                p.on_surface_variant,
-            ))
-            .center(Fill)
-            .style(look::chip(p, Tone::Plain))
-            .into(),
+                width,
+                height,
+            );
         };
-        container(picture)
-            .width(width)
-            .height(height)
-            .clip(true)
+        container(
+            container(
+                image(handle)
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(iced::ContentFit::Cover)
+                    .border_radius(look::THUMB_RADIUS),
+            )
+            .style(|_| container::Style {
+                background: Some(Color::BLACK.into()),
+                border: iced::border::rounded(look::THUMB_RADIUS),
+                ..container::Style::default()
+            }),
+        )
+        .width(width)
+        .height(height)
+        .clip(true)
+        .style(look::thumb(self.palette))
+        .into()
+    }
+
+    /// A small picture that is only `icon`, `width` by `height`, framed as
+    /// [`thumbnail`] frames one: for what has no picture of its own.
+    ///
+    /// [`thumbnail`]: App::thumbnail
+    pub(crate) fn icon_thumbnail<'a>(
+        &self,
+        icon: Icon,
+        width: f32,
+        height: f32,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        container(look::icon(icon, height * 0.4, p.on_surface_variant))
+            .center_x(width)
+            .center_y(height)
             .style(look::thumb(p))
             .into()
     }
 
-    // The stage pane
+    // The panes
 
-    /// The stage's card: what the audience sees, large, and beside it
-    /// what comes next (or what's lined up). While the search is open its
-    /// panel lies over the side column, which is left empty for it.
-    fn stage_centre<'a>(
-        &'a self,
-        seam: &dyn Fn(Side, f32) -> iced::widget::MouseArea<'a, Message>,
-    ) -> Element<'a, Message> {
+    /// The mode's panes under the strip, left to right, with a handle
+    /// between each two. A side with nothing to show is left out, and the
+    /// centre has its room. While the search is open its panel lies over
+    /// the right pane, which is left empty for it.
+    fn panes<'a>(&'a self, layout: Layout, timing: &Timing) -> Element<'a, Message> {
         let p = self.palette;
-        // While planning, nothing is on the projector: the picture here is
-        // what is being looked at, seen on this screen only.
-        let planning = self.mode == crate::mode::Mode::Plan;
-        let mut live = if planning {
-            self.preview_section()
-        } else {
-            self.on_stage_section()
+        let page = layout.apart.page(p, self.see_through());
+        let lined = layout.apart == Apart::Lines;
+        // A thin line between two panes that stops short of their top and
+        // foot, where lines tell them apart. The room round it is a handle:
+        // drag it to size the side it bounds, double-click it to let that
+        // size itself again. The line lights while it's held.
+        let seam = |side: Side, width: f32| {
+            let held = self.resizing == Some(side);
+            let line = container(Space::new())
+                .width(if held { 2 } else { 1 })
+                .height(Fill)
+                .style(move |_| match (held, lined) {
+                    (true, _) => container::Style::default().background(p.primary),
+                    (false, true) => {
+                        container::Style::default().background(Color::WHITE.scale_alpha(0.10))
+                    }
+                    (false, false) => container::Style::default(),
+                });
+            iced::widget::mouse_area(
+                container(line)
+                    .center_x(width)
+                    .height(Fill)
+                    .padding(iced::Padding::default().top(SEAM_INSET).bottom(SEAM_INSET)),
+            )
+            .on_press(Message::ResizePane(side))
+            .interaction(iced::mouse::Interaction::ResizingHorizontally)
         };
+        let left = self.side_widths().0;
+        let right = match self.search_open {
+            true => Some(Space::new().width(self.search_width()).into()),
+            false => self.pane(layout.right.pane, self.side_width(), timing),
+        };
+        let mut panes = row![].height(Fill);
+        if let Some(content) = self.pane(layout.left.pane, left, timing) {
+            let padding = layout.left.pane.padding();
+            panes = panes
+                .push(
+                    container(content)
+                        .width(left + 2.0 * padding)
+                        .height(Fill)
+                        .padding(padding),
+                )
+                .push(seam(Side::Left, GAP));
+        }
+        panes = panes.push(
+            container(
+                self.pane(layout.centre, self.centre_width(), timing)
+                    .unwrap_or_else(|| Space::new().into()),
+            )
+            .width(Fill)
+            .height(Fill)
+            .padding(layout.centre.padding())
+            .style(look::ground(page, iced::border::Radius::default())),
+        );
+        if let Some(content) = right {
+            panes = panes.push(seam(Side::Right, SEAM_GRIP)).push(
+                container(content)
+                    .height(Fill)
+                    .padding(layout.right.pane.padding()),
+            );
+        }
+        panes.into()
+    }
+
+    /// What `pane` shows, `width` wide inside its padding; nothing when it
+    /// has nothing to show.
+    fn pane<'a>(&'a self, pane: Pane, width: f32, timing: &Timing) -> Option<Element<'a, Message>> {
+        Some(match pane {
+            Pane::Plan => self.plan_pane(width, timing),
+            Pane::Session => self.session_pane(),
+            Pane::Stage => self.stage_pane(width),
+            // What Enter or PgDn would show: the result or step being
+            // looked at, or the plan's next step.
+            Pane::Next => beside(
+                if self.stage.preview.is_some() {
+                    self.preview_section()
+                } else {
+                    self.next_section()
+                },
+                width,
+            )
+            .into(),
+            // No plan to say what is next.
+            Pane::Picked => {
+                self.stage.preview.as_ref()?;
+                beside(self.preview_section(), width).into()
+            }
+            Pane::Library => self.side_panel(width),
+            // While planning, nothing is on the projector: the picture here
+            // is what is being looked at, seen on this screen only.
+            Pane::Preview => self.plan_preview(width),
+        })
+    }
+
+    /// What the audience sees, large, in a pane `width` wide.
+    fn stage_pane(&self, width: f32) -> Element<'_, Message> {
+        let p = self.palette;
+        let mut live = self.on_stage_section();
         // The picture is 16:9 of its column where the card is tall enough
         // for the rest too; in a shorter one it takes what the rest leaves.
         let scene = self.stage.program.as_ref();
@@ -1259,7 +1795,7 @@ impl App {
             + 10.0 * live.len() as f32
             + FIT_SLACK;
         let room = self.dashboard_size.height - 2.0 * EDGE - STRIP - GAP - 2.0 * CARD_PADDING;
-        let full = (self.live_width() * 9.0 / 16.0).round();
+        let full = (width * 9.0 / 16.0).round();
         let monitor = std::mem::replace(&mut live[1], Space::new().into());
         let slot = container(monitor).width(Fill);
         live[1] = if rest + full <= room {
@@ -1271,52 +1807,7 @@ impl App {
         for problem in self.problems() {
             live = live.push(text(problem).size(META).color(p.error));
         }
-        // Beside it: the search's room while it's open, else what Enter or
-        // PgDn would show (the result or step being looked at, or the
-        // plan's next step).
-        let side: Element<'_, Message> = if self.search_open {
-            Space::new().width(self.search_width()).into()
-        } else if planning {
-            // Beside the plan: the library to build it from, how what is
-            // selected looks, and what isn't ready.
-            container(self.side_panel())
-                .width(self.side_width().max(260.0))
-                .into()
-        } else if self.mode == crate::mode::Mode::Live && self.stage.preview.is_none() {
-            // No plan to say what is next.
-            Space::new().into()
-        } else {
-            let mut next = if self.stage.preview.is_some() {
-                self.preview_section()
-            } else {
-                self.next_section()
-            };
-            let width = self.side_width();
-            let monitor = std::mem::replace(&mut next[1], Space::new().into());
-            next[1] = container(monitor)
-                .width(Fill)
-                .height((width * 9.0 / 16.0).round())
-                .into();
-            column(next).spacing(10).width(width).into()
-        };
-        // Each a pane of the one card the panes make.
-        let card =
-            |content: Element<'a, Message>| container(content).height(Fill).padding(CARD_PADDING);
-        // Nothing beside it: the picture has the room.
-        if !self.search_open
-            && !planning
-            && self.mode == crate::mode::Mode::Live
-            && self.stage.preview.is_none()
-        {
-            return card(live.into()).width(Fill).into();
-        }
-        row![
-            card(live.into()).width(Fill),
-            seam(Side::Stage, SEAM_GRIP),
-            card(side)
-        ]
-        .height(Fill)
-        .into()
+        live.into()
     }
 
     /// The stage window should be open by the mode and the screens, and
@@ -1369,10 +1860,11 @@ impl App {
                     "The projector is black. {} brings it back.",
                     keys::label(Op::Blackout)
                 ),
+                Edge::None,
             ),
             // A sound that can't play says why where its picture would be.
             Some(scene) if matches!(scene.media, Media::Failed { .. }) => {
-                self.monitor(scene, None, Some(p.tertiary))
+                self.monitor(scene, None, Edge::Ring(p.tertiary))
             }
             // What the audience sees: under a sound, the picture it was
             // started over.
@@ -1387,7 +1879,7 @@ impl App {
                 let (content, over) = self.stage_content(seen);
                 framed_with(
                     crate::backdrop(&self.look, content, over),
-                    Some(p.tertiary),
+                    Edge::Ring(p.tertiary),
                     2,
                 )
             }
@@ -1401,16 +1893,16 @@ impl App {
                     {
                         self.playing(seen.id, player, p.tertiary)
                     }
-                    content => self.monitor(seen, content, Some(p.tertiary)),
+                    content => self.monitor(seen, content, Edge::Ring(p.tertiary)),
                 }
             }
             // What the audience sees with nothing on: the look's image.
             _ if self.look.image.is_some() => framed_with(
                 crate::backdrop(&self.look, Space::new(), crate::Over::Nothing),
-                None,
+                Edge::None,
                 2,
             ),
-            _ => empty_monitor(p, "Nothing on the projector"),
+            _ => empty_monitor(p, "Nothing on the projector", Edge::None),
         };
         // What was just taken comes over from Up next and settles.
         section.push(match self.motion.ring() {
@@ -1465,72 +1957,170 @@ impl App {
         section
     }
 
+    /// What is being looked at, beside the stage in a run or Live and at
+    /// the foot of the search panel: its picture, its name, and what can
+    /// be done with it.
     fn preview_section(&self) -> Vec<Element<'_, Message>> {
-        let p = self.palette;
         let scene = self.stage.preview.as_ref();
-        // A selected plan step with nothing to preview (a black screen, a
-        // live slot) still lines up here, ready to show.
-        let cued = self
-            .cued()
-            .filter(|step| !matches!(step.action, Action::Show { .. }));
-        let mode = self.mode;
-        let mut section: Vec<Element<'_, Message>> = vec![match mode {
-            crate::mode::Mode::Plan => {
-                let mut head = row![
-                    heading(p, "Preview"),
-                    hinted(
-                        p,
-                        look::icon(Icon::ScreenOff, 16.0, p.on_surface_variant),
-                        "Seen here only: nothing reaches the projector while planning".to_string(),
-                        tooltip::Position::Bottom,
-                    ),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center);
-                // In a rehearsal: which step of how many this is.
-                if let Some((at, all)) = self.rehearsal.as_ref().and_then(|r| r.place()) {
-                    head = head.push(Space::new().width(Fill)).push(chip(
-                        p,
-                        &format!("{at} / {all}"),
-                        Tone::Selected,
-                    ));
-                }
-                head.into()
-            }
-            _ => heading(p, "Preview"),
-        }];
+        let cued = self.cued_alone();
+        let mut section: Vec<Element<'_, Message>> = vec![
+            heading(self.palette, "Preview"),
+            self.preview_picture(cued.as_ref(), Edge::Ring(self.palette.primary)),
+        ];
         match (scene, &cued) {
-            (Some(scene), _) => {
-                let content = self.media.preloaded(&scene.resource.id);
-                section.push(self.monitor(scene, content, Some(p.primary)));
-                section.push(self.caption(scene));
-            }
+            (Some(scene), _) => section.push(self.caption(scene)),
             (None, Some(step)) => {
-                section.push(self.step_picture(step));
                 section.push(single_line(step.label.clone()).size(BODY).font(BOLD).into());
             }
-            (None, None) => section.push(empty_monitor(p, "")),
+            (None, None) => {}
         }
         // A rehearsal's buttons sit under what it shows.
         if let Some(controls) = self.rehearsal_controls() {
             section.push(controls);
         }
-        let has = scene.is_some() || cued.is_some();
+        section.extend(self.preview_acts(Length::Fill));
+        section
+    }
+
+    /// While planning, what is being looked at, on this screen only, in a
+    /// pane `width` wide: its picture in its own frame, its slides or
+    /// pages, its name, a table of what it is, and what can be done with
+    /// it.
+    fn plan_preview(&self, width: f32) -> Element<'_, Message> {
+        let p = self.palette;
+        let mut head = row![
+            caption(p, "PREVIEW"),
+            hinted(
+                p,
+                look::icon(Icon::ScreenOff, 13.0, p.on_surface_variant),
+                "Seen here only: nothing reaches the projector while planning".to_string(),
+                tooltip::Position::Bottom,
+            ),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        // In a rehearsal: which step of how many this is.
+        if let Some((at, all)) = self.rehearsal.as_ref().and_then(|r| r.place()) {
+            head = head.push(Space::new().width(Fill)).push(chip(
+                p,
+                &format!("{at} / {all}"),
+                Tone::Selected,
+            ));
+        }
+        let mut preview: Vec<Element<'_, Message>> = vec![
+            head.into(),
+            self.preview_picture(self.cued_alone().as_ref(), Edge::Hairline),
+        ];
+        if let Some(controls) = self.rehearsal_controls() {
+            preview.push(controls);
+        }
+        let frames = self.frames();
+        let count = (!frames.is_empty()).then_some(frames.len());
+        if let Some(film) = self.filmstrip(frames, width) {
+            preview.push(film);
+        }
+        // Its name, a step of the plan's in `primary`, and its facts.
+        let plan = self.engine.0.plan();
+        let named = match (self.previewed_step(), self.stage.preview.as_ref()) {
+            (Some(step), _) => plan.position(step.id).map(|at| {
+                let facts = step_facts(&plan, at, &self.step_length(&step), self.known(&step));
+                (step.label, p.primary, facts)
+            }),
+            (None, Some(scene)) => {
+                let facts = item_facts(&scene.resource, self.known_of(&scene.resource), count);
+                Some((scene.resource.title.clone(), p.on_surface, facts))
+            }
+            (None, None) => None,
+        };
+        if let Some((name, colour, facts)) = named {
+            preview.push(single_line(name).size(BODY).font(BOLD).color(colour).into());
+            if !facts.is_empty() {
+                preview.push(facts_table(p, &plan.section_colors(), facts));
+            }
+        }
+        preview.push(
+            row(self.preview_acts(Length::Shrink))
+                .spacing(6)
+                .wrap()
+                .vertical_spacing(6)
+                .into(),
+        );
+        let mut preview = beside(preview, width);
+        for problem in self.problems() {
+            preview = preview.push(text(problem).size(META).color(p.error));
+        }
+        if let Some((id, CardAt::Preview)) = self.card_open()
+            && let Some(step) = self.previewed_step().filter(|step| step.id == id)
+        {
+            preview = preview.push(self.look_and_timing_card(&step, CardAt::Preview));
+        }
+        // Its bar floats over its edge, only while there is more than
+        // fits, so the picture keeps the pane's width.
+        scrollable(preview)
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::new().width(4).scroller_width(4),
+            ))
+            .height(Fill)
+            .id(PREVIEW)
+            .into()
+    }
+
+    /// The selected plan step when it shows nothing of its own (a black
+    /// screen, a live slot): it still lines up in the preview, ready to
+    /// show.
+    fn cued_alone(&self) -> Option<Step> {
+        self.cued()
+            .filter(|step| !matches!(step.action, Action::Show { .. }))
+    }
+
+    /// What is being looked at, as a monitor with `edge`: what the
+    /// preview holds, else `cued`, the selected step that shows nothing
+    /// of its own.
+    fn preview_picture(&self, cued: Option<&Step>, edge: Edge) -> Element<'_, Message> {
+        match (self.stage.preview.as_ref(), cued) {
+            (Some(scene), _) => {
+                let content = self.media.preloaded(&scene.resource.id);
+                self.monitor(scene, content, edge)
+            }
+            (None, Some(step)) => self.step_picture(step, edge),
+            (None, None) => empty_monitor(self.palette, "", edge.empty()),
+        }
+    }
+
+    /// The plan's step being looked at: the selected one, while the
+    /// preview shows it or nothing, and no search result is picked.
+    fn previewed_step(&self) -> Option<Step> {
+        if self.search.picked().is_some() {
+            return None;
+        }
+        let step = self.cued()?;
+        match (&self.stage.preview, &step.action) {
+            (None, _) => Some(step),
+            (Some(scene), Action::Show { resource }) if resource.id == scene.resource.id => {
+                Some(step)
+            }
+            (Some(_), _) => None,
+        }
+    }
+
+    /// What can be done with what is being looked at, as pills `wide`:
+    /// planning adds it (a step of the plan has its own: see
+    /// [`App::step_acts`]), a run or Live shows it, and a run unlocked for
+    /// a change does either. With a step selected and something else picked,
+    /// the pick takes the step's place, keeping where it is and how long
+    /// it has. Each says its key once the pointer rests on it.
+    fn preview_acts(&self, wide: Length) -> Vec<Element<'_, Message>> {
+        let p = self.palette;
+        if self.mode == crate::mode::Mode::Plan
+            && let Some(step) = self.previewed_step()
+        {
+            return vec![self.step_acts(&step)];
+        }
+        let has = self.stage.preview.is_some() || self.cued_alone().is_some();
         // Looking at a step of the plan (not a search result): adding it
         // would add it a second time, so the button says so.
-        let in_plan = self.search.picked().is_none()
-            && match (scene, self.cued()) {
-                (Some(scene), Some(step)) => matches!(
-                    &step.action,
-                    Action::Show { resource } if resource.id == scene.resource.id
-                ),
-                (None, Some(_)) => true,
-                _ => false,
-            };
+        let in_plan = self.previewed_step().is_some();
         let add = if in_plan { "Add again" } else { "Add" };
-        // What each mode lets be done with it: planning adds it, a run or
-        // Live shows it, and a run unlocked for a change does either.
-        // Each says its key once the pointer rests on it.
         let show = hinted(
             p,
             pill(
@@ -1540,14 +2130,14 @@ impl App {
                 PILL,
                 has.then_some(op(Op::Take)),
             )
-            .width(Fill),
+            .width(wide),
             keys::with_key("Put it on the projector", Op::Enter),
             tooltip::Position::Top,
         );
         let adds = |tone, label: &str, key: Op| {
             hinted(
                 p,
-                pill(p, label, tone, PILL, has.then_some(op(Op::AddToPlan))).width(Fill),
+                pill(p, label, tone, PILL, has.then_some(op(Op::AddToPlan))).width(wide),
                 keys::with_key("After the selected step", key),
                 tooltip::Position::Top,
             )
@@ -1557,23 +2147,18 @@ impl App {
             false => 0,
         };
         let add_together = format!("Add {together} to the plan");
-        section.push(match (mode, self.can_edit()) {
+        let mut acts = vec![match (self.mode, self.can_edit()) {
             (crate::mode::Mode::Plan, _) if together > 1 => {
                 adds(Tone::Selected, &add_together, Op::AddToPlan)
-            }
-            (crate::mode::Mode::Plan, _) if in_plan => {
-                adds(Tone::Selected, "Add again", Op::AddToPlan)
             }
             (crate::mode::Mode::Plan, _) => adds(Tone::Selected, "Add to the plan", Op::Enter),
             (crate::mode::Mode::Run, true) => column![show, adds(Tone::Plain, add, Op::AddToPlan)]
                 .spacing(4)
                 .into(),
             _ => show,
-        });
-        // With a step selected and something else picked: the pick takes
-        // the step's place, keeping where it is and how long it has.
+        }];
         if let Some((step, _)) = self.replaceable() {
-            section.push(
+            acts.push(
                 pill(
                     p,
                     &format!("Replace “{}” with it", step.label),
@@ -1581,11 +2166,61 @@ impl App {
                     PILL,
                     Some(Message::ReplaceStep(step.id)),
                 )
-                .width(Fill)
+                .width(wide)
                 .into(),
             );
         }
-        section
+        acts
+    }
+
+    /// What can be done to the plan's step looked at while planning, as
+    /// pills on a line, wherever the step is looked at: Replace opens the
+    /// search for what goes in its place (picked there, it offers to
+    /// replace it), Look & timing opens how it looks and fades, and Remove
+    /// takes it out, last and in the colour of what is wrong.
+    fn step_acts(&self, step: &Step) -> Element<'_, Message> {
+        let p = self.palette;
+        let can = self.can_edit();
+        // Small, as the strip's Save, so the three fit across the pane.
+        let act = |label: &str, tone: Tone, message: Message| {
+            button(container(text(label.to_string()).size(META).font(MEDIUM)).center_y(Fill))
+                .height(PILL_SMALL)
+                .padding([0, 12])
+                .on_press_maybe(can.then_some(message))
+                .style(look::pill(p, tone))
+        };
+        let mut acts = vec![hinted(
+            p,
+            act("Replace", Tone::Plain, op(Op::Search)),
+            format!(
+                "Find what goes here instead, then Replace “{}” with it",
+                step.label
+            ),
+            tooltip::Position::Top,
+        )];
+        if matches!(step.action, Action::Show { .. }) {
+            let tone = match self.card_open() == Some((step.id, CardAt::Preview)) {
+                true => Tone::Selected,
+                false => Tone::Plain,
+            };
+            acts.push(hinted(
+                p,
+                act("Look & timing", tone, Message::LookAndTiming(step.id)),
+                "Where its picture and sound come from, and how it fades".to_string(),
+                tooltip::Position::Top,
+            ));
+        }
+        acts.push(hinted(
+            p,
+            button(container(text("Remove").size(META).font(MEDIUM)).center_y(Fill))
+                .height(PILL_SMALL)
+                .padding([0, 8])
+                .on_press_maybe(can.then_some(Message::Remove(step.id)))
+                .style(look::pill_clear(p.error)),
+            keys::with_key("Remove", Op::RemoveStep),
+            tooltip::Position::Top,
+        ));
+        row(acts).spacing(6).wrap().vertical_spacing(6).into()
     }
 
     /// The selected step and what is picked to put in its place: a search
@@ -1622,7 +2257,7 @@ impl App {
             let (label, moves) = self.next_label(self.engine.0.up_next().is_some());
             return vec![
                 heading(p, "The plan is waiting"),
-                self.step_picture(&step),
+                self.step_picture(&step, Edge::Ring(p.primary)),
                 single_line(step.label.clone()).size(BODY).font(BOLD).into(),
                 row![
                     wide(pill(
@@ -1659,7 +2294,7 @@ impl App {
         }
         let mut section: Vec<Element<'_, Message>> = vec![head.into()];
         section.push(match &next {
-            Some(step) => self.step_picture(step),
+            Some(step) => self.step_picture(step, Edge::Ring(p.primary)),
             // Nothing next isn't always the end: there may be no plan, or
             // one with nothing in it to show yet.
             None => {
@@ -1674,6 +2309,7 @@ impl App {
                     } else {
                         "The end of the plan"
                     },
+                    Edge::None,
                 )
             }
         });
@@ -1831,7 +2467,7 @@ impl App {
 
     /// A plan step as a monitor: its first slide or picture, or what kind
     /// of step it is.
-    fn step_picture(&self, step: &Step) -> Element<'_, Message> {
+    fn step_picture(&self, step: &Step, edge: Edge) -> Element<'_, Message> {
         let p = self.palette;
         match &step.action {
             Action::Show { resource } => self.picture(
@@ -1848,7 +2484,7 @@ impl App {
                 self.media.preloaded(&resource.id),
                 self.thumbs.get(resource),
                 self.loading_note(resource),
-                Some(p.primary),
+                edge,
             ),
             Action::Live { hint, .. } => {
                 match hint.as_ref().filter(|q| !q.text.trim().is_empty()) {
@@ -1858,13 +2494,16 @@ impl App {
                             "A live slot: “{}” opens when you get there",
                             query.text.trim()
                         ),
+                        edge.empty(),
                     ),
-                    None => empty_monitor(p, "A live slot: search when you get there"),
+                    None => {
+                        empty_monitor(p, "A live slot: search when you get there", edge.empty())
+                    }
                 }
             }
-            Action::Blank => empty_monitor(p, "A black screen"),
+            Action::Blank => empty_monitor(p, "A black screen", edge.empty()),
             Action::Note | Action::Section { .. } => {
-                empty_monitor(p, "A note for you, nothing on stage")
+                empty_monitor(p, "A note for you, nothing on stage", edge.empty())
             }
         }
     }
@@ -1882,14 +2521,14 @@ impl App {
         &'a self,
         scene: &'a Scene,
         content: Option<&'a Content>,
-        ring: Option<Color>,
+        edge: Edge,
     ) -> Element<'a, Message> {
         if let Media::Failed { reason } = &scene.media {
             return framed(
                 text(format!("Can't show this: {reason}"))
                     .size(BODY)
                     .color(self.palette.error),
-                ring,
+                edge,
             );
         }
         let loading = self.loading_note(&scene.resource);
@@ -1900,7 +2539,7 @@ impl App {
             content,
             self.thumbs.get(&scene.resource),
             loading,
-            ring,
+            edge,
         )
     }
 
@@ -1945,7 +2584,7 @@ impl App {
                     .align_bottom(Fill)
                     .padding(8),
             ],
-            Some(ring),
+            Edge::Ring(ring),
             2,
         )
     }
@@ -1963,7 +2602,7 @@ impl App {
         content: Option<&'a Content>,
         still: Option<image::Handle>,
         loading: String,
-        ring: Option<Color>,
+        edge: Edge,
     ) -> Element<'a, Message> {
         let p = self.palette;
         // A still with a few words in its corner: which video this is
@@ -1999,13 +2638,21 @@ impl App {
                         .align_bottom(Fill)
                         .padding(8),
                 ],
-                ring,
+                edge,
                 2,
             )
         };
         let picture: Element<'a, Message> = match (slide, content) {
             (None, Some(Content::Video { .. })) if still.is_some() => {
                 return marked(still.as_ref().unwrap(), Some(Icon::Play), "video".into());
+            }
+            // YouTube's player shows in a window of its own: here, its still.
+            (None, Some(Content::Official { .. })) if still.is_some() => {
+                return marked(
+                    still.as_ref().unwrap(),
+                    Some(Icon::Play),
+                    "in YouTube's player".into(),
+                );
             }
             (None, None) if still.is_some() => {
                 return marked(still.as_ref().unwrap(), None, loading);
@@ -2015,15 +2662,27 @@ impl App {
                 let look = &self.look;
                 return framed_with(
                     crate::backdrop(look, crate::slide(look, body, &kind), crate::Over::Text),
-                    ring,
+                    edge,
                     2,
                 );
             }
-            (None, Some(Content::Image(handle))) => thumb(handle),
-            (None, Some(Content::Pages(pages))) => thumb(&pages[frame.min(pages.len() - 1)]),
+            // A picture fills its frame, as a slide and a still do.
+            (None, Some(Content::Image(handle))) => return framed_with(thumb(handle), edge, 2),
+            (None, Some(Content::Pages(pages))) => {
+                return framed_with(thumb(&pages[frame.min(pages.len() - 1)]), edge, 2);
+            }
             (None, Some(Content::Video { .. })) => row![
                 look::icon(Icon::Play, 18.0, p.on_surface_variant),
                 text("video").size(BODY).color(p.on_surface_variant),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+            (None, Some(Content::Official { .. })) => row![
+                look::icon(Icon::Play, 18.0, p.on_surface_variant),
+                text("in YouTube's player")
+                    .size(BODY)
+                    .color(p.on_surface_variant),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -2037,7 +2696,7 @@ impl App {
             .into(),
             (None, None) => text(loading).size(BODY).color(p.on_surface_variant).into(),
         };
-        framed(picture, ring)
+        framed(picture, edge)
     }
 
     fn loading_note(&self, resource: &Resource) -> String {
@@ -2289,19 +2948,7 @@ impl App {
         if count < 2 {
             return None;
         }
-        let verses: Vec<String> = scene
-            .resource
-            .meta
-            .get("verses")
-            .map(|list| list.split(',').map(|v| v.trim().to_string()).collect())
-            .unwrap_or_default();
-        let mut labels = match scene.resource.location.as_text() {
-            Some(body) => self.slides.labels(body, &verses),
-            None => Vec::new(),
-        };
-        if labels.len() != count {
-            labels = (1..=count).map(|n| n.to_string()).collect();
-        }
+        let labels = self.slide_labels(scene, count);
         let chips = labels.into_iter().enumerate().map(|(n, label)| {
             let tone = if n == *frame {
                 Tone::Selected
@@ -2334,6 +2981,178 @@ impl App {
 
 /// How tall the slide strip grows before it scrolls: about three rows.
 const STRIP_HEIGHT: f32 = 96.0;
+
+impl App {
+    /// A name for each of the `count` slides of `scene`: a passage's by
+    /// its verses, a text's by its stanzas, anything else by number.
+    fn slide_labels(&self, scene: &Scene, count: usize) -> Vec<String> {
+        let verses: Vec<String> = scene
+            .resource
+            .meta
+            .get("verses")
+            .map(|list| list.split(',').map(|v| v.trim().to_string()).collect())
+            .unwrap_or_default();
+        let labels = match scene.resource.location.as_text() {
+            Some(body) => self.slides.labels(body, &verses),
+            None => Vec::new(),
+        };
+        match labels.len() == count {
+            true => labels,
+            false => (1..=count).map(|n| n.to_string()).collect(),
+        }
+    }
+
+    /// What the preview holds, slide by slide or page by page, as far as
+    /// it is loaded already: a PDF is never opened here for it.
+    fn frames(&self) -> Vec<Frame<'_>> {
+        let Some(scene) = self.stage.preview.as_ref() else {
+            return Vec::new();
+        };
+        match (
+            self.media.preloaded(&scene.resource.id),
+            scene.resource.location.as_text(),
+        ) {
+            (Some(Content::Pages(pages)), _) => pages.iter().map(Frame::Page).collect(),
+            (_, Some(body)) => {
+                let slides = self.slides.slides(body);
+                let names = self.slide_labels(scene, slides.len());
+                slides
+                    .iter()
+                    .zip(names)
+                    .enumerate()
+                    .map(|(n, (body, name))| Frame::Slide {
+                        body: body.clone(),
+                        kind: self.slide_kind(&scene.resource, n),
+                        name,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `frames` small under the preview's picture, four to a row, the one
+    /// shown ringed in `primary`; pressed, one is shown. Nothing for what
+    /// has only one.
+    fn filmstrip<'a>(&self, frames: Vec<Frame<'a>>, width: f32) -> Option<Element<'a, Message>> {
+        if frames.len() < 2 {
+            return None;
+        }
+        let p = self.palette;
+        let shown = self.stage.preview.as_ref().map_or(0, Scene::frame);
+        let wide = ((width - 3.0 * FILM_GAP) / 4.0).floor();
+        let tall = (wide * 9.0 / 16.0).round();
+        let cells = frames.into_iter().enumerate().map(|(n, frame)| {
+            let (edge, thick) = match n == shown {
+                true => (p.primary, 2.0),
+                false => (Color::WHITE.scale_alpha(0.10), 1.0),
+            };
+            let (face, name): (Element<'a, Message>, _) = match frame {
+                Frame::Page(page) => (
+                    image(page.clone())
+                        .width(Fill)
+                        .height(Fill)
+                        .content_fit(iced::ContentFit::Contain)
+                        .border_radius(FILM_RADIUS)
+                        .into(),
+                    None,
+                ),
+                // Drawn small as the stage shows it, inside its edge so
+                // the ring of the one shown stays in sight.
+                Frame::Slide { body, kind, name } => (
+                    self.slide_thumbnail(body, kind, wide - 2.0 * thick, tall - 2.0 * thick),
+                    // A name that is only its number says nothing more.
+                    Some(name).filter(|name| *name != (n + 1).to_string()),
+                ),
+            };
+            let cell = iced::widget::mouse_area(
+                container(face)
+                    .center_x(wide)
+                    .center_y(tall)
+                    .clip(true)
+                    .style(move |_| container::Style {
+                        background: Some(Color::BLACK.into()),
+                        border: iced::Border {
+                            color: edge,
+                            width: thick,
+                            radius: FILM_RADIUS.into(),
+                        },
+                        ..container::Style::default()
+                    }),
+            )
+            .on_press(Message::PreviewFrame(n))
+            .interaction(iced::mouse::Interaction::Pointer);
+            // Its name, a stanza's or a verse's, on hover.
+            match name {
+                Some(name) => hinted(p, cell, name, tooltip::Position::Bottom),
+                None => cell.into(),
+            }
+        });
+        let strip = row(cells)
+            .spacing(FILM_GAP)
+            .wrap()
+            .vertical_spacing(FILM_GAP);
+        // Past three rows it scrolls, and leaves the rest its room.
+        Some(
+            container(scrollable(strip))
+                .max_height(3.0 * tall + 2.0 * FILM_GAP)
+                .into(),
+        )
+    }
+}
+
+/// A slide or page of what the preview holds, in its filmstrip: the
+/// page's picture, or a text slide, its kind and its name.
+enum Frame<'a> {
+    Page(&'a image::Handle),
+    Slide {
+        body: String,
+        kind: crate::Slide,
+        name: String,
+    },
+}
+
+/// The room between the filmstrip's pictures, and their corners.
+const FILM_GAP: f32 = 4.0;
+const FILM_RADIUS: f32 = 4.0;
+
+/// The facts under the preview as a table, the one in the window: each
+/// label in the quiet colour and what it says in the text colour, with a
+/// hairline between rows and round them. A section's name is in its
+/// colour, from `colors`.
+fn facts_table<'a>(p: Palette, colors: &[(StepId, u8)], facts: Facts) -> Element<'a, Message> {
+    let mut table = column![rule(p)];
+    for (label, says) in facts {
+        let says: Element<'a, Message> = match says {
+            Says::Words(words) => text(words).size(META).color(p.on_surface).into(),
+            Says::Section(id, name, rest) => row![
+                text(name)
+                    .size(META)
+                    .font(BOLD)
+                    .color(section_hue(p, colors, id)),
+                text(format!(" · {rest}")).size(META).color(p.on_surface),
+            ]
+            .into(),
+        };
+        table = table
+            .push(
+                row![
+                    text(label)
+                        .size(META)
+                        .color(p.on_surface_variant)
+                        .width(FACT_LABEL),
+                    says,
+                ]
+                .spacing(8)
+                .padding([7, 0]),
+            )
+            .push(rule(p));
+    }
+    table.into()
+}
+
+/// How wide the column of the facts' labels is.
+const FACT_LABEL: f32 = 60.0;
 
 /// What something a slide plays or links to is called on its button, and
 /// its icon: "Video", or "Video 2" as the second of several on the slide.
@@ -2426,18 +3245,15 @@ fn bang_row(p: Palette, bang: Bang) -> Element<'static, Message> {
         .into()
 }
 
-/// A black 16:9-ish monitor with `content` centred, ringed in `ring`.
-fn framed<'a>(
-    content: impl Into<Element<'a, Message>>,
-    ring: Option<Color>,
-) -> Element<'a, Message> {
-    framed_with(content, ring, 12)
+/// A black 16:9-ish monitor with `content` centred, inside its `edge`.
+fn framed<'a>(content: impl Into<Element<'a, Message>>, edge: Edge) -> Element<'a, Message> {
+    framed_with(content, edge, 12)
 }
 
-/// A monitor, its content `padding` inside the ring.
+/// A monitor, its content `padding` inside its edge.
 fn framed_with<'a>(
     content: impl Into<Element<'a, Message>>,
-    ring: Option<Color>,
+    edge: Edge,
     padding: u16,
 ) -> Element<'a, Message> {
     // As tall as its slot in the stage pane.
@@ -2446,18 +3262,28 @@ fn framed_with<'a>(
         .center_y(Fill)
         .padding(padding)
         .clip(true)
-        .style(look::monitor(ring))
+        .style(look::monitor(edge))
         .into()
 }
 
-pub(crate) fn empty_monitor<'a>(p: Palette, note: &str) -> Element<'a, Message> {
+pub(crate) fn empty_monitor<'a>(p: Palette, note: &str, edge: Edge) -> Element<'a, Message> {
     framed(
         text(note.to_string())
             .size(META)
             .color(p.outline)
             .align_x(iced::alignment::Horizontal::Center),
-        None,
+        edge,
     )
+}
+
+/// A section of a side pane `width` wide: its picture is 16:9 of that.
+fn beside(mut section: Vec<Element<'_, Message>>, width: f32) -> iced::widget::Column<'_, Message> {
+    let monitor = std::mem::replace(&mut section[1], Space::new().into());
+    section[1] = container(monitor)
+        .width(Fill)
+        .height((width * 9.0 / 16.0).round())
+        .into();
+    column(section).spacing(10).width(width)
 }
 
 fn thumb(handle: &image::Handle) -> Element<'static, Message> {
@@ -2465,6 +3291,8 @@ fn thumb(handle: &image::Handle) -> Element<'static, Message> {
         .width(Fill)
         .height(Fill)
         .content_fit(iced::ContentFit::Contain)
+        // Inside the monitor's edge, round as it is.
+        .border_radius(look::ROW_RADIUS - 2.0)
         .into()
 }
 
@@ -2501,19 +3329,55 @@ mod tests {
 
     #[test]
     fn the_side_panes_narrow_together_and_stop_at_their_least() {
-        use super::pane_widths;
-        assert_eq!(pane_widths(1920.0), (340.0, 280.0));
+        use super::Layout;
+        use crate::mode::Mode;
+        for mode in [Mode::Run, Mode::Live] {
+            let panes = Layout::of(mode);
+            assert_eq!(panes.widths(1920.0), (340.0, 280.0));
+            assert_eq!(
+                panes.widths(1180.0),
+                (340.0, 280.0),
+                "the live picture has its room"
+            );
+            let (plan, side) = panes.widths(1100.0);
+            assert!(plan < 340.0 && side < 280.0, "{plan} {side}");
+            assert_eq!(
+                panes.widths(300.0),
+                (280.0, 220.0),
+                "never below their least"
+            );
+        }
+    }
+
+    #[test]
+    fn while_planning_the_plan_is_the_widest_pane_between_its_margins() {
+        use super::{Layout, Pane};
+        use crate::mode::Mode;
+        let planning = Layout::of(Mode::Plan);
         assert_eq!(
-            pane_widths(1180.0),
-            (340.0, 280.0),
-            "the live picture has its room"
+            (planning.left.pane, planning.centre, planning.right.pane),
+            (Pane::Library, Pane::Plan, Pane::Preview),
+            "from the library, into the plan, out to the stage"
         );
-        let (plan, side) = pane_widths(1100.0);
-        assert!(plan < 340.0 && side < 280.0, "{plan} {side}");
+        let (library, preview) = planning.widths(1280.0);
+        for window in [1280.0, 1000.0] {
+            let (left, right) = planning.widths(window);
+            let plan = planning.centre_width(window, left, right);
+            assert!(plan > left.max(right), "{left} {plan} {right}");
+            if window < 1280.0 {
+                assert!(left < library && right < preview, "they narrow together");
+            }
+        }
         assert_eq!(
-            pane_widths(300.0),
-            (280.0, 220.0),
+            planning.widths(300.0),
+            (244.0, 212.0),
             "never below their least"
         );
+        // A margin dragged while planning keeps its width apart from a
+        // run's panes.
+        let run = Layout::of(Mode::Run);
+        for kept in [planning.left.kept, planning.right.kept] {
+            assert!(![run.left.kept, run.right.kept].contains(&kept), "{kept}");
+        }
     }
 }

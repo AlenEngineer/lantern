@@ -1,6 +1,7 @@
-# A YouTube link, downloaded with yt-dlp into ~/.cache/lantern/youtube and
-# played from there. Needs the network unless the video is cached. With an
-# empty cache the take comes before the download, so the stage stays black
+# A YouTube link, downloaded with yt-dlp into the run's own cache and
+# played from there. Run with LANTERN_CONFIG=scripts/e2e/yt-dlp.toml: yt-dlp
+# plays only when chosen (youtube-official.script is the usual way). Needs the network. The
+# cache starts empty, so the take comes before the download: the stage stays black
 # until the file arrives and then plays.
 add https://www.youtube.com/watch?v=jNQXAC9IVRw
 next

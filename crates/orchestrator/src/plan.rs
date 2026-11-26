@@ -922,6 +922,29 @@ impl Plan {
         self.steps.iter_mut().find(|s| s.id == id)
     }
 
+    /// Calls `f` on every resource the plan holds: what each step shows,
+    /// what a live slot showed, a step's sound, the picture in a step's
+    /// place, what's laid out with it, and the standby shelf.
+    pub fn each_resource_mut(&mut self, mut f: impl FnMut(&mut Resource)) {
+        for step in &mut self.steps {
+            match &mut step.action {
+                Action::Show { resource } => f(resource),
+                Action::Live { shown, .. } => shown.iter_mut().for_each(&mut f),
+                _ => {}
+            }
+            if let Some(sound) = &mut step.sound {
+                f(&mut sound.resource);
+            }
+            if let Picture::File(picture) = &mut step.picture {
+                f(picture);
+            }
+            if let Layout::Beside(second) | Layout::LowerThird(second) = &mut step.layout {
+                f(second);
+            }
+        }
+        self.standby.iter_mut().for_each(f);
+    }
+
     /// Where a step currently is.
     pub fn position(&self, id: StepId) -> Option<usize> {
         self.steps.iter().position(|s| s.id == id)
@@ -3316,6 +3339,46 @@ mod tests {
 
     fn labels(plan: &Plan) -> Vec<&str> {
         plan.steps().iter().map(|s| s.label.as_str()).collect()
+    }
+
+    #[test]
+    fn every_resource_a_plan_holds_is_visited() {
+        let mut plan = Plan::default();
+        let shows = plan.push(
+            "a",
+            Action::Show {
+                resource: resource("shown"),
+            },
+        );
+        plan.push(
+            "live",
+            Action::Live {
+                hint: None,
+                shown: vec![resource("live")],
+            },
+        );
+        let step = plan.get_mut(shows).unwrap();
+        step.sound = Some(StepSound::new(resource("sound")));
+        step.picture = Picture::File(resource("picture"));
+        step.layout = Layout::LowerThird(resource("band"));
+        plan.standby.push(resource("standby"));
+
+        let mut seen = Vec::new();
+        plan.each_resource_mut(|r| {
+            seen.push(r.title.clone());
+            r.title.push('!');
+        });
+        seen.sort();
+        assert_eq!(
+            seen,
+            ["band", "live", "picture", "shown", "sound", "standby"]
+        );
+        let again: Vec<String> = {
+            let mut titles = Vec::new();
+            plan.each_resource_mut(|r| titles.push(r.title.clone()));
+            titles
+        };
+        assert!(again.iter().all(|t| t.ends_with('!')), "{again:?}");
     }
 
     #[test]

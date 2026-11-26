@@ -1,0 +1,19 @@
+# Picking YouTube videos on YouTube's own site, with no key and no yt-dlp
+# (the usual config): !yt offers "Pick on YouTube", which opens the picker
+# (YouTube's search in a window of lantern's, moved to the dashboard's
+# screen), and what is picked there lists under YouTube. A script can't
+# click inside YouTube's page, so `picked ID` tells lantern what such a
+# click would. Needs the network. The picker window is shot as
+# NAME-picker.png.
+wait 1500
+type !yt sublime gracia
+press enter
+wait 1500
+shot 1-no-key
+pick-on-youtube
+wait 9000
+shot 2-picker
+picked jNQXAC9IVRw
+picked aqz-KE-bpKQ
+wait 4000
+shot 3-picked

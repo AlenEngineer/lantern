@@ -10,7 +10,7 @@
 //! step can come again but has no order to draw; a loop has both.
 
 use iced::widget::{Space, button, container, mouse_area, pin, text, tooltip};
-use iced::{Element, Fill, Point};
+use iced::{Element, Fill, Length, Point};
 use lantern_engine::{FlowOf, Plan, Repeat, StepId};
 
 use crate::look::{self, BOLD, Icon, META};
@@ -82,9 +82,8 @@ pub enum RingOn {
     Loop(FlowOf),
     /// A drawn order's line: of a span, a section, or the plan.
     Shuffle(FlowOf),
-    /// A section, by its dot, or the plan by its own row (`None`): what
-    /// holds for all of it.
-    All(Option<StepId>),
+    /// A section, by its header: what holds for all of it.
+    All(StepId),
 }
 
 /// A ring that is open, and where: round the pointer as it was.
@@ -385,10 +384,10 @@ impl App {
             return Vec::new();
         };
         // The ring keeps its colours while all under it goes dim. A
-        // section's is in its bracket's colour.
+        // section's is in the section's colour.
         let plan = self.engine.0.plan();
         let p = match ring.on {
-            RingOn::All(Some(id)) => {
+            RingOn::All(id) => {
                 let hue = crate::plan_pane::section_hue(self.bright, &plan.section_colors(), id);
                 crate::palette::Palette {
                     primary: hue,
@@ -482,7 +481,7 @@ impl App {
                 // How it fades, under the ring and clear of its buttons:
                 // in and out, a second a press.
                 if matches!(step.action, lantern_engine::Action::Show { .. }) {
-                    let card = container(crate::plan_pane::fade_steppers(p, step))
+                    let card = container(crate::plan_pane::fade_steppers(p, step, Length::Shrink))
                         .padding([6, 12])
                         .center_x(FADES)
                         .style(move |_| container::Style {
@@ -561,10 +560,9 @@ impl App {
                     Some(Message::Rail(Act::Unshuffle(of))),
                 ));
             }
-            // A section's dot, or the plan's own row: what holds for all
-            // of it. How often it comes again is its loop's line's.
+            // A section: what holds for all of it, the span attached to
+            // it. How often it comes again is its loop's line's.
             RingOn::All(of) => {
-                // A section's is the span attached to it.
                 let Some(flow) = plan.flow_of(of) else {
                     return Vec::new();
                 };
@@ -617,16 +615,14 @@ impl App {
                 ));
             }
         }
-        // A section's ring, and the plan's, have their card under it:
-        // its name, its times, what it takes. A section's fill is a
-        // button of the ring, while planning.
+        // A section's ring has its card under it: its name, its times,
+        // what it takes. Its fill is a button of the ring, while planning.
         let timing = self.timing();
         let card = match ring.on {
-            RingOn::All(Some(id)) => plan.get(id).map(|step| {
+            RingOn::All(id) => plan.get(id).map(|step| {
                 let section = timing.sections.iter().find(|section| section.id == id);
                 self.section_card(p, &plan, step, section)
             }),
-            RingOn::All(None) => Some(self.plan_bracket_card(p, &plan)),
             _ => None,
         };
         // The card comes last, rising into place as the buttons settle.
@@ -655,7 +651,7 @@ impl App {
                     .into(),
             );
         }
-        if let RingOn::All(Some(id)) = ring.on
+        if let RingOn::All(id) = ring.on
             && self.mode == crate::mode::Mode::Plan
         {
             petals.push(petal(
@@ -692,7 +688,7 @@ impl App {
         }
         // A section's colour: its swatch, out past the inner row. Pressed,
         // the colours fan out round it, and one pressed is the section's.
-        if let RingOn::All(Some(id)) = ring.on {
+        if let RingOn::All(id) = ring.on {
             let slot = plan
                 .section_colors()
                 .into_iter()
@@ -739,7 +735,7 @@ impl App {
         }
         // A step's ring and a section's have, on the left, what is done
         // to it: renamed, copied, taken away. Its note is between.
-        if let RingOn::Dot(id) | RingOn::All(Some(id)) = ring.on {
+        if let RingOn::Dot(id) | RingOn::All(id) = ring.on {
             let section = matches!(ring.on, RingOn::All(_));
             for (angle, icon, words, op) in [
                 (
@@ -789,54 +785,6 @@ impl App {
                 ));
             }
         }
-        // The plan's has the same, and where the note would be, the rest
-        // of its settings. Plans are managed only while planning.
-        if ring.on == RingOn::All(None) && self.mode == crate::mode::Mode::Plan {
-            let deleting = self.deleting_plan;
-            for (angle, icon, lit, words, message) in [
-                (
-                    -90.0,
-                    Icon::Pencil,
-                    false,
-                    "Rename the plan",
-                    Message::EditPlanName,
-                ),
-                (
-                    -135.0,
-                    Icon::Copy,
-                    false,
-                    "A copy of the plan",
-                    Message::DuplicatePlan,
-                ),
-                (
-                    135.0,
-                    Icon::Close,
-                    deleting,
-                    match deleting {
-                        true => "Press again to delete the plan for good",
-                        false => "Delete the plan",
-                    },
-                    Message::DeletePlan,
-                ),
-                (
-                    180.0,
-                    Icon::Settings,
-                    false,
-                    "Its media, look and the rest",
-                    Message::PlanSettings,
-                ),
-            ] {
-                petals.push(petal(
-                    angle,
-                    LEFT,
-                    PETAL,
-                    lit,
-                    glyph(icon, lit),
-                    words,
-                    Some(message),
-                ));
-            }
-        }
         // Every ring has a note's place, on the left: what is noted of
         // what it is open on, opened, or a note for it made.
         let noted = match ring.on {
@@ -846,12 +794,12 @@ impl App {
             }
             RingOn::Loop(FlowOf::Step(id))
             | RingOn::Shuffle(FlowOf::Step(id))
-            | RingOn::All(Some(id)) => Some(lantern_engine::NoteOn::Step(id)),
+            | RingOn::All(id) => Some(lantern_engine::NoteOn::Step(id)),
             _ => None,
         };
         if let Some(on) = noted {
             let has = !plan.notes_on(on).is_empty();
-            petals.push(petal(
+            let mut note = petal(
                 180.0,
                 LEFT,
                 PETAL,
@@ -859,7 +807,9 @@ impl App {
                 glyph(Icon::Note, has),
                 if has { "Its note" } else { "A note on it" },
                 Some(Message::NoteFor(vec![on])),
-            ));
+            );
+            note.seen = Some(crate::track::Key::RingNote);
+            petals.push(note);
         }
         if let Some((of, flow, at)) = again_at {
             let clear = (at.x + PETAL / 2.0 + 8.0).max(middle.x + 50.0 + PETAL / 2.0 + 8.0);
@@ -901,6 +851,7 @@ impl App {
                 about,
                 message,
                 fill,
+                seen,
             } = petal;
             let (sin, cos) = angle.to_radians().sin_cos();
             let far = far * out * pop.max(0.0);
@@ -950,6 +901,10 @@ impl App {
                     },
                     ..button::Style::default()
                 });
+            let round: Element<'_, Message> = match seen {
+                Some(key) => crate::track::seen(key, &self.places, round),
+                None => round.into(),
+            };
             layers.push(
                 pin(hinted(p, round, about, tooltip::Position::Right))
                     .x(middle.x + far * cos - size / 2.0)
@@ -974,6 +929,8 @@ struct Petal {
     message: Option<Message>,
     /// Its ground, where it is a colour.
     fill: Option<iced::Color>,
+    /// The key it says its place under, for a script's pointer.
+    seen: Option<crate::track::Key>,
 }
 
 fn petal(
@@ -994,6 +951,7 @@ fn petal(
         about: about.to_string(),
         message,
         fill: None,
+        seen: None,
     }
 }
 

@@ -3,6 +3,8 @@
 //! ```toml
 //! # Settings come before the first [[table]], or TOML files them under it.
 //! brave_api_key = "…"   # optional, for !gi image search
+//! youtube = "official"  # optional: or "yt-dlp-first", "official-first"
+//! youtube_api_key = "…" # optional, for !yt search without yt-dlp
 //! colors = "~/.config/amane/colors.json"  # optional, see crate::palette
 //! stage_output = "Epson EB-X41"  # optional: the screen the stage prefers
 //!
@@ -38,6 +40,14 @@ pub struct Config {
     /// The Brave Search API key that `!gi` image search needs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub brave_api_key: Option<String>,
+    /// How YouTube videos play: through YouTube's own player, or also
+    /// through yt-dlp, which the operator has to choose.
+    #[serde(default, skip_serializing_if = "YoutubeMode::is_default")]
+    pub youtube: YoutubeMode,
+    /// The YouTube Data API key `!yt` search uses. Without one, `!yt`
+    /// searches through yt-dlp when that is chosen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub youtube_api_key: Option<String>,
     /// A JSON file of Material colour roles to take the dashboard's colours
     /// from, such as one Matugen writes from the wallpaper.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,9 +71,10 @@ pub struct Config {
     /// or something is on the projector.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_keep_awake: bool,
-    /// Download every YouTube video before playing it, also one shown
-    /// outside the plan. Unset, those play straight from YouTube and only
-    /// the plan's are downloaded.
+    /// With yt-dlp chosen ([`YoutubeMode::uses_yt_dlp`]): download every
+    /// YouTube video before playing it, also one shown outside the plan.
+    /// Unset, those play straight from YouTube and only the plan's are
+    /// downloaded.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub always_download: bool,
     /// Serve the remote for a phone on the local network.
@@ -92,6 +103,36 @@ pub struct Config {
     /// name to its key (`new = "ctrl+t"`). See `keys::ACTIONS`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
+}
+
+/// How YouTube videos play.
+///
+/// YouTube's terms allow its own player and nothing else, so that is the
+/// usual way. yt-dlp downloads videos ahead and plays them without the
+/// internet, outside YouTube's player: that is against YouTube's terms,
+/// and only ever done when the operator chooses it here.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum YoutubeMode {
+    /// YouTube's own player only. yt-dlp is never run.
+    #[default]
+    Official,
+    /// yt-dlp, and YouTube's player when yt-dlp can't.
+    YtDlpFirst,
+    /// YouTube's player, and yt-dlp for a video it won't play (its owner
+    /// doesn't allow it outside YouTube).
+    OfficialFirst,
+}
+
+impl YoutubeMode {
+    pub fn is_default(&self) -> bool {
+        *self == YoutubeMode::Official
+    }
+
+    /// Whether the operator chose to let yt-dlp play videos and search.
+    pub fn uses_yt_dlp(self) -> bool {
+        self != YoutubeMode::Official
+    }
 }
 
 /// The most see-through the dashboard gets, in percent.
@@ -486,6 +527,8 @@ mod tests {
         let home = Path::new("/home/ana");
         let config = Config {
             brave_api_key: Some("key".into()),
+            youtube: YoutubeMode::OfficialFirst,
+            youtube_api_key: Some("yt-key".into()),
             colors: Some("/home/ana/.config/amane/colors.json".into()),
             stage_output: Some("HDMI-A-1".into()),
             see_through: 40,
@@ -524,13 +567,18 @@ mod tests {
             text.contains("see_through = 40")
                 && text.contains("no_blur = true")
                 && text.contains("no_motion = true")
-                && text.contains("no_keep_awake = true"),
+                && text.contains("no_keep_awake = true")
+                && text.contains("youtube = \"official-first\""),
             "{text}"
         );
-        // Solid and blurred are the usual: a plain config says neither.
+        // Solid, blurred and YouTube's own player are the usual: a plain
+        // config says none of them.
         let plain = Config::default().to_toml(Some(home));
         assert!(
-            !plain.contains("see_through") && !plain.contains("blur") && !plain.contains("motion"),
+            !plain.contains("see_through")
+                && !plain.contains("blur")
+                && !plain.contains("motion")
+                && !plain.contains("youtube"),
             "{plain}"
         );
         let settings = text.find("colors").unwrap();

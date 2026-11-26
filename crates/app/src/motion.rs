@@ -35,9 +35,6 @@ pub const GAP: Duration = Duration::from_millis(150);
 pub const LEVEL: Duration = Duration::from_millis(140);
 /// The card of what was just picked up, rising under the pointer.
 pub const LIFT: Duration = Duration::from_millis(160);
-/// The bracket of what something carried would go into, standing out
-/// and back once as it becomes that.
-pub const PULSE: Duration = Duration::from_millis(420);
 /// How long a ring takes to open, all its buttons popped out.
 pub const BUBBLE: Duration = Duration::from_millis(420);
 
@@ -67,7 +64,7 @@ pub const DROP: Duration = Duration::from_millis(120);
 pub const DROPS: Duration = Duration::from_millis(600);
 /// What a fill put in, its dashed outline fading to a plain row.
 pub const SOLID: Duration = Duration::from_millis(500);
-/// A section put over its time: its sum turning red, its bracket bulging.
+/// A section put over its time: its words turning red.
 pub const TIPPED: Duration = Duration::from_millis(600);
 /// A light running back along a loop's line as the service goes round.
 pub const ROUND: Duration = Duration::from_millis(700);
@@ -146,11 +143,6 @@ pub struct Motion {
     ringing: Option<Run>,
     /// The section what is carried would be a part of, lighting up.
     host: Option<(StepId, Run)>,
-    /// The section what is carried just came to be going into, its
-    /// bracket standing out and back.
-    pulse: Option<(StepId, Run)>,
-    /// How wide each lane of the brackets' room is: from, to.
-    lanes: Option<(Vec<f32>, Vec<f32>, Run)>,
     /// The plan was just saved: its Save is a tick for a moment.
     saved: Option<Run>,
     /// The plan just became empty: its + breathes a few times, then
@@ -199,8 +191,6 @@ impl Motion {
             picked: None,
             ringing: None,
             host: None,
-            pulse: None,
-            lanes: None,
             saved: None,
             breath: None,
             gone: None,
@@ -296,8 +286,8 @@ impl Motion {
         self.tipped = Some((sections, self.run(TIPPED, Instant::now())));
     }
 
-    /// How far a section just put over its time has gone: its sum turning
-    /// red, its bracket bulging and settling.
+    /// How far a section just put over its time has gone: its words on
+    /// its header turning red.
     pub fn tipped(&self, section: StepId) -> Option<f32> {
         let (sections, run) = self.tipped.as_ref()?;
         sections.contains(&section).then_some(())?;
@@ -497,66 +487,19 @@ impl Motion {
         self.indent = None;
         self.picked = None;
         self.host = None;
-        self.pulse = None;
     }
 
     /// What is carried would be a part of `section` now, or of none.
     pub fn hosted_by(&mut self, section: Option<StepId>) {
         if section != self.host.as_ref().map(|(host, _)| *host) {
             self.host = section.map(|host| (host, self.run(LEVEL, Instant::now())));
-            self.pulse = section.map(|host| (host, self.run(PULSE, Instant::now())));
         }
-    }
-
-    /// How far `section`'s bracket stands out, 0 to 1 and back, having
-    /// just become what is carried would go into.
-    pub fn pulse(&self, section: StepId) -> f32 {
-        self.pulse
-            .as_ref()
-            .filter(|(host, _)| *host == section)
-            .and_then(|(_, run)| self.along(Some(run)))
-            .map_or(0.0, |t| (t * std::f32::consts::PI).sin())
     }
 
     /// How far the section it would be a part of has lit up: 1 when lit.
     pub fn host_lit(&self) -> f32 {
         self.along(self.host.as_ref().map(|(_, run)| run))
             .unwrap_or(1.0)
-    }
-
-    /// The brackets' lanes are to be `to` wide each, or back at rest for
-    /// none: they slide there from where they are shown.
-    pub fn lanes_to(&mut self, to: Option<Vec<f32>>) {
-        let Some(to) = to.or_else(|| {
-            let (_, was, _) = self.lanes.as_ref()?;
-            let n = was.len() as f32;
-            Some(vec![was.iter().sum::<f32>() / n; was.len()])
-        }) else {
-            return;
-        };
-        if self.lanes.as_ref().is_some_and(|(_, was, _)| *was == to) {
-            return;
-        }
-        // From where they are, else from at rest: as wide each, all of
-        // them as wide together.
-        let from = self
-            .lanes(to.len())
-            .unwrap_or_else(|| vec![to.iter().sum::<f32>() / to.len() as f32; to.len()]);
-        self.lanes = Some((from, to, self.run(LEVEL, Instant::now())));
-    }
-
-    /// How wide each of `n` lanes is shown, on its way: `None` where
-    /// they were last set for another number of lanes.
-    pub fn lanes(&self, n: usize) -> Option<Vec<f32>> {
-        let (from, to, slide) = self.lanes.as_ref().filter(|(_, to, _)| to.len() == n)?;
-        Some(match self.along(Some(slide)) {
-            Some(along) => from
-                .iter()
-                .zip(to)
-                .map(|(from, to)| between(*from, *to, along))
-                .collect(),
-            None => to.clone(),
-        })
     }
 
     /// Something was just picked up: its card rises under the pointer.
@@ -621,7 +564,7 @@ impl Motion {
     /// Something is moving: every frame is drawn.
     pub fn moving(&self) -> bool {
         let now = Instant::now();
-        let runs: [Option<&Run>; 22] = [
+        let runs: [Option<&Run>; 20] = [
             self.flight.as_ref().map(|(_, _, _, run)| run),
             self.proposed.as_ref().map(|(_, run)| run),
             self.accepted.as_ref().map(|(_, run)| run),
@@ -640,8 +583,6 @@ impl Motion {
             self.picked.as_ref(),
             self.ringing.as_ref(),
             self.host.as_ref().map(|(_, run)| run),
-            self.pulse.as_ref().map(|(_, run)| run),
-            self.lanes.as_ref().map(|(_, _, run)| run),
             self.refused.as_ref().map(|(_, light, _)| light),
             self.changed.as_ref().map(|(_, run)| run),
         ];
@@ -908,25 +849,6 @@ mod tests {
         motion.lands_open(4);
         assert!(motion.gap().is_none() && motion.closing_gap().is_none());
         assert!(!motion.no_gap());
-    }
-
-    #[test]
-    fn the_brackets_lanes_slide_to_their_widths_and_back() {
-        let mut motion = Motion::new();
-        assert_eq!(motion.lanes(2), None);
-        motion.lanes_to(Some(vec![26.0, 10.0]));
-        // On their way from at rest.
-        let shown = motion.lanes(2).unwrap();
-        assert!((18.0..26.0).contains(&shown[0]), "{shown:?}");
-        assert!(motion.moving());
-        // For another number of lanes, nothing is said.
-        assert_eq!(motion.lanes(3), None);
-        // With motion off, there at once; and back at rest, as wide
-        // together.
-        motion.still = true;
-        assert_eq!(motion.lanes(2), Some(vec![26.0, 10.0]));
-        motion.lanes_to(None);
-        assert_eq!(motion.lanes(2), Some(vec![18.0, 18.0]));
     }
 
     #[test]

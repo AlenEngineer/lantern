@@ -1,0 +1,236 @@
+# What the sections' brackets did, done on their headers with a real
+# pointer (see the pointer commands in crates/app/src/script.rs). Needs
+# scripts/e2e.sh under sway, at the usual E2E_DASHBOARD_SCALE of 1.5.
+#
+# Plan (entries counted from 1, as pointer-at-row counts them):
+#  1 Bienvenida  2 image  3 video        (a loop round 2 and 3)
+#  4 Alabanza    5 pages  6 image
+#  7 Lecturas    8 Live search
+#  9 Anuncios    (empty)
+# 10 Cierre     11 video
+# A press at a row's middle, then its bottom, is past the pointer's slop
+# and starts a carry; where it lands is asked once the carried rows have
+# left the list. What no entry is has a place of its own: the plan's
+# title (pressed to let go of what is picked), a section's chevron, the
+# open ring's note, and the library's rows, counted from 1 as they show
+# (with Fixtures open: 1 Fixtures 2 image 3 page 4 pages 5 photo
+# 6 portrait 7 video).
+wait 2500
+section 5 Bienvenida
+add fixtures/image.png
+add fixtures/video.mp4
+section 15 Alabanza
+add fixtures/pages.pdf
+add fixtures/image.png
+section 10 Lecturas
+slot !b jn 3
+section 5 Anuncios
+section 5 Cierre
+add fixtures/video.mp4
+go-on 2
+loop 2 3
+press ctrl+o
+wait 2500
+shot 00-plan
+
+pointer-at-row 4
+pointer-press
+pointer-release
+wait 800
+shot 01-click-picks-alabanza
+pointer-at title
+pointer-press
+pointer-release
+wait 500
+
+pointer-at-row 1
+pointer-press
+pointer-release
+wait 300
+pointer-at-row 4
+pointer-press left ctrl
+pointer-release
+wait 300
+pointer-at-row 7
+pointer-press left ctrl
+pointer-release
+wait 800
+shot 09-ctrl-click-adds-alabanza-and-lecturas
+pointer-at title
+pointer-press
+pointer-release
+wait 500
+
+pointer-at-row 4
+pointer-press
+pointer-release
+wait 60
+pointer-press
+pointer-release
+wait 900
+shot 03a-double-click-folds-alabanza
+pointer-press
+pointer-release
+wait 60
+pointer-press
+pointer-release
+wait 900
+shot 03b-double-click-opens-it
+pointer-at-row 4 chevron
+pointer-press
+pointer-release
+wait 900
+shot 03c-chevron-folds-it
+pointer-at-row 4 chevron
+pointer-press
+pointer-release
+wait 900
+shot 03d-chevron-opens-it
+pointer-at title
+pointer-press
+pointer-release
+wait 500
+
+pointer-at-row 7
+pointer-press right
+pointer-release right
+wait 900
+shot 07-right-click-rings-lecturas
+press escape
+wait 500
+
+pointer-at-row 4
+pointer-press right
+pointer-release right
+wait 900
+pointer-at ring-note
+pointer-press
+pointer-release
+wait 1200
+shot 11-a-note-on-alabanza-hangs-from-its-header
+pointer-at title
+pointer-press
+pointer-release
+wait 500
+press ctrl+z
+wait 500
+
+library Fixtures
+wait 1500
+pointer-at library 5
+pointer-press
+# The press has to reach the app before the pointer leaves the photo,
+# or the row it lands on is the one carried.
+wait 150
+pointer-at library 6
+wait 400
+pointer-at-row 7 bottom
+wait 600
+shot 10a-carrying-photo-over-lecturas-lower-half
+pointer-release
+wait 900
+shot 10b-photo-first-in-lecturas
+press ctrl+z
+wait 500
+
+pointer-at-row 7
+pointer-press
+pointer-at-row 7 bottom
+wait 400
+pointer-at-row 4 top
+wait 600
+shot 02a-carrying-lecturas-over-alabanza-upper-half
+pointer-release
+wait 900
+shot 02b-lecturas-before-alabanza
+press ctrl+z
+wait 500
+
+pointer-at-row 5
+pointer-press
+pointer-at-row 5 bottom
+wait 400
+pointer-at-row 7 bottom
+wait 600
+shot 04a-carrying-pages-over-lecturas-lower-half
+pointer-release
+wait 900
+shot 04b-pages-first-in-lecturas
+press ctrl+z
+wait 500
+
+pointer-at-row 9
+pointer-press
+pointer-at-row 9 bottom
+wait 400
+pointer-at-row 4 bottom
+wait 600
+shot 05a-carrying-anuncios-over-alabanza-lower-half
+pointer-release
+wait 900
+shot 05b-anuncios-inside-alabanza-first
+press ctrl+z
+wait 500
+
+pointer-at-row 9
+pointer-press
+pointer-at-row 9 bottom
+wait 400
+pointer-at-row 6 bottom
+wait 600
+shot 12a-carrying-anuncios-after-alabanzas-image
+press right
+wait 600
+shot 12b-right-a-level-in
+press left
+wait 600
+shot 12c-left-a-level-out
+press escape
+pointer-release
+wait 800
+
+pointer-at-row 6
+pointer-press
+pointer-at-row 6 bottom
+wait 400
+pointer-at-row 2 top
+wait 600
+shot 06a-carrying-image-over-bienvenida
+press escape
+wait 300
+pointer-release
+wait 900
+shot 06b-esc-moved-nothing
+
+pointer-at-row 4 top
+pointer-press
+pointer-at-row 6
+wait 600
+shot 08a-head-pulled-down-lets-go-of-pages
+pointer-release
+wait 900
+pointer-at-row 5 top
+pointer-press
+pointer-at-row 4
+wait 600
+shot 08b-head-pulled-up-over-pages
+pointer-release
+wait 900
+shot 08c-pages-in-alabanza-again
+pointer-at-row 4 foot
+pointer-press
+pointer-at-row 5
+wait 600
+shot 08d-foot-pulled-up-over-pages
+pointer-release
+wait 900
+shot 08e-image-let-go
+pointer-at-row 4 foot
+pointer-press
+pointer-at-row 6
+wait 600
+shot 08f-foot-pulled-down-over-image
+pointer-release
+wait 900
+shot 08g-image-in-alabanza-again
+quit

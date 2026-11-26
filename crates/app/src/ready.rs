@@ -1,10 +1,13 @@
 //! The ready check: what in a plan would go wrong on stage, found before
 //! the service. Each step is looked at the way the stage will load it
 //! ([`stage::needs`]): something it can't show, a missing file, a YouTube
-//! download not done or failed, an image link not downloaded yet.
+//! download not done or failed (with yt-dlp chosen), an image link not
+//! downloaded yet. A YouTube video in YouTube's own player has nothing to
+//! get ready: it plays from YouTube, with the internet, as it goes on.
 
-use lantern_engine::{Action, Plan, StepId};
+use lantern_engine::{Action, Plan, Resource, StepId};
 
+use crate::config::YoutubeMode;
 use crate::stage::{self, Needs};
 use crate::youtube::{Download, YoutubeVideo};
 
@@ -26,10 +29,12 @@ pub struct Issue {
     pub what: String,
 }
 
-/// Every issue in `plan`, in plan order. `download` is a YouTube video's
-/// download state; `cached` says whether an image link is downloaded.
+/// Every issue in `plan`, in plan order. `youtube` is how YouTube videos
+/// play; `download` is one's download state, with yt-dlp; `cached` says
+/// whether an image link is downloaded.
 pub fn check(
     plan: &Plan,
+    youtube: YoutubeMode,
     download: impl Fn(&YoutubeVideo) -> Option<Download>,
     cached: impl Fn(&str) -> bool,
 ) -> Vec<Issue> {
@@ -53,32 +58,81 @@ pub fn check(
                 Ok(_) => {}
             }
         }
-        match stage::needs(resource) {
-            Err(why) => issues.push(issue(Level::Problem, why)),
-            Ok(Needs::Nothing) => {}
-            Ok(Needs::File(path)) if !path.is_file() => {
-                issues.push(issue(Level::Problem, "file missing".into()))
-            }
-            Ok(Needs::File(_)) => {}
-            Ok(Needs::Youtube(video)) => match download(&video) {
-                // A live video plays as it comes: nothing to wait for.
-                Some(Download::Ready(_) | Download::Live) => {}
-                Some(Download::Failed(why)) => {
-                    issues.push(issue(Level::Problem, format!("download failed: {why}")))
-                }
-                Some(state @ (Download::Queued | Download::Running(_))) => {
-                    issues.push(issue(Level::Waiting, state.to_string()))
-                }
-                None => issues.push(issue(Level::Waiting, "not downloaded yet".into())),
-            },
-            Ok(Needs::Images(urls)) if !urls.iter().any(|url| cached(url)) => issues.push(issue(
-                Level::Waiting,
-                "not downloaded yet: needs the internet".into(),
-            )),
-            Ok(Needs::Images(_)) => {}
+        if let Some((level, what)) = issue_of(resource, youtube, &download, &cached) {
+            issues.push(issue(level, what));
         }
     }
     issues
+}
+
+/// What would go wrong showing `resource`, and how bad it is, as
+/// [`check`] finds it for a step; also a search result's warning.
+pub fn issue_of(
+    resource: &Resource,
+    youtube: YoutubeMode,
+    download: impl Fn(&YoutubeVideo) -> Option<Download>,
+    cached: impl Fn(&str) -> bool,
+) -> Option<(Level, String)> {
+    match stage::needs(resource) {
+        Err(why) => Some((Level::Problem, why)),
+        Ok(Needs::Nothing) => None,
+        Ok(Needs::File(path)) if !path.is_file() => Some((Level::Problem, "file missing".into())),
+        Ok(Needs::File(_)) => None,
+        // In YouTube's own player first: nothing is downloaded.
+        Ok(Needs::Youtube(_))
+            if matches!(youtube, YoutubeMode::Official | YoutubeMode::OfficialFirst) =>
+        {
+            None
+        }
+        Ok(Needs::Youtube(video)) => match download(&video) {
+            // A live video plays as it comes: nothing to wait for.
+            Some(Download::Ready(_) | Download::Live) => None,
+            // YouTube's player plays it instead, from the internet.
+            Some(Download::Failed(why)) => Some((
+                Level::Waiting,
+                format!("download failed ({why}): plays in YouTube's player, needs the internet"),
+            )),
+            Some(state @ (Download::Queued | Download::Running(_))) => {
+                Some((Level::Waiting, state.to_string()))
+            }
+            None => Some((Level::Waiting, "not downloaded yet".into())),
+        },
+        Ok(Needs::Images(urls)) if !urls.iter().any(|url| cached(url)) => Some((
+            Level::Waiting,
+            "not downloaded yet: needs the internet".into(),
+        )),
+        Ok(Needs::Images(_)) => None,
+    }
+}
+
+/// Where what `resource` shows comes from when it is shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Reach {
+    /// This computer: a file, typed text, a download that is done.
+    #[default]
+    Here,
+    /// The internet, until it is downloaded.
+    Online,
+    /// The internet, all the while it shows: a video that is live.
+    Stream,
+}
+
+/// Where `resource` comes from when shown, `download` and `cached` as
+/// [`check`] takes them.
+pub fn reach(
+    resource: &Resource,
+    download: impl Fn(&YoutubeVideo) -> Option<Download>,
+    cached: impl Fn(&str) -> bool,
+) -> Reach {
+    match stage::needs(resource) {
+        Ok(Needs::Youtube(video)) => match download(&video) {
+            Some(Download::Ready(_)) => Reach::Here,
+            Some(Download::Live) => Reach::Stream,
+            _ => Reach::Online,
+        },
+        Ok(Needs::Images(urls)) if !urls.iter().any(|url| cached(url)) => Reach::Online,
+        _ => Reach::Here,
+    }
 }
 
 /// One line for the whole plan, "ready", "2 not ready yet", "1 problem",
@@ -138,7 +192,7 @@ mod tests {
             "bbbbbbbbbbb" => Some(Download::Running(42.0)),
             _ => Some(Download::Failed("Video unavailable".into())),
         };
-        let issues = check(&plan, download, |_| false);
+        let issues = check(&plan, YoutubeMode::YtDlpFirst, download, |_| false);
         let found: Vec<(StepId, Level)> = issues.iter().map(|i| (i.step, i.level)).collect();
         assert_eq!(
             found,
@@ -146,14 +200,63 @@ mod tests {
                 (missing, Level::Problem),
                 (docx, Level::Problem),
                 (going, Level::Waiting),
-                (failed, Level::Problem),
+                (failed, Level::Waiting),
             ]
         );
         assert!(!found.iter().any(|(step, _)| *step == done));
         assert_eq!(issues[2].what, "downloading 42%");
+        assert!(
+            issues[3].what.contains("YouTube's player"),
+            "{}",
+            issues[3].what
+        );
         assert_eq!(
             summary(&plan, &issues),
-            Some(("3 problems".into(), Some(Level::Problem)))
+            Some(("2 problems".into(), Some(Level::Problem)))
+        );
+
+        // In YouTube's own player, the videos have nothing to get ready.
+        let issues = check(&plan, YoutubeMode::Official, download, |_| false);
+        let steps: Vec<StepId> = issues.iter().map(|i| i.step).collect();
+        assert_eq!(steps, [missing, docx]);
+        let issues = check(&plan, YoutubeMode::OfficialFirst, download, |_| false);
+        assert_eq!(issues.len(), 2);
+    }
+
+    #[test]
+    fn one_thing_says_what_would_go_wrong_and_where_it_comes_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = file(&dir.path().join("gone.mp4"), Kind::Video);
+        let none = |_: &YoutubeVideo| None;
+        assert_eq!(
+            issue_of(&gone, YoutubeMode::YtDlpFirst, none, |_| false),
+            Some((Level::Problem, "file missing".into()))
+        );
+        assert_eq!(reach(&gone, none, |_| false), Reach::Here);
+
+        let video = youtube("aaaaaaaaaaa");
+        let state = |state: Download| move |_: &YoutubeVideo| Some(state.clone());
+        assert_eq!(reach(&video, none, |_| false), Reach::Online);
+        assert_eq!(
+            issue_of(&video, YoutubeMode::YtDlpFirst, none, |_| false),
+            Some((Level::Waiting, "not downloaded yet".into()))
+        );
+        assert_eq!(
+            issue_of(&video, YoutubeMode::Official, none, |_| false),
+            None,
+            "in YouTube's player, nothing waits"
+        );
+        assert_eq!(
+            reach(&video, state(Download::Running(40.0)), |_| false),
+            Reach::Online
+        );
+        assert_eq!(
+            reach(&video, state(Download::Live), |_| false),
+            Reach::Stream
+        );
+        assert_eq!(
+            reach(&video, state(Download::Ready("x.mp4".into())), |_| false),
+            Reach::Here
         );
     }
 
@@ -175,7 +278,7 @@ mod tests {
             Location::Inline("Porque…".into()),
         );
         plan.show(verse);
-        let issues = check(&plan, |_| None, |_| false);
+        let issues = check(&plan, YoutubeMode::Official, |_| None, |_| false);
         assert!(issues.is_empty());
         assert_eq!(summary(&plan, &issues), Some(("ready".into(), None)));
     }

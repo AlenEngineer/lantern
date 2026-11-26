@@ -1,0 +1,24 @@
+# YouTube's own player, the usual way a YouTube video plays: lantern-web's
+# window over the stage. A running service with the video then a picture:
+# it fades in, plays, blacks out and back, pauses and plays on, and the
+# plan goes on to the picture when it ends. Needs the network. It plays
+# sound: run it with PULSE_SINK set to a null sink to keep it quiet.
+add https://www.youtube.com/watch?v=jNQXAC9IVRw
+add fixtures/image.png
+go-on 1
+fade 1 2 2
+mode start
+wait 1500
+shot 1-fading-in
+wait 6000
+shot 2-playing
+black
+wait 600
+shot 3-black
+black
+pause
+wait 1500
+shot 4-paused
+play
+wait 22000
+shot 5-went-on

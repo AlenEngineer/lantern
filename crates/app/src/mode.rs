@@ -62,6 +62,14 @@ impl Mode {
 /// How long "End the service" waits for its second press.
 const SURE: Duration = Duration::from_secs(4);
 
+/// How wide each pill of the switch is, and the room between two. Every
+/// pill is as wide as the others, so the lit one under them can slide
+/// from one to the next.
+const PILL_WIDE: f32 = 62.0;
+const PILL_GAP: f32 = 2.0;
+/// How wide the switch is with every mode on it.
+pub(crate) const SWITCH: f32 = Mode::ALL.len() as f32 * (PILL_WIDE + PILL_GAP) - PILL_GAP;
+
 /// What kind of thing a message does, as far as the modes care.
 enum Does {
     /// Puts something on the projector, or moves what is there.
@@ -482,8 +490,7 @@ impl App {
         }
     }
 
-    /// The switch between the modes, with what goes with the one it is
-    /// in: the way into a run, or out of it.
+    /// The switch between the modes, and in a run the way out of it.
     pub(crate) fn mode_switch(&self) -> Element<'_, Message> {
         let p = self.palette;
         // In a run only Run shows: the others are reached by ending it,
@@ -492,14 +499,10 @@ impl App {
             .into_iter()
             .filter(|mode| self.mode != Mode::Run || *mode == Mode::Run)
             .collect();
-        // Every pill is as wide as the others, so the lit one under them
-        // can slide from one to the next.
-        const WIDE: f32 = 62.0;
-        const GAP: f32 = 2.0;
         const TALL: f32 = 32.0;
         let place = |mode: Mode| {
             let at = shown.iter().position(|shown| *shown == mode).unwrap_or(0);
-            at as f32 * (WIDE + GAP)
+            at as f32 * (PILL_WIDE + PILL_GAP)
         };
         let (fill, ink) = look::pill_colours(p, self.mode.tone());
         // On its way from the mode it left: across, and from its colour.
@@ -523,30 +526,34 @@ impl App {
         };
         let ground = row![
             Space::new().width(place(self.mode)),
-            container(Space::new().width(WIDE).height(TALL)).style(move |_| container::Style {
-                background: waiting.map(Into::into),
-                border: iced::Border {
-                    radius: (TALL / 2.0).into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
+            container(Space::new().width(PILL_WIDE).height(TALL)).style(move |_| {
+                container::Style {
+                    background: waiting.map(Into::into),
+                    border: iced::Border {
+                        radius: (TALL / 2.0).into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }
             }),
         ]
         // The first layer gives the stack its size: as wide as every pill.
-        .width(shown.len() as f32 * (WIDE + GAP) - GAP)
+        .width(shown.len() as f32 * (PILL_WIDE + PILL_GAP) - PILL_GAP)
         .height(TALL);
         let lit = row![
             Space::new().width(aside),
-            container(Space::new().width(WIDE).height(TALL)).style(move |_| container::Style {
-                background: Some(fill.into()),
-                border: iced::Border {
-                    radius: (TALL / 2.0).into(),
-                    ..iced::Border::default()
-                },
-                ..container::Style::default()
+            container(Space::new().width(PILL_WIDE).height(TALL)).style(move |_| {
+                container::Style {
+                    background: Some(fill.into()),
+                    border: iced::Border {
+                        radius: (TALL / 2.0).into(),
+                        ..iced::Border::default()
+                    },
+                    ..container::Style::default()
+                }
             }),
         ]
-        .width(shown.len() as f32 * (WIDE + GAP) - GAP)
+        .width(shown.len() as f32 * (PILL_WIDE + PILL_GAP) - PILL_GAP)
         .height(TALL);
         let plan_has_steps = self
             .engine
@@ -558,7 +565,7 @@ impl App {
         let buttons = shown.iter().map(|&mode| {
             let on = mode == self.mode;
             // Run is reached by starting the service: pressed, it starts
-            // it, as its button beside does. The mode it is in is
+            // it, as Start the service does. The mode it is in is
             // pressable too, to no effect: unpressable, it would look
             // switched off.
             let starts = !on && mode == Mode::Run;
@@ -572,7 +579,7 @@ impl App {
             .center_x(Fill)
             .center_y(Fill);
             let pill = button(label)
-                .width(WIDE)
+                .width(PILL_WIDE)
                 .height(TALL)
                 .padding(0)
                 .on_press_maybe(match starts {
@@ -595,28 +602,14 @@ impl App {
                 tooltip::Position::Bottom,
             )
         });
-        let mut switch = row![iced::widget::stack![ground, lit, row(buttons).spacing(GAP)]]
-            .spacing(8)
-            .align_y(Alignment::Center);
-        let plan = self.engine.0.plan();
+        let mut switch = row![iced::widget::stack![
+            ground,
+            lit,
+            row(buttons).spacing(PILL_GAP)
+        ]]
+        .spacing(8)
+        .align_y(Alignment::Center);
         match self.mode {
-            Mode::Plan => {
-                let can_start = plan.steps().iter().any(|step| !step.is_section());
-                switch = switch.push(hinted(
-                    p,
-                    button(
-                        text("Start the service")
-                            .size(BODY)
-                            .font(BOLD)
-                            .wrapping(text::Wrapping::None),
-                    )
-                    .padding([6, 14])
-                    .on_press_maybe(can_start.then_some(Message::StartService))
-                    .style(look::pill(p, Tone::Live)),
-                    keys::with_key("From its first step", Op::Mode(Mode::Run)),
-                    tooltip::Position::Bottom,
-                ));
-            }
             Mode::Run => {
                 let sure = self.ending.is_some();
                 switch = switch.push(hinted(
@@ -638,7 +631,7 @@ impl App {
                     tooltip::Position::Bottom,
                 ));
             }
-            Mode::Live => {}
+            Mode::Plan | Mode::Live => {}
         }
         switch.into()
     }
@@ -902,7 +895,7 @@ impl App {
         .padding([16, 12])
         .height(Fill);
         iced::widget::stack![pane, self.refusal_over()]
-            .width(self.plan_width())
+            .width(Fill)
             .height(Fill)
             .into()
     }

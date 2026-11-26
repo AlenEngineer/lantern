@@ -40,11 +40,12 @@ crates/
   showman/       stage state: program/preview, frames, playback, blackout
   engine/        facade that wires everything together; what a UI embeds
   app/           the desktop app: operator dashboard + stage window (binary `lantern`)
+  web/           YouTube's own player in a window of its own (binary `lantern-web`)
 sources/
   local/         local folders (music, videos, images, presentations, documents)
   link/          pasted links: YouTube, direct files, web pages
   bible/         offline translations: verse text search + reference parsing
-  youtube/       YouTube search through yt-dlp (!yt, on request)
+  youtube/       YouTube search: Data API key, or yt-dlp when chosen (!yt, on request)
   brave/         image search through the Brave Search API (!gi, on request)
 ```
 
@@ -55,9 +56,13 @@ The full design is in [ARCHITECTURE.md](ARCHITECTURE.md).
 Linux builds are attached to each
 [release](https://github.com/AlenEngineer/lantern/releases). Building from
 source needs Rust 1.99 or newer. Either way, the app needs GStreamer with
-its base and good plugins (and `gst-libav` for H.264), `pdftoppm` (poppler)
-for PDFs, and `yt-dlp` for YouTube links. Showing PowerPoint files needs
-LibreOffice as well.
+its base and good plugins (and `gst-libav` for H.264), and `pdftoppm`
+(poppler) for PDFs. YouTube videos play in YouTube's own player, which
+`lantern-web` (built and shipped beside `lantern`) shows in a window of its
+own over the stage: on Linux it needs WebKitGTK 4.1 (`webkit2gtk-4.1`), and
+on Windows the WebView2 that Windows 10 and 11 come with. `yt-dlp` is only
+needed if you choose it in Settings → YouTube. Showing PowerPoint files
+needs LibreOffice as well.
 
 A PowerPoint file (`.pptx`, `.ppt`, `.ppsx`, `.pps`, or LibreOffice's
 `.odp`) is shown as slides you step through, like a PDF. LibreOffice turns
@@ -106,8 +111,8 @@ opens or closes it by hand, which holds until the mode or the screens
 change. Closing the stage never closes Lantern: with a service or Live
 going, its button turns red and the live picture says the stage is closed.
 Closing the dashboard quits; while the projector is in use it has to be
-closed twice within a few seconds. The dashboard is three cards on one
-ground. Across the top, a **strip**: the plan's name and its buttons, the
+closed twice within a few seconds. In Run and Live the dashboard is three
+cards on one ground. Across the top, a **strip**: the plan's name and its buttons, the
 running section's time and how the service stands against its schedule,
 the time of day, then Search, what isn't ready, the stage's window, Blackout
 and Settings. Each says how something stands and opens what changes it. On
@@ -118,6 +123,13 @@ column, with the result you're looking at under the list; Esc sends it
 back. Drag the gap between the plan and the stage, or between the live
 picture and the column beside it, to make them narrower or wider; a double
 click lets them size themselves again. The widths are kept.
+
+While planning, the plan is in the middle instead, the one brighter
+surface on the window's background: the **library** to its left (Lantern's
+own sources, then your folders) and the **preview** to its right (what is
+picked, its slides, where it is from and how it plays, and Look & timing).
+The strip floats over all three with the plan's name, its settings and Save,
+and Start the service.
 
 There is one screen, the same before and during the service. The plan is
 edited where it is: the selected step's row carries small buttons to rename
@@ -135,10 +147,16 @@ changes.
 Results show a thumbnail: a picture, a PDF's or a deck's first page or a
 video's still
 (YouTube too). A passage has a book instead, and its result says how it
-starts. A plan step is one line: its dot on the rail, its name, and at its
-end the one thing worth saying of it: what's wrong with it, how far the
-stage is into it, what kind it is, or how long it takes. Selecting it opens
-a second line with what can be done to it.
+starts. While planning, a plan step's row has the time of day it comes
+(once the plan has a start time), its dot on the rail, a small picture
+with its length or page count in the corner and how far its download has
+come while it has one, its name over a line of where it's from and what
+it is (or what's wrong with it, amber when it may sort itself out and red
+when it won't), and its length beside a mark for whether it goes on by
+itself or waits. In a service a plan step is one line: its dot on the
+rail, its name, and at its end the one thing worth saying of it: what's
+wrong with it, how far the stage is into it, what kind it is, or how long
+it takes. Selecting it opens a second line with what can be done to it.
 
 The rail down the left of the steps shows how the plan moves. A filled dot
 with a line on to the next step goes on by itself; a hollow dot waits for
@@ -181,13 +199,14 @@ A section has a dot of its own, on the rail by its name: a click folds it
 away or opens it.
 
 **Right click** opens a ring that holds only what is that thing's own.
-On a section's dot or anywhere on its heading, and on the plan's own row
-at the top: every step goes straight on, all of it comes again, all of it
-in a drawn order. On a step's dot: go straight on, come again. On the line
-between two steps: go straight on, or wait here. On a loop's line: how
-often it comes. On a drawn order's line: one button, lit, that takes the
-order away. Beside a section's name are marks for what is on; they are
-not buttons. Esc or a click elsewhere closes the ring.
+On a section's dot or anywhere on its heading: every step goes straight
+on, all of it comes again, all of it in a drawn order; the whole plan's
+are under Plays in its settings. On a step's dot: go straight on, come
+again. On the line between two steps: go straight on, or wait here. On a
+loop's line: how often it comes. On a drawn order's line: one button,
+lit, that takes the order away. Beside a section's name are marks for
+what is on; they are not buttons. Esc or a click elsewhere closes the
+ring.
 
 How often is: **− ×2 +** for a number of times (fewer than twice is
 once: the loop is gone), **∞** until you move on, and a clock with a box to type
@@ -260,7 +279,7 @@ on a result or step only lines it up; a double click shows it at once.
 | Ctrl+K | open the search |
 | Esc | clear the search box, keeping its bang chip for the next search; again closes the search |
 | Del | with no search, remove the selected step |
-| F2 | rename the selected step, in its row |
+| F2 | rename the selected step, in its row; with nothing selected, the plan, in its settings |
 | Backspace | in an empty box, take the bang chip away |
 | Alt+↑ ↓ | move the selected step (or drag it: the list opens a gap where it'll land; a section brings its steps; Esc lets go) |
 | Alt+→ ← | put the selected section inside the one before it, or move it out a level (three levels deep); dragging a section left or right does the same |
@@ -371,7 +390,10 @@ screen, a double click or Enter adds it to the plan after the selected
 step, and it can be dragged to where it should go. F6 gives it the arrows
 (its heading lights up): ↑ ↓ walk its rows, → ← open and close folders,
 Enter adds the file. Folders nest as on disk,
-and the filter at the top narrows the tree to what you type. With a step
+and the filter at the top narrows the tree to what you type. Three small
+icons on the folders' heading lay out the open folder as a list, as a
+grid of even tiles, or as tiles at each picture's own shape; each folder
+keeps its layout, also after a restart. With a step
 selected and something else picked, **Replace** puts the pick in the step's
 place. The lines inside a step go to their slide: on the projector in a
 run, in the preview while planning.
@@ -408,7 +430,7 @@ the chip away again.
 | `!b` | the Bibles: verse text, or a reference like `!b jn 3 16` |
 | `!f` | the media folders |
 | `!h`, … | one folder, by the bang you gave it in Settings |
-| `!yt` | YouTube, through `yt-dlp` |
+| `!yt` | YouTube, with a YouTube Data API key or yt-dlp (Settings → YouTube); with neither, "Pick on YouTube" opens YouTube's own search in a lantern window, where a click adds a video |
 | `!gi` | images on the web, through the [Brave Search API](https://brave.com/search/api/) (needs a key) |
 
 `!yt` and `!gi` go over the network and take a few seconds, so they search
@@ -791,18 +813,42 @@ killed mid-service, the end command never runs.
 ### End-to-end screenshots
 
 `scripts/e2e.sh <script> <outdir>` runs the real app on two headless
-Hyprland outputs, follows a script from `scripts/e2e/`, and saves a
-screenshot of both windows at every `shot`. `basic`, `media`, `library`,
+outputs, follows a script from `scripts/e2e/`, and saves a screenshot of
+both windows at every `shot`. With sway installed, the run gets a headless
+sway of its own, and nothing shows on your screen. Without it, or with
+`E2E_COMPOSITOR=hyprland`, it uses your Hyprland session.
+
+> **A Hyprland run changes your screens.** It adds two outputs to your
+> session and removes them at the end, and other apps see that: Steam's
+> window has crashed and reopened during runs. The stage window can also
+> show on your own screen for a moment before it moves to its headless
+> output. `basic`, `media`, `library`,
 `dashboard`, `launcher`, `plans`, `timer`, `settings` (run it with
-`LANTERN_CONFIG` pointing at a copy: it saves), `youtube` and `online`
-(both need the network) cover hymns, images, video, PDFs, Bible passages, the dashboard,
-bangs, plan files, YouTube downloads and search, and image links.
+`LANTERN_CONFIG` pointing at a copy: it saves), `youtube-official`,
+`youtube` and `online` (these need the network) cover hymns, images,
+video, PDFs, Bible passages, the dashboard, bangs, plan files, YouTube's
+player, YouTube downloads and search, and image links. `youtube` and
+`youtube-thumbs` go through yt-dlp, so run them with
+`LANTERN_CONFIG=scripts/e2e/yt-dlp.toml`. `youtube-key` shows the key
+setup, and `youtube-pick` picking on YouTube's site; its header says which configs show which answer. The YouTube scripts
+play sound;
+to keep them quiet, play it into a null sink:
+
+```sh
+module=$(pactl load-module module-null-sink sink_name=e2e_quiet)
+PULSE_SINK=e2e_quiet scripts/e2e.sh scripts/e2e/youtube-official.script ~/.cache/lantern/e2e/yt
+pactl unload-module "$module"
+```
+
+A shot while planning has no stage picture: the stage window is closed
+then, and `windows.log` says so.
 
 ```sh
 scripts/e2e.sh scripts/e2e/dashboard.script ~/.cache/lantern/e2e/dashboard
 ```
 
-Each run saves plans in a fresh `<outdir>/data`, never in your own. `reopen`
+Each run gives the app a fresh home, `<outdir>/home`, so an export or a
+download never lands in yours, and saves plans in a fresh `<outdir>/data`. `reopen`
 checks that the next start reopens the plan `plans` saved, so it shares its
 data folder:
 
@@ -891,6 +937,35 @@ that section as the notes.
 - [x] Choose the stage's output from the app (Hyprland)
 - [ ] Sources: online Bible API
 - [ ] Multiple outputs (stage + stage-display/confidence monitor + stream)
+
+## What you show, and the services it comes from
+
+lantern is a tool: what goes on the screen, and the right to show it, is up
+to whoever runs it. In particular:
+
+- **Showing something to an audience is a public performance.** Songs,
+  lyrics, videos, pictures and Bible translations are usually copyrighted.
+  Make sure you have the right to show them, for instance through a
+  licence like CCLI for worship songs, or the owner's permission.
+- **YouTube** videos play in YouTube's own player, as YouTube's terms
+  allow; it shows YouTube's own controls for a moment after a jump or
+  while paused, and any ads YouTube plays. `!yt` searches with your own
+  YouTube Data API key, under YouTube's API terms: Settings → YouTube
+  walks you through making one (free, about 100 searches a day) and
+  checks it. Lantern ships no key of its own and never signs you in. In Settings → YouTube
+  you can choose [yt-dlp](https://github.com/yt-dlp/yt-dlp) instead,
+  which downloads videos ahead and plays them without YouTube's player:
+  YouTube's [Terms of Service](https://www.youtube.com/t/terms) don't
+  allow that, so it is off unless you choose it, and then it's your
+  choice and your agreement with YouTube.
+- **Image search** (`!gi`) uses your own key for the
+  [Brave Search API](https://brave.com/search/api/) and is bound by
+  Brave's terms for it. The images it finds belong to their owners.
+- **The Windows download** carries GStreamer and poppler, which are under
+  the GNU LGPL and GPL. `THIRD-PARTY-NOTICES.txt` in it says what each is,
+  its licence, and where its source is.
+
+This isn't legal advice; the rules differ by country.
 
 ## License
 

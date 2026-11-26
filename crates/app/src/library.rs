@@ -8,7 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use lantern_engine::{Engine, Plan, SourceId};
-use lantern_source_bible::{Bible, BibleSource, Translation};
+use lantern_source_bible::{Bible, BibleSource, Book, Translation};
 use lantern_source_brave::BraveImages;
 use lantern_source_clock::ClockSource;
 use lantern_source_link::LinkSource;
@@ -16,7 +16,7 @@ use lantern_source_local::{Folder, LocalSource};
 use lantern_source_text::TextSource;
 use lantern_source_youtube::YoutubeSource;
 
-use crate::config::{self, BibleEntry, Config, FolderEntry};
+use crate::config::{self, BibleEntry, Config, FolderEntry, YoutubeMode};
 use crate::{log, watch};
 
 /// How one source fared: its indexed item count, or why it has none.
@@ -89,17 +89,55 @@ pub struct Library {
     changes: Arc<AtomicU64>,
     /// Counts applies, so only the latest one says indexing is done.
     generation: AtomicU64,
+    /// The Bibles the config loaded, as their books, for a picker.
+    outlines: Mutex<Vec<Outline>>,
+}
+
+/// A Bible's books, chapters and verses, without its text: what a picker
+/// of book, chapter and verse needs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Outline {
+    /// The translation's short name: "RVG".
+    pub name: String,
+    /// Every book in order, Genesis first.
+    pub books: Vec<BookOutline>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookOutline {
+    /// Its name in the translation's language: "Juan".
+    pub name: String,
+    /// A short name for a button: "Jn".
+    pub short: String,
+    /// How many verses each chapter has; empty when this translation
+    /// lacks the book.
+    pub verses: Vec<u16>,
+}
+
+impl Outline {
+    fn of(bible: &Bible) -> Outline {
+        let language = bible.translation().language;
+        Outline {
+            name: bible.translation().abbreviation.clone(),
+            books: Book::all()
+                .map(|book| BookOutline {
+                    name: book.name(language).to_string(),
+                    short: book.short(language),
+                    verses: bible.verse_counts(book),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Library {
-    /// Registers the sources the config doesn't change (links, YouTube) now,
+    /// Registers the sources the config doesn't change (links, clock, text) now,
     /// and the configured ones and their index on a worker thread.
     pub fn start(engine: Arc<Engine>, config: Config) -> Arc<Library> {
         let fixed = [
             engine.add_source(LinkSource::new(id("link"))),
             engine.add_source(ClockSource::new(id("clock"))),
             engine.add_source(TextSource::new(id("text"))),
-            engine.add_source(YoutubeSource::new(id("youtube"))),
         ];
         for err in fixed.into_iter().filter_map(Result::err) {
             log(format!("source: {err}"));
@@ -113,12 +151,13 @@ impl Library {
             watch: Mutex::new(None),
             changes: Arc::default(),
             generation: AtomicU64::new(0),
+            outlines: Mutex::new(Vec::new()),
         });
         library.apply(config);
         library
     }
 
-    /// Swaps the configured sources (folders, Bibles, image search) for
+    /// Swaps the configured sources (folders, Bibles, image and YouTube search) for
     /// `config`'s and reindexes, on a worker thread. Searches keep working
     /// meanwhile; the dashboard says it's indexing until done.
     pub fn apply(self: &Arc<Self>, config: Config) {
@@ -138,7 +177,8 @@ impl Library {
                 .iter()
                 .map(|entry| (entry.path.clone(), folder_source(entry)))
                 .collect();
-            let (registered, mut reports) = register(engine, config);
+            let (registered, mut reports, outlines) = register(engine, config);
+            *library.outlines.lock().unwrap_or_else(|e| e.into_inner()) = outlines;
             *library.configured.lock().unwrap_or_else(|e| e.into_inner()) = registered;
             reports.extend(engine.reindex().into_iter().map(|report| Indexed {
                 source: report.source.to_string(),
@@ -164,6 +204,14 @@ impl Library {
     /// How many times a watched folder changed the index so far.
     pub fn changes(&self) -> u64 {
         self.changes.load(Ordering::SeqCst)
+    }
+
+    /// The Bibles the config loaded, as their books.
+    pub fn outlines(&self) -> Vec<Outline> {
+        self.outlines
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn indexing(&self) -> bool {
@@ -202,7 +250,19 @@ fn problems(reports: Option<&[Indexed]>) -> Vec<String> {
 /// one per bang for the rest), one source per Bible, and
 /// image search with the config's key. Returns the ids registered, and a
 /// report for each source that couldn't be loaded or registered.
-fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
+/// `!yt` search: through the Data API with a key, and through yt-dlp only
+/// when the operator chose yt-dlp.
+fn youtube_source(mode: YoutubeMode, key: Option<String>) -> YoutubeSource {
+    let source = YoutubeSource::new(id("youtube")).with_key(key);
+    if mode.uses_yt_dlp() {
+        source.with_yt_dlp(|| crate::programs::command("yt-dlp"))
+    } else {
+        source
+    }
+}
+
+fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>, Vec<Outline>) {
+    let mut outlines = Vec::new();
     let mut registered = Vec::new();
     let mut failed = Vec::new();
     let mut add = |source: String, result: Result<SourceId, String>| match result {
@@ -217,6 +277,13 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
         engine
             .add_source(BraveImages::new(id("images"), config.brave_api_key))
             .map(|()| id("images"))
+            .map_err(|err| err.to_string()),
+    );
+    add(
+        "youtube".into(),
+        engine
+            .add_source(youtube_source(config.youtube, config.youtube_api_key))
+            .map(|()| id("youtube"))
             .map_err(|err| err.to_string()),
     );
     let mut bad = Vec::new();
@@ -242,6 +309,7 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
                 let translation = Translation::new(name.clone(), name, entry.lang.into());
                 let bible = Bible::load(translation, &entry.path)
                     .map_err(|err| format!("{}: {err}", entry.path.display()))?;
+                outlines.push(Outline::of(&bible));
                 engine
                     .add_source(BibleSource::new(id.clone(), bible))
                     .map(|()| id)
@@ -249,7 +317,7 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
             });
         add(source, result);
     }
-    (registered, failed)
+    (registered, failed, outlines)
 }
 
 /// The local sources for `folders`, with their source ids: `local` for
@@ -258,7 +326,7 @@ fn register(engine: &Engine, config: Config) -> (Vec<SourceId>, Vec<Indexed>) {
 /// that can't be one is reported with `bad` and the folder goes in `local`.
 /// The source a folder belongs to: `local-h` for a folder with `!h`,
 /// `local` without a bang or with one that can't be.
-fn folder_source(entry: &FolderEntry) -> SourceId {
+pub(crate) fn folder_source(entry: &FolderEntry) -> SourceId {
     match entry.bang.as_deref().map(config::folder_bang) {
         Some(Ok(bang)) => id(&format!("local-{bang}")),
         _ => id("local"),
@@ -315,7 +383,7 @@ fn folder_sources(
 }
 
 /// A folder's label, or else its own name.
-fn folder_name(entry: &FolderEntry) -> String {
+pub(crate) fn folder_name(entry: &FolderEntry) -> String {
     entry.label.clone().unwrap_or_else(|| {
         entry.path.file_name().map_or_else(
             || entry.path.display().to_string(),
@@ -570,8 +638,8 @@ mod tests {
         );
         assert_eq!(
             engine.searcher().index().len(),
-            12 + CLOCKS,
-            "4 files and 8 verses, and the clocks"
+            14 + CLOCKS,
+            "6 files and 8 verses, and the clocks"
         );
         let problems = library.problems();
         assert_eq!(problems.len(), 1, "{problems:?}");
@@ -607,7 +675,7 @@ mod tests {
             path = "scripts/e2e/fixtures"
             "#,
         );
-        assert_eq!(engine.searcher().index().len(), 4 + CLOCKS);
+        assert_eq!(engine.searcher().index().len(), 6 + CLOCKS);
         let bible_only = Config::parse(
             r#"
             [[bibles]]

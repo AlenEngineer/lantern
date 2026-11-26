@@ -1,0 +1,28 @@
+# Plan mode's layout, for before and after pictures of the dashboard.
+# Plan: Bienvenida [image, video], Alabanza [pages, image],
+# Lecturas [a live slot], Anuncios [nothing], Cierre [video]. The video
+# is picked, so the preview shows it. A fresh data folder opens on the
+# plans list, so ctrl+o goes back to the plan. Then Alabanza is folded.
+wait 2500
+section 5 Bienvenida
+add fixtures/image.png
+add fixtures/video.mp4
+section 15 Alabanza
+add fixtures/pages.pdf
+add fixtures/image.png
+section 10 Lecturas
+slot !b jn 3
+section 5 Anuncios
+section 5 Cierre
+add fixtures/video.mp4
+go-on 2
+loop 2 3
+press ctrl+o
+wait 2500
+step 3
+wait 2000
+shot plan
+fold 4
+wait 1500
+shot folded
+quit

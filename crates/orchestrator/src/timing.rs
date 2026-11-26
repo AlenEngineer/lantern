@@ -47,10 +47,6 @@ pub struct Estimate {
 /// The length of `step`. `loaded` is its media's real length, if the app
 /// has loaded it.
 pub fn estimate(step: &Step, loaded: Option<Duration>) -> Estimate {
-    let known = |length| Estimate {
-        length,
-        basis: Basis::Known,
-    };
     let guess = |length| Estimate {
         length,
         basis: Basis::Guess,
@@ -62,12 +58,25 @@ pub fn estimate(step: &Step, loaded: Option<Duration>) -> Estimate {
         };
     }
     match &step.action {
-        Action::Show { resource } => match source_length(resource).or(loaded) {
-            Some(length) => known(length),
-            None => guess(guess_for(resource)),
-        },
+        Action::Show { resource } => media_length(resource, loaded),
         Action::Live { .. } => guess(LIVE_SLOT),
         Action::Blank | Action::Note | Action::Section { .. } => guess(Duration::ZERO),
+    }
+}
+
+/// How long `resource` itself takes, whatever length a step showing it
+/// is given: what its source says, its media's length once `loaded`, or
+/// a guess by kind.
+pub fn media_length(resource: &Resource, loaded: Option<Duration>) -> Estimate {
+    match source_length(resource).or(loaded) {
+        Some(length) => Estimate {
+            length,
+            basis: Basis::Known,
+        },
+        None => Estimate {
+            length: guess_for(resource),
+            basis: Basis::Guess,
+        },
     }
 }
 
@@ -896,6 +905,17 @@ mod tests {
         assert_eq!(estimate(&step(&plan, 1), None).basis, Basis::Known);
         plan.get_mut(ids[1]).unwrap().estimate = Some(5 * MIN);
         assert_eq!(estimate(&step(&plan, 1), None).basis, Basis::Set);
+        let Action::Show { resource } = &step(&plan, 1).action else {
+            panic!("a video step")
+        };
+        assert_eq!(
+            media_length(resource, None),
+            Estimate {
+                length: 4 * MIN,
+                basis: Basis::Known
+            },
+            "what the video takes stays its own"
+        );
 
         let mut unknown = Plan::new("x");
         let id = unknown.show(video("D", None));

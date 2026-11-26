@@ -164,6 +164,29 @@ impl Book {
         }
     }
 
+    /// A short name for a button: the first of the book's usual
+    /// abbreviations, as it's written (`Jn`, `1Co`, `Hch`), else the
+    /// first letters of its name in `language`.
+    pub fn short(self, language: Language) -> String {
+        let (_, _, _, abbreviations) = BOOKS[self.index()];
+        let short = abbreviations
+            .first()
+            .map(|short| short.to_string())
+            .unwrap_or_else(|| self.name(language).chars().take(3).collect());
+        let mut seen_letter = false;
+        short
+            .chars()
+            .map(|c| {
+                if c.is_alphabetic() && !seen_letter {
+                    seen_letter = true;
+                    c.to_uppercase().next().unwrap_or(c)
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
     /// Looks up an OSIS code, ignoring case.
     pub fn from_osis(code: &str) -> Option<Book> {
         Self::all().find(|b| b.osis().eq_ignore_ascii_case(code))
@@ -323,6 +346,14 @@ mod tests {
         assert_eq!(find("Mt."), Some("Matt"));
         assert_eq!(find("Hch"), Some("Acts"));
         assert_eq!(find("Ro"), Some("Rom"));
+    }
+
+    #[test]
+    fn a_book_has_a_short_name_for_a_button() {
+        let short = |osis| Book::from_osis(osis).unwrap().short(Language::Spanish);
+        assert_eq!(short("John"), "Jn");
+        assert_eq!(short("1Cor"), "1Co");
+        assert_eq!(short("Acts"), "Hch");
         assert_eq!(find("filip"), Some("Phil"));
         assert_eq!(find("Stgo"), Some("Jas"));
         assert_eq!(find("Santiago"), Some("Jas"));

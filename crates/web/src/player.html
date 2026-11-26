@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>lantern</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; opacity: 1; }
+  #player { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="player"></div></div>
+<script>
+  // Steered by lantern-web: it calls lantern.*, and hears back through
+  // window.ipc. Only YouTube's own player is on the page, uncovered, as
+  // YouTube's terms ask; fades change the whole player's opacity over black.
+  const send = (message) => window.ipc.postMessage(JSON.stringify(message));
+  let player = null;
+  let wanted = null;      // { id, start, play } until the player exists
+  let shown = false;
+  let ticking = null;
+  let toldLength = false;
+  let level = 1;          // the volume asked for, kept for a new player
+
+  function tick() {
+    if (!player || !player.getCurrentTime) return;
+    send({ event: "position", seconds: player.getCurrentTime() });
+    const length = player.getDuration();
+    if (!toldLength && length > 0) {
+      toldLength = true;
+      send({ event: "timeline", seconds: length });
+    }
+  }
+
+  function changed(e) {
+    if (e.data === YT.PlayerState.PLAYING) {
+      send({ event: "playing" });
+      tick();
+      if (!ticking) ticking = setInterval(tick, 250);
+    } else {
+      if (ticking) { clearInterval(ticking); ticking = null; }
+      if (e.data === YT.PlayerState.PAUSED) { tick(); send({ event: "paused" }); }
+      if (e.data === YT.PlayerState.ENDED) send({ event: "ended" });
+      if (e.data === YT.PlayerState.CUED) tick();
+    }
+  }
+
+  function make(id, start) {
+    toldLength = false;
+    player = new YT.Player("player", {
+      videoId: id,
+      playerVars: { start: Math.floor(start), controls: 0, rel: 0, playsinline: 1,
+                    origin: location.origin },
+      events: {
+        onReady: () => {
+          lantern.volume(level);
+          if (wanted && wanted.start > start) player.seekTo(wanted.start, true);
+          tick();
+          if (wanted && wanted.play && shown) player.playVideo();
+        },
+        onStateChange: changed,
+        onError: (e) => send({ event: "error", code: e.data }),
+      },
+    });
+  }
+
+  window.lantern = {
+    load(id, start, play) {
+      wanted = { id, start, play };
+      toldLength = false;
+      if (!window.YT || !YT.Player) return;           // made when the API is ready
+      if (!player) make(id, start);
+      else player.cueVideoById({ videoId: id, startSeconds: start });
+      if (player.playVideo && play && shown) player.playVideo();
+    },
+    // Asked for before YouTube's player is made, these wait in `wanted`.
+    play() {
+      if (wanted) wanted.play = true;
+      if (player && player.playVideo && shown) player.playVideo();
+    },
+    pause() {
+      if (wanted) wanted.play = false;
+      if (player && player.pauseVideo) player.pauseVideo();
+    },
+    seek(seconds) {
+      if (wanted) wanted.start = seconds;
+      if (player && player.seekTo) { player.seekTo(seconds, true); tick(); }
+    },
+    volume(to) {
+      level = to;
+      if (!player || !player.setVolume) return;
+      player.setVolume(Math.round(to * 100));
+      if (to > 0) player.unMute(); else player.mute();
+    },
+    // The whole player fades over black, never covered by anything.
+    opacity(to) { document.getElementById("stage").style.opacity = to; },
+    shown() {
+      shown = true;
+      if (player && player.playVideo && wanted && wanted.play) player.playVideo();
+    },
+    hidden() { shown = false; if (player && player.pauseVideo) player.pauseVideo(); },
+  };
+
+  window.onYouTubeIframeAPIReady = () => {
+    if (wanted) make(wanted.id, wanted.start);
+    send({ event: "ready" });
+  };
+  const api = document.createElement("script");
+  api.src = "https://www.youtube.com/iframe_api";
+  api.onerror = () => send({ event: "error", code: 5 });
+  document.head.appendChild(api);
+</script>
+</body>
+</html>

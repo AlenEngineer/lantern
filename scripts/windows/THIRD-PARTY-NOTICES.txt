@@ -1,0 +1,42 @@
+Third-party software in this download
+=====================================
+
+lantern.exe itself is licensed under MIT or Apache-2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE). The dashboard font, Inter, is under the
+SIL Open Font License 1.1 (Inter-LICENSE.txt).
+
+This folder also carries programs and libraries made by others, unchanged,
+so that lantern runs without installing anything. Each keeps its own
+license. lantern only loads GStreamer's libraries and runs pdftoppm as a
+separate program; neither is part of lantern's own code.
+
+GStreamer {gstreamer}
+  The *.dll files beside lantern.exe, and the folders lib\, libexec\ and
+  etc\ssl\. GStreamer's official Windows (MSVC) build, from
+  https://gstreamer.freedesktop.org/download/
+  GStreamer is under the GNU LGPL 2.1 or later (licenses\LGPL-2.1.txt).
+  The build bundles other libraries, each under its own license: among
+  them GLib (LGPL), FFmpeg's libraries (LGPL), and plugins under the GNU
+  GPL (licenses\GPL-2.0.txt), as well as libraries under permissive
+  licenses. The licenses that came with the build are in
+  licenses\gstreamer\ when the build provided them.
+  Source: https://gstreamer.freedesktop.org/src/ (version {gstreamer}),
+  and the recipes it was built with: https://gitlab.freedesktop.org/gstreamer/cerbero
+
+poppler {poppler}
+  The folder poppler\ (pdftoppm.exe and the libraries it needs).
+  Built by https://github.com/oschwartz10612/poppler-windows
+  poppler is under the GNU GPL, version 2 or 3 (licenses\GPL-2.0.txt,
+  licenses\GPL-3.0.txt). The libraries beside it keep their own licenses.
+  Source: https://poppler.freedesktop.org/ (version {poppler}), and the
+  build: https://github.com/oschwartz10612/poppler-windows
+
+Getting the source
+  For three years from the date of the release this download belongs to,
+  anyone may ask for the complete source code of the GPL and LGPL
+  software above, in the exact versions in this download, by opening an
+  issue at https://github.com/AlenEngineer/lantern/issues . It is given
+  at no more than the cost of providing it.
+
+You may replace any of these libraries or programs with your own build of
+them: put it in the same place.

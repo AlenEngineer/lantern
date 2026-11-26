@@ -99,8 +99,9 @@ A source declares one or both capabilities:
 
 A live source can also be **on request**: it is only asked when the query
 names it with its bang (`!yt amazing grace`), never by a plain search. That
-is for slow, remote or metered sources (YouTube through `yt-dlp`, the Brave
-image API), so typing doesn't start a request on every pause. The dashboard
+is for slow, remote or metered sources (YouTube through its Data API or,
+when the operator chose it, `yt-dlp`; the Brave image API), so typing
+doesn't start a request on every pause. The dashboard
 searches them when Enter is pressed.
 
 **Bangs.** `Searcher::parse(text)` reads a leading `!bang` into a `Query`
@@ -248,6 +249,36 @@ Every operator method runs through one private function, `operate`. It
 takes the locks in order and compares the program's `SceneId` before and
 after the action. If a new scene is on program, `operate` logs it, as
 planned when it came from the plan and as live otherwise.
+
+### YouTube's player (`crates/web`, `crates/web-protocol`)
+
+YouTube's terms allow its own player and nothing else, so a YouTube video
+plays in it by default: `lantern-web`, a program of its own beside
+`lantern`, shows the IFrame Player API in a web view (wry: WebKitGTK on
+Linux, WebView2 on Windows), in a borderless full-screen window over the
+stage. A program, not a widget: iced draws the stage itself, and a web view
+inside its window doesn't work on Wayland, nor could iced's fades or
+blackout be drawn over it.
+
+- The app starts it the first time such a video plays
+  (`app::web_player`), writes `Command`s to its stdin and reads `Event`s
+  from its stdout, one JSON line each (`lantern-web-protocol`, which both
+  depend on, so the app doesn't link WebKitGTK). When its stdin closes it
+  quits.
+- It serves its page from a loopback port, not a file: YouTube's player
+  needs the page's address (the HTTP Referer) and refuses without it.
+- The stage (`app::stage`) drives it from the same places it drives a
+  video player: load and show on install, play and pause, seek, volume
+  and opacity (fades and blackout happen in the page, over black), and it
+  takes position, length, end and errors back as the engine's reports.
+- It shows only while the stage window is open, on the stage's screen (a
+  point on it: on Wayland the window system's screen names aren't the
+  outputs'), and hides at a video's end, so YouTube's end screen isn't
+  shown. Under it the stage draws the video's still, which the dashboard
+  and the phone see.
+- yt-dlp is only used when the operator chose it (`config::YoutubeMode`):
+  `stage::route` decides, per video, between YouTube's player and yt-dlp,
+  with the other as the fallback the mode names.
 
 ## Threading model
 

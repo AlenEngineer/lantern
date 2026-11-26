@@ -7,43 +7,89 @@
 //!
 //! A phone gets the address, with its token, from a QR code in the
 //! settings. The token is made once and kept in the data folder, so an
-//! address saved to a phone's home screen keeps working.
+//! address saved to a phone's home screen keeps working. When this machine
+//! is on Tailscale, a second code gives its Tailscale address, for a phone
+//! that isn't on the same Wi-Fi.
 
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::{Duration, Instant, SystemTime};
 
 use iced::futures::channel::mpsc::{UnboundedReceiver, unbounded};
+use iced::widget::image::Handle;
 use iced::widget::svg;
 use iced::{Color, Task};
-use lantern_engine::{Action, Media, Playback, Step, StepId, Timing};
+use lantern_engine::{Action, Kind, Media, Playback, Resource, ResourceId, Step, StepId, Timing};
 use lantern_remote::{
-    Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Server, Slides, Snapshot,
-    StepKind, Timed, Upcoming,
+    Badge, Bang, BibleBook, BibleBooks, Colors, Command, Found, Group, Hit, HitKind, Listed, Live,
+    Note, Place, Plan, Server, Shown, Slides, Snapshot, Source, SourceKind, Starts, StepKind,
+    Timed, Tone, Upcoming,
 };
 
+use crate::before::{self, SoundChange};
 use crate::keys::Op;
-use crate::plan_pane::{section_status, slot_detail};
+use crate::mode::Mode;
+use crate::plan_pane::{State, Under, section_status, slot_detail, soft_words, what_of};
+use crate::ready::Level;
 use crate::search;
-use crate::{App, Message, length, live_search, log};
+use crate::{App, Message, in_thread, length, library, live_search, log};
 
 /// How many results of one source a phone is sent: more than fit a few
 /// screens of a phone are better found by typing more.
 const MOST_HITS: usize = 25;
 
+/// How many results' pictures a phone is given at once: the first a
+/// search or a listed folder shows. Each is a few kilobytes.
+const MOST_THUMBS: usize = 60;
+
+/// How often this machine's Tailscale address is looked for again while
+/// the settings show it.
+const LOOK_FOR_TAILSCALE: Duration = Duration::from_secs(10);
+
+/// How long the settings wait for `tailscale ip` before going on without
+/// its answer; a later look picks the answer up.
+const WAIT_FOR_TAILSCALE: Duration = Duration::from_millis(150);
+
+/// The longest `tailscale ip` may take before it is stopped.
+const TAILSCALE_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// The remote, running.
 pub struct Remote {
     server: Server,
-    /// The address a phone opens, token and all.
-    pub address: String,
-    /// The same as a QR code.
-    pub code: svg::Handle,
+    /// How a phone on the same Wi-Fi opens the page.
+    pub lan: Reach,
+    /// How a phone on Tailscale opens it, when this machine is on it.
+    pub tailscale: Option<Reach>,
     /// What phones sent, until the app's subscription takes it.
     pub inbox: Arc<Inbox>,
     token: String,
-    /// This machine's name in [`address`](Remote::address).
+    looking: Tailscale,
+    /// The results' pictures the server has, as JPEGs: made once each,
+    /// and let go once the phone no longer lists it.
+    thumbs: Mutex<HashMap<ResourceId, Arc<Vec<u8>>>>,
+}
+
+/// One way a phone opens the page.
+pub struct Reach {
+    /// The address, token and all.
+    pub address: String,
+    /// The same as a QR code.
+    pub code: svg::Handle,
+    /// This machine's name in the address.
     host: String,
+}
+
+impl Reach {
+    fn new(host: String, port: u16, token: &str) -> Result<Reach, String> {
+        let address = format!("http://{host}:{port}/?t={token}");
+        Ok(Reach {
+            code: svg::Handle::from_memory(qr_svg(&address)?.into_bytes()),
+            address,
+            host,
+        })
+    }
 }
 
 /// The commands phones sent, waiting for the app.
@@ -68,32 +114,58 @@ impl Remote {
         .map_err(|err| format!("port {port}: {err}"))?;
         let mut remote = Remote {
             server,
-            address: String::new(),
-            code: svg::Handle::from_memory(Vec::new()),
+            lan: Reach {
+                address: String::new(),
+                code: svg::Handle::from_memory(Vec::new()),
+                host: String::new(),
+            },
+            tailscale: None,
             inbox: Arc::new(Inbox(Mutex::new(Some(received)))),
             token,
-            host: String::new(),
+            looking: Tailscale::default(),
+            thumbs: Mutex::default(),
         };
         remote.follow_network()?;
         Ok(remote)
     }
 
-    /// Writes the address and its code again if this machine's address
-    /// on the network changed: it joined another Wi-Fi, or a hotspot.
-    /// The server listens on every address, so only what the phone is
-    /// told changes.
+    /// Writes the addresses and their codes again if this machine's
+    /// addresses changed: it joined another Wi-Fi or a hotspot, or
+    /// Tailscale came on or went off. The server listens on every
+    /// address, so only what the phone is told changes.
     pub fn follow_network(&mut self) -> Result<(), String> {
-        let host = lan_address().map_or_else(|| "localhost".to_string(), |ip| ip.to_string());
-        if host == self.host {
-            return Ok(());
-        }
         let port = self.server.port();
-        let address = format!("http://{host}:{port}/?t={}", self.token);
-        self.code = svg::Handle::from_memory(qr_svg(&address)?.into_bytes());
-        self.address = address;
-        log(format!("remote: listening at http://{host}:{port}"));
-        self.host = host;
+        let lan = lan_address().map_or_else(|| "localhost".to_string(), host);
+        if lan != self.lan.host {
+            log(format!("remote: listening at http://{lan}:{port}"));
+            self.lan = Reach::new(lan, port, &self.token)?;
+        }
+        // With Tailscale carrying all its traffic, this machine's address
+        // on the network is its Tailscale one: one code says it all.
+        let tailscale = self
+            .looking
+            .address()
+            .map(host)
+            .filter(|tailscale| *tailscale != self.lan.host);
+        if tailscale.as_ref() != self.tailscale.as_ref().map(|reach| &reach.host) {
+            self.tailscale = match tailscale {
+                Some(tailscale) => {
+                    log(format!(
+                        "remote: over Tailscale at http://{tailscale}:{port}"
+                    ));
+                    Some(Reach::new(tailscale, port, &self.token)?)
+                }
+                None => None,
+            };
+        }
         Ok(())
+    }
+
+    /// Whether the server has the picture of the result `id`.
+    fn has_thumb(&self, id: &ResourceId) -> bool {
+        self.thumbs
+            .lock()
+            .is_ok_and(|thumbs| thumbs.contains_key(id))
     }
 
     /// Whether a phone is showing the picture of the stage.
@@ -149,6 +221,106 @@ fn lan_address() -> Option<IpAddr> {
     socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
     let ip = socket.local_addr().ok()?.ip();
     (!ip.is_unspecified() && !ip.is_loopback()).then_some(ip)
+}
+
+/// `ip` as an address's host: an IPv6 one in brackets.
+fn host(ip: IpAddr) -> String {
+    let at = SocketAddr::new(ip, 0).to_string();
+    at.strip_suffix(":0").unwrap_or(&at).to_string()
+}
+
+/// This machine's Tailscale address, looked for at most every
+/// [`LOOK_FOR_TAILSCALE`].
+#[derive(Default)]
+struct Tailscale {
+    looked: Option<Instant>,
+    found: Arc<Mutex<Option<IpAddr>>>,
+}
+
+impl Tailscale {
+    /// The address on a network interface of this machine's, else the one
+    /// `tailscale ip` gives: Tailscale run without a network interface of
+    /// its own (`--tun=userspace-networking`) puts its address on none.
+    /// Windows always has the interface, so it is never asked there.
+    fn address(&mut self) -> Option<IpAddr> {
+        if self
+            .looked
+            .is_none_or(|looked| looked.elapsed() >= LOOK_FOR_TAILSCALE)
+        {
+            self.looked = Some(Instant::now());
+            let interfaces = if_addrs::get_if_addrs().unwrap_or_default();
+            match tailscale_address(interfaces.iter().map(if_addrs::Interface::ip)) {
+                Some(ip) => *self.found.lock().ok()? = Some(ip),
+                None if cfg!(windows) => *self.found.lock().ok()? = None,
+                None => {
+                    let found = Arc::clone(&self.found);
+                    let (done, asked) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let said = ask_tailscale();
+                        if let Ok(mut found) = found.lock() {
+                            *found = said;
+                        }
+                        let _ = done.send(());
+                    });
+                    let _ = asked.recv_timeout(WAIT_FOR_TAILSCALE);
+                }
+            }
+        }
+        *self.found.lock().ok()?
+    }
+}
+
+/// The Tailscale address `tailscale ip` gives, if Tailscale is installed
+/// and up.
+fn ask_tailscale() -> Option<IpAddr> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("tailscale")
+        .arg("ip")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().ok()? {
+            break status;
+        }
+        if started.elapsed() > TAILSCALE_TIMEOUT {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let mut said = String::new();
+    child.stdout.take()?.read_to_string(&mut said).ok()?;
+    status
+        .success()
+        .then(|| tailscale_address(said.lines().filter_map(|line| line.trim().parse().ok())))
+        .flatten()
+}
+
+/// The first of `addresses` Tailscale gives out: an IPv4 one in
+/// 100.64.0.0/10, else an IPv6 one in fd7a:115c:a1e0::/48. A phone on
+/// mobile data is more likely to reach the IPv4 one.
+fn tailscale_address(addresses: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
+    let mut v6 = None;
+    for ip in addresses {
+        match ip {
+            IpAddr::V4(v4) if v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64 => {
+                return Some(ip);
+            }
+            IpAddr::V6(v6_ip)
+                if v6.is_none() && v6_ip.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0] =>
+            {
+                v6 = Some(ip);
+            }
+            _ => {}
+        }
+    }
+    v6
 }
 
 /// `text` as a QR code: black squares on white, with the quiet border a
@@ -253,8 +425,53 @@ impl App {
     /// Shows the phones how things stand, when any is looking.
     pub(crate) fn tell_remote(&self) {
         if let Some(remote) = self.remote.as_ref().filter(|remote| remote.watched()) {
+            self.give_thumbs(remote);
             remote.server.publish(&self.snapshot());
         }
+    }
+
+    /// Gives the server the pictures of the results the phone lists, as
+    /// far as they are made: each made into a JPEG once, while listed.
+    fn give_thumbs(&self, remote: &Remote) {
+        let Ok(mut given) = remote.thumbs.lock() else {
+            return;
+        };
+        let mut listed = HashMap::new();
+        for resource in self.phone_results().take(MOST_THUMBS) {
+            let jpeg = match given.get(&resource.id) {
+                Some(jpeg) => Some(jpeg.clone()),
+                None => self
+                    .thumbs
+                    .whole(resource)
+                    .and_then(|(handle, _)| jpeg_of(&handle))
+                    .map(Arc::new),
+            };
+            if let Some(jpeg) = jpeg {
+                listed.insert(resource.id.clone(), jpeg);
+            }
+        }
+        if listed.len() == given.len() && listed.keys().all(|id| given.contains_key(id)) {
+            return;
+        }
+        remote.server.set_thumbs(
+            listed
+                .iter()
+                .map(|(id, jpeg)| (id.to_string(), jpeg.clone()))
+                .collect(),
+        );
+        *given = listed;
+    }
+
+    /// The results the phone lists, in order: its search's, then the
+    /// folder it asked to list.
+    fn phone_results(&self) -> impl Iterator<Item = &Arc<Resource>> {
+        let found = self
+            .phone_search
+            .groups()
+            .iter()
+            .filter(|_| !self.phone_asked.trim().is_empty())
+            .flat_map(|group| group.hits.iter().take(MOST_HITS));
+        found.chain(self.phone_listed.iter().flat_map(|(_, files)| files))
     }
 
     /// Carries out what a phone asked for.
@@ -266,13 +483,20 @@ impl App {
         // whoever sits at it knows it wasn't them.
         if !matches!(
             command,
-            Command::Hello | Command::Search { .. } | Command::Seek { .. }
+            Command::Hello
+                | Command::Search { .. }
+                | Command::Browse { .. }
+                | Command::LineUp { .. }
+                | Command::Seek { .. }
+                | Command::Volume { .. }
+                | Command::Mute { .. }
         ) {
             self.motion.phone_acted();
         }
         match command {
-            // Its snapshot goes out with every update, this one included.
-            Command::Hello => Task::none(),
+            // Its snapshot goes out with every update, this one included;
+            // the sound's when it has been asked.
+            Command::Hello => self.update(Message::HearSound),
             Command::Next => self.op(Op::Next),
             Command::Prev => self.op(Op::Prev),
             Command::PlayPause => self.op(Op::PlayPause),
@@ -285,6 +509,11 @@ impl App {
                 Task::none()
             }
             Command::Seek { .. } => Task::none(),
+            Command::Volume { level } if level.is_finite() => {
+                self.change_sound(SoundChange::Volume(level))
+            }
+            Command::Volume { .. } => Task::none(),
+            Command::Mute { on } => self.change_sound(SoundChange::Muted(on)),
             Command::Search { text, enter } => {
                 let engine = self.engine.0.clone();
                 // The same text again, asked for outright: the search a
@@ -314,6 +543,47 @@ impl App {
                 self.stepping = true;
                 self.preload()
             }
+            Command::LineUp { id } => {
+                let Some(resource) = self.phone_found(&id) else {
+                    return Task::none();
+                };
+                // As lining one up from the dashboard's shelf does.
+                self.selected = None;
+                self.editing = None;
+                self.search.unpick();
+                self.engine.0.preview(resource);
+                self.preload()
+            }
+            Command::Again { n } => {
+                let Some(entry) = self.engine.0.log().into_iter().nth(n) else {
+                    return Task::none();
+                };
+                self.engine.0.show_now(Arc::new(entry.resource));
+                self.stepping = true;
+                self.preload()
+            }
+            Command::Browse { folder } => {
+                self.phone_listed = folder.and_then(|n| {
+                    let entry = self.config.folders.get(n)?;
+                    let query =
+                        lantern_engine::Query::new("").with_source(library::folder_source(entry));
+                    let mut files: Vec<_> = self
+                        .engine
+                        .0
+                        .search_index(&query)
+                        .into_iter()
+                        .map(|hit| hit.resource)
+                        .filter(|file| {
+                            file.location
+                                .as_path()
+                                .is_some_and(|path| path.starts_with(&entry.path))
+                        })
+                        .collect();
+                    files.sort_by(|a, b| lantern_engine::natural(&a.title, &b.title));
+                    Some((n, files))
+                });
+                Task::none()
+            }
             Command::Add { id } => {
                 let Some(resource) = self.phone_found(&id) else {
                     return Task::none();
@@ -340,14 +610,143 @@ impl App {
         }
     }
 
+    /// Changes the computer's sound, and shows the phones it changed
+    /// without waiting for the next look.
+    fn change_sound(&mut self, change: SoundChange) -> Task<Message> {
+        if let Some(sound) = &mut self.phone_sound {
+            match change {
+                SoundChange::Volume(level) => {
+                    sound.volume = level.clamp(0.0, 1.0);
+                    sound.muted = false;
+                }
+                SoundChange::Muted(on) => sound.muted = on,
+            }
+        }
+        Task::perform(
+            in_thread(move || before::change_sound(change)),
+            Message::Heard,
+        )
+    }
+
     /// The result a phone named, among what its search found.
     fn phone_found(&self, id: &str) -> Option<Arc<lantern_engine::Resource>> {
+        let listed = self.phone_listed.iter().flat_map(|(_, files)| files);
         self.phone_search
             .groups()
             .iter()
             .flat_map(|group| &group.hits)
+            .chain(listed)
             .find(|hit| hit.id.to_string() == id)
             .cloned()
+    }
+
+    /// What Live on the phone starts from: a tile for each source.
+    fn phone_sources(&self) -> Vec<Source> {
+        let registered: Vec<String> = self
+            .engine
+            .0
+            .searcher()
+            .sources()
+            .iter()
+            .map(|source| source.id().to_string())
+            .collect();
+        let has = |id: &str| registered.iter().any(|source| source == id);
+        let tile = |kind, name: &str, bang: &str, hint: String| Source {
+            kind,
+            name: name.into(),
+            bang: bang.into(),
+            hint,
+            folder: None,
+        };
+        let mut sources = Vec::new();
+        let bibles: Vec<String> = self
+            .library
+            .0
+            .outlines()
+            .into_iter()
+            .map(|outline| outline.name)
+            .collect();
+        if !bibles.is_empty() {
+            let hint = format!("{} · by book", bibles.join(", "));
+            sources.push(tile(SourceKind::Bible, "Bible", "b", hint));
+        }
+        for (n, entry) in self.config.folders.iter().enumerate() {
+            let bang = entry.bang.clone().unwrap_or_else(|| "f".into());
+            sources.push(Source {
+                folder: Some(n),
+                ..tile(
+                    SourceKind::Folder,
+                    &library::folder_name(entry),
+                    &bang,
+                    format!("your folder · !{bang}"),
+                )
+            });
+        }
+        if has("youtube") {
+            sources.push(tile(
+                SourceKind::Youtube,
+                "YouTube",
+                "yt",
+                "search videos".into(),
+            ));
+        }
+        if has("text") {
+            sources.push(tile(SourceKind::Text, "Text", "x", "type a slide".into()));
+        }
+        if has("clock") {
+            sources.push(tile(
+                SourceKind::Time,
+                "Time",
+                "t",
+                "clock, countdowns".into(),
+            ));
+        }
+        if has("images") {
+            sources.push(tile(
+                SourceKind::Images,
+                "Images",
+                "gi",
+                "web pictures".into(),
+            ));
+        }
+        sources
+    }
+
+    /// The first Bible's books, for the phone's picker.
+    fn phone_bible(&self) -> Option<BibleBooks> {
+        let outline = self.library.0.outlines().into_iter().next()?;
+        Some(BibleBooks {
+            name: outline.name,
+            books: outline
+                .books
+                .into_iter()
+                .map(|book| BibleBook {
+                    name: book.name,
+                    short: book.short,
+                    verses: book.verses,
+                })
+                .collect(),
+        })
+    }
+
+    /// What was shown since Live began, for showing again.
+    fn phone_shown(&self) -> Vec<Shown> {
+        let on = self.stage.program.as_ref().map(|scene| &scene.resource.id);
+        self.engine
+            .0
+            .log()
+            .into_iter()
+            .enumerate()
+            .skip(self.live_from)
+            .map(|(n, entry)| Shown {
+                n,
+                at: chrono::DateTime::<chrono::Local>::from(entry.at)
+                    .format("%H:%M")
+                    .to_string(),
+                live: on == Some(&entry.resource.id),
+                title: entry.resource.title,
+            })
+            .collect()
     }
 
     /// The phone's search and what it found so far.
@@ -362,11 +761,7 @@ impl App {
                 .hits
                 .iter()
                 .take(MOST_HITS)
-                .map(|hit| Hit {
-                    id: hit.id.to_string(),
-                    title: hit.title.clone(),
-                    facts: hit.subtitle.clone().unwrap_or_default(),
-                })
+                .map(|hit| self.remote_hit(hit))
                 .collect(),
         });
         Some(Found {
@@ -448,6 +843,15 @@ impl App {
                 Action::Show { resource } if step.label.is_empty() => resource.title.clone(),
                 _ => step.label.clone(),
             },
+            detail: self.remote_detail(&step),
+        });
+        let in_live = self.mode == Mode::Live;
+        let starts = plan.starts.map(|at| Starts {
+            at: at.to_string(),
+            in_seconds: at
+                .since_midnight()
+                .checked_sub(length::now_of_day())
+                .map(|left| left.as_secs()),
         });
         Snapshot {
             colors: Colors {
@@ -461,9 +865,15 @@ impl App {
                 live: hex(p.tertiary),
                 danger: hex(p.error),
             },
+            mode: match self.mode {
+                Mode::Plan => lantern_remote::Mode::Plan,
+                Mode::Run => lantern_remote::Mode::Run,
+                Mode::Live => lantern_remote::Mode::Live,
+            },
+            starts,
             plan: (!plan.is_empty() || !plan.title.is_empty()).then(|| Plan {
                 name: plan.title.clone(),
-                steps: self.remote_steps(&plan),
+                steps: self.remote_steps(&plan, &timing),
             }),
             live,
             next,
@@ -482,11 +892,98 @@ impl App {
                 })
                 .collect(),
             search: self.found(),
+            sources: if in_live {
+                self.phone_sources()
+            } else {
+                Vec::new()
+            },
+            bible: in_live.then(|| self.phone_bible()).flatten(),
+            shown: if in_live {
+                self.phone_shown()
+            } else {
+                Vec::new()
+            },
+            listed: self.phone_listed.as_ref().map(|(folder, files)| Listed {
+                folder: *folder,
+                hits: files.iter().map(|file| self.remote_hit(file)).collect(),
+            }),
+            sound: self
+                .phone_sound
+                .as_ref()
+                .map(|sound| lantern_remote::Sound {
+                    output: sound.output.clone(),
+                    volume: sound.volume,
+                    muted: sound.muted,
+                }),
+        }
+    }
+
+    /// A result as the phone lists it: as the dashboard's row has it
+    /// ([`App::result_facts`]).
+    fn remote_hit(&self, resource: &Resource) -> Hit {
+        let facts = self.result_facts(resource);
+        let picture = self
+            .remote
+            .as_ref()
+            .is_some_and(|remote| remote.has_thumb(&resource.id));
+        let shape = self
+            .thumbs
+            .pixels(&resource.id)
+            .map(|pixels| pixels.width as f32 / pixels.height.max(1) as f32)
+            .or_else(|| {
+                picture
+                    .then(|| self.thumbs.whole(resource))
+                    .flatten()
+                    .map(|(_, shape)| shape)
+            });
+        let state = facts.thumb.state;
+        Hit {
+            id: resource.id.to_string(),
+            title: resource.title.clone(),
+            facts: what_of(resource),
+            text: match &resource.location {
+                lantern_engine::Location::Inline(text) => text.chars().take(800).collect(),
+                _ => String::new(),
+            },
+            kind: hit_kind(resource),
+            size: facts.thumb.size,
+            state: state.map(|state| Badge {
+                text: state.words(),
+                tone: match state {
+                    State::Live => Tone::Live,
+                    State::Online | State::Coming(_) => Tone::Plain,
+                    State::Soft(_) => Tone::Waiting,
+                },
+            }),
+            warning: match facts.under {
+                Under::What(_) => None,
+                Under::Wrong(level, text) => Some(Badge {
+                    text,
+                    tone: match level {
+                        Level::Waiting => Tone::Waiting,
+                        Level::Problem => Tone::Problem,
+                    },
+                }),
+                Under::Soft(screen) => Some(Badge {
+                    text: soft_words(screen),
+                    tone: Tone::Waiting,
+                }),
+            },
+            progress: match state {
+                Some(State::Coming(part)) => Some(part),
+                _ => None,
+            },
+            shape,
+            picture,
         }
     }
 
     /// The plan's rows as the page shows them.
-    fn remote_steps(&self, plan: &lantern_engine::Plan) -> Vec<lantern_remote::Step> {
+    fn remote_steps(
+        &self,
+        plan: &lantern_engine::Plan,
+        timing: &Timing,
+    ) -> Vec<lantern_remote::Step> {
         let current = self.engine.0.current_step().map(|step| step.id);
         let at = current.and_then(|id| plan.position(id));
         let issues = self.issues(plan);
@@ -508,6 +1005,13 @@ impl App {
                     _ => Place::Ahead,
                 },
                 detail: self.remote_detail(step),
+                pace: remote_pace(
+                    timing
+                        .sections
+                        .iter()
+                        .find(|section| section.id == step.id)
+                        .and_then(|section| section.pace()),
+                ),
                 problem: issues
                     .iter()
                     .find(|issue| issue.step == step.id)
@@ -523,7 +1027,7 @@ impl App {
             Action::Live { hint, shown } => slot_detail(hint.as_ref(), shown.len()),
             Action::Blank => "black".to_string(),
             Action::Note => "note".to_string(),
-            Action::Section { .. } => String::new(),
+            Action::Section { budget, .. } => budget.map(length::rough).unwrap_or_default(),
             Action::Show { .. } => self.step_length(step),
         }
     }
@@ -531,18 +1035,27 @@ impl App {
     /// How the service stands, a few words each: the section under way
     /// against its budget, then how far behind or ahead the whole is, or
     /// when it ends.
-    fn standing(&self, timing: &Timing) -> Vec<String> {
+    fn standing(&self, timing: &Timing) -> Vec<Note> {
         let mut notes = Vec::new();
         if let Some(section) = timing.running() {
-            notes.push(section_status(section).0);
+            notes.push(Note {
+                text: section_status(section).0,
+                pace: remote_pace(section.pace()),
+            });
         }
         let ends_in = |end: SystemTime| end.duration_since(SystemTime::now()).unwrap_or_default();
         match (self.drift(timing), timing.end) {
-            (Some(drift), _) => notes.push(drift),
-            (None, Some(end)) if timing.running().is_some() => notes.push(format!(
-                "ends in {}",
-                length::rough(ends_in(end)).trim_start_matches('~')
-            )),
+            (Some(drift), _) => notes.push(Note {
+                text: drift,
+                pace: lantern_remote::Pace::OnTrack,
+            }),
+            (None, Some(end)) if timing.running().is_some() => notes.push(Note {
+                text: format!(
+                    "ends in {}",
+                    length::rough(ends_in(end)).trim_start_matches('~')
+                ),
+                pace: lantern_remote::Pace::OnTrack,
+            }),
             _ => {}
         }
         notes
@@ -564,6 +1077,46 @@ impl App {
         let behind =
             lantern_engine::timing::behind(starts?, scheduled?, length::now_of_day(), ends_in);
         Some(length::drift(behind))
+    }
+}
+
+/// A thumbnail as a JPEG, for a phone.
+fn jpeg_of(handle: &Handle) -> Option<Vec<u8>> {
+    let Handle::Rgba {
+        width,
+        height,
+        pixels,
+        ..
+    } = handle
+    else {
+        return None;
+    };
+    picture(pixels, *width, *height).ok()
+}
+
+/// What a result is, for the page's picture when it has none.
+fn hit_kind(resource: &Resource) -> HitKind {
+    if lantern_source_clock::Clock::of(resource).is_some() {
+        return HitKind::Time;
+    }
+    match &resource.kind {
+        Kind::Video => HitKind::Video,
+        Kind::Image => HitKind::Picture,
+        Kind::Presentation => HitKind::Deck,
+        Kind::Document => HitKind::Pdf,
+        Kind::Audio => HitKind::Sound,
+        Kind::Text if resource.meta.contains_key("verses") => HitKind::Passage,
+        Kind::Text => HitKind::Text,
+        Kind::Web => HitKind::Web,
+        Kind::Other(_) => HitKind::Other,
+    }
+}
+
+fn remote_pace(pace: Option<lantern_engine::Pace>) -> lantern_remote::Pace {
+    match pace {
+        None | Some(lantern_engine::Pace::OnTrack) => lantern_remote::Pace::OnTrack,
+        Some(lantern_engine::Pace::Tight) => lantern_remote::Pace::Tight,
+        Some(lantern_engine::Pace::Over) => lantern_remote::Pace::Over,
     }
 }
 
@@ -602,6 +1155,55 @@ mod tests {
         let x: usize = first.split(' ').next().unwrap().parse().unwrap();
         assert!((4..side - 4).contains(&x), "{x}");
         assert!(svg.contains("fill=\"#ffffff\"") && svg.contains("fill=\"#000000\""));
+    }
+
+    #[test]
+    fn a_tailscale_address_is_told_from_the_others() {
+        let ip = |text: &str| text.parse::<IpAddr>().unwrap();
+        let lan = [
+            ip("127.0.0.1"),
+            ip("192.168.1.20"),
+            ip("::1"),
+            ip("fe80::1"),
+        ];
+        let v4 = ip("100.101.102.103");
+        let v6 = ip("fd7a:115c:a1e0::1");
+        assert_eq!(tailscale_address(lan.into_iter().chain([v4])), Some(v4));
+        assert_eq!(tailscale_address(lan.into_iter().chain([v6])), Some(v6));
+        assert_eq!(tailscale_address([v6, v4]), Some(v4), "IPv4 first");
+        assert_eq!(tailscale_address(lan), None);
+        assert_eq!(
+            tailscale_address([
+                ip("100.63.255.255"),
+                ip("100.128.0.1"),
+                ip("fd7a:115c:a1e1::1")
+            ]),
+            None,
+            "next to Tailscale's ranges, not in them"
+        );
+        assert_eq!(
+            tailscale_address([ip("100.64.0.0")]),
+            Some(ip("100.64.0.0"))
+        );
+        let edge = ip("100.127.255.255");
+        assert_eq!(tailscale_address([edge]), Some(edge));
+    }
+
+    #[test]
+    fn an_ipv6_host_is_in_brackets() {
+        let address = |ip: &str| {
+            Reach::new(host(ip.parse().unwrap()), 7373, "abc")
+                .unwrap()
+                .address
+        };
+        assert_eq!(
+            address("fd7a:115c:a1e0::1"),
+            "http://[fd7a:115c:a1e0::1]:7373/?t=abc"
+        );
+        assert_eq!(
+            address("100.101.102.103"),
+            "http://100.101.102.103:7373/?t=abc"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The left pane: the plan. Its steps, grouped under section headers that
 //! say how each part is keeping to its time, edited in place (see
-//! [`crate::plan_edit`]), and behind the Plans button the saved plans.
+//! [`crate::plan_edit`]), and behind the plan's name the saved plans.
 //!
 //! Clicking a step selects it, opens its edit strip and lines it up in the
 //! preview; Enter puts it on stage, and Ctrl+Enter adds after it.
@@ -12,28 +12,29 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length, Rectangle, mouse};
 use lantern_engine::{
-    Action, Basis, FadeTime, Flow, FlowOf, Media, Pace, Phase, Plan, Query, Repeat, Resource,
-    SectionTiming, Step, StepId, Timing,
+    Action, Basis, Estimate, FadeTime, Flow, FlowOf, Kind, Location, Media, Pace, Phase, Plan,
+    Query, Repeat, Resource, SectionTiming, Step, StepId, TimeOfDay, Timing,
 };
 
 use crate::dashboard::{NAME_BOX, level_tone, op, unit};
 use crate::drag::Half;
 use crate::keys::{self, Op};
 use crate::length;
-use crate::look::{self, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, Tone};
+use crate::look::{self, BADGE, BODY, BOLD, HEADING, Icon, MEDIUM, META, PILL_SMALL, TITLE, Tone};
 use crate::palette::Palette;
+use crate::pixels::{Pixels, looks_soft};
 use crate::plan_edit::{NewStep, Part, goes_on_when, insertion_mark};
 use crate::plans::{self, Entry, Notice, Switch, file_name};
-use crate::ready::Issue;
+use crate::ready::{Issue, Level, Reach};
+use crate::sources::CardAt;
 use crate::widgets::{self, Filled, hinted, pill, scrolling, single_line, wide};
 use crate::{App, Clicked, FadeEnd, Message, track};
 
 /// The id of the pane's rows, to scroll them.
 pub const ROWS: &str = "plan-rows";
 
-/// How far a section's steps sit in from its header: room between the
-/// section's own line and its steps' for the line of a loop round some
-/// of them.
+/// How far in a section's header sits for each section round it, and the
+/// gap for what is carried for each level in it would land.
 pub(crate) const INDENT: f32 = 12.0;
 
 /// The field the plan's target time is typed in.
@@ -42,7 +43,8 @@ pub(crate) const TARGET_BOX: &str = "plan-target";
 pub(crate) const STARTS_BOX: &str = "plan-starts";
 
 /// The rail beside the steps: how wide its column is, its dots, its
-/// line, and how far down a row its dot sits, level with the step's name.
+/// line, and how far down a row of one line its dot sits, level with the
+/// step's name.
 pub(crate) const RAIL: f32 = 20.0;
 pub(crate) const RAIL_DOT: f32 = 10.0;
 const RAIL_LINE: f32 = 2.0;
@@ -54,26 +56,106 @@ const RAIL_RING: f32 = 4.0;
 /// drag opens: for what is cut to a height on its way open or closed, and
 /// a row not drawn yet. A little over is right; under would cut a row
 /// that should show whole.
-const ROW_TALL: f32 = 44.0;
+const ROW_TALL: f32 = 50.0;
 const PART_TALL: f32 = 22.0;
 const GAP_TALL: f32 = 48.0;
-/// How tall the place for one carried step is, how many of them are
-/// drawn at most, and how tall the place for a carried section is.
-const PLACE_TALL: f32 = 36.0;
+/// How many places for carried steps are drawn at most.
 const PLACES: usize = 6;
-const BLOCK_TALL: f32 = 60.0;
 
-/// The plan's own row: a right click on it opens the ring of how the
-/// whole plan moves, where the plan can change (`can`).
-fn plans_own<'a>(row: Element<'a, Message>, can: bool) -> Element<'a, Message> {
-    if !can {
-        return row;
+/// A step's picture while planning, 16:9, and the room above and below
+/// it: together, how tall the first line of its row is.
+const PICTURE: f32 = 64.0;
+const PICTURE_ROOM: f32 = 5.0;
+const TALL_LINE: f32 = PICTURE * 9.0 / 16.0 + 2.0 * PICTURE_ROOM;
+/// How far a picture's badges sit in from its corners, and the room
+/// either side of a badge's words.
+const BADGE_INSET: f32 = 2.0;
+const BADGE_PAD: f32 = 3.0;
+/// How wide the column of the steps' times of day is.
+const TIME_WIDE: f32 = 40.0;
+/// How large a section's name is on its header, a little over its
+/// steps' names, how wide the gauge of its time is, and how tall the
+/// header's line is.
+const NAME: f32 = 14.0;
+const GAUGE: f32 = 64.0;
+pub(crate) const HEAD_LINE: f32 = 26.0;
+
+/// How the plan's steps are laid out. While planning a step's row is
+/// tall: its time of day, its dot, its picture, its name over a line of
+/// what it is, and its length. In a run, where the plan is a narrow pane
+/// beside the stage, it is one line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Rows {
+    Tall,
+    Line,
+}
+
+impl Rows {
+    fn of(mode: crate::mode::Mode) -> Rows {
+        match mode {
+            crate::mode::Mode::Plan => Rows::Tall,
+            crate::mode::Mode::Run | crate::mode::Mode::Live => Rows::Line,
+        }
     }
-    mouse_area(row)
-        .on_right_press(Message::Rail(crate::rail::Act::Ring(
-            crate::rail::RingOn::All(None),
-        )))
-        .into()
+
+    /// How far down a step's row its dot sits: level with the middle of
+    /// its picture, or with its name.
+    fn dot(self) -> f32 {
+        match self {
+            Rows::Tall => (TALL_LINE - RAIL_DOT) / 2.0,
+            Rows::Line => RAIL_TOP,
+        }
+    }
+
+    /// How tall the place for one carried step is: about as tall as a
+    /// step's row.
+    fn place(self) -> f32 {
+        match self {
+            Rows::Tall => TALL_LINE,
+            Rows::Line => 36.0,
+        }
+    }
+
+    /// How far down a place, or a folded section's row, its dot sits: in
+    /// a place's middle.
+    fn place_dot(self) -> f32 {
+        (self.place() - RAIL_DOT) / 2.0
+    }
+
+    /// The room over a section's header, where a new group starts.
+    fn head_room(self) -> f32 {
+        match self {
+            Rows::Tall => 14.0,
+            Rows::Line => 8.0,
+        }
+    }
+
+    /// The room round what is in a step's row, above and below it and to
+    /// either side.
+    fn padding(self) -> [f32; 2] {
+        match self {
+            Rows::Tall => [PICTURE_ROOM, 10.0],
+            Rows::Line => [10.0, 10.0],
+        }
+    }
+
+    /// How far in from the start of a step's row its name is: past its
+    /// picture, with the row's room between.
+    fn inset(self) -> f32 {
+        match self {
+            Rows::Tall => PICTURE + 8.0,
+            Rows::Line => 0.0,
+        }
+    }
+
+    /// About how far left of the end of a step's row its notes' marks
+    /// are: past its length, and while planning the mark beside it.
+    fn marks_from_end(self) -> f32 {
+        match self {
+            Rows::Tall => 63.0,
+            Rows::Line => 44.0,
+        }
+    }
 }
 
 /// What the place of a file carried in from the library goes by, among the
@@ -83,113 +165,205 @@ fn held_place(n: usize) -> StepId {
         .expect("a step id is a number")
 }
 
-/// The sections that are brackets in `plan` (as `bracketed` says), each
-/// a lane further out than those it holds.
-fn lay_brackets(plan: &Plan, bracketed: &dyn Fn(&Plan, usize) -> bool) -> Vec<Braced> {
-    let mut braced: Vec<Braced> = (0..plan.len())
-        .filter(|at| bracketed(plan, *at))
-        .map(|at| Braced {
-            at,
-            end: plan.group_end(at),
-            lane: 0,
-        })
-        .collect();
-    for at in (0..braced.len()).rev() {
-        let (outer, inner) = braced.split_at_mut(at + 1);
-        let this = &mut outer[at];
-        this.lane = inner
-            .iter()
-            .filter(|held| held.end <= this.end)
-            .map(|held| held.lane + 1)
-            .max()
-            .unwrap_or(0);
-    }
-    braced
-}
-
-/// A section that is a bracket beside its steps: where its heading is,
-/// where what it holds ends, and how far out its bracket is.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Braced {
-    at: usize,
-    end: usize,
-    lane: u8,
-}
-
-/// The brackets beside the steps: which sections they are, how many
-/// lanes of them, and whether one needs room right of its brace.
-#[derive(Debug, Clone, Copy)]
-struct Side<'a> {
-    braced: &'a [Braced],
-    lanes: u8,
-    wide: bool,
-    /// There is room for the brackets' names: without it they fold
-    /// away, and only their colours tell them apart.
-    named: bool,
-    /// The lane of the plan's own bracket, round all of its steps,
-    /// where there is one: the outermost.
-    plan: Option<u8>,
-    /// Each section's colour.
-    colors: &'a [(StepId, u8)],
-    /// How wide each lane's brace is now, the innermost first.
-    widths: &'a [f32],
-}
-
-impl Side<'_> {
-    /// How wide all of it is.
-    fn room(&self) -> f32 {
-        track::side_room(self.lanes, self.wide, self.named, self.plan.is_some())
-    }
-
-    /// How wide the plan's part of it is, from its brace to the right.
-    fn plans_room(&self) -> Option<f32> {
-        let lane = self.plan?;
-        Some(self.room() - track::brace_at(self.widths, lane, self.named))
-    }
-}
-
-/// What a part of the room beside the steps is the bracket of.
+/// What a row of the plan's list is, top to bottom.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Held {
-    Section(StepId),
-    Plan,
+enum Listed {
+    /// A section's header, `depth` in. Folded, it stands for all it
+    /// holds.
+    Head {
+        section: StepId,
+        depth: u8,
+        folded: bool,
+    },
+    Step(StepId),
+    /// The place of a section with nothing in it, or nothing but what is
+    /// carried: where its steps will be.
+    Empty(StepId),
+    /// Where what is carried would land.
+    Gap,
+    /// The room under a section's last row, where its foot is pulled.
+    Foot(StepId),
 }
 
-/// What the part of the room right of the row at `index` in `lane` is
-/// the bracket of; with no lane, the innermost section the row is in.
-/// The plan's in its own lane, and round a row in no section.
-fn covering(plan: &Plan, side: Side<'_>, index: usize, lane: Option<u8>) -> Option<Held> {
-    side.braced
-        .iter()
-        .filter(|braced| (braced.at + 1..braced.end).contains(&index))
-        .filter(|braced| lane.is_none_or(|lane| braced.lane == lane))
-        .min_by_key(|braced| braced.lane)
-        .map(|braced| Held::Section(plan.steps()[braced.at].id))
-        .or_else(|| {
-            side.plan
-                .filter(|plan| lane.is_none_or(|lane| lane == *plan))
-                .map(|_| Held::Plan)
-        })
-}
-
-/// How the bracket of `id` (the plan's for none) stands in `plan` while
-/// `lit` is the one pointed at or taking in what is carried: that one
-/// lit, those inside it in their own colours, the rest stepping back.
-fn lit_of(plan: &Plan, lit: Option<Held>, id: Option<StepId>) -> track::Light {
-    let inside = match (lit, id) {
-        (None, _) => return track::Light::Plain,
-        (Some(Held::Plan), None) => return track::Light::Lit,
-        (Some(Held::Section(lit)), Some(id)) if lit == id => return track::Light::Lit,
-        (Some(Held::Plan), Some(_)) => true,
-        (Some(Held::Section(_)), None) => false,
-        (Some(Held::Section(lit)), Some(id)) => plan
-            .position(id)
-            .is_some_and(|at| plan.within(at).contains(&lit)),
-    };
-    match inside {
-        true => track::Light::Within,
-        false => track::Light::Back,
+/// The rows of `plan` as its list shows them: each section's header
+/// before what it holds, one `shut` as its header alone but for a step
+/// `kept` in sight. What is `carried` is out, and the gap opens where it
+/// would land: before the row `landing` says among the rest, as far in
+/// as it says, so inside each section further out and after the feet of
+/// the others. With `feet`, each section has one under its last row.
+fn listed(
+    plan: &Plan,
+    shut: &dyn Fn(StepId) -> bool,
+    kept: &[StepId],
+    carried: &[StepId],
+    landing: Option<(usize, u8)>,
+    feet: bool,
+) -> Vec<Listed> {
+    let steps = plan.steps();
+    let mut rows = Vec::new();
+    // The sections whose feet are still to come, innermost last: where
+    // what they hold ends, and how far in they are.
+    let mut open: Vec<(StepId, usize, u8)> = Vec::new();
+    let mut hidden_to = 0;
+    let mut rest = 0;
+    for index in 0..=steps.len() {
+        let step = steps.get(index);
+        if step.is_some_and(|step| carried.contains(&step.id)) {
+            continue;
+        }
+        let gap = landing
+            .filter(|(at, _)| *at == rest)
+            .map(|(_, level)| level);
+        let mut ends = |rows: &mut Vec<Listed>, inside: Option<u8>| {
+            while let Some(&(id, end, depth)) = open.last() {
+                if end > index || inside.is_some_and(|level| depth < level) {
+                    break;
+                }
+                open.pop();
+                if feet {
+                    rows.push(Listed::Foot(id));
+                }
+            }
+        };
+        ends(&mut rows, gap);
+        if gap.is_some() {
+            rows.push(Listed::Gap);
+        }
+        ends(&mut rows, None);
+        let Some(step) = step else {
+            break;
+        };
+        rest += 1;
+        if index < hidden_to && (step.is_section() || !kept.contains(&step.id)) {
+            continue;
+        }
+        let Some(depth) = step.depth() else {
+            rows.push(Listed::Step(step.id));
+            continue;
+        };
+        let end = plan.group_end(index);
+        let folded = shut(step.id);
+        rows.push(Listed::Head {
+            section: step.id,
+            depth,
+            folded,
+        });
+        if folded {
+            hidden_to = end;
+            continue;
+        }
+        // Landing in a section with nothing in it, the gap is its place.
+        let lands_in = landing.is_some_and(|(at, level)| at == rest && level > depth);
+        if (index + 1..end).all(|at| carried.contains(&steps[at].id)) && !lands_in {
+            rows.push(Listed::Empty(step.id));
+        }
+        open.push((step.id, end, depth));
     }
+    rows
+}
+
+/// How the line of the section `id` stands in `plan` while `lit` is the
+/// one pointed at or taking in what is carried: that one lit, those
+/// inside it as they are, the rest stepping back.
+fn lit_of(plan: &Plan, lit: Option<StepId>, id: StepId) -> track::Light {
+    match lit {
+        None => track::Light::Plain,
+        Some(lit) if lit == id => track::Light::Lit,
+        Some(lit)
+            if plan
+                .position(id)
+                .is_some_and(|at| plan.within(at).contains(&lit)) =>
+        {
+            track::Light::Within
+        }
+        Some(_) => track::Light::Back,
+    }
+}
+
+/// The sections a row of the list is in, the outermost first. A
+/// section's header, place and foot are in it too, and the gap is in
+/// `gap_in`, the sections round where what is carried would land,
+/// innermost first.
+fn inside(plan: &Plan, row: Listed, gap_in: &[StepId]) -> Vec<StepId> {
+    let within = |id: StepId| {
+        plan.position(id)
+            .map_or_else(Vec::new, |at| plan.within(at))
+    };
+    match row {
+        Listed::Step(id) => within(id),
+        Listed::Head { section, .. } | Listed::Empty(section) | Listed::Foot(section) => {
+            let mut round = within(section);
+            round.push(section);
+            round
+        }
+        Listed::Gap => gap_in.iter().rev().copied().collect(),
+    }
+}
+
+/// Each section's line beside `rows`, in pieces, top to bottom: the
+/// section, and the rows a piece starts and ends at. A piece starts at
+/// the section's header, or at the first of its rows with a dot after a
+/// section inside it ended, and ends at the last of those before the next
+/// header inside it, or at its foot. A folded section is a row with a
+/// dot of the one round it, as the gap is of the innermost of `gap_in`.
+fn stretches(plan: &Plan, rows: &[Listed], gap_in: &[StepId]) -> Vec<(StepId, usize, usize)> {
+    let mut pieces = Vec::new();
+    // The sections open so far: where their piece starts, and the last
+    // of its rows with a dot.
+    let mut open: Vec<(StepId, Option<usize>, Option<usize>)> = Vec::new();
+    let round = |id: StepId| {
+        plan.position(id)
+            .and_then(|at| plan.within(at).last().copied())
+    };
+    for (n, row) in rows.iter().enumerate() {
+        let dotted = match *row {
+            Listed::Head {
+                section,
+                folded: false,
+                ..
+            } => {
+                if let Some(piece) =
+                    round(section).and_then(|round| open.iter_mut().find(|(id, ..)| *id == round))
+                    && let (Some(from), Some(to)) = (piece.1.take(), piece.2.take())
+                {
+                    pieces.push((piece.0, from, to));
+                }
+                open.push((section, Some(n), None));
+                continue;
+            }
+            Listed::Foot(section) => {
+                if let Some(at) = open.iter().position(|(id, ..)| *id == section)
+                    && let (_, Some(from), _) = open.remove(at)
+                {
+                    pieces.push((section, from, n));
+                }
+                continue;
+            }
+            Listed::Empty(_) => continue,
+            Listed::Step(id) | Listed::Head { section: id, .. } => round(id),
+            Listed::Gap => gap_in.first().copied(),
+        };
+        if let Some(piece) =
+            dotted.and_then(|holder| open.iter_mut().find(|(id, ..)| *id == holder))
+        {
+            piece.1.get_or_insert(n);
+            piece.2 = Some(n);
+        }
+    }
+    pieces.extend(
+        open.into_iter()
+            .filter_map(|(section, from, to)| Some((section, from?, to?))),
+    );
+    pieces.sort_by_key(|(_, from, _)| *from);
+    pieces
+}
+
+/// The last of `rows` in `section`, but for its foot: where its band
+/// ends.
+fn last_in(plan: &Plan, rows: &[Listed], section: StepId, gap_in: &[StepId]) -> Option<usize> {
+    rows.iter().rposition(|row| {
+        !matches!(row, Listed::Foot(_)) && inside(plan, *row, gap_in).contains(&section)
+    })
 }
 
 /// What a plan takes: see [`App::plan_sums`].
@@ -205,97 +379,163 @@ impl PlanSums {
     fn against(&self, target: Option<Duration>) -> Option<Duration> {
         target.or((self.total != self.filled).then_some(self.total))
     }
+
+    /// What its steps come to, "Σ 7:48": at least that, "Σ 7:48+", where
+    /// something comes again with no end.
+    fn said(&self) -> String {
+        match self.open {
+            true => format!("Σ {}+", length::clock(self.filled)),
+            false => format!("Σ {}", length::clock(self.filled)),
+        }
+    }
+
+    /// When a plan that `starts` then should end: after its goal, or else
+    /// after what its steps and its sections' times come to.
+    fn ends(&self, starts: Option<TimeOfDay>, target: Option<Duration>) -> Option<TimeOfDay> {
+        starts.map(|starts| starts.plus(target.unwrap_or(self.total)))
+    }
 }
 
-/// What is written beside the plan's bracket, after its name, in the
-/// order a section's are: the time it is meant to take (with no goal of
-/// its own, what its sections' times come to), what its steps come to
-/// (at least that, where something comes again with no end) and whether
-/// that is over it, and the time of day it starts.
-fn plan_lines(
+/// What the plan's title says of it while planning, in order, each with
+/// whether it is over: how many `steps` it has; what they come to, over
+/// where that is more than what it is held against; that, its goal
+/// ([`PlanSums::against`]); and the time of day it `starts` and so ends.
+/// Only what is known is said.
+fn plan_facts(
+    steps: usize,
     target: Option<Duration>,
-    starts: Option<lantern_engine::TimeOfDay>,
+    starts: Option<TimeOfDay>,
     sums: &PlanSums,
-) -> Vec<(track::Sign, String, bool)> {
-    let mut lines = Vec::new();
+) -> Vec<(String, bool)> {
     let against = sums.against(target);
-    if let Some(against) = against {
-        lines.push((track::Sign::Goal, length::clock(against), false));
+    let over = against.is_some_and(|against| sums.filled > against);
+    let mut facts = vec![(count(steps, "step"), false), (sums.said(), over)];
+    facts.extend(against.map(|against| (format!("◎ {}", length::clock(against)), false)));
+    if let (Some(starts), Some(ends)) = (starts, sums.ends(starts, target)) {
+        facts.push((format!("starts {starts}, ends {ends}"), false));
     }
-    let sum = match sums.open {
-        true => format!("{}+", length::clock(sums.filled)),
-        false => length::clock(sums.filled),
-    };
-    lines.push((
-        track::Sign::Sum,
-        sum,
-        against.is_some_and(|against| sums.filled > against),
-    ));
-    if let Some(starts) = starts {
-        lines.push((track::Sign::Start, starts.to_string(), false));
-    }
-    lines
+    facts
 }
 
 impl App {
-    /// The head of the plan's bracket, over its rows: its name, goal,
-    /// what it takes, and when it starts. Pressed, its card opens; a
-    /// right click opens its ring.
+    /// The plan's head, over its rows, then its sections' parts. While
+    /// planning it is the page's title: its name, large, and what is
+    /// known of it ([`plan_facts`]). In a run, where the strip has its
+    /// name, it is its name small and the time it is meant to take.
     fn plan_head(&self, plan: &Plan, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
         let sums = self.plan_sums(plan);
-        let mut line = row![
-            Space::new().width(Fill),
-            text(plan.title.clone())
-                .size(META)
-                .font(BOLD)
-                .color(p.primary)
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center);
-        for (sign, words, over) in plan_lines(plan.target, plan.starts, &sums) {
-            let ink = match (sign, over) {
-                (_, true) => p.error,
-                (track::Sign::Sum, false) => p.on_surface,
-                _ => p.on_surface_variant,
-            };
-            let mark = match sign {
-                track::Sign::Goal => "◎",
-                track::Sign::Sum => "Σ",
-                track::Sign::Start => "▷",
-                track::Sign::Clock => "",
-            };
-            line = line.push(text(format!("{mark} {words}")).size(META).color(ink));
-        }
-        let mut head = column![line].spacing(4);
+        let (line, apart): (Element<'_, Message>, f32) = match self.mode {
+            crate::mode::Mode::Plan => {
+                let steps = plan.steps().iter().filter(|s| !s.is_section()).count();
+                let facts = plan_facts(steps, plan.target, plan.starts, &sums);
+                let mut said = row![].spacing(5).align_y(Alignment::Center);
+                for (at, (words, over)) in facts.into_iter().enumerate() {
+                    if at > 0 {
+                        said = said.push(single_line("·").size(META).color(p.on_surface_variant));
+                    }
+                    let ink = if over { p.error } else { p.on_surface_variant };
+                    said = said.push(single_line(words).size(META).color(ink));
+                }
+                let title = row![
+                    single_line(plan.title.clone())
+                        .size(TITLE)
+                        .font(BOLD)
+                        .color(p.on_surface),
+                    container(said)
+                        .width(Fill)
+                        .clip(true)
+                        .padding(iced::Padding::default().bottom(4.0)),
+                ]
+                .spacing(12)
+                .align_y(Alignment::End);
+                (track::seen(track::Key::Title, &self.places, title), 14.0)
+            }
+            _ => {
+                let mut line = row![
+                    Space::new().width(Fill),
+                    text(plan.title.clone())
+                        .size(META)
+                        .font(BOLD)
+                        .color(p.primary)
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center);
+                // With no goal of its own, what its sections' times come to.
+                if let Some(against) = sums.against(plan.target) {
+                    line = line.push(
+                        text(format!("◎ {}", length::clock(against)))
+                            .size(META)
+                            .color(p.on_surface_variant),
+                    );
+                }
+                (line.into(), 4.0)
+            }
+        };
+        let mut head = column![line].spacing(apart);
         if let Some(parts) = self.section_parts(plan, timing) {
             head = head.push(parts);
         }
-        let line = track::seen(
-            track::Key::Head,
-            &self.places,
-            container(head).padding([2, 8]),
-        );
-        mouse_area(line)
-            .on_press(Message::PickPlan)
-            .on_double_click(Message::FoldPlan)
-            .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                crate::rail::RingOn::All(None),
-            )))
-            .interaction(mouse::Interaction::Pointer)
-            .into()
+        container(head).padding([2, 8]).into()
+    }
+
+    /// Where `aim` is on the dashboard, as last laid out: for a script's
+    /// pointer. A spot of a row is across its middle; anything else is
+    /// its middle.
+    pub(crate) fn place_of(&self, aim: crate::script::Aim) -> Option<iced::Point> {
+        use crate::script::{Aim, Spot};
+        let places = self.places.borrow();
+        let middle = |key: track::Key, scrolled: f32| {
+            let seen = places.get(&key)?;
+            Some(iced::Point::new(
+                seen.center_x(),
+                seen.center_y() - scrolled,
+            ))
+        };
+        let (entry, spot) = match aim {
+            Aim::Row(entry, spot) => (entry, spot),
+            Aim::Title => return middle(track::Key::Title, self.plan_scrolled),
+            Aim::RingNote => return middle(track::Key::RingNote, 0.0),
+            Aim::Library(n) => {
+                // The library's list is told nothing once its rows fit in
+                // it, as a layout can make them: then it is at its top,
+                // whatever it was last told.
+                let tall = |key| places.get(&key).map(|seen: &Rectangle| seen.height);
+                let most = tall(track::Key::ShelfRows)
+                    .zip(tall(track::Key::ShelfView))
+                    .map_or(0.0, |(rows, view)| (rows - view).max(0.0));
+                return middle(track::Key::Shelf(n), self.shelf_scrolled.min(most));
+            }
+        };
+        let id = self.engine.0.plan().steps().get(entry)?.id;
+        let key = match spot {
+            Spot::Chevron => return middle(track::Key::Chevron(id), self.plan_scrolled),
+            Spot::Foot => track::Key::Foot(id),
+            Spot::Top | Spot::Middle | Spot::Bottom => track::Key::Whole(id),
+        };
+        let row = *places.get(&key)?;
+        let y = match spot {
+            Spot::Top => row.y + FOOT / 2.0,
+            Spot::Bottom => row.y + row.height * 0.75,
+            Spot::Middle | Spot::Foot | Spot::Chevron => row.center_y(),
+        };
+        Some(iced::Point::new(row.center_x(), y - self.plan_scrolled))
     }
 }
 
 impl App {
-    /// A part for each of the plan's own sections, in its colour, as
-    /// wide as the time it is given (or else takes) and as full as its
-    /// steps make it; over its time, full in the colour of what is
-    /// wrong. `None` with no sections.
+    /// A part for each of the plan's own sections, solid in its colour,
+    /// as wide as the time it is given (or else takes); past its time,
+    /// the share of its steps that is over is in the colour of what is
+    /// wrong. How full it is against its time is its header's gauge. One
+    /// that holds nothing is faded. Under each, its name in its colour
+    /// and what its steps take, or for one that holds nothing its name
+    /// and "empty", as much of that as its width has room for
+    /// ([`words_said`]). `None` with no sections.
     fn section_parts<'a>(&self, plan: &Plan, timing: &Timing) -> Option<Element<'a, Message>> {
         let p = self.palette;
         let colors = plan.section_colors();
-        let parts: Vec<Element<'a, Message>> = timing
+        let parts: Vec<SectionPart> = timing
             .sections
             .iter()
             .filter(|section| {
@@ -308,22 +548,187 @@ impl App {
                     Phase::Running { expected, .. } => expected,
                     Phase::Done { took } => took.unwrap_or_default(),
                 };
-                let (full, over) = part_fill(section.budget, planned);
-                let color = match over {
-                    true => p.error,
-                    false => section_hue(p, &colors, section.id),
+                let hue = section_hue(p, &colors, section.id);
+                let empty = plan
+                    .position(section.id)
+                    .is_some_and(|at| plan.group_end(at) == at + 1);
+                let name = plan
+                    .get(section.id)
+                    .map_or_else(String::new, |step| step.label.clone());
+                let (colour, over, words) = if empty {
+                    let faded = |ink| Palette::tint(ink, EMPTY_FADED);
+                    (
+                        faded(hue),
+                        0.0,
+                        vec![
+                            (name, faded(hue), BOLD),
+                            ("· empty".to_string(), faded(p.on_surface_variant), look::UI),
+                        ],
+                    )
+                } else {
+                    let over = over_share(section.budget, planned);
+                    (
+                        hue,
+                        over,
+                        vec![
+                            (name, hue, BOLD),
+                            (
+                                length::clock(planned),
+                                if over > 0.0 {
+                                    p.error
+                                } else {
+                                    p.on_surface_variant
+                                },
+                                look::UI,
+                            ),
+                        ],
+                    )
                 };
-                let wide = section.budget.unwrap_or(planned).as_secs().clamp(1, 60_000) as u16;
-                container(bar(p, full, color, 0.0))
-                    .width(Length::FillPortion(wide))
-                    .into()
+                SectionPart {
+                    wide: section.budget.unwrap_or(planned).as_secs().clamp(1, 60_000) as u16,
+                    colour,
+                    over,
+                    words,
+                }
             })
             .collect();
-        (!parts.is_empty()).then(|| row(parts).spacing(3).into())
+        if parts.is_empty() {
+            return None;
+        }
+        // How wide each part is shows only once they are laid out.
+        let whole: f32 = parts.iter().map(|part| f32::from(part.wide)).sum();
+        let error = p.error;
+        let ribbon = iced::widget::responsive(move |room| {
+            let room = room.width - PART_GAP * (parts.len() - 1) as f32;
+            row(parts.iter().map(|part| {
+                let words: Vec<&str> = part.words.iter().map(|(word, ..)| word.as_str()).collect();
+                let said = words_said(room * f32::from(part.wide) / whole, &words);
+                let label = row(part.words.iter().take(said).map(|(word, ink, font)| {
+                    single_line(word.clone())
+                        .size(META)
+                        .font(*font)
+                        .color(*ink)
+                        .into()
+                }))
+                .spacing(WORD_GAP);
+                column![
+                    ribbon_bar(part.colour, part.over, error),
+                    container(label).width(Fill).clip(true),
+                ]
+                .spacing(5)
+                .width(Length::FillPortion(part.wide))
+                .into()
+            }))
+            .spacing(PART_GAP)
+            .into()
+        })
+        .height(Length::Shrink);
+        Some(ribbon.into())
     }
 }
 
-/// How full a section's part is: its steps against its time, full where
+/// A section's part of the plan's head: its share of the width, its
+/// bar's colour and the share of it that is over its time, and the words
+/// under it, each in its colour and weight.
+struct SectionPart {
+    wide: u16,
+    colour: iced::Color,
+    over: f32,
+    words: Vec<(String, iced::Color, iced::Font)>,
+}
+
+/// How strong a section that holds nothing is drawn in the plan's head.
+const EMPTY_FADED: f32 = 0.45;
+
+/// A section's bar in the plan's head: solid in `colour`, rounded, and
+/// its last `over` of it in `error`, apart by a notch: a section's own
+/// colour can be near the colour of what is wrong.
+fn ribbon_bar<'a>(colour: iced::Color, over: f32, error: iced::Color) -> Element<'a, Message> {
+    const TALL: f32 = 6.0;
+    let piece = |ink: iced::Color, share: f32, radius: iced::border::Radius| {
+        container(Space::new())
+            .width(Length::FillPortion((share * 1000.0).round().max(1.0) as u16))
+            .height(TALL)
+            .style(move |_| container::Style {
+                background: Some(ink.into()),
+                border: iced::Border {
+                    radius,
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            })
+    };
+    let end = TALL / 2.0;
+    match over > 0.0 {
+        true => row![
+            piece(colour, 1.0 - over, iced::border::left(end)),
+            piece(error, over, iced::border::right(end)),
+        ]
+        .spacing(2)
+        .into(),
+        false => piece(colour, 1.0, end.into()).width(Fill).into(),
+    }
+}
+
+/// The room between two parts of the plan's head, and between two words
+/// under one.
+const PART_GAP: f32 = 3.0;
+const WORD_GAP: f32 = 5.0;
+
+/// How many of `words` a part `wide` says under it: all of them where
+/// they fit, else the first, cut where it must be, and none where the
+/// part is too narrow for a couple of letters and the "…" after them.
+fn words_said(wide: f32, words: &[&str]) -> usize {
+    const READABLE: f32 = 28.0;
+    let all = words
+        .iter()
+        .map(|word| widgets::steady(word, META))
+        .sum::<f32>()
+        + WORD_GAP * words.len().saturating_sub(1) as f32;
+    match wide {
+        wide if wide < READABLE => 0,
+        wide if all <= wide => words.len(),
+        _ => words.len().min(1),
+    }
+}
+
+/// What a section's header says of its time: what it has `taken` (or will
+/// take), against the `budget` it is given, and the time of day it should
+/// be over `by`, as "0:24 of 5:00 · by 19:15". One that holds nothing is
+/// "empty", and one that is over in a service says it is `done`.
+fn time_words(
+    taken: Duration,
+    budget: Option<Duration>,
+    by: Option<TimeOfDay>,
+    empty: bool,
+    done: bool,
+) -> String {
+    let mut words = vec![match (empty, budget) {
+        (true, _) => "empty".to_string(),
+        (false, Some(budget)) => format!("{} of {}", length::clock(taken), length::clock(budget)),
+        (false, None) => length::clock(taken),
+    }];
+    if empty && let Some(budget) = budget {
+        words.push(length::clock(budget));
+    }
+    words.extend(by.map(|by| format!("by {by}")));
+    if done {
+        words.push("done".to_string());
+    }
+    words.join(" · ")
+}
+
+/// How much of what a section's steps take is past its time, from 0 to 1.
+fn over_share(budget: Option<Duration>, planned: Duration) -> f32 {
+    match budget {
+        Some(budget) if planned > budget => {
+            (planned - budget).as_secs_f32() / planned.as_secs_f32()
+        }
+        _ => 0.0,
+    }
+}
+
+/// How full a section's gauge is: its steps against its time, full where
 /// it has none; and whether they run over it.
 fn part_fill(budget: Option<Duration>, planned: Duration) -> (f32, bool) {
     match budget {
@@ -334,13 +739,9 @@ fn part_fill(budget: Option<Duration>, planned: Duration) -> (f32, bool) {
 }
 
 impl App {
-    /// What a plan's steps come to, as its bracket's head says it.
+    /// What a plan's steps come to, as the list of plans says it.
     fn takes(&self, plan: &Plan) -> String {
-        let sums = self.plan_sums(plan);
-        match sums.open {
-            true => format!("Σ {}+", length::clock(sums.filled)),
-            false => format!("Σ {}", length::clock(sums.filled)),
-        }
+        self.plan_sums(plan).said()
     }
 
     /// A saved plan's line in the list: how many steps, what they come
@@ -376,18 +777,13 @@ impl App {
 /// The colour of a sound that keeps going under the steps after its own.
 pub(crate) const SOUND_LINE: iced::Color = iced::Color::from_rgb(0.557, 0.773, 1.0);
 
-/// How wide the plan's goal is on its card, pressed or typed.
+/// How wide the plan's goal is in its settings, pressed or typed.
 const GOAL_WIDE: f32 = 54.0;
 
-/// How tall the head and the foot of a bracket are, to be pulled: thin
-/// bands at its very ends, so the rest of it, its name too, picks the
-/// section up.
+/// How tall a section's head and foot are, to be pulled: thin bands, the
+/// top of its header and the room under its last row, so the rest of its
+/// header, its name too, picks the section up.
 const FOOT: f32 = 8.0;
-
-/// How wide the steps' room is kept, for their dots, names and times,
-/// before a section that holds only sections gives up the room for its
-/// name.
-const NAMES_ROOM: f32 = 150.0;
 
 /// A span as the rail shows it: what it is, the steps it runs from and
 /// to, how far out from the dots it is drawn (the more of its kind it
@@ -456,8 +852,11 @@ fn laid(plan: &Plan, wanted: impl Fn(Flow) -> bool) -> Vec<Laid> {
 /// again, on the right for those of a drawn order, a lane for each one
 /// that holds another. While planning there is always one of each,
 /// since a pull can draw either.
+/// Left of all of it, the steps' times of day, where they have them.
+/// The rows say how far down them the dots are.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Lanes<'a> {
+    time: f32,
     curl: f32,
     drawn: f32,
     loops: &'a [Laid],
@@ -465,6 +864,14 @@ pub(crate) struct Lanes<'a> {
     /// How many lanes each side has room for.
     loop_lanes: u8,
     order_lanes: u8,
+    rows: Rows,
+}
+
+impl Lanes<'_> {
+    /// All the room left of the dots' column.
+    fn left(&self) -> f32 {
+        self.time + self.curl
+    }
 }
 
 /// `row` with the room there is between two rows of the plan under it.
@@ -472,6 +879,18 @@ fn apart<'a>(row: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(row)
         .padding(iced::Padding::default().bottom(2.0))
         .into()
+}
+
+/// The room under a section's last row: pressed and pulled, its foot
+/// ends the section somewhere else.
+fn foot_strip<'a>(section: StepId, places: &track::Places) -> Element<'a, Message> {
+    track::seen(
+        track::Key::Foot(section),
+        places,
+        mouse_area(Space::new().width(Fill).height(FOOT))
+            .on_press(Message::PressFoot(section))
+            .interaction(mouse::Interaction::ResizingVertically),
+    )
 }
 
 /// Where a step is in the service.
@@ -483,8 +902,435 @@ pub(crate) enum Place {
     Later,
 }
 
+/// What a step's row says of it while planning, worked out once from the
+/// step and what is known of what it shows (see [`RowFacts::of`]).
+#[derive(Debug, PartialEq)]
+pub(crate) struct RowFacts<'a> {
+    /// The time of day it comes, where the plan has a start.
+    at: Option<TimeOfDay>,
+    thumb: Thumb<'a>,
+    under: Under,
+    /// It goes on by itself when it is done; else it waits.
+    goes_on: bool,
+}
+
+/// A row's small picture: what it is of, with its size in the lower
+/// right corner and its state in the upper left. A step's row and a file's
+/// row in the library draw theirs alike (see [`App::row_picture`]).
+#[derive(Debug, PartialEq)]
+pub(crate) struct Thumb<'a> {
+    picture: Picture<'a>,
+    /// How long it plays, how many pages it has, a picture's pixels.
+    pub(crate) size: Option<String>,
+    pub(crate) state: Option<State>,
+}
+
+impl<'a> Thumb<'a> {
+    /// The picture of `resource`, with what is known of it.
+    pub(crate) fn of(resource: &'a Resource, known: Known) -> Thumb<'a> {
+        Thumb {
+            picture: Picture::Of(resource),
+            size: size_words(resource, known),
+            state: match (known.download, known.reach) {
+                (Some(part), _) => Some(State::Coming(part)),
+                (None, Reach::Stream) => Some(State::Live),
+                (None, Reach::Online) => Some(State::Online),
+                (None, Reach::Here) => known.soft_on().map(State::Soft),
+            },
+        }
+    }
+
+    /// Only `icon`: for what shows nothing of its own, or isn't looked
+    /// at yet.
+    pub(crate) fn kind(icon: Icon) -> Thumb<'a> {
+        Thumb {
+            picture: Picture::Kind(icon),
+            size: None,
+            state: None,
+        }
+    }
+}
+
+/// What a row's picture is of.
+#[derive(Debug, PartialEq)]
+enum Picture<'a> {
+    Of(&'a Resource),
+    /// The kind of thing it is, for one that shows nothing of its own.
+    Kind(Icon),
+}
+
+/// What a row's picture says in its upper left corner.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum State {
+    /// On stage now, or a stream that needs the internet all the while
+    /// it shows.
+    Live,
+    /// It comes from the internet, not downloaded yet.
+    Online,
+    /// How far its download has come, from 0 to 1.
+    Coming(f32),
+    /// It will look soft on the stage's screen, of this size.
+    Soft(Pixels),
+}
+
+impl State {
+    pub(crate) fn words(self) -> String {
+        match self {
+            State::Live => "● live".to_string(),
+            State::Online => "☁ online".to_string(),
+            State::Coming(part) => format!("↓ {:.0}%", part * 100.0),
+            State::Soft(_) => "⚠".to_string(),
+        }
+    }
+}
+
+/// How large a badge's `words` are set on a picture `width` wide:
+/// [`BADGE`], or smaller when they are too long for a narrow picture,
+/// such as a photo's pixels in the library, so they stay on it.
+fn badge_size(words: &str, width: f32) -> f32 {
+    let room = width - 2.0 * (BADGE_INSET + BADGE_PAD);
+    BADGE.min(room / widgets::steady(words, 1.0))
+}
+
+/// The line under a step's or a result's name.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Under {
+    /// Where it is from and what it is: "Fixtures · picture".
+    What(String),
+    /// What is wrong with it, and whether that may sort itself out.
+    Wrong(Level, String),
+    /// It shows, but scaled up past its own pixels on a screen of this
+    /// size.
+    Soft(Pixels),
+}
+
+/// What is known of what a step shows, for its row.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct Known {
+    /// How long it plays by itself, known or guessed.
+    length: Option<Estimate>,
+    /// How many pages or slides it has, once they are loaded.
+    pages: Option<usize>,
+    /// How far its download has come, while it is under way.
+    download: Option<f32>,
+    /// A picture's or a video's own size, once its thumbnail is made.
+    pixels: Option<Pixels>,
+    /// The screen it is shown on (see [`crate::outputs::stage_screen`]).
+    screen: Pixels,
+    /// Where it comes from when shown.
+    reach: Reach,
+}
+
+impl Known {
+    /// The screen what it shows looks soft on, where it does.
+    pub(crate) fn soft_on(self) -> Option<Pixels> {
+        self.pixels
+            .filter(|&pixels| looks_soft(pixels, self.screen))
+            .map(|_| self.screen)
+    }
+}
+
+impl<'a> RowFacts<'a> {
+    fn of(
+        step: &'a Step,
+        issue: Option<&Issue>,
+        known: Known,
+        at: Option<TimeOfDay>,
+        goes_on: bool,
+    ) -> RowFacts<'a> {
+        let thumb = match &step.action {
+            Action::Show { resource } => Thumb::of(resource, known),
+            Action::Live { .. } => Thumb::kind(Icon::Screen),
+            Action::Blank => Thumb::kind(Icon::ScreenOff),
+            Action::Note | Action::Section { .. } => Thumb::kind(Icon::Note),
+        };
+        let issue = issue.map(|issue| (issue.level, issue.what.clone()));
+        let (thumb, under) = one_warning(thumb, issue, what_it_is(step));
+        RowFacts {
+            at,
+            thumb,
+            under,
+            goes_on,
+        }
+    }
+}
+
+/// A row's picture and the line under its name, once `issue`, what would
+/// go wrong showing it, has had its say: the line is `what` it is, or
+/// the one warning that matters.
+fn one_warning<'a>(
+    thumb: Thumb<'a>,
+    issue: Option<(Level, String)>,
+    what: String,
+) -> (Thumb<'a>, Under) {
+    // A download under way says how far it has come on the picture:
+    // that it isn't done yet is no news under the name. Something wrong
+    // is the one warning a row gives, over a soft picture's.
+    let (state, under) = match (thumb.state, issue) {
+        (Some(State::Coming(_)), _) => (thumb.state, Under::What(what)),
+        (_, Some((level, words))) => (None, Under::Wrong(level, words)),
+        (Some(State::Soft(screen)), None) => (thumb.state, Under::Soft(screen)),
+        (_, None) => (thumb.state, Under::What(what)),
+    };
+    (Thumb { state, ..thumb }, under)
+}
+
+/// What a search result's row says of it, on the computer and the phone
+/// alike (see [`App::result_facts`]).
+#[derive(Debug, PartialEq)]
+pub(crate) struct ResultFacts<'a> {
+    pub(crate) thumb: Thumb<'a>,
+    pub(crate) under: Under,
+}
+
+impl<'a> ResultFacts<'a> {
+    /// `resource`'s row, `known` what is known of it, `issue` what would
+    /// go wrong showing it and `on_stage` whether it is on stage now.
+    pub(crate) fn of(
+        resource: &'a Resource,
+        known: Known,
+        issue: Option<(Level, String)>,
+        on_stage: bool,
+    ) -> ResultFacts<'a> {
+        let (thumb, under) = one_warning(Thumb::of(resource, known), issue, what_of(resource));
+        let state = match on_stage {
+            true => Some(State::Live),
+            false => thumb.state,
+        };
+        ResultFacts {
+            thumb: Thumb { state, ..thumb },
+            under,
+        }
+    }
+}
+
+/// How big `resource` is, in words: how long it plays, how many pages it
+/// has, or a picture's pixels.
+fn size_words(resource: &Resource, known: Known) -> Option<String> {
+    match plays(resource) {
+        true => known
+            .length
+            .map(length_words)
+            .filter(|words| !words.is_empty()),
+        false if matches!(resource.kind, Kind::Image) => {
+            known.pixels.map(|pixels| pixels.to_string())
+        }
+        false if let Some(verses) = verses(resource) => Some(count(verses, "verse")),
+        // A page opened out of its file is one page.
+        false if resource.page_of().is_none() => {
+            known.pages.map(|pages| count(pages, unit(resource)))
+        }
+        false => None,
+    }
+}
+
+/// How many verses a Bible passage has.
+fn verses(resource: &Resource) -> Option<usize> {
+    let verses = resource.meta.get("verses")?;
+    Some(verses.split(',').filter(|verse| !verse.is_empty()).count()).filter(|&n| n > 0)
+}
+
+/// What a line of the facts under the preview says.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Says {
+    Words(String),
+    /// A section's name, to be in its colour, and words after it.
+    Section(StepId, String, String),
+}
+
+/// The facts under the preview, line by line, each with its label. Only
+/// what is known is said.
+pub(crate) type Facts = Vec<(&'static str, Says)>;
+
+/// The facts of the plan's step at `at`, `length` how long it is in
+/// words and `known` what is known of what it shows: where it is from, a
+/// picture's size, how it plays and goes on, whose look it has and how it
+/// fades, and where in the plan it is.
+pub(crate) fn step_facts(plan: &Plan, at: usize, length: &str, known: Known) -> Facts {
+    let step = &plan.steps()[at];
+    let mut facts = Facts::new();
+    let from = match &step.action {
+        Action::Show { resource } => from_words(resource),
+        Action::Live {
+            hint: Some(query), ..
+        } => Some(query.text.trim().to_string()).filter(|text| !text.is_empty()),
+        _ => None,
+    };
+    facts.extend(from.map(|from| ("From", Says::Words(from))));
+    if let Action::Show { resource } = &step.action {
+        facts.extend(picture_size(resource, known).map(|size| ("Size", Says::Words(size))));
+    }
+    let goes_on = match plan.goes_on(at) {
+        true => "goes on by itself",
+        false => "waits",
+    };
+    facts.push((
+        "Plays",
+        Says::Words(match length.is_empty() {
+            true => goes_on.to_string(),
+            false => format!("{length}, then {goes_on}"),
+        }),
+    ));
+    if matches!(step.action, Action::Show { .. } | Action::Live { .. }) {
+        let own = |step: &Step| step.look.as_ref().is_some_and(|look| !look.is_empty());
+        let whose = match own(step) {
+            true => "its own".to_string(),
+            false => plan
+                .within(at)
+                .into_iter()
+                .rev()
+                .filter_map(|id| plan.get(id))
+                .find(|section| own(section))
+                .map_or("the plan's".to_string(), |section| {
+                    format!("{}'s", section.label)
+                }),
+        };
+        let look = std::iter::once(whose)
+            .chain(fade_words(step.fade))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        facts.push(("Look", Says::Words(look)));
+    }
+    if let Some(section) = plan.within(at).last().and_then(|id| plan.get(*id)) {
+        let steps = |upto: usize| {
+            plan.steps()[..upto]
+                .iter()
+                .filter(|step| !step.is_section())
+                .count()
+        };
+        let which = format!("step {} of {}", steps(at + 1), steps(plan.steps().len()));
+        facts.push((
+            "Section",
+            Says::Section(section.id, section.label.clone(), which),
+        ));
+    }
+    facts
+}
+
+/// The facts of `resource`, which isn't in the plan, `frames` how many
+/// slides or pages it is known to have: where it is from, what it is,
+/// and how long or how big it is.
+pub(crate) fn item_facts(resource: &Resource, known: Known, frames: Option<usize>) -> Facts {
+    let mut facts = Facts::new();
+    facts.extend(from_words(resource).map(|from| ("From", Says::Words(from))));
+    facts.extend(kind_word(resource).map(|what| ("What", Says::Words(what.to_string()))));
+    let known = Known {
+        pages: known.pages.or(frames),
+        ..known
+    };
+    let size = match plays(resource) {
+        true => "Length",
+        false => "Size",
+    };
+    let words = picture_size(resource, known).or_else(|| size_words(resource, known));
+    facts.extend(words.map(|words| (size, Says::Words(words))));
+    facts
+}
+
+/// A picture's size as the preview's facts say it: "1920 × 1080".
+fn picture_size(resource: &Resource, known: Known) -> Option<String> {
+    let pixels = known
+        .pixels
+        .filter(|_| matches!(resource.kind, Kind::Image))?;
+    Some(format!("{} × {}", pixels.width, pixels.height))
+}
+
+/// Where `resource` is from: its folder and its file's name ("Fixtures /
+/// video.mp4"), or its source and what it is called there ("RV1909 ·
+/// Juan 3:16").
+fn from_words(resource: &Resource) -> Option<String> {
+    let (name, between) = match &resource.location {
+        Location::File(path) => (path.file_name()?.to_string_lossy().into_owned(), " / "),
+        _ => (resource.title.clone(), " · "),
+    };
+    Some(
+        resource
+            .subtitle
+            .iter()
+            .cloned()
+            .chain([name])
+            .filter(|words| !words.is_empty())
+            .collect::<Vec<_>>()
+            .join(between),
+    )
+    .filter(|from| !from.is_empty())
+}
+
+/// How a step fades, in words: "fades in 2 s, out 4 s"; none when it
+/// doesn't.
+fn fade_words(fade: lantern_engine::Fade) -> Option<String> {
+    match (fade.fade_in, fade.fade_out) {
+        (None, None) => None,
+        (Some(fade_in), None) => Some(format!("fades in {} s", fade_in.secs())),
+        (None, Some(fade_out)) => Some(format!("fades out {} s", fade_out.secs())),
+        (Some(fade_in), Some(fade_out)) => Some(format!(
+            "fades in {} s, out {} s",
+            fade_in.secs(),
+            fade_out.secs()
+        )),
+    }
+}
+
+/// Whether `resource` plays for a time of its own: a video, a sound, a
+/// countdown.
+fn plays(resource: &Resource) -> bool {
+    matches!(resource.kind, Kind::Video | Kind::Audio)
+        || resource.meta.contains_key(Resource::DURATION)
+}
+
+/// Where what a step shows is from and what it is, "Fixtures · picture";
+/// for a step that shows nothing of its own, what it does instead.
+fn what_it_is(step: &Step) -> String {
+    let resource = match &step.action {
+        Action::Show { resource } => resource,
+        Action::Live { hint, shown } => return slot_detail(hint.as_ref(), shown.len()),
+        Action::Blank => return "nothing on the projector".into(),
+        Action::Note => return "a note for you, nothing on stage".into(),
+        Action::Section { .. } => return String::new(),
+    };
+    what_of(resource)
+}
+
+/// Where `resource` is from and what it is: "Fixtures · picture".
+pub(crate) fn what_of(resource: &Resource) -> String {
+    resource
+        .subtitle
+        .iter()
+        .map(String::as_str)
+        .chain(kind_word(resource))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// What `resource` is, in a word: "picture", "video", "page".
+pub(crate) fn kind_word(resource: &Resource) -> Option<&str> {
+    match (&resource.kind, resource.page_of()) {
+        (_, Some(_)) => Some(unit(resource)),
+        (Kind::Image, _) => Some("picture"),
+        (Kind::Video, _) => Some("video"),
+        (Kind::Audio, _) => Some("sound"),
+        (Kind::Document, _) => Some("document"),
+        (Kind::Presentation, _) => Some("slides"),
+        (Kind::Web, _) => Some("web page"),
+        // A text's source says what it is: "your text", a Bible's name.
+        (Kind::Text, _) => resource.subtitle.is_none().then_some("text"),
+        (Kind::Other(name), _) => Some(name.as_str()),
+    }
+}
+
+/// A length as a row says it: `4:00` when known, `~4 min` when guessed,
+/// nothing for a guess of nothing.
+fn length_words(estimate: Estimate) -> String {
+    match estimate.basis {
+        Basis::Guess if estimate.length.is_zero() => String::new(),
+        Basis::Guess => length::rough(estimate.length),
+        Basis::Set | Basis::Known => length::clock(estimate.length),
+    }
+}
+
 impl App {
-    pub(crate) fn plan_pane(&self, timing: &Timing) -> Element<'_, Message> {
+    /// The plan's pane, `width` wide.
+    pub(crate) fn plan_pane(&self, width: f32, timing: &Timing) -> Element<'_, Message> {
         let p = self.palette;
         let plan = self.engine.0.plan();
         let issues = self.issues(&plan);
@@ -511,129 +1357,75 @@ impl App {
         if let Some(notice) = self.plan_notice(&plan) {
             status = status.push(notice);
         }
-        // While planning, the rail's three marks, named once at the foot.
+        // While planning, a section carried says at the foot how to set
+        // how far in it goes, past what the row under the pointer says.
         if self.mode == crate::mode::Mode::Plan
+            && self.carrying_section()
             && matches!(
                 self.plans.mode,
                 plans::Mode::Steps | plans::Mode::Renaming(_)
             )
         {
-            let quiet = p.on_surface_variant;
-            let named = |mark: Element<'static, Message>, name: &'static str| {
-                row![mark, text(name).size(META).color(quiet)]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-            };
-            // While a section is carried: how to set how far in it goes.
-            let carrying = self
-                .drag
-                .as_ref()
-                .is_some_and(|drag| drag.moving && drag.is_section());
-            let legend = match carrying {
-                true => row![
-                    named(
-                        text("]").size(BODY).font(BOLD).color(p.primary).into(),
-                        "over a bracket: into it"
-                    ),
-                    named(
-                        text("← →").size(META).font(BOLD).color(p.primary).into(),
-                        "a level out or in"
-                    ),
-                ],
-                false => row![
-                    named(
-                        look::icon(Icon::Joined, 13.0, p.primary).into(),
-                        "by itself"
-                    ),
-                    named(look::icon(Icon::Pause, 13.0, quiet).into(), "waits"),
-                    named(look::ring(0.4, 13.0, p.tertiary).into(), "downloading"),
-                ],
-            };
-            pane = pane.push(container(legend.spacing(16)).padding([0, 8]));
+            let hint = row![
+                text("← →").size(META).font(BOLD).color(p.primary),
+                text("a level out or in")
+                    .size(META)
+                    .color(p.on_surface_variant),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            pane = pane.push(container(hint).padding([0, 8]));
         }
         pane = pane.push(container(status).padding([0, 8]));
-        let pane = pane.padding([16, 12]).height(Fill);
+        // While planning the plan is the page, with a page's margins: at
+        // its sides about a nineteenth of its width, 36 at a laptop's,
+        // never less than in a run.
+        let padding = match self.mode {
+            crate::mode::Mode::Plan => {
+                let side = (width * 0.053).round().clamp(12.0, 36.0);
+                iced::Padding::from([20.0, side]).bottom(16.0)
+            }
+            _ => iced::Padding::from([16, 12]),
+        };
+        let pane = pane.padding(padding).height(Fill);
         iced::widget::stack![pane, self.refusal_over()]
-            .width(self.plan_width())
+            .width(Fill)
             .height(Fill)
             .into()
     }
 
-    /// The Plans button, the plan's name (click to rename), and where the
-    /// service is: "3 of 7".
-    pub(crate) fn plan_header(&self, plan: &Plan) -> Element<'_, Message> {
+    /// The plan's name and what is beside it in the strip, `room` wide.
+    /// While `planning` the name drops the list of plans and the sliders
+    /// beside it open the plan's own settings; its facts are in its title
+    /// over its rows. In a run it is only a name, with where the service
+    /// is: "3 of 7". Then Save, while the plan has changes.
+    pub(crate) fn plan_header(
+        &self,
+        plan: &Plan,
+        planning: bool,
+        room: f32,
+    ) -> Element<'_, Message> {
         let p = self.palette;
-        // The list of plans is the pane's home: its header is its own, not
-        // the open plan's name and count over a list of other plans.
-        if matches!(self.plans.mode, plans::Mode::Browsing(_)) {
-            return container(text("Plans").size(HEADING).font(BOLD).color(p.primary))
-                .padding([4, 8])
-                .height(PILL_SMALL)
-                .align_y(Alignment::Center)
-                .into();
-        }
-
-        // A long name is cut at its edge, not drawn over the count. It
-        // opens the plan's own settings, and is lit while they are open;
-        // in a run it is only a name. It is renamed in the plan's card.
-        let name: Element<'_, Message> = {
-            let open = self.plan_panel;
-            let name = container(
-                single_line(plan.title.clone())
-                    .size(HEADING)
-                    .font(BOLD)
-                    .color(p.primary),
-            )
-            .clip(true);
-            let running = self.mode == crate::mode::Mode::Run;
-            let mut inside = row![name].spacing(8).align_y(Alignment::Center);
-            if !running {
-                inside = inside.push(look::icon(Icon::Tune, 14.0, p.primary));
-            }
-            tooltip(
-                button(inside)
-                    .padding([4, 10])
-                    .on_press_maybe((!running).then_some(Message::PlanSettings))
-                    .style(look::pill(
-                        p,
-                        if open { Tone::Selected } else { Tone::Plain },
-                    )),
-                container(text("This plan: media, look, copy, delete").size(META))
-                    .padding([4, 8])
-                    .style(look::tip(p)),
-                tooltip::Position::Bottom,
-            )
-            .delay(look::TIP_DELAY)
-            .into()
-        };
-        // The name has the header's room. Where the service is ("3 of 7")
-        // shows only once it's running; how many steps there are is plain
-        // from the list.
+        // A long name is cut at its edge, not drawn over what follows. It
+        // is renamed in the plan's settings.
+        let name = container(
+            single_line(plan.title.clone())
+                .size(HEADING)
+                .font(BOLD)
+                .color(p.primary),
+        )
+        .clip(true);
         let items: Vec<&Step> = plan.steps().iter().filter(|s| !s.is_section()).collect();
-        let at = self
-            .engine
-            .0
-            .current_step()
-            .and_then(|current| items.iter().position(|s| s.id == current.id));
-        // The other plans are under this one, folded, in its list.
-        let mut header = row![name];
-        if let Some(at) = at {
-            header = header.push(
-                text(format!("{} of {}", at + 1, items.len()))
-                    .size(META)
-                    .color(p.on_surface_variant),
-            );
-        }
-        if self.plans.is_dirty(plan) {
-            header = header.push(hinted(
+        let save: Option<Element<'_, Message>> = if self.plans.is_dirty(plan) {
+            Some(hinted(
                 p,
                 pill(p, "Save", Tone::Selected, PILL_SMALL, Some(op(Op::Save))),
                 keys::with_key("Save the plan", Op::Save),
                 tooltip::Position::Bottom,
-            ));
-        } else if let Some(shown) = self.motion.tick() {
+            ))
+        } else {
             // Saved: Save is a tick for a moment, fading.
-            header = header.push(
+            self.motion.tick().map(|shown| {
                 container(look::icon(
                     Icon::Check,
                     14.0,
@@ -642,10 +1434,109 @@ impl App {
                         ..p.primary
                     },
                 ))
-                .padding([3, 10]),
+                .padding([3, 10])
+                .into()
+            })
+        };
+        let mut header = row![].spacing(6).align_y(Alignment::Center);
+        if planning {
+            let browsing = matches!(self.plans.mode, plans::Mode::Browsing(_));
+            // The sliders' button, and Save or its tick: the name keeps
+            // them their room.
+            const TUNE: f32 = 35.0;
+            let saving = match (self.plans.is_dirty(plan), save.is_some()) {
+                (true, _) => widgets::steady("Save", BODY) + 32.0,
+                (false, true) => 34.0,
+                (false, false) => 0.0,
+            };
+            // The pill round the name: its padding and the chevron.
+            const AROUND: f32 = 40.0;
+            let name_room = room - TUNE - saving - 18.0 - AROUND;
+            // Pressed, the list of plans takes the plan's place, the name
+            // lit while it shows; pressed again, the plan is back.
+            let chevron = look::icon(Icon::Down, 14.0, p.primary).rotation(match browsing {
+                true => iced::Radians::PI,
+                false => iced::Radians(0.0),
+            });
+            header = header.push(hinted(
+                p,
+                button(
+                    row![name.max_width(name_room.max(0.0)), chevron]
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                )
+                .padding([4, 10])
+                .on_press(op(Op::Open))
+                .style(look::pill(
+                    p,
+                    if browsing {
+                        Tone::Selected
+                    } else {
+                        Tone::Plain
+                    },
+                )),
+                keys::with_key("Your plans", Op::Open),
+                tooltip::Position::Bottom,
+            ));
+            let open = self.plan_panel;
+            header = header.push(
+                tooltip(
+                    button(look::icon(
+                        Icon::Tune,
+                        15.0,
+                        if open {
+                            p.primary
+                        } else {
+                            p.on_surface_variant
+                        },
+                    ))
+                    .padding([9, 10])
+                    .on_press(Message::PlanSettings)
+                    .style(look::strip_item(
+                        p,
+                        if open { Tone::Selected } else { Tone::Plain },
+                    )),
+                    container(
+                        text("This plan: its name, times, media, look, copy, delete").size(META),
+                    )
+                    .padding([4, 8])
+                    .style(look::tip(p)),
+                    tooltip::Position::Bottom,
+                )
+                .delay(look::TIP_DELAY),
             );
+        } else {
+            let open = self.plan_panel;
+            header = header.push(
+                tooltip(
+                    button(row![name].spacing(8).align_y(Alignment::Center))
+                        .padding([4, 10])
+                        .style(look::pill(
+                            p,
+                            if open { Tone::Selected } else { Tone::Plain },
+                        )),
+                    container(text("This plan: media, look, copy, delete").size(META))
+                        .padding([4, 8])
+                        .style(look::tip(p)),
+                    tooltip::Position::Bottom,
+                )
+                .delay(look::TIP_DELAY),
+            );
+            // Where the service is shows only once it's running.
+            let at = self
+                .engine
+                .0
+                .current_step()
+                .and_then(|current| items.iter().position(|s| s.id == current.id));
+            if let Some(at) = at {
+                header = header.push(
+                    text(format!("{} of {}", at + 1, items.len()))
+                        .size(META)
+                        .color(p.on_surface_variant),
+                );
+            }
         }
-        header.spacing(6).align_y(Alignment::Center).into()
+        header.push(save).into()
     }
 
     /// The last save or open: its error, or that it worked while nothing
@@ -670,6 +1561,7 @@ impl App {
 
     fn steps(&self, plan: &Plan, timing: &Timing, issues: &[Issue]) -> Element<'_, Message> {
         let p = self.palette;
+        let step_rows = Rows::of(self.mode);
         let current = self.engine.0.current_step().map(|step| step.id);
         let next = self.engine.0.up_next().map(|step| step.id);
         let at = current.and_then(|id| plan.position(id));
@@ -695,29 +1587,17 @@ impl App {
         let carried = moving.map_or(&[][..], |drag| drag.carried.as_slice());
         // What is carried in from the library opens the same gap.
         let held = self.carried.as_ref().filter(|held| held.moving);
-        let landing = moving
-            .and_then(|drag| drag.landing)
-            .or_else(|| self.carry_landing(plan));
+        // Where it would land, as the plan has it: before which of the
+        // rows that stay, how far in, and in which section.
+        let target = self.carry_target(plan);
+        let landing = target.map(|(at, ..)| at);
         // It opens as it comes, so the rows under it are moved aside and
         // not thrown there.
         let opening = self.motion.gap();
         // The gap it just left closes at the same pace, so the rows in
         // between slide over instead of jumping.
         let closing = self.motion.closing_gap();
-        // The plan without what is carried: where it lands is counted
-        // in this.
-        let rest_steps: Vec<&Step> = plan
-            .steps()
-            .iter()
-            .filter(|step| !carried.contains(&step.id))
-            .collect();
-        // How far in it would land: a section where the pointer has taken
-        // it, a step under whatever it lands in.
-        let gap_level = match (moving, landing) {
-            (Some(drag), _) => drag.level,
-            (None, Some(at)) => crate::drag::level_at(&rest_steps, at),
-            (None, None) => 0,
-        };
+        let gap_level = target.map_or(0, |(_, level, _)| level);
         // The gap is that far in, sliding there when the level changes.
         let gap_in = self
             .motion
@@ -731,10 +1611,9 @@ impl App {
         let gap_tall = GAP_TALL + ruler.map_or(0.0, |_| RULER_TALL);
         // The place that opens is in the shape of what is carried. For
         // steps, a dashed place for each (up to a few), with a dot's
-        // place on the line and room for the brackets, so the section
-        // they would be in takes them in and a loop or a drawn order
-        // they bring is drawn beside them. For a section, one place with
-        // a bracket of its own. For a file from the library, as before.
+        // place on the line, so a loop or a drawn order they bring is
+        // drawn beside them. For a section, a dashed header at its level.
+        // A file from the library has a step's place.
         let stepwise: Vec<StepId> = moving
             .filter(|drag| !drag.is_section())
             .map(|drag| drag.carried.iter().copied().take(PLACES).collect())
@@ -752,16 +1631,33 @@ impl App {
             .map(|drag| drag.step);
         let gap_tall = match (stepwise.len(), blockwise) {
             (0, None) => gap_tall,
-            (0, Some(_)) => BLOCK_TALL + 4.0 + ruler.map_or(0.0, |_| RULER_TALL),
-            (places, _) => PLACE_TALL * places as f32,
+            (0, Some(_)) => step_rows.head_room() + HEAD_LINE + ruler.map_or(0.0, |_| RULER_TALL),
+            (places, _) => step_rows.place() * places as f32,
         };
         let closing_gap = move |left: f32| Space::new().height(gap_tall * left);
-        let gap = |side_wide: f32, lanes: Lanes<'_>| -> Element<'_, Message> {
+        // The sections what is carried would be in, innermost first.
+        let into: Vec<StepId> = target
+            .and_then(|(.., section)| section)
+            .map(|section| {
+                let around = plan
+                    .position(section)
+                    .map_or_else(Vec::new, |at| plan.within(at));
+                std::iter::once(section)
+                    .chain(around.into_iter().rev())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let colors = plan.section_colors();
+        let hue = |id: StepId| section_hue(p, &colors, id);
+        // The places that open are in the colour of the section they
+        // would land in.
+        let gap_ink = into.first().map_or(p.primary, |section| hue(*section));
+        let gap = |lanes: Lanes<'_>| -> Element<'_, Message> {
             let dashes = |tall: f32| {
                 crate::drawn::dashed(
                     container(Space::new().width(Fill).height(tall)).style(move |_| {
                         container::Style {
-                            background: Some(Palette::tint(p.primary, 0.08).into()),
+                            background: Some(Palette::tint(gap_ink, 0.08).into()),
                             border: iced::Border {
                                 radius: 9.0.into(),
                                 ..iced::Border::default()
@@ -769,71 +1665,81 @@ impl App {
                             ..container::Style::default()
                         }
                     }),
-                    Palette::tint(p.primary, 0.7),
+                    Palette::tint(gap_ink, 0.7),
                     9.0,
                 )
             };
-            let beside = |id: StepId, dot: bool| -> Element<'_, Message> {
-                // The same room a step's rail takes, with where its dot
-                // would be.
-                let mark: Element<'_, Message> = match dot {
-                    true => column![
-                        Space::new().height(RAIL_TOP - 2.0),
+            // The same room a step's rail takes, with where its dot would
+            // be.
+            let beside = |id: StepId, dot: Option<f32>| -> Element<'_, Message> {
+                let mark = match dot {
+                    Some(down) => column![
+                        Space::new().height(down),
                         track::seen(
                             track::Key::Dot(id),
                             &self.places,
                             Space::new().width(RAIL_DOT).height(RAIL_DOT)
                         ),
-                    ]
-                    .width(RAIL)
-                    .align_x(Alignment::Center)
-                    .into(),
-                    false => Space::new().width(RAIL).into(),
+                    ],
+                    None => column![],
                 };
-                track::seen(
-                    track::Key::Row(id),
-                    &self.places,
-                    row![
-                        Space::new().width(lanes.curl),
-                        mark,
-                        Space::new().width(lanes.drawn)
-                    ]
-                    .height(Fill),
-                )
-            };
-            let room = |id: StepId| {
-                track::seen(
-                    track::Key::Side(id),
-                    &self.places,
-                    Space::new().width(side_wide).height(Fill),
-                )
+                row![
+                    Space::new().width(lanes.left()),
+                    track::seen(
+                        track::Key::Row(id),
+                        &self.places,
+                        mark.width(RAIL).height(Fill).align_x(Alignment::Center)
+                    ),
+                    Space::new().width(lanes.drawn)
+                ]
+                .height(Fill)
+                .into()
             };
             let slot: Element<'_, Message> = match (stepwise.is_empty(), blockwise) {
                 (false, _) => column(stepwise.iter().map(|id| {
                     row![
-                        beside(*id, true),
-                        container(dashes(PLACE_TALL - 8.0)).padding([4, 0]),
-                        room(*id)
+                        beside(*id, Some(lanes.rows.place_dot())),
+                        container(dashes(lanes.rows.place() - 8.0)).padding([4, 10]),
                     ]
-                    .height(PLACE_TALL)
+                    .height(lanes.rows.place())
                     .into()
                 }))
                 .into(),
+                // A section: one dashed header at its level, its name
+                // faint, with the levels it could take under it.
                 (true, Some(section)) => {
+                    let (room, tall) = (lanes.rows.head_room(), HEAD_LINE);
+                    let name = plan.get(section).map(|step| step.label.clone());
+                    let head = crate::drawn::dashed(
+                        container(
+                            single_line(name.unwrap_or_default())
+                                .size(NAME)
+                                .font(BOLD)
+                                .color(Palette::tint(gap_ink, 0.7)),
+                        )
+                        .padding([0, 10])
+                        .width(Fill)
+                        .center_y(tall),
+                        Palette::tint(gap_ink, 0.7),
+                        9.0,
+                    );
                     let mut block = column![
                         row![
-                            beside(section, false),
-                            container(dashes(BLOCK_TALL - 4.0)).padding([2, 0]),
-                            room(section)
+                            beside(section, None),
+                            container(head).padding(
+                                iced::Padding::default()
+                                    .top(room)
+                                    .left(10.0 + gap_in)
+                                    .right(10.0)
+                            ),
                         ]
-                        .height(BLOCK_TALL)
-                    ]
-                    .spacing(4);
+                        .height(room + tall)
+                    ];
                     if let Some((at, (least, most))) = ruler {
-                        block = block.push(
-                            container(level_ruler(p, at, least, most))
-                                .padding(iced::Padding::default().left(gap_in)),
-                        );
+                        block =
+                            block.push(container(level_ruler(p, at, least, most)).padding(
+                                iced::Padding::default().left(lanes.left() + RAIL + gap_in),
+                            ));
                     }
                     block.into()
                 }
@@ -852,10 +1758,13 @@ impl App {
                 None => slot,
             }
         };
-        // The section it would be a part of.
-        let host_id = landing
-            .and_then(|at| crate::drag::host(&rest_steps, at, gap_level))
-            .map(|(start, _)| rest_steps[start].id);
+        // Where the gap's first and last places say they are: for steps,
+        // their dots; for a section, its line.
+        let gap_keys = match (stepwise.first(), stepwise.last(), blockwise) {
+            (Some(first), Some(last), _) => Some((track::Key::Dot(*first), track::Key::Dot(*last))),
+            (_, _, Some(section)) => Some((track::Key::Row(section), track::Key::Row(section))),
+            _ => None,
+        };
         // The pink line is there only while a search has a result for
         // Ctrl+Enter to add.
         let adds = self.search.first().is_some();
@@ -870,179 +1779,41 @@ impl App {
         // Where the dots are, said by the rows as they are laid out, and
         // what one drawing over the list makes of them.
         let places = self.places.clone();
-        // Every section is a bracket beside what it holds, unless one
-        // folded round it hides it. Each bracket is a lane further out
-        // than those it holds.
-        // Folded by hand, or over in a service: its steps are gathered
-        // into one row beside its bracket.
+        // Folded by hand, or over in a service: its header stands for all
+        // it holds.
         let shut = |id: StepId| self.shut(timing, id);
-        let bracketed = |plan: &Plan, at: usize| {
-            let step = &plan.steps()[at];
-            step.is_section() && !plan.within(at).iter().any(|id| *id != step.id && shut(*id))
-        };
-        let mut braced = lay_brackets(plan, &bracketed);
-        // A bracket's foot being pulled: the brackets as letting go would
-        // have them (no row moves, so they line up with the rows as they
-        // are); one that can't go there says so in the colour of what is
-        // wrong.
+        // A section's foot being pulled where it can't end says so in the
+        // colour of what is wrong.
         let foot_refused = match self.foot {
-            Some((section, Some(last))) => {
-                let mut after = plan.clone();
-                match after.reach_section(section, Some(last)) {
-                    Ok(()) => {
-                        braced = lay_brackets(&after, &bracketed);
-                        None
-                    }
-                    Err(_) => Some(section),
-                }
-            }
+            Some((section, Some(last))) => plan
+                .clone()
+                .reach_section(section, Some(last))
+                .is_err()
+                .then_some(section),
             _ => None,
         };
-        let footed = self.foot.map(|(section, _)| section);
-        // A section that is carried is laid out as letting go would have
-        // it: a dry run of the drop says which sections it would be in,
-        // which it would take into itself, and how far out each bracket
-        // is then.
-        let dropped = moving
-            .filter(|drag| drag.is_section())
-            .and_then(|drag| Some((drag, drag.landing?)))
-            .and_then(|(drag, at)| {
-                let mut after = plan.clone();
-                let among = drag.among(plan);
-                crate::drag::place_section(&mut after, &drag.carried, at, drag.level, among)
-                    .then_some((drag, after))
-            });
-        let mut carried_lane = 0;
-        let mut taken: Vec<StepId> = Vec::new();
-        let mut holders: Vec<StepId> = Vec::new();
-        if let Some((drag, after)) = &dropped {
-            let lanes: std::collections::HashMap<StepId, u8> = lay_brackets(after, &bracketed)
-                .into_iter()
-                .map(|laid| (after.steps()[laid.at].id, laid.lane))
-                .collect();
-            braced.retain(|laid| !drag.carried.contains(&plan.steps()[laid.at].id));
-            for laid in &mut braced {
-                if let Some(lane) = lanes.get(&plan.steps()[laid.at].id) {
-                    laid.lane = *lane;
-                }
-            }
-            carried_lane = lanes.get(&drag.step).copied().unwrap_or(0);
-            if let Some(at) = after.position(drag.step) {
-                holders = after.within(at).into_iter().rev().collect();
-                taken = after.steps()[at + 1..after.group_end(at)]
-                    .iter()
-                    .map(|step| step.id)
-                    .filter(|id| !drag.carried.contains(id))
-                    .collect();
-            }
-        }
-        let section_lanes = braced
-            .iter()
-            .map(|braced| braced.lane + 1)
-            .chain(dropped.as_ref().map(|_| carried_lane + 1))
-            .max()
-            .unwrap_or(0);
-        // The plan is a bracket too, round all of its steps, further out
-        // than every section's, where it can change.
-        let plan_lane = (matches!(self.mode, crate::mode::Mode::Plan | crate::mode::Mode::Run)
-            && self.can_edit()
-            && !plan.is_empty())
-        .then_some(section_lanes);
-        let side_lanes = section_lanes + u8::from(plan_lane.is_some());
-        // The steps that are a section's own, from `from` up to `end`: in
-        // it and in no section inside it. A section that holds others
-        // writes its name beside the longest run of those; one with none
-        // needs room right of its brace. The plan's are those in no
-        // section.
-        let own_of = |from: usize, end: usize| {
-            // What is carried is not where it was.
-            let own = |at: &usize| {
-                !plan.steps()[*at].is_section()
-                    && !carried.contains(&plan.steps()[*at].id)
-                    && !braced.iter().any(|inner| {
-                        inner.at >= from && inner.end <= end && (inner.at..inner.end).contains(at)
-                    })
-            };
-            // The longest run of them, the first of the longest.
-            let mut best: Option<(usize, usize)> = None;
-            let mut at = from;
-            while at < end {
-                match own(&at) {
-                    true => {
-                        let last = (at..end).take_while(own).last().unwrap_or(at);
-                        if best.is_none_or(|(from, to)| last - at > to - from) {
-                            best = Some((at, last));
-                        }
-                        at = last + 1;
-                    }
-                    false => at += 1,
-                }
-            }
-            best
-        };
-        let plans_steps = plan_lane
-            .filter(|lane| *lane > 0)
-            .and_then(|_| own_of(0, plan.len()));
-        // That room is given only while the steps keep enough of theirs
-        // for their names: without it, such a section is its brace alone,
-        // its name in its card. Where even the innermost's names leave
-        // them too little, every name folds away.
-        let canvas = self.places.borrow().get(&track::Key::Canvas).copied();
-        let leaves = |wide: bool, named: bool| {
-            canvas.is_none_or(|canvas| {
-                canvas.width - track::side_room(side_lanes, wide, named, plan_lane.is_some())
-                    >= NAMES_ROOM
-            })
-        };
-        let named = leaves(false, true);
-        // The plan's bracket writes its words at its head, never beside
-        // its brace: it asks for no room there.
-        let side_wide = leaves(true, true)
-            && braced
-                .iter()
-                .any(|braced| braced.lane > 0 && own_of(braced.at + 1, braced.end).is_none());
-        // The plan's ring is open: its bracket is drawn strong.
-        let plan_ringed = self
-            .ring
-            .is_some_and(|ring| ring.on == crate::rail::RingOn::All(None));
-        let colors = plan.section_colors();
-        // The lanes lean to the pointer, or to where what is carried
-        // would go, as the motion has them now.
-        let widths = track::written_right(
-            self.motion
-                .lanes(usize::from(side_lanes))
-                .unwrap_or_else(|| track::lane_widths(side_lanes, None, false)),
-            side_wide && named,
-        );
-        let side = Side {
-            braced: &braced,
-            lanes: side_lanes,
-            wide: side_wide,
-            named,
-            plan: plan_lane,
-            colors: &colors,
-            widths: &widths,
-        };
-        let hue = |id: StepId| section_hue(p, &colors, id);
         let mut stops: Vec<track::Stop> = Vec::new();
-        // The row the place for what is carried was put before, where
-        // there is one.
-        let mut gap_at: Option<usize> = None;
-        // Every row in sight: a press on one of them is not on nothing.
-        let mut whole: Vec<StepId> = Vec::new();
-        // The sections with nothing in it that have a place in sight:
-        // a bracket round them runs beside those too.
-        let mut placed: Vec<usize> = Vec::new();
+        // The place for what is carried is in sight.
+        let mut gapped = false;
+        // Where every row in sight says it is: a press on one of them is
+        // not on nothing.
+        let mut seen_rows: Vec<track::Key> = Vec::new();
         // The folded sections in sight: each one row for all it holds.
         let mut gathered: Vec<usize> = Vec::new();
         let mut shown: Vec<usize> = Vec::new();
-        // While planning, the pane is a tree: the open plan, its sections
-        // and their steps, and under them the other plans.
+        // While planning, the pane is a tree: the plan's sections and
+        // their steps.
         let tree = self.mode == crate::mode::Mode::Plan;
         let running = self.mode == crate::mode::Mode::Run;
-        // A right click on the plan's own row opens the ring of how the
-        // whole plan moves, where the plan can change.
         let can = self.can_edit();
+        // Its head is over its rows while planning, and in a service where
+        // it can change.
+        let headed = matches!(self.mode, crate::mode::Mode::Plan | crate::mode::Mode::Run)
+            && can
+            && !plan.is_empty();
+        // While planning, where the plan can change, a section's head and
+        // foot are pulled to start or end it somewhere else.
+        let feet = tree && can;
         let loops = laid(plan, |flow| flow.repeat != Repeat::Once);
         let orders = laid(plan, |flow| flow.shuffle);
         // While planning one of each is always there: a pull can draw
@@ -1051,33 +1822,42 @@ impl App {
         let deepest = |of: &[Laid]| of.iter().map(|laid| laid.lane + 1).max().unwrap_or(0);
         let (loop_lanes, order_lanes) = (deepest(&loops).max(least), deepest(&orders).max(least));
         let lanes = Lanes {
+            // A plan with no start has no times of day to say.
+            time: match (step_rows, plan.starts) {
+                (Rows::Tall, Some(_)) => TIME_WIDE,
+                _ => 0.0,
+            },
             curl: track::loop_room(loop_lanes) - RAIL / 2.0,
             drawn: track::order_room(order_lanes) - RAIL / 2.0,
             loops: &loops,
             orders: &orders,
             loop_lanes,
             order_lanes,
+            rows: step_rows,
         };
-        // While planning, what the plan takes heads its bracket.
         if running {
-            rows = rows.push(plans_own(self.run_time_row(plan, timing), can));
+            rows = rows.push(self.run_time_row(plan, timing));
         }
-        if plan_lane.is_some() && !(running && !can) {
+        if headed {
             rows = rows.push(self.plan_head(plan, timing));
         }
         // A service locked is watched, not changed: its rail is the road
         // it takes.
         if running && !can {
             rows = rows.push(self.road_rail(plan, timing, issues));
-            return mouse_area(scrolling(rows).id(ROWS))
-                .on_exit(Message::LeftPlan)
-                .into();
+            return mouse_area(
+                scrolling(rows)
+                    .id(ROWS)
+                    .on_scroll(|seen| Message::PlanScrolled(seen.absolute_offset().y)),
+            )
+            .on_exit(Message::LeftPlan)
+            .into();
         }
-        // In a service with a start time, a section still to come says
-        // when it is due.
-        let due = plan.starts.filter(|_| running).map(|starts| {
+        // The time of day each step first comes, where the plan has a
+        // start.
+        let clock = plan.starts.map(|starts| {
             let schedule = lantern_engine::timing::schedule(plan, &|step| self.loaded_length(step));
-            move |id| schedule.start_of(id).map(|after| starts.plus(after))
+            move |id| schedule.first_at(id).map(|after| starts.plus(after))
         });
         // Where a fill's proposed rows go: the end of its section, as far
         // in as that section's steps.
@@ -1087,7 +1867,7 @@ impl App {
             .and_then(|fill| plan.position(fill.section));
         let fill_at = fill_of.map(|at| plan.group_end(at));
         let fill_indent = fill_of.map_or(0.0, |at| {
-            INDENT * f32::from(plan.level(at) + 1) + lanes.curl
+            INDENT * f32::from(plan.level(at) + 1) + lanes.left()
         });
         // The steps and what sits among them, with no room between two:
         // each brings its own under it, but for a step's rail, which runs
@@ -1098,63 +1878,106 @@ impl App {
                 list = list.push(apart($row))
             };
         }
-        // Up to where rows are folded away with the section that holds
-        // them.
-        let mut hidden_to = 0;
-        let mut rest = 0;
-        // What is carried would land in an empty section's own place.
-        let mut landed_in_place = false;
-        // Folded, the open plan is one row, as the others are.
-        let folded_plan = tree && self.plan_folded;
-        let listed: &[Step] = match folded_plan {
-            true => &[],
-            false => plan.steps(),
+        // A step in a folded section stays in sight while the service is
+        // at it or it is being worked on.
+        let kept: Vec<StepId> = current
+            .into_iter()
+            .chain(self.selected.filter(|_| moving.is_none()))
+            .collect();
+        let rows_listed = listed(
+            plan,
+            &shut,
+            &kept,
+            carried,
+            landing.map(|at| (at, gap_level)),
+            feet,
+        );
+        // Where a row is in the plan, and among the rows that stay: the
+        // gap that is closing goes before the first row at or after its
+        // own. What a fill proposes goes at the end of its section, before
+        // its foot, or else before what follows.
+        let index_of = |row: &Listed| match *row {
+            Listed::Step(id) | Listed::Head { section: id, .. } => plan.position(id),
+            _ => None,
         };
-        for (index, step) in listed.iter().enumerate() {
-            if carried.contains(&step.id) {
-                continue;
-            }
-            // Landing in an empty section, its own place is where: no
-            // gap of its own.
-            if landing == Some(rest) && !landed_in_place {
-                put!(gap(side.room(), lanes));
-                gap_at = Some(index);
-            }
-            if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
-                put!(closing_gap(left));
-            }
-            rest += 1;
-            let selected = self.selected == Some(step.id) && moving.is_none();
-            // What a fill proposes sits at the end of its section,
-            // before whatever comes after it.
-            if fill_at == Some(index)
-                && let Some(proposed) = self.fill_rows(fill_indent)
+        let rest_at = |index: usize| {
+            index
+                - carried
+                    .iter()
+                    .filter(|id| plan.position(**id).is_some_and(|at| at < index))
+                    .count()
+        };
+        let fill_section = self.filling.as_ref().map(|fill| fill.section);
+        let mut closed = closing.is_none();
+        let mut filled = fill_at.is_none();
+        for row in &rows_listed {
+            let index = index_of(row);
+            if let (Some(index), Some((at, left))) = (index, closing.filter(|_| !closed))
+                && rest_at(index) >= at
             {
-                put!(track::seen(track::Key::Fill, &places, proposed));
+                put!(closing_gap(left));
+                closed = true;
             }
-            let hidden = index < hidden_to;
-            if step.is_section() {
-                // Folded away with the section it is in.
-                if hidden {
+            let fills = match *row {
+                Listed::Foot(section) => fill_section == Some(section),
+                _ => index.zip(fill_at).is_some_and(|(index, at)| index >= at),
+            };
+            if fills && !filled {
+                filled = true;
+                if let Some(proposed) = self.fill_rows(fill_indent) {
+                    put!(track::seen(track::Key::Fill, &places, proposed));
+                }
+            }
+            let index = match *row {
+                Listed::Gap => {
+                    put!(gap(lanes));
+                    gapped = true;
                     continue;
                 }
-                // In a service, a section that is over folds away to its
-                // one row: what it was, and how long it took.
-                let over = self.over(timing, step.id);
-                let folded = self.shut(timing, step.id);
-                if folded {
-                    hidden_to = plan.group_end(index);
+                Listed::Foot(section) => {
+                    list = list.push(foot_strip(section, &places));
+                    continue;
                 }
-                // A bracket beside its steps: no row. One folded has its
-                // steps gathered into one row; one with nothing in it has
-                // a place where its steps will be.
+                Listed::Empty(section) => {
+                    seen_rows.push(track::Key::Place(section));
+                    put!(self.empty_place(
+                        section,
+                        hue(section),
+                        picked_end == Some(section),
+                        lanes,
+                        &places
+                    ));
+                    continue;
+                }
+                Listed::Head { .. } | Listed::Step(_) => match index {
+                    Some(index) => index,
+                    None => continue,
+                },
+            };
+            let step = &plan.steps()[index];
+            let selected = self.selected == Some(step.id) && moving.is_none();
+            // Rows just taken away from before this one close up.
+            if let Some(room) = self.motion.gone_before(Some(step.id)) {
+                put!(Space::new().height(room));
+            }
+            if let Listed::Head { depth, folded, .. } = *row {
+                seen_rows.push(track::Key::Whole(step.id));
+                put!(self.header(
+                    plan,
+                    timing,
+                    index,
+                    depth,
+                    folded,
+                    hue(step.id),
+                    lanes,
+                    &places
+                ));
+                // Folded, its steps are its stacked dot, and their line is
+                // its last step's: down to what follows, where that goes on
+                // into it by itself.
                 if folded {
-                    whole.push(step.id);
-                    placed.push(index);
                     gathered.push(index);
-                    put!(self.folded_place(plan, step, over, lanes, side, &places));
-                    // Its line is its last step's: down to what follows,
-                    // where that goes on into it by itself.
+                    let over = self.over(timing, step.id);
                     let last = (index + 1..plan.group_end(index))
                         .rev()
                         .find(|at| !plan.steps()[*at].is_section());
@@ -1162,7 +1985,7 @@ impl App {
                     let goes = last.is_some_and(|last| plan.goes_on(last)) && after.is_some();
                     let ink = match over {
                         true => p.outline,
-                        false => p.primary,
+                        false => hue(step.id),
                     };
                     stops.push(track::Stop {
                         id: step.id,
@@ -1177,31 +2000,11 @@ impl App {
                         next: after.map(|after| plan.steps()[after].id),
                         back: None,
                     });
-                } else if (index + 1..plan.group_end(index))
-                    .all(|at| carried.contains(&plan.steps()[at].id))
-                {
-                    // Empty, or all it holds is being carried: its place
-                    // shows, and its bracket stays beside it. Where what
-                    // is carried would land in it, its place is lit.
-                    let lands_here = landing == Some(rest) && host_id == Some(step.id);
-                    landed_in_place = lands_here;
-                    whole.push(step.id);
-                    placed.push(index);
-                    put!(self.empty_place(plan, step.id, lands_here, lanes, side, &places));
                 }
                 if selected && adds {
                     put!(insertion_mark(p, INDENT));
                 }
                 continue;
-            }
-            // Folded away with its section, unless it is the step the
-            // service is at or the one being worked on.
-            if hidden && Some(step.id) != current && !selected {
-                continue;
-            }
-            // Rows just taken away from before this one close up.
-            if let Some(room) = self.motion.gone_before(Some(step.id)) {
-                put!(Space::new().height(room));
             }
             let place = if self
                 .rehearsal
@@ -1223,11 +2026,28 @@ impl App {
             };
             let issue = issues.iter().find(|i| i.step == step.id);
             let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id));
+            // While planning, its row says all of what it is.
+            let facts = (step_rows == Rows::Tall).then(|| {
+                RowFacts::of(
+                    step,
+                    issue,
+                    self.known(step),
+                    clock.as_ref().and_then(|clock| clock(step.id)),
+                    plan.goes_on(index),
+                )
+            });
             let mut row = column![self.ringed(
                 crate::rail::RingOn::Dot(step.id),
                 self.draggable(
                     step.id,
-                    self.step_row(step, place, issue, &noted, picked_end == Some(step.id))
+                    self.step_row(
+                        step,
+                        place,
+                        issue,
+                        facts.as_ref(),
+                        &noted,
+                        picked_end == Some(step.id)
+                    )
                 )
             )];
             // In a service, what is noted of the step that is on is said
@@ -1252,7 +2072,7 @@ impl App {
             }
             // Inside the step: what its slides play or link to, and the
             // sound that plays with it.
-            let parts = self.step_parts(step, place == Place::Current);
+            let parts = self.step_parts(step, place == Place::Current, step_rows.inset());
             let tall = ROW_TALL + parts.len() as f32 * PART_TALL;
             for part in parts {
                 row = row.push(part);
@@ -1260,7 +2080,11 @@ impl App {
             // The rail runs down beside the step and what is inside it.
             // The rail is as tall as the row and the room under it, so
             // its line meets the next row's.
-            let (rail, mut stop) = self.rail(plan, index, place, lanes, &places);
+            let tint = plan
+                .within(index)
+                .last()
+                .map_or(p.primary, |section| hue(*section));
+            let (rail, mut stop) = self.rail(plan, index, place, tint, lanes, &places);
             // A step that was not let go where it was carried shakes.
             let aside = alarm
                 .filter(|_| self.alarm.0.contains(&step.id))
@@ -1268,14 +2092,19 @@ impl App {
             if aside > 0.0 {
                 stop.dot = track::Dot::Would(alarm_ink);
             }
-            let row = row![
-                Space::new().width(aside),
-                rail,
-                apart(row),
-                self.side(plan, index, side, &places)
-            ]
-            .height(Length::Shrink);
-            whole.push(step.id);
+            // Left of the rail, the time of day it comes, level with its
+            // dot.
+            let time: Element<'_, Message> = match facts.as_ref().and_then(|facts| facts.at) {
+                Some(at) => container(text(at.to_string()).size(META).color(p.outline))
+                    .padding(iced::Padding::default().right(8.0))
+                    .align_right(lanes.time)
+                    .center_y(TALL_LINE)
+                    .into(),
+                None => Space::new().width(lanes.time).into(),
+            };
+            let row =
+                row![Space::new().width(aside), time, rail, apart(row)].height(Length::Shrink);
+            seen_rows.push(track::Key::Whole(step.id));
             let row = track::seen(track::Key::Whole(step.id), &places, row);
             // Put back just now: it grows in.
             let row: Element<'_, Message> = match self.motion.growing(step.id) {
@@ -1301,37 +2130,11 @@ impl App {
         if let Some(room) = self.motion.gone_before(None) {
             put!(Space::new().height(room));
         }
-        if fill_at == Some(plan.len())
-            && let Some(proposed) = self.fill_rows(fill_indent)
-        {
+        if !filled && let Some(proposed) = self.fill_rows(fill_indent) {
             put!(track::seen(track::Key::Fill, &places, proposed));
         }
-        if landing == Some(rest) && !landed_in_place {
-            put!(gap(side.room(), lanes));
-            gap_at = Some(plan.len());
-        }
-        if let Some((_, left)) = closing.filter(|(at, _)| *at == rest) {
+        if let Some((_, left)) = closing.filter(|_| !closed) {
             put!(closing_gap(left));
-        }
-        if folded_plan {
-            let sums = self.plan_sums(plan);
-            let steps = plan
-                .steps()
-                .iter()
-                .filter(|step| !step.is_section())
-                .count();
-            list = list.push(self.folded_plan_row(
-                plan.title.clone(),
-                steps,
-                length::clock(sums.filled),
-                true,
-                lanes.curl,
-                Message::FoldPlan,
-                Some(Message::Rail(crate::rail::Act::Ring(
-                    crate::rail::RingOn::All(None),
-                ))),
-                None,
-            ));
         }
         rows = rows.push(list);
         if adds
@@ -1357,7 +2160,7 @@ impl App {
         }
         // The last row adds a section. Steps come from the library and
         // its search; Live and Black screen are first in the library.
-        if moving.is_none() && self.can_edit() && !folded_plan {
+        if moving.is_none() && self.can_edit() {
             // An empty plan's + breathes a few times: it is where to begin.
             let breath = match plan.is_empty() {
                 true => self.motion.breath(),
@@ -1387,76 +2190,6 @@ impl App {
             let lined_up = self.standby_lined_up();
             for (at, resource) in plan.standby.iter().enumerate() {
                 rows = rows.push(self.standby_row(resource, lined_up == Some(at)));
-            }
-        }
-        // Under the open plan, the other plans, each folded into one row
-        // as a bracket: pressed, it opens in this one's place. Under
-        // them the templates, starred: pressed, a new plan starts from
-        // one.
-        if tree && moving.is_none() {
-            let saved = |template: bool| {
-                self.plans.entries.iter().filter_map(move |entry| {
-                    let summary = entry.summary.as_ref().ok()?;
-                    (Some(entry.path.as_path()) != self.plans.file()
-                        && summary.template == template)
-                        .then_some((entry, summary))
-                })
-            };
-            for (at, (entry, summary)) in saved(false).enumerate() {
-                if at == 0 {
-                    rows = rows.push(Space::new().height(14));
-                }
-                let when = ago(SystemTime::now()
-                    .duration_since(entry.modified)
-                    .unwrap_or_default());
-                rows = rows.push(self.folded_plan_row(
-                    summary.title.clone(),
-                    summary.steps,
-                    format!("{} · {when}", self.takes(&summary.plan)),
-                    false,
-                    lanes.curl,
-                    Message::OpenPlan(entry.path.clone()),
-                    None,
-                    Some(star(p, &entry.path, false)),
-                ));
-            }
-            for (at, (entry, summary)) in saved(true).enumerate() {
-                if at == 0 {
-                    rows = rows.push(Space::new().height(14));
-                }
-                rows = rows.push(self.folded_plan_row(
-                    summary.title.clone(),
-                    summary.steps,
-                    self.takes(&summary.plan),
-                    false,
-                    lanes.curl,
-                    Message::FromTemplate(entry.path.clone()),
-                    None,
-                    Some(star(p, &entry.path, true)),
-                ));
-            }
-            // A new plan, or one brought from another computer.
-            rows = rows.push(Space::new().height(14));
-            rows = rows.push(
-                container(column![
-                    list_action(p, "+", "New plan".to_string(), Message::NewPlan),
-                    list_action(
-                        p,
-                        if self.importing.is_some() {
-                            "−"
-                        } else {
-                            "↓"
-                        },
-                        "Import a plan".into(),
-                        Message::ToggleImport,
-                    ),
-                ])
-                .padding(iced::Padding::default().left(lanes.curl)),
-            );
-            if let Some(import) = self.import_rows() {
-                rows = rows.push(
-                    container(import).padding(iced::Padding::default().left(lanes.curl + 24.0)),
-                );
             }
         }
         // The spans beside the line: each from the first to the last of
@@ -1570,8 +2303,8 @@ impl App {
         // Where carried steps would land, each has a dot's place; and a
         // loop, a drawn order or a join that is wholly among them comes
         // with them, drawn beside their places.
-        if gap_at.is_some() && !stepwise.is_empty() {
-            let ink = Palette::tint(p.primary, 0.7);
+        if gapped && !stepwise.is_empty() {
+            let ink = Palette::tint(gap_ink, 0.7);
             // With every flow stripped (Alt), the places show none: what
             // is seen is what letting go would give.
             let stripped = self.carry_how() == lantern_engine::Carry::Stripped;
@@ -1700,412 +2433,82 @@ impl App {
                 Some(Would::Join { .. }) | None => {}
             }
         }
-        // The sections' brackets, each beside the first to the last of
-        // its steps in sight, with its name and its times.
-        // The sections what is carried would be in, innermost first: for
-        // steps, where they would land and all that is around it; for a
-        // section, the one it would be a part of.
-        let into: Vec<StepId> = match moving {
-            Some(drag) if !drag.is_section() => drag
-                .landing
-                .and_then(|at| self.carry_place(plan, drag, at).section)
-                .map(|section| {
-                    let around = plan.position(section).map(|at| plan.within(at));
-                    std::iter::once(section)
-                        .chain(around.unwrap_or_default().into_iter().rev())
-                        .collect()
-                })
-                .unwrap_or_default(),
-            // The sections the dry run of the drop has it in.
-            Some(_) => holders.clone(),
-            // A file carried in: the section it would be a part of, and
-            // those round that.
-            None => host_id
-                .filter(|_| held.is_some())
-                .map(|host| {
-                    let around = plan.position(host).map(|at| plan.within(at));
-                    std::iter::once(host)
-                        .chain(around.unwrap_or_default().into_iter().rev())
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
-        // The bracket the pointer is on, or, while something is carried,
-        // the one it would go into: its rows take its colour, those inside
-        // it keep theirs, and the rest step back.
+        // The section the pointer is on, that what is carried would go
+        // into, or whose foot is pulled is lit: a band from its header down
+        // to its last row, or to where its foot would end it, and its line
+        // strong. Those inside it are as they are, and the rest step back.
         let carrying = moving.is_some() || held.is_some();
-        let lit: Option<Held> = match carrying {
-            true => landing.and_then(|_| match into.first() {
-                Some(section) => Some(Held::Section(*section)),
-                None => plan_lane.map(|_| Held::Plan),
-            }),
-            false => self.bracket_over.and_then(|pointed| {
-                let at = plan.position(pointed.row?)?;
-                match plan.steps()[at].is_section() {
-                    // A section's own row is its bracket's, but for the
-                    // plan's part right of it.
-                    true => Some(match plan_lane == Some(pointed.lane) {
-                        true => Held::Plan,
-                        false => Held::Section(plan.steps()[at].id),
-                    }),
-                    false => covering(plan, side, at, (pointed.lane > 0).then_some(pointed.lane)),
+        let lit = match (self.foot, carrying) {
+            (Some((section, _)), _) => Some(section),
+            (None, true) => landing.and(into.first().copied()),
+            (None, false) => self
+                .hovered
+                .map(|(over, _)| over)
+                .filter(|id| plan.get(*id).is_some_and(Step::is_section)),
+        }
+        .filter(|lit| {
+            rows_listed
+                .iter()
+                .any(|row| matches!(row, Listed::Head { section, .. } if section == lit))
+        });
+        let band = lit.and_then(|section| {
+            let pulled = self
+                .foot
+                .filter(|(foot, _)| *foot == section)
+                .and_then(|(_, last)| last);
+            let last = match pulled {
+                Some(last) if plan.get(last).is_some_and(Step::is_section) => {
+                    last_in(plan, &rows_listed, last, &into)
                 }
-            }),
-        };
-        // As letting go would lay them out, for a section carried.
-        let laid_plan = dropped.as_ref().map_or(plan, |(_, after)| after);
-        let lit_as = |id: Option<StepId>| lit_of(laid_plan, lit, id);
-        // While something is carried, the lane of where it would go makes
-        // room for it.
-        let lean = match carrying {
-            true => track::Lean::Carried(lit.and_then(|lit| {
-                match lit {
-                    Held::Plan => plan_lane,
-                    Held::Section(id) => braced
-                        .iter()
-                        .find(|braced| plan.steps()[braced.at].id == id)
-                        .map(|braced| braced.lane),
-                }
-            })),
-            false => track::Lean::Pointer,
-        };
-        // The first and last of the places that were opened.
-        let place_keys = match (stepwise.first(), stepwise.last(), blockwise) {
-            (Some(first), Some(last), _) => Some((*first, *last)),
-            (_, _, Some(section)) => Some((section, section)),
-            _ => None,
-        };
-        // Every row a bracket can run beside: the steps, and the places
-        // of sections with nothing in them.
-        let mut beside: Vec<usize> = shown.iter().chain(&placed).copied().collect();
-        beside.sort_unstable();
-        let mut brackets: Vec<track::Bracket> = braced
-            .iter()
-            .filter_map(|braced| {
-                let step = &plan.steps()[braced.at];
-                let mut inside = beside
+                Some(last) => rows_listed
                     .iter()
-                    .copied()
-                    .filter(|at| (braced.at + 1..braced.end).contains(at));
-                let picked = self.selected == Some(step.id);
-                // Folded: beside its one row, with its name, and how long
-                // it took against its time when it is over, else its time
-                // and what it would take.
-                if shut(step.id) {
-                    let goal = match step.action {
-                        Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
-                        _ => None,
-                    };
-                    let section = timing.sections.iter().find(|s| s.id == step.id);
-                    let mut lines = Vec::new();
-                    match section.map(|section| section.phase) {
-                        Some(Phase::Done { took }) => {
-                            let took = took.unwrap_or_default();
-                            let late = goal.is_some_and(|goal| took > goal);
-                            lines.push((
-                                track::Sign::Sum,
-                                match goal {
-                                    Some(goal) => {
-                                        format!(
-                                            "{} of {}",
-                                            length::clock(took),
-                                            length::clock(goal)
-                                        )
-                                    }
-                                    None => length::clock(took),
-                                },
-                                if late { p.error } else { p.outline },
-                            ));
-                        }
-                        _ => {
-                            if let Some(goal) = goal {
-                                lines.push((
-                                    track::Sign::Goal,
-                                    length::clock(goal),
-                                    p.on_surface_variant,
-                                ));
-                            }
-                            lines.push((
-                                track::Sign::Sum,
-                                length::clock(self.planned(plan, step.id)),
-                                p.on_surface_variant,
-                            ));
-                        }
-                    }
-                    return Some(track::Bracket {
-                        id: Some(step.id),
-                        first: step.id,
-                        last: step.id,
-                        offset: track::brace_at(&widths, 0, named),
-                        beside: None,
-                        color: match self.over(timing, step.id) {
-                            true => Palette::tint(hue(step.id), 0.45),
-                            false => hue(step.id),
-                        },
-                        name: step.label.clone(),
-                        lines,
-                        strong: picked,
-                        bare: !named,
-                        upright: false,
-                        place: false,
-                        lit: lit_as(Some(step.id)),
-                        marks: crate::notes::numbers_on(
-                            plan,
-                            lantern_engine::NoteOn::Step(step.id),
-                        )
-                        .into_iter()
-                        .map(|(_, n)| n)
-                        .collect(),
-                        bulge: 0.0,
-                    });
-                }
-                // With nothing in it: beside its place, with its name and
-                // the time it is given.
-                if braced.end == braced.at + 1 {
-                    let goal = match step.action {
-                        Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
-                        _ => None,
-                    };
-                    // What is carried would go into it: its bracket takes in
-                    // the place opened for it, under its own.
-                    let last = match (gap_at, place_keys) {
-                        (Some(_), Some((_, to))) if into.first() == Some(&step.id) => to,
-                        _ => step.id,
-                    };
-                    return Some(track::Bracket {
-                        id: Some(step.id),
-                        first: step.id,
-                        last,
-                        offset: track::brace_at(&widths, 0, named),
-                        beside: None,
-                        color: hue(step.id),
-                        name: step.label.clone(),
-                        lines: goal
-                            .map(|goal| {
-                                (track::Sign::Goal, length::clock(goal), p.on_surface_variant)
-                            })
-                            .into_iter()
-                            .collect(),
-                        strong: picked
-                            || host_id == Some(step.id)
-                            || into.first() == Some(&step.id),
-                        bare: !named,
-                        upright: false,
-                        place: false,
-                        lit: lit_as(Some(step.id)),
-                        marks: crate::notes::numbers_on(
-                            plan,
-                            lantern_engine::NoteOn::Step(step.id),
-                        )
-                        .into_iter()
-                        .map(|(_, n)| n)
-                        .collect(),
-                        bulge: self.motion.pulse(step.id),
-                    });
-                }
-                let first = inside.next()?;
-                let last = inside.next_back().unwrap_or(first);
-                // The section what is carried would be in takes its
-                // place in: its bracket runs from there, or to there,
-                // where the place is before its first step or after its
-                // last.
-                let takes = into.contains(&step.id);
-                let (first_key, last_key) = match (gap_at.filter(|_| takes), place_keys) {
-                    (Some(gap), Some((from, _))) if gap <= first => (from, id_at(last)),
-                    (Some(gap), Some((_, to))) if gap > last => (id_at(first), to),
-                    _ => (id_at(first), id_at(last)),
-                };
-                let section = timing.sections.iter().find(|s| s.id == step.id);
-                let budget = match step.action {
-                    Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
-                    _ => None,
-                };
-                let phase = section.map_or(
-                    Phase::Coming {
-                        planned: self.planned(plan, step.id),
+                    .position(|row| *row == Listed::Step(last)),
+                None => last_in(plan, &rows_listed, section, &into),
+            }?;
+            let last = match rows_listed[last] {
+                Listed::Step(id) | Listed::Head { section: id, .. } => track::Key::Whole(id),
+                Listed::Empty(id) => track::Key::Place(id),
+                Listed::Gap => track::Key::Row(stepwise.last().copied().or(blockwise)?),
+                Listed::Foot(_) => return None,
+            };
+            Some(track::Band {
+                section,
+                last,
+                color: match foot_refused == Some(section) {
+                    true => p.error,
+                    false => hue(section),
+                },
+            })
+        });
+        // Each section's line beside its rows, in its colour: from where a
+        // row says its line starts, or its dot, to its dot or its foot.
+        let end_of = |row: Listed, top: bool| match row {
+            Listed::Step(id)
+            | Listed::Head {
+                section: id,
+                folded: true,
+                ..
+            } => Some(track::Key::Dot(id)),
+            Listed::Head { section, .. } => Some(track::Key::Row(section)),
+            Listed::Foot(section) => Some(track::Key::Foot(section)),
+            Listed::Gap => gap_keys.map(|(first, last)| if top { first } else { last }),
+            Listed::Empty(_) => None,
+        };
+        let stretched: Vec<track::Stretch> = stretches(plan, &rows_listed, &into)
+            .into_iter()
+            .filter_map(|(section, from, to)| {
+                Some(track::Stretch {
+                    from: end_of(rows_listed[from], true)?,
+                    to: end_of(rows_listed[to], false)?,
+                    color: match (foot_refused == Some(section), self.over(timing, section)) {
+                        (true, _) => p.error,
+                        (false, true) => Palette::tint(hue(section), 0.45),
+                        (false, false) => hue(section),
                     },
-                    |section| section.phase,
-                );
-                // The time it takes, against the time it is given.
-                let (sum, late, on) = match phase {
-                    Phase::Coming { planned } => (
-                        planned,
-                        budget.is_some_and(|budget| planned > budget),
-                        false,
-                    ),
-                    Phase::Running { elapsed, expected } => (
-                        elapsed,
-                        budget.is_some_and(|budget| expected > budget),
-                        true,
-                    ),
-                    Phase::Done { took } => (took.unwrap_or_default(), false, false),
-                };
-                // Over in a service and opened again: grey, as folded.
-                let past = self.over(timing, step.id);
-                let mut lines = Vec::new();
-                if let Some(budget) = budget {
-                    lines.push((
-                        track::Sign::Goal,
-                        length::clock(budget),
-                        p.on_surface_variant,
-                    ));
-                }
-                // Just tipped over its time: the sum turns red as it goes.
-                let tipped = self.motion.tipped(step.id);
-                lines.push((
-                    track::Sign::Sum,
-                    length::clock(sum),
-                    match (late, on, tipped) {
-                        (true, _, Some(t)) => crate::motion::blend(p.on_surface, p.error, t),
-                        (true, _, None) => p.error,
-                        (false, true, _) => p.tertiary,
-                        (false, false, _) if past => p.outline,
-                        (false, false, _) => p.on_surface,
-                    },
-                ));
-                // The time of day it should be over by, in the colour of
-                // what is wrong where it is expected to end after; else, in
-                // a service, when it is due.
-                match step.done_by() {
-                    Some(by) => lines.push((
-                        track::Sign::Clock,
-                        by.to_string(),
-                        match section.and_then(SectionTiming::late) {
-                            Some(_) => p.error,
-                            None => p.on_surface_variant,
-                        },
-                    )),
-                    None => {
-                        if let Some(due) = due.as_ref().and_then(|due| due(step.id)).filter(|_| !on)
-                        {
-                            lines.push((track::Sign::Clock, due.to_string(), p.on_surface_variant));
-                        }
-                    }
-                }
-                let picked = self.selected == Some(step.id);
-                let beside = Some(braced)
-                    .filter(|braced| braced.lane > 0)
-                    .and_then(|braced| own_of(braced.at + 1, braced.end))
-                    .map(|(first, last)| (id_at(first), id_at(last)));
-                Some(track::Bracket {
-                    id: Some(step.id),
-                    first: first_key,
-                    last: last_key,
-                    offset: track::brace_at(&widths, braced.lane, named),
-                    // One that holds others writes beside its own steps.
-                    beside,
-                    color: match foot_refused == Some(step.id) {
-                        true => p.error,
-                        false if past => Palette::tint(hue(step.id), 0.45),
-                        false => hue(step.id),
-                    },
-                    name: step.label.clone(),
-                    lines,
-                    strong: picked
-                        || self.picked.contains(&step.id)
-                        || host_id == Some(step.id)
-                        || into.first() == Some(&step.id)
-                        || footed == Some(step.id),
-                    bare: !named,
-                    // With nothing of its own to write beside and no room
-                    // right of its brace, it writes up its brace.
-                    upright: braced.lane > 0 && beside.is_none() && !side.wide,
-                    place: false,
-                    lit: lit_as(Some(step.id)),
-                    marks: crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(step.id))
-                        .into_iter()
-                        .map(|(_, n)| n)
-                        .collect(),
-                    bulge: self
-                        .motion
-                        .tipped(step.id)
-                        .map_or(0.0, |t| (t * std::f32::consts::PI).sin())
-                        .max(self.motion.pulse(step.id)),
+                    light: lit_of(plan, lit, section),
                 })
             })
             .collect();
-        // A section that is carried has a bracket of its own at its
-        // place, dashed, with its name faint beside it.
-        if let Some(section) = blockwise.filter(|_| gap_at.is_some())
-            && let Some(step) = plan.get(section)
-        {
-            let budget = match step.action {
-                Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
-                _ => None,
-            };
-            // Down past what it would take into itself.
-            let last = taken
-                .iter()
-                .rev()
-                .find(|id| plan.position(**id).is_some_and(|at| beside.contains(&at)))
-                .copied()
-                .unwrap_or(section);
-            brackets.push(track::Bracket {
-                id: Some(section),
-                first: section,
-                last,
-                offset: track::brace_at(&widths, carried_lane, named),
-                beside: None,
-                color: hue(section),
-                name: step.label.clone(),
-                lines: budget
-                    .map(|budget| {
-                        (
-                            track::Sign::Goal,
-                            length::clock(budget),
-                            p.on_surface_variant,
-                        )
-                    })
-                    .into_iter()
-                    .collect(),
-                strong: false,
-                bare: !named,
-                upright: false,
-                place: true,
-                // It lands in the lit one.
-                lit: match lit {
-                    Some(_) => track::Light::Within,
-                    None => track::Light::Plain,
-                },
-                marks: Vec::new(),
-                bulge: 0.0,
-            });
-        }
-        // The plan's own, from the first row in sight to the last.
-        let plan_rows = beside.first().zip(beside.last());
-        if let (Some(lane), Some((first, last))) = (plan_lane, plan_rows) {
-            let sums = self.plan_sums(plan);
-            let beside = plans_steps.map(|(first, last)| (id_at(first), id_at(last)));
-            brackets.push(track::Bracket {
-                id: None,
-                first: id_at(*first),
-                last: id_at(*last),
-                offset: track::brace_at(&widths, lane, named),
-                beside,
-                color: p.primary,
-                name: plan.title.clone(),
-                lines: plan_lines(plan.target, plan.starts, &sums)
-                    .into_iter()
-                    .map(|(sign, words, over)| {
-                        let ink = match (sign, over) {
-                            (_, true) => p.error,
-                            (track::Sign::Sum, false) => p.on_surface,
-                            _ => p.on_surface_variant,
-                        };
-                        (sign, words, ink)
-                    })
-                    .collect(),
-                strong: plan_ringed || self.plan_picked,
-                // Its words are at its head, over the rows: there is
-                // room there in the narrowest pane.
-                bare: true,
-                upright: false,
-                place: false,
-                lit: lit_as(None),
-                marks: Vec::new(),
-                bulge: 0.0,
-            });
-        }
         // A line that was pulled where none can be stays a moment, where
         // it was, shaking and flashing while why is said.
         if let (Some(aside), Some((pulled_to, first, last))) = (alarm, self.alarm_pull) {
@@ -2134,27 +2537,36 @@ impl App {
                 let Some(origin) = places.get(&track::Key::Canvas).copied() else {
                     return Vec::new();
                 };
-                let rows: Vec<Rectangle> = note
+                // Each row it is on, and how far left of the row's end its
+                // marks are: a step's left of its length, a section's at the
+                // end of its header.
+                let rows: Vec<(Rectangle, f32)> = note
                     .on
                     .iter()
                     .filter_map(|on| crate::notes::anchor(plan, *on))
-                    .filter_map(|id| places.get(&track::Key::Side(id)).copied())
+                    .filter_map(|id| {
+                        let from_end = match plan.get(id).is_some_and(Step::is_section) {
+                            true => 17.0,
+                            false => step_rows.marks_from_end(),
+                        };
+                        Some((places.get(&track::Key::Whole(id)).copied()?, from_end))
+                    })
                     .collect();
-                let Some(first) = rows.iter().max_by(|a, b| a.y.total_cmp(&b.y)) else {
+                let Some((first, _)) = rows.iter().max_by(|a, b| a.0.y.total_cmp(&b.0.y)) else {
                     return Vec::new();
                 };
                 // From the card's top edge, near its mark, to where each
-                // mark is: just left of the time at the row's end.
+                // mark is.
                 let card = iced::Point::new(
                     (origin.width - crate::notes::CARD - 4.0).max(0.0) + 14.0,
                     first.y + first.height - origin.y + 2.0,
                 );
                 rows.iter()
-                    .map(|row| {
+                    .map(|(row, from_end)| {
                         (
                             card,
                             iced::Point::new(
-                                row.x - origin.x - 44.0,
+                                row.x + row.width - origin.x - from_end,
                                 row.center_y() - origin.y + 7.0,
                             ),
                         )
@@ -2181,11 +2593,9 @@ impl App {
             orders: drawn_orders,
             still: self.motion.still,
             hot: can,
-            brackets,
+            stretches: stretched,
+            band,
             threads,
-            lanes: widths.clone(),
-            named,
-            lean,
             lit: match carrying {
                 true => self.motion.host_lit(),
                 false => 1.0,
@@ -2213,19 +2623,13 @@ impl App {
                 .collect(),
             select: (tree && can).then_some(p.primary),
             band_anywhere: tree && can && self.mods.shift(),
-            rows: whole,
+            rows: seen_rows,
             filling: self.filling.is_some(),
         };
         // Leaving the list means letting go would move nothing.
         let mut layers = stack![
             rows,
-            track::over(
-                picture,
-                &places,
-                Message::Marquee,
-                Message::BracketOver,
-                Message::PressSoundEnd,
-            )
+            track::over(picture, &places, Message::Marquee, Message::PressSoundEnd,)
         ]
         .width(Fill);
         // The open note's card, beside the first thing it is on, with a
@@ -2239,7 +2643,7 @@ impl App {
                 .on
                 .iter()
                 .filter_map(|on| crate::notes::anchor(plan, *on))
-                .filter_map(|id| places.get(&track::Key::Side(id)).copied())
+                .filter_map(|id| places.get(&track::Key::Whole(id)).copied())
                 .collect();
             if let (Some(origin), Some(first)) =
                 (origin, rows.iter().max_by(|a, b| a.y.total_cmp(&b.y)))
@@ -2251,36 +2655,13 @@ impl App {
                 layers = layers.push(iced::widget::pin(card).x(x).y(y));
             }
         }
-        // Steps picked together can be made a section: a mark beside the
-        // last of them does it.
-        let last_picked = self
-            .picked
-            .iter()
-            .filter_map(|id| plan.position(*id))
-            .max()
-            // A bracket's mark goes by the last of what is in it.
-            .map(|last| (last..plan.group_end(last)).last().unwrap_or(last))
-            .filter(|_| self.picked.len() > 1 && tree && can && moving.is_none());
-        // A step has them at its end; a section's place has them over it.
-        if let Some(last) = last_picked.filter(|last| plan.steps()[*last].is_section())
-            && let Some((origin, row)) = {
-                let places = places.borrow();
-                places
-                    .get(&track::Key::Canvas)
-                    .copied()
-                    .zip(places.get(&track::Key::Side(id_at(last))).copied())
-            }
-        {
-            layers = layers.push(
-                iced::widget::pin(self.picked_actions())
-                    // Beside the place, level with it.
-                    .x((row.x - origin.x - 70.0).max(0.0))
-                    .y((row.y - origin.y + 7.0).max(0.0)),
-            );
-        }
-        mouse_area(scrolling(layers).id(ROWS))
-            .on_exit(Message::LeftPlan)
-            .into()
+        mouse_area(
+            scrolling(layers)
+                .id(ROWS)
+                .on_scroll(|seen| Message::PlanScrolled(seen.absolute_offset().y)),
+        )
+        .on_exit(Message::LeftPlan)
+        .into()
     }
 
     /// What can be done to steps picked together: make a section of them,
@@ -2289,7 +2670,7 @@ impl App {
         let p = self.palette;
         let make = hinted(
             p,
-            button(text("[+]").size(META).font(BOLD).color(p.primary))
+            button(text("+ Section").size(META).font(BOLD).color(p.primary))
                 .padding([3, 6])
                 .on_press(Message::BracketPicked)
                 .style(look::pill(p, Tone::Selected)),
@@ -2317,9 +2698,11 @@ impl App {
     /// What is inside a step, a line each under its row: the videos,
     /// sounds and pictures on a deck's slides, by slide, and the step's
     /// own sound with the slide it starts at. `on_stage`: the step is the
-    /// one the service is at, so the slide it is on is marked.
-    fn step_parts<'a>(&self, step: &Step, on_stage: bool) -> Vec<Element<'a, Message>> {
+    /// one the service is at, so the slide it is on is marked. Each is in
+    /// from its row's name, `inset` in from the row's start.
+    fn step_parts<'a>(&self, step: &Step, on_stage: bool, inset: f32) -> Vec<Element<'a, Message>> {
         let p = self.palette;
+        let indent = 34.0 + inset;
         let Action::Show { resource } = &step.action else {
             // A note or a live slot under a sound that keeps going says so.
             return crate::sources::mix_lines(&self.engine.0.plan(), step)
@@ -2333,7 +2716,7 @@ impl App {
                         .spacing(8)
                         .align_y(Alignment::Center),
                     )
-                    .padding(iced::Padding::default().left(34.0).top(2.0).bottom(3.0))
+                    .padding(iced::Padding::default().left(indent).top(2.0).bottom(3.0))
                     .into()
                 })
                 .collect();
@@ -2365,7 +2748,7 @@ impl App {
             .width(Fill)
             .padding(
                 iced::Padding::default()
-                    .left(34.0)
+                    .left(indent)
                     .right(8.0)
                     .top(2.0)
                     .bottom(3.0),
@@ -2419,7 +2802,7 @@ impl App {
                 .width(Fill)
                 .padding(
                     iced::Padding::default()
-                        .left(34.0)
+                        .left(indent)
                         .right(8.0)
                         .top(2.0)
                         .bottom(3.0),
@@ -2448,30 +2831,6 @@ impl App {
             ));
         }
         parts
-    }
-
-    /// How the picked step fades, in a card under its name: in and out, a
-    /// second less or more each press. Only for a step that shows
-    /// something, where it can change.
-    fn fade_card<'a>(&self, step: &Step) -> Option<Element<'a, Message>> {
-        if !matches!(step.action, Action::Show { .. }) {
-            return None;
-        }
-        let changes = self.can_edit()
-            && (self.mode != crate::mode::Mode::Run || self.ahead(&self.engine.0.plan(), step.id));
-        if !changes {
-            return None;
-        }
-        let p = self.palette;
-        Some(
-            container(
-                container(column![self.sources_card(p, step), fade_steppers(p, step)].spacing(6))
-                    .padding([4, 5])
-                    .style(look::card(p, 0.0, 10.0)),
-            )
-            .padding(iced::Padding::default().top(6.0))
-            .into(),
-        )
     }
 
     /// `row`, telling the app which half of it the pointer is over, so a
@@ -2508,15 +2867,22 @@ impl App {
         }
     }
 
+    /// A step's row. With its `facts` it is tall, as while planning (see
+    /// [`Rows`]); without, one line.
     pub(crate) fn step_row(
         &self,
         step: &Step,
         place: Place,
         issue: Option<&Issue>,
+        facts: Option<&RowFacts<'_>>,
         noted: &[(lantern_engine::NoteId, usize)],
         picked_end: bool,
     ) -> Element<'_, Message> {
         let p = self.palette;
+        let rows = match facts {
+            Some(_) => Rows::Tall,
+            None => Rows::Line,
+        };
         // The current step is on stage unless something off the plan was
         // shown since.
         let shown = match &step.action {
@@ -2608,6 +2974,9 @@ impl App {
             }
             (None, _) => (kind, p.on_surface_variant),
         };
+        // While planning, the line under its name says what there is to
+        // say.
+        let said = said.filter(|_| facts.is_none());
         let selected =
             self.selected == Some(step.id) && !self.drag.as_ref().is_some_and(|drag| drag.moving);
         // The length is edited where it's read: on the selected row a click
@@ -2655,9 +3024,19 @@ impl App {
                 p.on_surface_variant,
             )
         };
+        // While planning, beside its length, whether it goes on by itself.
+        let end = match facts {
+            Some(facts) => row![goes_on_mark(p, facts.goes_on), end]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            None => end,
+        };
         let mut label = column![title];
         if self.editing(step.id, Part::Search) {
             label = label.push(self.search_field(step));
+        } else if let Some(facts) = facts {
+            label = label.push(under_name(p, &facts.under));
         } else if (selected || on_now)
             && let Some(said) = &said
         {
@@ -2672,9 +3051,11 @@ impl App {
         // Its dot is on the rail beside it. One the phone put on the
         // projector says so here.
         let ring = self.motion.ring().filter(|_| shown);
-        let mut line = row![container(label).width(Fill).clip(true)]
-            .spacing(8)
-            .align_y(Alignment::Center);
+        let mut line = row![].spacing(8).align_y(Alignment::Center);
+        if let Some(facts) = facts {
+            line = line.push(self.row_picture(&facts.thumb, PICTURE));
+        }
+        let mut line = line.push(container(label).width(Fill).clip(true));
         // Under the pointer, a row that can change says so, in its
         // length's place so its name keeps its room: what would replace
         // it, and the way to take it out. The selected row has all of
@@ -2703,7 +3084,8 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        let line = match coming {
+        // While planning, its picture says how far its download has come.
+        let line = match coming.filter(|_| facts.is_none()) {
             Some(part) => line.push(hinted(
                 p,
                 look::ring(part, 16.0, p.tertiary),
@@ -2736,22 +3118,181 @@ impl App {
             Some(faded) => crate::motion::blend(Palette::tint(p.primary, 0.5), fill, faded),
             None => fill,
         };
-        // Under all of its line: what can be done to the steps picked
-        // together, under the last of them so its name keeps the row's
-        // width; and picked, how it fades.
+        // Under all of its line, in line with its name: what can be done
+        // to the steps picked together, under the last of them so its
+        // name keeps the row's width; and picked in a run, its look and
+        // timing.
+        let inset = iced::Padding::default().left(rows.inset());
         let mut line = column![line];
         if picked_end {
-            line = line.push(self.picked_actions());
+            line = line.push(container(self.picked_actions()).padding(inset));
         }
-        if let Some(card) = self.fade_card(step).filter(|_| selected) {
-            line = line.push(card);
+        if selected && self.card_open() == Some((step.id, CardAt::Row)) {
+            line =
+                line.push(container(self.look_and_timing_card(step, CardAt::Row)).padding(inset));
         }
         let row = button(line)
             .width(Fill)
-            .padding([10, 10])
+            .padding(rows.padding())
             .on_press(Message::Click(Clicked::Step(step.id)))
             .style(look::row_filled(p, fill));
         row.into()
+    }
+
+    /// A row's picture, `width` wide at 16:9, with its size in its lower
+    /// right corner and its state in its upper left: white on a dark
+    /// scrim, so they read over any picture, or a warning solid in its
+    /// tint.
+    pub(crate) fn row_picture<'a>(&self, thumb: &Thumb<'_>, width: f32) -> Element<'a, Message> {
+        let picture = match thumb.picture {
+            Picture::Of(resource) => self.thumbnail(resource, width),
+            Picture::Kind(icon) => self.icon_thumbnail(icon, width, width * 9.0 / 16.0),
+        };
+        self.badged(picture, thumb, width, None, false)
+    }
+
+    /// A tile's picture in the library's Shapes: whole, `width` by
+    /// `height`, which is its own shape, with its corners as a row's
+    /// picture has them and a ○ in `primary` in its upper right one while
+    /// it is `in_plan`. Over its foot, its `title`, where the tile has
+    /// room for some of it beside its size.
+    pub(crate) fn tile_picture<'a>(
+        &self,
+        thumb: &Thumb<'_>,
+        (width, height): (f32, f32),
+        title: &str,
+        in_plan: bool,
+    ) -> Element<'a, Message> {
+        let picture = match thumb.picture {
+            Picture::Of(resource) => self.whole_thumbnail(resource, width, height),
+            Picture::Kind(icon) => self.icon_thumbnail(icon, width, height),
+        };
+        let size = thumb.size.as_deref().map_or(0.0, |words| {
+            widgets::steady(words, badge_size(words, width)) + 2.0 * BADGE_PAD
+        });
+        let foot = crate::gallery::titled(width, size).then(|| {
+            single_line(title)
+                .size(META)
+                .font(MEDIUM)
+                .color(iced::Color::WHITE)
+                .into()
+        });
+        self.badged(picture, thumb, width, foot, in_plan)
+    }
+
+    /// `picture`, `width` wide, with `thumb`'s size and state in its
+    /// corners, and a ○ in `primary` in its upper right one while it is
+    /// `in_plan`; and `foot`, where there is one, along its foot before
+    /// the size, on a shade that darkens to the edge so white words read
+    /// over any picture.
+    fn badged<'a>(
+        &self,
+        picture: Element<'a, Message>,
+        thumb: &Thumb<'_>,
+        width: f32,
+        foot: Option<Element<'a, Message>>,
+        in_plan: bool,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let scrim = (iced::Color::BLACK.scale_alpha(0.74), iced::Color::WHITE);
+        let badge = |words: String, round: f32, (fill, ink): (iced::Color, iced::Color)| {
+            container(
+                text(words.clone())
+                    .size(badge_size(&words, width))
+                    .font(BOLD)
+                    .color(ink)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            )
+            .padding([0.0, BADGE_PAD])
+            .style(move |_| container::Style {
+                background: Some(fill.into()),
+                border: iced::Border {
+                    radius: round.into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            })
+        };
+        let size = thumb.size.clone().map(|size| badge(size, 3.0, scrim));
+        let mut layers = stack![picture];
+        match foot {
+            Some(foot) => {
+                let line = row![container(foot).width(Fill).clip(true)]
+                    .extend(size.map(Into::into))
+                    .spacing(4)
+                    .align_y(Alignment::End);
+                let shade = iced::gradient::Linear::new(iced::Radians::PI)
+                    .add_stop(0.0, iced::Color::BLACK.scale_alpha(0.0))
+                    .add_stop(1.0, iced::Color::BLACK.scale_alpha(0.7));
+                layers = layers.push(
+                    container(
+                        container(line)
+                            .width(Fill)
+                            .padding(
+                                iced::Padding::new(BADGE_INSET)
+                                    .top(10.0)
+                                    .left(BADGE_INSET + 4.0),
+                            )
+                            .style(move |_| container::Style {
+                                background: Some(shade.into()),
+                                border: iced::border::rounded(iced::border::bottom(
+                                    look::THUMB_RADIUS,
+                                )),
+                                ..container::Style::default()
+                            }),
+                    )
+                    .align_bottom(Fill),
+                );
+            }
+            None => {
+                if let Some(size) = size {
+                    layers = layers.push(
+                        container(size)
+                            .align_right(Fill)
+                            .align_bottom(Fill)
+                            .padding(BADGE_INSET),
+                    );
+                }
+            }
+        }
+        if let Some(state) = thumb.state {
+            let colours = match state {
+                State::Coming(_) | State::Online => scrim,
+                State::Live => (scrim.0, p.tertiary),
+                State::Soft(_) => (p.tertiary, p.surface),
+            };
+            let badge: Element<'a, Message> = match state {
+                // Its words say why, where the line under it doesn't.
+                State::Soft(screen) => hinted(
+                    p,
+                    badge(state.words(), look::PILL_RADIUS, colours),
+                    soft_words(screen),
+                    tooltip::Position::Bottom,
+                ),
+                State::Live | State::Online | State::Coming(_) => {
+                    badge(state.words(), look::PILL_RADIUS, colours).into()
+                }
+            };
+            layers = layers.push(
+                container(badge)
+                    .align_left(Fill)
+                    .align_top(Fill)
+                    .padding(BADGE_INSET),
+            );
+        }
+        if in_plan {
+            layers = layers.push(
+                container(badge(
+                    "○".to_string(),
+                    look::PILL_RADIUS,
+                    (scrim.0, p.primary),
+                ))
+                .align_right(Fill)
+                .align_top(Fill)
+                .padding(BADGE_INSET),
+            );
+        }
+        layers.into()
     }
 
     /// The same row while the service runs: how long it has run, large;
@@ -2887,14 +3428,12 @@ impl App {
         }
     }
 
-    /// What the picked plan is set to and what can be done to it, as a
-    /// picked section's card says of the section: its name, the time it
-    /// is meant to take, when it starts and so ends, what its steps come
-    /// to, how it moves, and its other settings.
-    /// What the plan's ring shows under it, in `p`, the ring's colours:
-    /// its name (a field while it is renamed), its goal, when it starts,
-    /// what it takes, and how it moves.
-    pub(crate) fn plan_bracket_card(&self, p: Palette, plan: &Plan) -> Element<'_, Message> {
+    /// The plan's own fields in its settings, each with what it is
+    /// called: its name, the time it is meant to take, what its steps
+    /// come to against that, when it starts and so ends, and how it
+    /// plays. Each but what it takes is pressed to change it.
+    pub(crate) fn plan_fields(&self, plan: &Plan) -> [(&'static str, Element<'_, Message>); 5] {
+        let p = self.palette;
         let quiet = p.on_surface_variant;
         let can = self.can_edit();
         let name: Element<'_, Message> = match &self.plans.mode {
@@ -2902,18 +3441,20 @@ impl App {
                 .id(NAME_BOX)
                 .on_input(Message::PlanName)
                 .on_submit(Message::SubmitPlanName)
-                .size(BODY)
-                .padding([3, 6])
+                .size(META)
+                .padding([5, 9])
                 .style(look::input(p))
                 .into(),
-            _ => container(
+            _ => button(
                 single_line(plan.title.clone())
-                    .size(BODY)
+                    .size(META)
                     .font(BOLD)
                     .color(p.primary),
             )
             .width(Fill)
-            .clip(true)
+            .padding([5, 9])
+            .on_press_maybe(can.then_some(Message::EditPlanName))
+            .style(look::pill(p, Tone::Plain))
             .into(),
         };
         let small = |label: &'static str, does: Message| -> Element<'_, Message> {
@@ -2962,48 +3503,18 @@ impl App {
             .into(),
         };
         let goal = row![
-            look::icon(Icon::Target, 12.0, quiet),
             small("−", Message::PlanGoal(-60)),
             goal,
             small("+", Message::PlanGoal(60)),
         ]
         .spacing(3)
         .align_y(Alignment::Center);
-        let sums = self.plan_sums(plan);
-        // When it starts, typed, and so when it should end.
-        let starts: Element<'_, Message> = match &self.starts_typed {
-            Some(typed) => field("10:30", STARTS_BOX, typed)
-                .on_input(Message::PlanStarts)
-                .on_submit(Message::StartsDone)
-                .into(),
-            None => pressed(
-                plan.starts
-                    .map_or("—".to_string(), |starts| starts.to_string()),
-                Message::EditStarts,
-            ),
-        };
-        let mut starts = row![look::icon(Icon::Play, 12.0, quiet), starts]
-            .spacing(4)
-            .align_y(Alignment::Center);
-        if let Some(begins) = plan.starts {
-            starts = starts.push(
-                text(format!(
-                    "→ {}",
-                    begins.plus(plan.target.unwrap_or(sums.total))
-                ))
-                .size(META)
-                .color(quiet),
-            );
-        }
         // What its steps come to, and how far from the time it is meant
         // to take: over in the colour of what is wrong, under quietly.
+        let sums = self.plan_sums(plan);
         let against = sums.against(plan.target);
         let over = against.is_some_and(|against| sums.filled > against);
-        let filled = match sums.open {
-            true => format!("Σ {}+", length::clock(sums.filled)),
-            false => format!("Σ {}", length::clock(sums.filled)),
-        };
-        let mut sum = row![text(filled).size(META).font(BOLD).color(if over {
+        let mut sum = row![text(sums.said()).size(META).font(BOLD).color(if over {
             p.error
         } else {
             p.on_surface
@@ -3021,9 +3532,29 @@ impl App {
                     .color(ink),
             );
         }
-        // How the whole plan moves, and rehearsing it.
-        let flow = self.flow_buttons(p, None, plan.flow, false);
-        column![name, goal, starts, sum, flow].spacing(6).into()
+        // When it starts, typed, and so when it should end.
+        let starts: Element<'_, Message> = match &self.starts_typed {
+            Some(typed) => field("10:30", STARTS_BOX, typed)
+                .on_input(Message::PlanStarts)
+                .on_submit(Message::StartsDone)
+                .into(),
+            None => pressed(
+                plan.starts
+                    .map_or("—".to_string(), |starts| starts.to_string()),
+                Message::EditStarts,
+            ),
+        };
+        let mut starts = row![starts].spacing(8).align_y(Alignment::Center);
+        if let Some(ends) = sums.ends(plan.starts, plan.target) {
+            starts = starts.push(text(format!("→ {ends}")).size(META).color(quiet));
+        }
+        [
+            ("Name", name),
+            ("Goal", goal.into()),
+            ("Takes", sum.into()),
+            ("Starts", starts.into()),
+            ("Plays", self.flow_buttons(p, None, plan.flow, true)),
+        ]
     }
 
     pub(crate) fn flow_buttons<'a>(
@@ -3164,7 +3695,8 @@ impl App {
     /// The rail beside the step at `index`: its dot, the line down to
     /// it from the step before when that one goes on by itself, and the
     /// line on to the next when this one does. A gap is a step that
-    /// waits. Planned is the plan's colour, live the stage's, past grey;
+    /// waits. Planned is `planned`, the colour of the innermost section
+    /// the step is in (the plan's in none), live the stage's, past grey;
     /// under the step on the projector the line fills as it plays.
     /// A click under the dot joins the step to the next, or parts them.
     fn rail<'a>(
@@ -3172,6 +3704,7 @@ impl App {
         plan: &Plan,
         index: usize,
         place: Place,
+        planned: iced::Color,
         lanes: Lanes<'_>,
         places: &track::Places,
     ) -> (Element<'a, Message>, track::Stop) {
@@ -3186,7 +3719,6 @@ impl App {
         let next = plan.next_step(index).map(|next| &steps[next]);
         let joined_above = before.is_some_and(|before| plan.goes_on(before));
         let joined_below = goes && after;
-        let planned = p.primary;
         // Past is grey in a service. In a rehearsal it is the plan's
         // colour, dimmed: nothing there has really happened.
         let past = match self.rehearsal {
@@ -3249,7 +3781,7 @@ impl App {
             Place::Next => track::Dot::Hollow(live),
             Place::Done => track::Dot::Solid(past),
             Place::Later if goes => track::Dot::Solid(planned),
-            Place::Later => track::Dot::Hollow(p.on_surface_variant),
+            Place::Later => track::Dot::Hollow(planned),
         };
         // The line from this dot to the next step's.
         let joining = matches!(would, Some(crate::rail::Would::Join { first, last }) if first <= index && index < last);
@@ -3288,8 +3820,8 @@ impl App {
         // What is here in the row is only room to press: the dot, the
         // line over it and the line under it.
         let above = Space::new().width(RAIL_LINE).height(match on {
-            true => RAIL_TOP - RAIL_RING,
-            false => RAIL_TOP,
+            true => lanes.rows.dot() - RAIL_RING,
+            false => lanes.rows.dot(),
         });
         let size = match on {
             true => RAIL_DOT + 2.0 * RAIL_RING,
@@ -3437,92 +3969,279 @@ impl App {
         (rail, stop)
     }
 
-    /// The place of a section with nothing in it: where its steps will
-    /// be, dashed, with room on its right for its bracket. A press on it
-    /// picks the section; steps carried over it land in it.
-    fn empty_place<'a>(
+    /// The line of a section's header: its name in `color`, as quiet as
+    /// what has played once it is over in a service, and what it takes
+    /// against the time it is given, with a gauge while planning and in
+    /// its pace's tint in a service; or, heading the service's `round`th
+    /// time round it (from 0), which round. Folded, it says how many steps
+    /// it holds. By its arrow, there while folded or pointed at, it folds
+    /// or opens.
+    pub(crate) fn head_line<'a>(
         &self,
         plan: &Plan,
-        section: StepId,
-        lit: bool,
+        timing: &Timing,
+        index: usize,
+        color: iced::Color,
+        folded: bool,
+        round: u16,
+    ) -> iced::widget::Row<'a, Message> {
+        let p = self.palette;
+        let step = &plan.steps()[index];
+        let id = step.id;
+        let quiet = p.on_surface_variant;
+        // Over in a service: as quiet as what has played.
+        let past = self.over(timing, id);
+        let hue = match past {
+            true => Palette::tint(color, 0.45),
+            false => color,
+        };
+        let budget = match step.action {
+            Action::Section { budget, .. } => budget.filter(|budget| !budget.is_zero()),
+            _ => None,
+        };
+        let section = timing.sections.iter().find(|section| section.id == id);
+        let phase = section.map_or(
+            Phase::Coming {
+                planned: self.planned(plan, id),
+            },
+            |section| section.phase,
+        );
+        let (taken, expected) = match phase {
+            Phase::Coming { planned } => (planned, planned),
+            Phase::Running { elapsed, expected } => (elapsed, expected),
+            Phase::Done { took } => (took.unwrap_or_default(), took.unwrap_or_default()),
+        };
+        let empty = plan.group_end(index) == index + 1;
+        let running = self.mode == crate::mode::Mode::Run;
+        let words = time_words(
+            taken,
+            budget,
+            step.done_by(),
+            empty,
+            running && matches!(phase, Phase::Done { .. }),
+        );
+        let late = budget.is_some_and(|budget| expected > budget)
+            || section.and_then(SectionTiming::late).is_some();
+        // Just tipped over its time: its words turn red as they go.
+        let ink = match (late, self.motion.tipped(id)) {
+            (true, Some(t)) => crate::motion::blend(quiet, p.error, t),
+            (true, None) => p.error,
+            (false, _) if past => p.outline,
+            (false, _) => quiet,
+        };
+        // In a service, a pace that is not on track says so, in its tint.
+        let pace = budget
+            .filter(|_| running && !past && !empty)
+            .map(|budget| Pace::of(expected, budget));
+        let said: Element<'a, Message> = match (round, pace) {
+            (0, Some(pace @ (Pace::Tight | Pace::Over))) => {
+                let tone = pace_tone(pace);
+                let word = match pace {
+                    Pace::Over => "over",
+                    _ => "tight",
+                };
+                container(
+                    single_line(format!("{word} · {words}"))
+                        .size(META)
+                        .font(BOLD)
+                        .color(tone.text(p)),
+                )
+                .padding([1, 8])
+                .style(look::chip(p, tone))
+                .into()
+            }
+            (0, _) => single_line(words).size(META).color(ink).into(),
+            (round, _) => single_line(format!("round {}", round + 1))
+                .size(META)
+                .color(quiet)
+                .into(),
+        };
+        let pointed = self.hovered.is_some_and(|(over, _)| over == id);
+        let mut title = row![
+            single_line(step.label.clone())
+                .size(NAME)
+                .font(BOLD)
+                .color(hue)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+        if folded || pointed {
+            title = title.push(track::seen(
+                track::Key::Chevron(id),
+                &self.places,
+                button(text(if folded { "▸" } else { "▾" }).size(BODY).color(hue))
+                    .padding([0, 4])
+                    .on_press(Message::Fold(id))
+                    .style(look::row(p, Tone::Plain)),
+            ));
+        }
+        if folded {
+            let steps = (index + 1..plan.group_end(index))
+                .filter(|at| !plan.steps()[*at].is_section())
+                .count();
+            title = title.push(single_line(count(steps, "step")).size(META).color(quiet));
+        }
+        let mut line = row![container(title).width(Fill).clip(true), said]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        // While planning, how full it is against its time.
+        if let Some(budget) = budget.filter(|_| Rows::of(self.mode) == Rows::Tall && !empty) {
+            let (full, over) = part_fill(Some(budget), taken);
+            let color = match over {
+                true => p.error,
+                false => hue,
+            };
+            line = line.push(container(bar(p, full, color, 0.0)).width(GAUGE));
+        }
+        for (note, n) in crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(id)) {
+            line = line.push(crate::notes::mark(n, Some(Message::OpenNote(note))));
+        }
+        line
+    }
+
+    /// A section's header, over what it holds: its line, `depth` levels
+    /// in. Folded, it stands for all it holds: they are a stacked dot on
+    /// the line. Its words start where the steps' pictures do, so the
+    /// lines down the dots pass them by. Pressed it is picked, held and
+    /// moved it is carried, twice or by its arrow it folds or opens, and a
+    /// right click opens its ring.
+    #[allow(clippy::too_many_arguments)]
+    fn header<'a>(
+        &self,
+        plan: &Plan,
+        timing: &Timing,
+        index: usize,
+        depth: u8,
+        folded: bool,
+        color: iced::Color,
         lanes: Lanes<'_>,
-        side: Side<'_>,
         places: &track::Places,
     ) -> Element<'a, Message> {
         let p = self.palette;
-        // Lit, where what is carried would land: in the section's colour.
-        let hue = section_hue(p, &plan.section_colors(), section);
-        let (ground, edge) = match lit {
-            true => (Palette::tint(hue, 0.22), hue),
-            false => (
-                Palette::tint(p.primary, 0.06),
-                Palette::tint(p.primary, 0.6),
-            ),
-        };
-        let pick = Message::Click(Clicked::Step(section));
-        let inside = row![
-            look::icon(Icon::Plus, 14.0, p.on_surface_variant),
-            Space::new().width(Fill),
-            look::icon(Icon::Fill, 14.0, Palette::tint(p.primary, 0.7)),
-        ]
-        .align_y(Alignment::Center)
+        let rows = lanes.rows;
+        let id = plan.steps()[index].id;
+        let past = self.over(timing, id);
+        let line = self.head_line(plan, timing, index, color, folded, 0);
+        let picked = self.selected == Some(id) || self.picked.contains(&id);
+        let fill = look::row_fill(
+            p,
+            match picked {
+                true => Tone::Selected,
+                false => Tone::Plain,
+            },
+        );
+        let (room, tall) = (rows.head_room(), HEAD_LINE);
+        let body = button(
+            container(line)
+                .padding(iced::Padding::default().left(INDENT * f32::from(depth)))
+                .center_y(tall),
+        )
+        .width(Fill)
         .padding([0, 10])
-        .height(PLACE_TALL - 8.0);
+        .on_press_maybe((!past).then_some(Message::Click(Clicked::Step(id))))
+        .style(look::row_filled(p, fill));
+        // In the dots' column: folded, its stacked dot, level with its
+        // name; and from there down, where its section's line starts.
+        let middle = room + tall / 2.0;
+        let rail = match folded {
+            true => column![
+                Space::new().height(middle - RAIL_DOT / 2.0),
+                track::seen(
+                    track::Key::Dot(id),
+                    places,
+                    Space::new().width(RAIL_DOT).height(RAIL_DOT)
+                ),
+            ],
+            false => column![Space::new().height(middle)],
+        };
+        let rail = rail
+            .push(track::seen(
+                track::Key::Row(id),
+                places,
+                Space::new().width(RAIL).height(Fill),
+            ))
+            .width(RAIL)
+            .height(Fill)
+            .align_x(Alignment::Center);
+        // Its top, pressed and pulled while planning, starts the section
+        // somewhere else.
+        let above: Element<'a, Message> =
+            match self.can_edit() && self.mode == crate::mode::Mode::Plan && !folded {
+                true => column![
+                    mouse_area(Space::new().width(Fill).height(FOOT))
+                        .on_press(Message::PressHead(id))
+                        .interaction(mouse::Interaction::ResizingVertically),
+                    Space::new().height(room - FOOT),
+                ]
+                .into(),
+                false => Space::new().height(room).into(),
+            };
+        // The lines of the spans it is in pass it, with their rings.
+        let covers = |laid: &Laid| (laid.first..=laid.last).contains(&index);
+        let header = row![
+            Space::new().width(lanes.time),
+            self.loop_lanes(lanes, &covers, false, None),
+            rail,
+            self.order_lanes(lanes, &covers, false, None),
+            column![above, body],
+        ]
+        .height(room + tall);
+        track::seen(
+            track::Key::Whole(id),
+            places,
+            self.ringed(
+                crate::rail::RingOn::All(id),
+                self.draggable(id, header.into()),
+            ),
+        )
+    }
+
+    /// The place of a section with nothing in it, under its header:
+    /// where its steps will be, dashed in its `color`. A press on it picks
+    /// the section, and what is carried over it lands in it. Picked with
+    /// others, as the last of them, it has what can be done to them.
+    fn empty_place(
+        &self,
+        section: StepId,
+        color: iced::Color,
+        picked_end: bool,
+        lanes: Lanes<'_>,
+        places: &track::Places,
+    ) -> Element<'_, Message> {
+        let inside = row![
+            look::icon(Icon::Plus, 14.0, color),
+            text("Drop steps here").size(BODY).font(MEDIUM).color(color),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .padding([0, 12])
+        .height(lanes.rows.place() - 8.0);
         let slot = button(crate::drawn::dashed(
-            container(inside)
-                .width(Fill)
-                .style(move |_| container::Style {
-                    background: Some(ground.into()),
-                    border: iced::Border {
-                        radius: 9.0.into(),
-                        ..iced::Border::default()
-                    },
-                    ..container::Style::default()
-                }),
-            edge,
-            9.0,
+            container(inside).width(Fill),
+            Palette::tint(color, 0.55),
+            12.0,
         ))
         .padding(0)
         .width(Fill)
-        .on_press(pick.clone())
+        .on_press(Message::Click(Clicked::Step(section)))
         .style(|_, _| button::Style::default());
-        let plans = side.plans_room();
-        let mut beside = mouse_area(
-            Space::new()
-                .width(side.room() - plans.unwrap_or_default())
-                .height(Fill),
-        )
-        .on_press(pick)
-        .interaction(mouse::Interaction::Pointer);
-        if self.can_edit() {
-            beside = beside.on_right_press(Message::Rail(crate::rail::Act::Ring(
-                crate::rail::RingOn::All(Some(section)),
-            )));
+        let mut place = column![container(slot).padding([4, 0])];
+        if picked_end {
+            place = place.push(self.picked_actions());
         }
-        let beside = self.with_plans_part(self.named_under(plan, section, side, beside), plans);
         let place = row![
-            Space::new().width(lanes.curl + RAIL + lanes.drawn),
-            container(slot).padding([4, 0]),
-            track::seen(track::Key::Side(section), places, beside),
-        ]
-        .height(PLACE_TALL);
-        // A section carried over it goes into it, as over its bracket.
-        let level = plan
-            .get(section)
-            .and_then(Step::depth)
-            .map(|depth| depth + 1);
-        let place: Element<'a, Message> = match (self.carrying_section(), level) {
-            (true, Some(level)) => mouse_area(place)
-                .on_enter(Message::CarryInto(level))
-                .on_exit(Message::CarryOut(level))
-                .into(),
-            _ => place.into(),
+            Space::new().width(lanes.left() + RAIL + lanes.drawn),
+            container(place).padding([0, 10]),
+        ];
+        // Wherever the pointer is on it, what is carried lands in it.
+        let area = mouse_area(place)
+            .on_enter(Message::Hover(Some((section, Half::Lower))))
+            .on_exit(Message::Unhover(section));
+        let area = match self.drag.as_ref().is_some_and(|drag| drag.moving) {
+            true => area.interaction(mouse::Interaction::Grabbing),
+            false => area,
         };
-        track::seen(
-            track::Key::Whole(section),
-            places,
-            self.draggable(section, place),
-        )
+        track::seen(track::Key::Place(section), places, area)
     }
 
     /// Whether a section is being carried.
@@ -3551,93 +4270,6 @@ impl App {
         }
     }
 
-    /// A folded section's one row: its steps gathered into a stacked dot
-    /// on the line, how many there are, and how long they take. Pressed,
-    /// it opens, one over in a service too.
-    fn folded_place<'a>(
-        &self,
-        plan: &Plan,
-        step: &Step,
-        over: bool,
-        lanes: Lanes<'_>,
-        side: Side<'_>,
-        places: &track::Places,
-    ) -> Element<'a, Message> {
-        let p = self.palette;
-        let id = step.id;
-        let at = plan.position(id).unwrap_or_default();
-        let steps = (at + 1..plan.group_end(at))
-            .filter(|row| !plan.steps()[*row].is_section())
-            .count();
-        let ink = match over {
-            true => p.outline,
-            false => p.on_surface,
-        };
-        let dot = column![
-            Space::new().height(RAIL_TOP - 2.0),
-            track::seen(
-                track::Key::Dot(id),
-                places,
-                Space::new().width(RAIL_DOT).height(RAIL_DOT)
-            ),
-        ]
-        .width(RAIL)
-        .align_x(Alignment::Center);
-        let mut words = row![
-            text(match steps {
-                1 => "1 step".to_string(),
-                n => format!("{n} steps"),
-            })
-            .size(BODY)
-            .color(ink),
-            Space::new().width(Fill),
-        ];
-        if !over {
-            words = words.push(
-                text(length::clock(self.planned(plan, id)))
-                    .size(META)
-                    .color(p.on_surface_variant),
-            );
-        }
-        let words = words.align_y(Alignment::Center).padding([0, 10]);
-        let body = mouse_area(container(words).width(Fill).center_y(Fill))
-            .interaction(mouse::Interaction::Pointer)
-            .on_press(Message::Fold(id));
-        // Its bracket: twice opens it, as twice folded it.
-        let plans = side.plans_room();
-        let mut beside = mouse_area(
-            Space::new()
-                .width(side.room() - plans.unwrap_or_default())
-                .height(Fill),
-        )
-        .on_double_click(Message::Fold(id))
-        .interaction(mouse::Interaction::Pointer);
-        if !over {
-            beside = beside.on_press(Message::Click(Clicked::Step(id)));
-        }
-        let beside = self.with_plans_part(self.named_under(plan, id, side, beside), plans);
-        let place = row![
-            Space::new().width(lanes.curl),
-            track::seen(track::Key::Row(id), places, dot),
-            Space::new().width(lanes.drawn),
-            body,
-            track::seen(track::Key::Side(id), places, beside),
-        ]
-        .height(ROW_TALL);
-        track::seen(
-            track::Key::Whole(id),
-            places,
-            self.ringed(
-                crate::rail::RingOn::All(Some(id)),
-                self.draggable(id, place.into()),
-            ),
-        )
-    }
-
-    /// What a picked section is set to and what can be done to it, one
-    /// under another so it is no wider than its bracket's name was: its
-    /// name, the time it is given (pressed, it is set), the time it
-    /// takes, and filling it, renaming it and taking it out.
     /// What a section's ring shows under it: its name (a field while it
     /// is renamed), the time it is given, the time of day it should be
     /// over by, what it takes, and when it is expected to end. In `p`,
@@ -3776,191 +4408,6 @@ impl App {
             card = card.push(ends);
         }
         card.into()
-    }
-
-    /// `content`, a part of the room beside the steps that is `section`'s
-    /// bracket's: where the brackets' names have folded away, its name
-    /// and what it takes come up under the pointer.
-    fn named_under<'a>(
-        &self,
-        plan: &Plan,
-        section: StepId,
-        side: Side<'_>,
-        content: impl Into<Element<'a, Message>>,
-    ) -> Element<'a, Message> {
-        let content = content.into();
-        let Some(step) = plan.get(section).filter(|_| !side.named) else {
-            return content;
-        };
-        let p = self.palette;
-        let card = column![
-            text(step.label.clone())
-                .size(META)
-                .font(BOLD)
-                .color(section_hue(p, side.colors, section)),
-            text(format!("Σ {}", length::clock(self.planned(plan, section))))
-                .size(META)
-                .color(p.on_surface),
-        ]
-        .spacing(2);
-        tooltip(
-            content,
-            container(card).padding([4, 8]).style(look::tip(p)),
-            tooltip::Position::Left,
-        )
-        .into()
-    }
-
-    /// The plan's bracket's part of the room right of a row, `wide`: as
-    /// a section's, a press there picks the plan, twice folds or opens
-    /// it, and a right click opens its ring.
-    fn plans_part<'a>(&self, wide: f32) -> Element<'a, Message> {
-        mouse_area(Space::new().width(wide).height(Fill))
-            .on_press(Message::PickPlan)
-            .on_double_click(Message::FoldPlan)
-            .on_right_press(Message::Rail(crate::rail::Act::Ring(
-                crate::rail::RingOn::All(None),
-            )))
-            .interaction(mouse::Interaction::Pointer)
-            .into()
-    }
-
-    /// The room right of a section's own row, `section`, and the plan's
-    /// bracket's part right of it, `plans` wide, where there is one.
-    fn with_plans_part<'a>(
-        &self,
-        section: Element<'a, Message>,
-        plans: Option<f32>,
-    ) -> Element<'a, Message> {
-        match plans {
-            Some(plans) => row![section, self.plans_part(plans)].into(),
-            None => section,
-        }
-    }
-
-    /// The room right of the step at `index` for the brackets of the
-    /// sections it is in, a part for each lane, the innermost first. A
-    /// press there picks that section, and held and moved carries it
-    /// with all it holds; twice folds it away; a right click opens the
-    /// ring of what holds for all of it. The plan's bracket, round them
-    /// all, is the same but for being carried, folded or pulled.
-    fn side<'a>(
-        &self,
-        plan: &Plan,
-        index: usize,
-        side: Side<'_>,
-        places: &track::Places,
-    ) -> Element<'a, Message> {
-        let covering = |lane: Option<u8>| covering(plan, side, index, lane);
-        // While a section is carried, a bracket's lane under the pointer
-        // is where it would go: into that section, or the plan's level.
-        let carrying = self
-            .drag
-            .as_ref()
-            .is_some_and(|drag| drag.moving && drag.is_section());
-        let into = |held: Option<Held>, part: Element<'a, Message>| -> Element<'a, Message> {
-            let level = match held {
-                _ if !carrying => None,
-                Some(Held::Plan) => Some(0),
-                Some(Held::Section(section)) => plan
-                    .get(section)
-                    .and_then(Step::depth)
-                    .map(|depth| depth + 1),
-                None => None,
-            };
-            match level {
-                Some(level) => mouse_area(part)
-                    .on_enter(Message::CarryInto(level))
-                    .on_exit(Message::CarryOut(level))
-                    .into(),
-                None => part,
-            }
-        };
-        let part_of = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
-            let part = Space::new().width(wide).height(Fill);
-            let section = match held {
-                None => return part.into(),
-                Some(Held::Plan) => {
-                    return self.draggable(plan.steps()[index].id, self.plans_part(wide));
-                }
-                Some(Held::Section(section)) => section,
-            };
-            let mut area = mouse_area(part)
-                .on_press(Message::Grab(section))
-                .on_double_click(Message::Fold(section))
-                .interaction(mouse::Interaction::Pointer);
-            if self.can_edit() {
-                area = area.on_right_press(Message::Rail(crate::rail::Act::Ring(
-                    crate::rail::RingOn::All(Some(section)),
-                )));
-            }
-            let area = self.named_under(plan, section, side, area);
-            // Beside the first and the last of its steps, the head and the
-            // foot of its bracket: held and pulled, the head takes in what
-            // comes before or lets go of its first rows, the foot takes in
-            // what comes after or lets go of its last.
-            let (first, last) = side
-                .braced
-                .iter()
-                .find(|braced| plan.steps()[braced.at].id == section)
-                .map(|braced| {
-                    let mut steps =
-                        (braced.at + 1..braced.end).filter(|row| !plan.steps()[*row].is_section());
-                    let first = steps.next();
-                    (first, steps.next_back().or(first))
-                })
-                .unwrap_or((None, None));
-            let pulls = self.can_edit() && self.mode == crate::mode::Mode::Plan;
-            let handle = |pressed: Message| {
-                mouse_area(Space::new().width(wide).height(FOOT))
-                    .on_press(pressed)
-                    .interaction(mouse::Interaction::ResizingVertically)
-            };
-            let mut parts = column![];
-            if pulls && first == Some(index) {
-                parts = parts.push(handle(Message::PressHead(section)));
-            }
-            parts = parts.push(area);
-            if pulls && last == Some(index) {
-                parts = parts.push(handle(Message::PressFoot(section)));
-            }
-            let area: Element<'a, Message> = parts.into();
-            // What is under the pointer here is this row's step, as on
-            // the rest of the row: where something carried would land
-            // goes by rows, and must not flip to the section's start as
-            // the pointer crosses into its bracket's room.
-            self.draggable(plan.steps()[index].id, area)
-        };
-        let part = |wide: f32, held: Option<Held>| -> Element<'a, Message> {
-            into(held, part_of(wide, held))
-        };
-        // The innermost brace and the names beside it: the section this
-        // step is most nearly in. Then a brace for each one further out,
-        // and the room right of those, which is the outermost's.
-        // Each as wide as its lane is now, so a press lands on the
-        // bracket drawn there.
-        let mut parts: Vec<Element<'a, Message>> = Vec::new();
-        for (lane, wide) in (0..side.lanes).zip(side.widths) {
-            parts.push(match lane {
-                0 => part(
-                    wide + if side.named { track::LABEL } else { 0.0 },
-                    covering(None),
-                ),
-                lane => part(*wide, covering(Some(lane))),
-            });
-        }
-        if side.wide {
-            let outermost = side
-                .lanes
-                .checked_sub(1)
-                .and_then(|lane| covering(Some(lane)));
-            parts.push(part(track::LABEL, outermost));
-        }
-        track::seen(
-            track::Key::Side(plan.steps()[index].id),
-            places,
-            row(parts).width(side.room()).height(Fill),
-        )
     }
 
     /// The room left of the dots in one row, a part for each lane, the
@@ -4174,12 +4621,56 @@ impl App {
     /// How long a step takes: `4:00` when known, `~4 min` when guessed,
     /// nothing for a step that shows nothing.
     pub(crate) fn step_length(&self, step: &Step) -> String {
-        let estimate = lantern_engine::timing::estimate(step, self.loaded_length(step));
-        match estimate.basis {
-            Basis::Guess if estimate.length.is_zero() => String::new(),
-            Basis::Guess => length::rough(estimate.length),
-            Basis::Set | Basis::Known => length::clock(estimate.length),
+        length_words(lantern_engine::timing::estimate(
+            step,
+            self.loaded_length(step),
+        ))
+    }
+
+    /// What is known of what `step` shows, for its row while planning.
+    pub(crate) fn known(&self, step: &Step) -> Known {
+        match &step.action {
+            Action::Show { resource } => self.known_of(resource),
+            _ => Known::default(),
         }
+    }
+
+    /// What is known of `resource`: how long it plays, how many pages
+    /// it has, how far its download has come, how big it is and the
+    /// screen it is shown on.
+    pub(crate) fn known_of(&self, resource: &Resource) -> Known {
+        Known {
+            length: Some(lantern_engine::timing::media_length(
+                resource,
+                self.resource_length(resource),
+            )),
+            pages: self.media.pages(&resource.id),
+            download: self.download_part(resource),
+            pixels: self.thumbs.pixels(&resource.id),
+            screen: self.stage_screen,
+            reach: crate::ready::reach(
+                resource,
+                |video| self.downloads.0.state(&video.id),
+                crate::stage::image_cached,
+            ),
+        }
+    }
+
+    /// What a search result's row says of `resource`: its picture's size
+    /// and state, and where it's from or the one warning that matters.
+    pub(crate) fn result_facts<'a>(&self, resource: &'a Resource) -> ResultFacts<'a> {
+        let on_stage = self
+            .stage
+            .program
+            .as_ref()
+            .is_some_and(|scene| scene.resource.id == resource.id);
+        let issue = crate::ready::issue_of(
+            resource,
+            self.config.youtube,
+            |video| self.downloads.0.state(&video.id),
+            crate::stage::image_cached,
+        );
+        ResultFacts::of(resource, self.known_of(resource), issue, on_stage)
     }
 
     /// Where a plan made on another computer is looked for, while that is
@@ -4461,8 +4952,8 @@ pub(crate) fn goal_of(
 }
 
 /// How long `step` fades in and out, each a second less or more with −
-/// and +.
-pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message> {
+/// and +; a chooser among them is `width` wide.
+pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step, width: Length) -> Element<'a, Message> {
     let id = step.id;
     // What it plays apart fades with what it shows, or on its own; the
     // two say which is which as the lines above do.
@@ -4475,7 +4966,7 @@ pub(crate) fn fade_steppers<'a>(p: Palette, step: &Step) -> Element<'a, Message>
         move |end, by| Message::SetFade(id, end, by),
     );
     if apart {
-        steppers = steppers.push(crate::sources::sound_fade_chooser(p, step));
+        steppers = steppers.push(crate::sources::sound_fade_chooser(p, step, width));
         if let Some(fade) = step.sound_fade {
             steppers = steppers.push(fade_pair(
                 p,
@@ -4540,6 +5031,38 @@ fn ramped<'a>(
         .spacing(4)
         .align_y(Alignment::Center)
         .into()
+}
+
+/// The line under a step's name while planning: what it is, quietly, or
+/// what is wrong with it in the colour of how bad that is.
+pub(crate) fn under_name<'a>(p: Palette, under: &Under) -> Element<'a, Message> {
+    let (words, ink) = match under {
+        Under::What(words) => (words.clone(), p.on_surface_variant),
+        Under::Wrong(level, words) => (words.clone(), level_tone(Some(*level)).text(p)),
+        Under::Soft(screen) => (soft_words(*screen), p.tertiary),
+    };
+    single_line(words).size(META).color(ink).into()
+}
+
+/// What a row says of a picture the stage must scale up to fit `screen`.
+pub(crate) fn soft_words(screen: Pixels) -> String {
+    format!("Smaller than the screen ({screen}): it will look soft")
+}
+
+/// The mark beside a step's length while planning: whether it goes on
+/// by itself when it is done, in the colour of the line on to the next,
+/// or waits. Pointed at, it says which.
+fn goes_on_mark<'a>(p: Palette, goes_on: bool) -> Element<'a, Message> {
+    let (icon, ink, says) = match goes_on {
+        true => (Icon::Joined, p.primary, "Goes straight on by itself"),
+        false => (Icon::Pause, p.on_surface_variant, "Waits for you"),
+    };
+    hinted(
+        p,
+        look::icon(icon, 13.0, ink),
+        says.to_string(),
+        tooltip::Position::Top,
+    )
 }
 
 /// How far into its media the stage is: "slide 2 of 5", "page 1 of 3",
@@ -4614,117 +5137,6 @@ fn pace_tone(pace: Pace) -> Tone {
 /// A saved plan in the list. Clicking a plan opens it; clicking a template
 /// starts a new plan from it, and its Edit opens the template itself. The
 /// star makes a plan a template, or not.
-impl App {
-    /// A plan folded into one row: its steps gathered into a stacked
-    /// dot, how many, `detail` (when it was saved, or what it takes), and
-    /// its bracket with its name; `open` in the colours of the plan that
-    /// is open. Pressed or pressed twice, `opens` is done; a right click
-    /// does `ring`.
-    #[allow(clippy::too_many_arguments)]
-    fn folded_plan_row<'a>(
-        &self,
-        title: String,
-        steps: usize,
-        detail: String,
-        open: bool,
-        curl: f32,
-        opens: Message,
-        ring: Option<Message>,
-        star: Option<Element<'a, Message>>,
-    ) -> Element<'a, Message> {
-        let p = self.palette;
-        let ink = match open {
-            true => p.primary,
-            false => p.on_surface_variant,
-        };
-        let mark = |shape: Shape, wide: f32| {
-            iced::widget::canvas(Marked { shape, ink })
-                .width(wide)
-                .height(ROW_TALL)
-        };
-        let line = row![
-            Space::new().width(curl),
-            mark(Shape::Stack, RAIL),
-            container(
-                row![
-                    single_line(count(steps, "step")).size(BODY).color(ink),
-                    Space::new().width(Fill),
-                    single_line(detail).size(META).color(ink),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .width(Fill)
-            .padding([0, 10]),
-            mark(Shape::Brace, track::BRACE),
-            container(single_line(title).size(META).font(BOLD).color(ink))
-                .width(track::LABEL)
-                .center_y(ROW_TALL),
-            star,
-        ]
-        .height(ROW_TALL)
-        .align_y(Alignment::Center);
-        let mut area = mouse_area(line)
-            .on_press(opens.clone())
-            .on_double_click(opens)
-            .interaction(mouse::Interaction::Pointer);
-        if let Some(ring) = ring {
-            area = area.on_right_press(ring);
-        }
-        area.into()
-    }
-}
-
-/// What a folded plan's row draws: its steps' stacked dot, or its brace.
-#[derive(Debug, Clone, Copy)]
-enum Shape {
-    Stack,
-    Brace,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Marked {
-    shape: Shape,
-    ink: iced::Color,
-}
-
-impl<Message> iced::widget::canvas::Program<Message> for Marked {
-    type State = ();
-
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &iced::Renderer,
-        _: &iced::Theme,
-        bounds: Rectangle,
-        _: mouse::Cursor,
-    ) -> Vec<iced::widget::canvas::Geometry> {
-        use iced::widget::canvas::{Frame, Path, Stroke};
-        let mut frame = Frame::new(renderer, bounds.size());
-        let ink = self.ink;
-        match self.shape {
-            Shape::Stack => {
-                let y = RAIL_TOP + RAIL_DOT / 2.0;
-                let x = bounds.width / 2.0;
-                for (aside, fade) in [(-5.0, 0.35), (0.0, 0.6), (5.0, 1.0)] {
-                    frame.stroke(
-                        &Path::circle(iced::Point::new(x + aside, y), 4.0),
-                        Stroke::default().with_width(1.6).with_color(iced::Color {
-                            a: ink.a * fade,
-                            ..ink
-                        }),
-                    );
-                }
-            }
-            Shape::Brace => {
-                let brace = track::square(3.0, 6.0, bounds.height - 6.0, 0.0);
-                frame.stroke(&brace, Stroke::default().with_width(1.6).with_color(ink));
-            }
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
 fn saved_plan(p: Palette, entry: &Entry, detail: String, picked: bool) -> Element<'_, Message> {
     let (title, detail, color, template) = match &entry.summary {
         Ok(summary) => (
@@ -4948,32 +5360,6 @@ fn seconds_left(left: Duration) -> String {
     }
 }
 
-/// The star that makes the plan in `path` a template, or a plan again.
-fn star<'a>(p: Palette, path: &std::path::Path, template: bool) -> Element<'a, Message> {
-    tooltip(
-        button(
-            text(if template { "★" } else { "☆" })
-                .size(BODY)
-                .color(p.primary),
-        )
-        .padding([2, 6])
-        .on_press(Message::SetTemplate(path.to_path_buf(), !template))
-        .style(look::row(p, Tone::Plain)),
-        container(
-            text(match template {
-                true => "A template: new plans start from it. Make it a plan again",
-                false => "Make it a template",
-            })
-            .size(META),
-        )
-        .padding([4, 8])
-        .style(look::tip(p)),
-        tooltip::Position::Left,
-    )
-    .delay(look::TIP_DELAY)
-    .into()
-}
-
 #[cfg(test)]
 mod tests {
     use lantern_engine::StepId;
@@ -4981,51 +5367,88 @@ mod tests {
     use super::*;
 
     const MIN: Duration = Duration::from_secs(60);
+    const SECOND: Duration = Duration::from_secs(1);
 
     #[test]
-    fn the_plans_bracket_says_its_goal_its_sum_and_its_start() {
-        use track::Sign;
+    fn the_title_says_a_plans_steps_its_sum_its_goal_and_its_times() {
         let sums = |filled: Duration, total: Duration, open: bool| PlanSums {
             filled,
             total,
             open,
         };
-        // Nothing set: only what its steps come to.
+        let fact = |words: &str, over: bool| (words.to_string(), over);
+        // Nothing set: how many steps, and what they come to.
         assert_eq!(
-            plan_lines(None, None, &sums(40 * MIN, 40 * MIN, false)),
-            [(Sign::Sum, "40:00".to_string(), false)]
+            plan_facts(5, None, None, &sums(40 * MIN, 40 * MIN, false)),
+            [fact("5 steps", false), fact("Σ 40:00", false)]
         );
         // Something comes again with no end: at least that.
         assert_eq!(
-            plan_lines(None, None, &sums(40 * MIN, 40 * MIN, true))[0].1,
-            "40:00+".to_string()
+            plan_facts(1, None, None, &sums(40 * MIN, 40 * MIN, true)),
+            [fact("1 step", false), fact("Σ 40:00+", false)]
         );
-        // All of it, in a section's order; over its goal, the sum says so.
-        let starts = lantern_engine::TimeOfDay::parse("10:30");
+        // Over its goal, the sum says so; it ends after its goal.
+        let starts = TimeOfDay::parse("19:00");
         assert_eq!(
-            plan_lines(Some(45 * MIN), starts, &sums(50 * MIN, 50 * MIN, false)),
+            plan_facts(3, Some(45 * MIN), starts, &sums(50 * MIN, 50 * MIN, false)),
             [
-                (Sign::Goal, "45:00".to_string(), false),
-                (Sign::Sum, "50:00".to_string(), true),
-                (Sign::Start, "10:30".to_string(), false),
+                fact("3 steps", false),
+                fact("Σ 50:00", true),
+                fact("◎ 45:00", false),
+                fact("starts 19:00, ends 19:45", false),
             ]
         );
-        assert!(!plan_lines(Some(45 * MIN), None, &sums(45 * MIN, 45 * MIN, false))[1].2);
-        // No goal of its own: what its sections' times come to.
+        assert!(!plan_facts(3, Some(45 * MIN), None, &sums(45 * MIN, 45 * MIN, false))[1].1);
+        // Without a goal it is held against its sections' times, which are
+        // no goal to be over, and ends after them.
         assert_eq!(
-            plan_lines(None, None, &sums(20 * MIN, 60 * MIN, false)),
+            plan_facts(3, None, starts, &sums(5 * MIN, 35 * MIN, false)),
             [
-                (Sign::Goal, "1:00:00".to_string(), false),
-                (Sign::Sum, "20:00".to_string(), false),
+                fact("3 steps", false),
+                fact("Σ 5:00", false),
+                fact("◎ 35:00", false),
+                fact("starts 19:00, ends 19:35", false),
             ]
         );
     }
 
     #[test]
-    fn a_sections_part_fills_as_its_steps_take_its_time() {
+    fn a_plan_is_held_against_its_goal_or_else_its_sections_times() {
+        let sums = |filled: Duration, total: Duration| PlanSums {
+            filled,
+            total,
+            open: false,
+        };
+        assert_eq!(
+            sums(20 * MIN, 60 * MIN).against(Some(45 * MIN)),
+            Some(45 * MIN)
+        );
+        assert_eq!(sums(20 * MIN, 60 * MIN).against(None), Some(60 * MIN));
+        assert_eq!(sums(20 * MIN, 20 * MIN).against(None), None);
+    }
+
+    #[test]
+    fn a_sections_gauge_fills_as_its_steps_take_its_time() {
         assert_eq!(part_fill(Some(10 * MIN), 5 * MIN), (0.5, false));
         assert_eq!(part_fill(Some(10 * MIN), 12 * MIN), (1.0, true));
         assert_eq!(part_fill(None, 5 * MIN), (1.0, false));
+    }
+
+    #[test]
+    fn a_sections_part_is_over_by_what_its_steps_take_past_its_time() {
+        assert_eq!(over_share(Some(10 * MIN), 15 * MIN), 1.0 / 3.0);
+        assert_eq!(over_share(Some(10 * MIN), 10 * MIN), 0.0);
+        assert_eq!(over_share(Some(10 * MIN), 5 * MIN), 0.0);
+        assert_eq!(over_share(None, 5 * MIN), 0.0);
+    }
+
+    #[test]
+    fn a_sections_part_says_as_much_as_it_has_room_for() {
+        let words = ["Bienvenida", "0:24"];
+        assert_eq!(words_said(400.0, &words), 2, "its name and its time");
+        assert_eq!(words_said(60.0, &words), 1, "its name alone, cut");
+        assert_eq!(words_said(20.0, &words), 0, "nothing readable");
+        assert_eq!(words_said(60.0, &["empty"]), 1);
     }
 
     #[test]
@@ -5124,6 +5547,411 @@ mod tests {
         assert_eq!(slot_detail(Some(&Query::new("!yt ")), 2), "2 shown · !yt");
     }
 
+    fn media(kind: Kind, from: Option<&str>) -> Resource {
+        let source = lantern_engine::SourceId::new("test").unwrap();
+        let resource = Resource::new(
+            lantern_engine::ResourceId::new(&source, "x"),
+            "x",
+            kind,
+            lantern_engine::Location::File("/media/x".into()),
+        );
+        match from {
+            Some(from) => resource.with_subtitle(from),
+            None => resource,
+        }
+    }
+
+    #[test]
+    fn a_planned_row_says_where_a_thing_is_from_what_it_is_and_its_size() {
+        let mut plan = Plan::new("t");
+        let picture = plan.show(media(Kind::Image, Some("Fixtures")));
+        let video = plan.show(media(Kind::Video, Some("Fixtures")));
+        let pdf = plan.show(media(Kind::Document, Some("Fixtures")));
+        let page = plan.show(media(Kind::Document, Some("Fixtures")).page(1));
+        let typed = plan.show(media(Kind::Text, Some("your text")));
+        let bare = plan.show(media(Kind::Text, None));
+        let slot = plan.live("Live search", Some(Query::new("!b jn 3")));
+        let black = plan.push("Black screen", Action::Blank);
+        let facts = |id: StepId, known: Known| {
+            RowFacts::of(plan.get(id).unwrap(), None, known, None, false)
+        };
+        let what = |words: &str| Under::What(words.to_string());
+        let lasts = |seconds: u64, basis: Basis| Known {
+            length: Some(Estimate {
+                length: Duration::from_secs(seconds),
+                basis,
+            }),
+            ..Known::default()
+        };
+        let pages = |pages: usize| Known {
+            pages: Some(pages),
+            ..Known::default()
+        };
+        let full_hd = Pixels {
+            width: 1920,
+            height: 1080,
+        };
+        let sharp = Known {
+            pixels: Some(full_hd),
+            screen: full_hd,
+            ..Known::default()
+        };
+
+        let still = facts(picture, Known::default());
+        assert_eq!(still.under, what("Fixtures · picture"));
+        assert_eq!(still.thumb.size, None, "its size isn't known yet");
+        let still = facts(picture, sharp);
+        assert_eq!(still.thumb.size.as_deref(), Some("1920×1080"));
+        assert_eq!(still.thumb.state, None, "as big as the screen");
+        assert_eq!(still.under, what("Fixtures · picture"));
+        let played = facts(video, lasts(6, Basis::Known));
+        assert_eq!(played.under, what("Fixtures · video"));
+        assert_eq!(played.thumb.size.as_deref(), Some("0:06"));
+        assert_eq!(
+            facts(video, lasts(240, Basis::Guess)).thumb.size.as_deref(),
+            Some("~4 min"),
+            "a guess looks like one"
+        );
+        assert_eq!(facts(pdf, pages(3)).thumb.size.as_deref(), Some("3 pages"));
+        assert_eq!(facts(pdf, Known::default()).thumb.size, None);
+        let one = facts(page, pages(3));
+        assert_eq!(one.under, what("Fixtures · page"));
+        assert_eq!(one.thumb.size, None, "a page is one page");
+        assert_eq!(facts(typed, Known::default()).under, what("your text"));
+        assert_eq!(facts(bare, Known::default()).under, what("text"));
+        assert_eq!(
+            facts(slot, Known::default()).under,
+            what("live search · !b jn 3")
+        );
+        let blank = facts(black, Known::default());
+        assert_eq!(blank.thumb.picture, Picture::Kind(Icon::ScreenOff));
+        assert_eq!(blank.under, what("nothing on the projector"));
+    }
+
+    #[test]
+    fn the_preview_says_where_a_step_is_from_how_it_plays_its_look_and_its_place() {
+        let mut plan = Plan::new("t");
+        plan.section("Bienvenida", None);
+        plan.show(media(Kind::Image, Some("Fixtures")));
+        let praise = plan.section("Alabanza", None);
+        let song = plan.show(media(Kind::Video, Some("Fixtures / Kids")));
+        plan.push("Black screen", Action::Blank);
+        let words = |words: &str| Says::Words(words.to_string());
+        let place = |which: &str| Says::Section(praise, "Alabanza".into(), which.into());
+        let sized = Known {
+            pixels: Some(Pixels {
+                width: 1920,
+                height: 1080,
+            }),
+            ..Known::default()
+        };
+        assert_eq!(
+            step_facts(&plan, 1, "~30 s", sized)[..2],
+            [
+                ("From", words("Fixtures / x")),
+                ("Size", words("1920 × 1080")),
+            ],
+            "a picture's size"
+        );
+        assert_eq!(
+            step_facts(&plan, 3, "0:06", sized),
+            [
+                ("From", words("Fixtures / Kids / x")),
+                ("Plays", words("0:06, then waits")),
+                ("Look", words("the plan's")),
+                ("Section", place("step 2 of 3")),
+            ],
+            "a video's size is how long it plays"
+        );
+        let look = |plan: &Plan| step_facts(plan, 3, "0:06", Known::default()).remove(2);
+        plan.get_mut(song).unwrap().fade.fade_in = FadeTime::from_secs(2);
+        assert_eq!(look(&plan), ("Look", words("the plan's · fades in 2 s")));
+        let change = lantern_engine::LookChange {
+            background: Some(lantern_engine::Rgb([1, 2, 3])),
+            ..lantern_engine::LookChange::default()
+        };
+        plan.get_mut(praise).unwrap().look = Some(change.clone());
+        assert_eq!(look(&plan), ("Look", words("Alabanza's · fades in 2 s")));
+        plan.get_mut(song).unwrap().look = Some(change);
+        assert_eq!(look(&plan), ("Look", words("its own · fades in 2 s")));
+        // A black screen is from nowhere and has no look of its own.
+        plan.flow.joined = true;
+        assert_eq!(
+            step_facts(&plan, 4, "", Known::default()),
+            [
+                ("Plays", words("goes on by itself")),
+                ("Section", place("step 3 of 3")),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_preview_says_where_an_item_is_from_what_it_is_and_its_size() {
+        let words = |words: &str| Says::Words(words.to_string());
+        let lasts = Known {
+            length: Some(Estimate {
+                length: Duration::from_secs(6),
+                basis: Basis::Known,
+            }),
+            ..Known::default()
+        };
+        assert_eq!(
+            item_facts(&media(Kind::Video, Some("Fixtures")), lasts, None),
+            [
+                ("From", words("Fixtures / x")),
+                ("What", words("video")),
+                ("Length", words("0:06")),
+            ]
+        );
+        assert_eq!(
+            item_facts(&media(Kind::Image, None), Known::default(), None),
+            [("From", words("x")), ("What", words("picture"))],
+            "a picture's size isn't known"
+        );
+        let sized = Known {
+            pixels: Some(Pixels {
+                width: 800,
+                height: 450,
+            }),
+            ..Known::default()
+        };
+        assert_eq!(
+            item_facts(&media(Kind::Image, None), sized, None).pop(),
+            Some(("Size", words("800 × 450")))
+        );
+        assert_eq!(
+            item_facts(&media(Kind::Document, None), Known::default(), Some(3)).pop(),
+            Some(("Size", words("3 pages"))),
+            "pages loaded for the preview count"
+        );
+        let source = lantern_engine::SourceId::new("bible").unwrap();
+        let passage = Resource::new(
+            lantern_engine::ResourceId::new(&source, "jn3"),
+            "Juan 3:16-17",
+            Kind::Text,
+            Location::Inline("Porque de tal manera".into()),
+        )
+        .with_subtitle("RV1909");
+        assert_eq!(
+            item_facts(&passage, Known::default(), Some(2)),
+            [
+                ("From", words("RV1909 · Juan 3:16-17")),
+                ("Size", words("2 slides")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_planned_row_says_its_issue_unless_its_picture_says_it() {
+        let mut plan = Plan::new("t");
+        let video = plan.show(media(Kind::Video, Some("YouTube")));
+        let step = plan.get(video).unwrap();
+        let issue = |level, what: &str| Issue {
+            step: video,
+            level,
+            what: what.to_string(),
+        };
+        let missing = issue(Level::Problem, "file missing");
+        let facts = RowFacts::of(step, Some(&missing), Known::default(), None, false);
+        assert_eq!(
+            facts.under,
+            Under::Wrong(Level::Problem, "file missing".to_string())
+        );
+        assert_eq!(facts.thumb.state, None);
+        let coming = issue(Level::Waiting, "downloading 42%");
+        let downloading = Known {
+            download: Some(0.42),
+            ..Known::default()
+        };
+        let facts = RowFacts::of(step, Some(&coming), downloading, None, false);
+        assert_eq!(
+            facts.thumb.state.map(State::words).as_deref(),
+            Some("↓ 42%")
+        );
+        assert_eq!(facts.under, Under::What("YouTube · video".to_string()));
+    }
+
+    #[test]
+    fn a_result_says_its_size_its_state_and_the_one_warning_that_matters() {
+        let lasts = |seconds: u64| Known {
+            length: Some(Estimate {
+                length: Duration::from_secs(seconds),
+                basis: Basis::Known,
+            }),
+            ..Known::default()
+        };
+        let row = |resource: &Resource, known: Known, issue: Option<(Level, &str)>| {
+            let issue = issue.map(|(level, what)| (level, what.to_string()));
+            let facts = ResultFacts::of(resource, known, issue, false);
+            let state = facts.thumb.state.map(State::words);
+            (facts.thumb.size.clone(), state, facts.under)
+        };
+        let what = |words: &str| Under::What(words.to_string());
+
+        let video = media(Kind::Video, Some("Himnario"));
+        assert_eq!(
+            row(&video, lasts(187), None),
+            (Some("3:07".into()), None, what("Himnario · video")),
+            "a video's length"
+        );
+        let deck = media(Kind::Presentation, Some("Sermones"));
+        let slides = Known {
+            pages: Some(12),
+            ..Known::default()
+        };
+        assert_eq!(row(&deck, slides, None).0.as_deref(), Some("12 slides"));
+        let pdf = media(Kind::Document, Some("Boletines"));
+        let pages = Known {
+            pages: Some(8),
+            ..Known::default()
+        };
+        assert_eq!(row(&pdf, pages, None).0.as_deref(), Some("8 pages"));
+
+        let source = lantern_engine::SourceId::new("bible").unwrap();
+        let passage = Resource::new(
+            lantern_engine::ResourceId::new(&source, "John.3.16-18"),
+            "Juan 3:16-18",
+            Kind::Text,
+            lantern_engine::Location::Inline("Porque de tal manera…".into()),
+        )
+        .with_subtitle("Reina-Valera 1909")
+        .with_meta("verses", "16,17,18");
+        assert_eq!(
+            row(&passage, Known::default(), None),
+            (Some("3 verses".into()), None, what("Reina-Valera 1909")),
+            "a passage's verses"
+        );
+
+        let screen = Pixels {
+            width: 1920,
+            height: 1080,
+        };
+        let small = Known {
+            pixels: Some(Pixels {
+                width: 800,
+                height: 600,
+            }),
+            screen,
+            ..Known::default()
+        };
+        let picture = media(Kind::Image, Some("Fotos"));
+        assert_eq!(
+            row(&picture, small, None),
+            (
+                Some("800×600".into()),
+                Some("⚠".into()),
+                Under::Soft(screen)
+            ),
+            "a soft picture warns of it"
+        );
+        assert_eq!(
+            row(&picture, small, Some((Level::Problem, "file missing"))),
+            (
+                Some("800×600".into()),
+                None,
+                Under::Wrong(Level::Problem, "file missing".into())
+            ),
+            "a missing file is the one warning, in red"
+        );
+
+        let online = |reach, download| Known {
+            reach,
+            download,
+            ..Known::default()
+        };
+        let youtube = media(Kind::Video, Some("YouTube"));
+        assert_eq!(
+            row(
+                &youtube,
+                online(Reach::Online, Some(0.4)),
+                Some((Level::Waiting, "downloading 40%"))
+            ),
+            (None, Some("↓ 40%".into()), what("YouTube · video")),
+            "a download says how far it has come, not that it isn't done"
+        );
+        assert_eq!(
+            row(&youtube, online(Reach::Online, None), None)
+                .1
+                .as_deref(),
+            Some("☁ online")
+        );
+        assert_eq!(
+            row(
+                &youtube,
+                online(Reach::Online, None),
+                Some((Level::Waiting, "not downloaded yet"))
+            ),
+            (
+                None,
+                None,
+                Under::Wrong(Level::Waiting, "not downloaded yet".into())
+            ),
+        );
+        assert_eq!(
+            row(&youtube, online(Reach::Stream, None), None)
+                .1
+                .as_deref(),
+            Some("● live"),
+            "a stream needs the internet throughout"
+        );
+
+        let shown = ResultFacts::of(&picture, small, None, true);
+        assert_eq!(
+            (shown.thumb.state.map(State::words), shown.under),
+            (Some("● live".into()), Under::Soft(screen)),
+            "on stage, it says so, and still warns"
+        );
+    }
+
+    #[test]
+    fn a_row_warns_of_a_soft_picture_unless_something_is_wrong_with_it() {
+        let mut plan = Plan::new("t");
+        let picture = plan.show(media(Kind::Image, Some("Fixtures")));
+        let video = plan.show(media(Kind::Video, Some("Fixtures")));
+        let screen = Pixels {
+            width: 1920,
+            height: 1080,
+        };
+        let small = Known {
+            pixels: Some(Pixels {
+                width: 800,
+                height: 600,
+            }),
+            screen,
+            ..Known::default()
+        };
+        let step = plan.get(picture).unwrap();
+        let soft = RowFacts::of(step, None, small, None, false);
+        assert_eq!(soft.thumb.size.as_deref(), Some("800×600"));
+        assert_eq!(soft.thumb.state.map(State::words).as_deref(), Some("⚠"));
+        assert_eq!(soft.under, Under::Soft(screen));
+        assert_eq!(
+            soft_words(screen),
+            "Smaller than the screen (1920×1080): it will look soft"
+        );
+        let lasts = Known {
+            length: Some(Estimate {
+                length: Duration::from_secs(6),
+                basis: Basis::Known,
+            }),
+            ..small
+        };
+        let played = RowFacts::of(plan.get(video).unwrap(), None, lasts, None, false);
+        assert_eq!(played.thumb.size.as_deref(), Some("0:06"), "its length");
+        assert_eq!(played.under, Under::Soft(screen), "a video warns alike");
+        let missing = Issue {
+            step: picture,
+            level: Level::Problem,
+            what: "file missing".to_string(),
+        };
+        let wrong = RowFacts::of(step, Some(&missing), small, None, false);
+        assert_eq!(
+            wrong.under,
+            Under::Wrong(Level::Problem, "file missing".to_string())
+        );
+        assert_eq!(wrong.thumb.state, None, "the one warning is what's wrong");
+    }
+
     #[test]
     fn progress_says_how_far_in_the_stage_is() {
         use std::num::NonZeroUsize;
@@ -5173,42 +6001,172 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_lane_beside_a_row_is_the_bracket_of_what_holds_it_there() {
-        // Music: A, and Hymns in it: B, C. The plan round them all.
-        let mut plan = Plan::new("Sabbath");
-        let music = plan.section("Music", None);
-        plan.push("A", Action::Blank);
-        let hymns = plan.section("Hymns", None);
-        plan.push("B", Action::Blank);
-        plan.push("C", Action::Blank);
-        assert!(plan.nest(hymns, true));
-        let braced = lay_brackets(&plan, &|plan, at| plan.steps()[at].is_section());
-        let side = Side {
-            braced: &braced,
-            lanes: 3,
-            wide: false,
-            named: true,
-            plan: Some(2),
-            colors: &[],
-            widths: &[],
-        };
-        let (a, b) = (1, 3);
-        // Nearest the rows, the innermost the row is in.
-        assert_eq!(covering(&plan, side, a, None), Some(Held::Section(music)));
-        assert_eq!(covering(&plan, side, b, None), Some(Held::Section(hymns)));
-        // Each lane further out, the one there.
-        assert_eq!(
-            covering(&plan, side, b, Some(1)),
-            Some(Held::Section(music))
-        );
-        assert_eq!(covering(&plan, side, b, Some(2)), Some(Held::Plan));
-        // A lane with no bracket beside this row is no one's.
-        assert_eq!(covering(&plan, side, a, Some(0)), None);
+    fn head(section: StepId, depth: u8, folded: bool) -> Listed {
+        Listed::Head {
+            section,
+            depth,
+            folded,
+        }
     }
 
     #[test]
-    fn the_lit_bracket_keeps_those_inside_it_and_the_rest_step_back() {
+    fn each_header_comes_before_what_it_holds_and_a_folded_one_alone() {
+        use Listed::{Foot, Step as Row};
+        let mut plan = Plan::new("Sunday");
+        let welcome = plan.push("Welcome", Action::Blank);
+        let worship = plan.section("Worship", None);
+        let song = plan.push("Song", Action::Blank);
+        let hymn = plan.push("Hymn", Action::Blank);
+        let word = plan.section("Word", None);
+        let reading = plan.push("Reading", Action::Blank);
+        let open = |_: StepId| false;
+        assert_eq!(
+            listed(&plan, &open, &[], &[], None, false),
+            [
+                Row(welcome),
+                head(worship, 0, false),
+                Row(song),
+                Row(hymn),
+                head(word, 0, false),
+                Row(reading),
+            ]
+        );
+        // With feet, each section has one under its last row.
+        assert_eq!(
+            listed(&plan, &open, &[], &[], None, true),
+            [
+                Row(welcome),
+                head(worship, 0, false),
+                Row(song),
+                Row(hymn),
+                Foot(worship),
+                head(word, 0, false),
+                Row(reading),
+                Foot(word),
+            ]
+        );
+        // Folded, its header alone: no foot, and nothing it holds but a
+        // step kept in sight.
+        let shut = |id: StepId| id == worship;
+        assert_eq!(
+            listed(&plan, &shut, &[], &[], None, true),
+            [
+                Row(welcome),
+                head(worship, 0, true),
+                head(word, 0, false),
+                Row(reading),
+                Foot(word),
+            ]
+        );
+        assert_eq!(
+            listed(&plan, &shut, &[hymn], &[], None, false),
+            [
+                Row(welcome),
+                head(worship, 0, true),
+                Row(hymn),
+                head(word, 0, false),
+                Row(reading),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_section_has_its_place_and_one_inside_another_is_a_level_in() {
+        use Listed::{Empty, Step as Row};
+        let mut plan = Plan::new("Sabbath");
+        let notices = plan.section("Notices", None);
+        let music = plan.section("Music", None);
+        let a = plan.push("A", Action::Blank);
+        let hymns = plan.section("Hymns", None);
+        let b = plan.push("B", Action::Blank);
+        assert!(plan.nest(hymns, true));
+        let open = |_: StepId| false;
+        assert_eq!(
+            listed(&plan, &open, &[], &[], None, false),
+            [
+                head(notices, 0, false),
+                Empty(notices),
+                head(music, 0, false),
+                Row(a),
+                head(hymns, 1, false),
+                Row(b),
+            ]
+        );
+        // All it holds carried away, its place shows.
+        assert_eq!(
+            listed(&plan, &open, &[], &[a, hymns, b], None, false),
+            [
+                head(notices, 0, false),
+                Empty(notices),
+                head(music, 0, false),
+                Empty(music),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_gap_opens_where_what_is_carried_lands_in_or_after_a_section() {
+        use Listed::{Empty, Foot, Gap, Step as Row};
+        let mut plan = Plan::new("Sunday");
+        let welcome = plan.push("Welcome", Action::Blank);
+        let notices = plan.section("Notices", None);
+        let worship = plan.section("Worship", None);
+        let song = plan.push("Song", Action::Blank);
+        let word = plan.section("Word", None);
+        let reading = plan.push("Reading", Action::Blank);
+        let open = |_: StepId| false;
+        // Welcome carried. Rest: Notices, Worship, Song, Word, Reading.
+        let gap =
+            |at: usize, level: u8| listed(&plan, &open, &[], &[welcome], Some((at, level)), true);
+        // Under Word's header: first in Word.
+        assert_eq!(
+            gap(4, 1),
+            [
+                head(notices, 0, false),
+                Empty(notices),
+                Foot(notices),
+                head(worship, 0, false),
+                Row(song),
+                Foot(worship),
+                head(word, 0, false),
+                Gap,
+                Row(reading),
+                Foot(word),
+            ]
+        );
+        // At Worship's end: in it, before its foot; out of it, after.
+        assert_eq!(
+            gap(3, 1)[3..7],
+            [head(worship, 0, false), Row(song), Gap, Foot(worship)]
+        );
+        assert_eq!(
+            gap(3, 0)[3..7],
+            [head(worship, 0, false), Row(song), Foot(worship), Gap]
+        );
+        // In Notices, which holds nothing, the gap is its place.
+        assert_eq!(
+            gap(1, 1)[..4],
+            [
+                head(notices, 0, false),
+                Gap,
+                Foot(notices),
+                head(worship, 0, false)
+            ]
+        );
+        assert_eq!(
+            gap(1, 0)[..5],
+            [
+                head(notices, 0, false),
+                Empty(notices),
+                Foot(notices),
+                Gap,
+                head(worship, 0, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_lit_section_keeps_those_inside_it_and_the_rest_step_back() {
         use crate::track::Light;
         let mut plan = Plan::new("Sabbath");
         let music = plan.section("Music", None);
@@ -5219,17 +6177,82 @@ mod tests {
         let sermon = plan.section("Sermon", None);
         plan.push("C", Action::Blank);
         let of = |lit, id| lit_of(&plan, lit, id);
-        assert_eq!(of(None, Some(music)), Light::Plain);
-        let lit = Some(Held::Section(music));
-        assert_eq!(of(lit, Some(music)), Light::Lit);
-        assert_eq!(of(lit, Some(hymns)), Light::Within);
-        assert_eq!(of(lit, Some(sermon)), Light::Back);
-        assert_eq!(of(lit, None), Light::Back);
+        assert_eq!(of(None, music), Light::Plain);
+        assert_eq!(of(Some(music), music), Light::Lit);
+        assert_eq!(of(Some(music), hymns), Light::Within);
+        assert_eq!(of(Some(music), sermon), Light::Back);
         // Inside it, the one round it steps back.
-        assert_eq!(of(Some(Held::Section(hymns)), Some(music)), Light::Back);
-        // The plan holds every section.
-        assert_eq!(of(Some(Held::Plan), None), Light::Lit);
-        assert_eq!(of(Some(Held::Plan), Some(sermon)), Light::Within);
+        assert_eq!(of(Some(hymns), music), Light::Back);
+    }
+
+    #[test]
+    fn a_sections_line_breaks_at_a_header_inside_it_and_goes_on_after() {
+        use Listed::{Foot, Step as Row};
+        // Music: A, Hymns [B], C. Hymns ends at B, so C is Music's.
+        let mut plan = Plan::new("Sabbath");
+        let music = plan.section("Music", None);
+        let a = plan.push("A", Action::Blank);
+        let hymns = plan.section("Hymns", None);
+        let b = plan.push("B", Action::Blank);
+        let c = plan.push("C", Action::Blank);
+        assert!(plan.nest(hymns, true));
+        assert!(plan.reach_section(hymns, Some(b)).is_ok());
+        let open = |_: StepId| false;
+        let rows = listed(&plan, &open, &[], &[], None, false);
+        assert_eq!(
+            rows,
+            [
+                head(music, 0, false),
+                Row(a),
+                head(hymns, 1, false),
+                Row(b),
+                Row(c)
+            ]
+        );
+        // From each header to its last dot before the next one inside it,
+        // and on from the first dot after that one ends.
+        assert_eq!(
+            stretches(&plan, &rows, &[]),
+            [(music, 0, 1), (hymns, 2, 3), (music, 4, 4)]
+        );
+        // With feet, each runs on into its own, where it is capped.
+        let rows = listed(&plan, &open, &[], &[], None, true);
+        assert_eq!(rows[4..], [Foot(hymns), Row(c), Foot(music)]);
+        assert_eq!(
+            stretches(&plan, &rows, &[]),
+            [(music, 0, 1), (hymns, 2, 4), (music, 5, 6)]
+        );
+        // A folded one is a dot on the line round it; one that holds
+        // nothing has a line only down to its foot.
+        let shut = |id: StepId| id == hymns;
+        let rows = listed(&plan, &shut, &[], &[], None, false);
+        assert_eq!(stretches(&plan, &rows, &[]), [(music, 0, 3)]);
+        let mut empty = Plan::new("Sabbath");
+        let notices = empty.section("Notices", None);
+        let rows = listed(&empty, &open, &[], &[], None, true);
+        assert_eq!(stretches(&empty, &rows, &[]), [(notices, 0, 2)]);
+        assert_eq!(
+            stretches(&empty, &listed(&empty, &open, &[], &[], None, false), &[]),
+            []
+        );
+    }
+
+    #[test]
+    fn a_header_says_its_time_against_its_budget() {
+        let at = TimeOfDay::parse("19:15");
+        assert_eq!(
+            time_words(24 * SECOND, Some(5 * MIN), at, false, false),
+            "0:24 of 5:00 · by 19:15"
+        );
+        assert_eq!(time_words(150 * SECOND, None, None, false, false), "2:30");
+        assert_eq!(
+            time_words(Duration::ZERO, Some(10 * MIN), None, true, false),
+            "empty · 10:00"
+        );
+        assert_eq!(
+            time_words(292 * SECOND, Some(5 * MIN), None, false, true),
+            "4:52 of 5:00 · done"
+        );
     }
 
     #[test]

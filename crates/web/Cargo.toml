@@ -1,0 +1,21 @@
+[package]
+name = "lantern-web"
+description = "YouTube's own player for lantern's stage: a window of its own with the IFrame Player API in a web view, run and steered by the app."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lantern-source-link.workspace = true
+lantern-web-protocol.workspace = true
+serde_json.workspace = true
+tao = "0.37"
+wry = "0.57"
+url.workspace = true
+
+# The picker lays two web views out in one window: on Linux in a GTK
+# container, the same GTK tao and wry use.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"

@@ -1,0 +1,39 @@
+{
+  "kind": "youtube#searchListResponse",
+  "regionCode": "US",
+  "pageInfo": { "totalResults": 1000000, "resultsPerPage": 4 },
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#video", "videoId": "Hc-8A7NA-Uk" },
+      "snippet": {
+        "title": "Sublime Gracia - Amazing Grace en español con letra",
+        "channelTitle": "Cinco Solas por Gracia",
+        "liveBroadcastContent": "none"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#video", "videoId": "d8uhxs1sW8Y" },
+      "snippet": {
+        "title": "Himno &quot;Sublime Gracia&quot; &amp; más",
+        "channelTitle": "Himnos de Fe y Alabanzas",
+        "liveBroadcastContent": "none"
+      }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#channel", "channelId": "UC0000000000000000000000" },
+      "snippet": { "title": "A channel", "channelTitle": "A channel", "liveBroadcastContent": "none" }
+    },
+    {
+      "kind": "youtube#searchResult",
+      "id": { "kind": "youtube#video", "videoId": "liveliveliv" },
+      "snippet": {
+        "title": "Culto en vivo",
+        "channelTitle": "Iglesia en vivo",
+        "liveBroadcastContent": "live"
+      }
+    }
+  ]
+}

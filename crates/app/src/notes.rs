@@ -107,22 +107,11 @@ pub fn numbers_on(plan: &Plan, on: NoteOn) -> Vec<(NoteId, usize)> {
     found
 }
 
-/// The step whose row a note on `on` is shown by: the step; a section's
-/// first step (the section itself where it holds none); a loop's or a
-/// drawn order's first step.
+/// The step whose row a note on `on` is shown by: the step, a section's
+/// header, or a loop's or a drawn order's first step.
 pub fn anchor(plan: &Plan, on: NoteOn) -> Option<StepId> {
     match on {
-        NoteOn::Step(id) => {
-            let at = plan.position(id)?;
-            match plan.steps()[at].is_section() {
-                true => Some(
-                    (at + 1..plan.group_end(at))
-                        .find(|row| !plan.steps()[*row].is_section())
-                        .map_or(id, |row| plan.steps()[row].id),
-                ),
-                false => Some(id),
-            }
-        }
+        NoteOn::Step(id) => plan.get(id).map(|_| id),
         NoteOn::Span(id) => plan.span_range(id).map(|(first, _)| plan.steps()[first].id),
     }
 }

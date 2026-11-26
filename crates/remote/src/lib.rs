@@ -15,6 +15,7 @@
 //! GET  /events?t=…  the snapshot, again every time it changes (server-sent events)
 //! POST /do?t=…      a command, as JSON
 //! GET  /stage.jpg?t=…  a picture of the stage, when the app has one
+//! GET  /thumb.jpg?t=…&id=…  a result's picture, when [`Hit::picture`] says so
 //! ```
 //!
 //! The picture costs the app something to make, so it makes one only
@@ -23,20 +24,37 @@
 mod http;
 mod protocol;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 pub use protocol::{
-    Bang, Colors, Command, Found, Group, Hit, Live, Place, Plan, Slides, Snapshot, Step, StepKind,
-    Timed, Upcoming,
+    Badge, Bang, BibleBook, BibleBooks, Colors, Command, Found, Group, Hit, HitKind, Listed, Live,
+    Mode, Note, Pace, Place, Plan, Shown, Slides, Snapshot, Sound, Source, SourceKind, Starts,
+    Step, StepKind, Timed, Tone, Upcoming,
 };
 
 /// The page, whole: its style and script are inside it.
 const PAGE: &str = include_str!("page.html");
+
+/// Inter, the dashboard's type, in the weights the page uses.
+const FONTS: [(&str, &[u8]); 3] = [
+    (
+        "/inter-400.ttf",
+        include_bytes!("../../app/fonts/Inter-Regular.ttf"),
+    ),
+    (
+        "/inter-500.ttf",
+        include_bytes!("../../app/fonts/Inter-Medium.ttf"),
+    ),
+    (
+        "/inter-700.ttf",
+        include_bytes!("../../app/fonts/Inter-Bold.ttf"),
+    ),
+];
 
 /// How long a phone that hears nothing waits for a sign of life. A phone
 /// that left without saying so is found out by the write that fails.
@@ -81,20 +99,26 @@ struct State {
     picture: Option<Arc<Vec<u8>>>,
     /// When a phone last asked for it.
     picture_asked: Option<Instant>,
+    /// The results' pictures, as JPEGs, by [`Hit::id`].
+    thumbs: HashMap<String, Arc<Vec<u8>>>,
     /// The other machines that asked for anything, by address.
     reached: HashSet<IpAddr>,
 }
 
 impl Server {
-    /// Starts listening on every address of this machine, at `port` (0 for
-    /// any free one). Requests must carry `token`. `act` is called with
-    /// each command a phone sends, on a thread of the server's.
+    /// Starts listening on every address of this machine, IPv4 and IPv6,
+    /// at `port` (0 for any free one). Requests must carry `token`. `act`
+    /// is called with each command a phone sends, on a thread of the
+    /// server's.
     pub fn start(
         port: u16,
         token: impl Into<String>,
         act: impl Fn(Command) + Send + Sync + 'static,
     ) -> io::Result<Server> {
         let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))?;
+        // A phone given an IPv6 address, as over Tailscale, needs one of
+        // these too. A machine without IPv6 still serves IPv4.
+        let listener_v6 = ipv6_listener(listener.local_addr()?.port()).ok();
         let shared = Arc::new(Shared {
             at: listener.local_addr()?,
             token: token.into(),
@@ -104,16 +128,18 @@ impl Server {
             watching: AtomicUsize::new(0),
             stopped: AtomicBool::new(false),
         });
-        let serving = Arc::clone(&shared);
-        std::thread::spawn(move || {
-            for phone in listener.incoming().flatten() {
-                if serving.stopped.load(Ordering::SeqCst) {
-                    break;
+        for listener in std::iter::once(listener).chain(listener_v6) {
+            let serving = Arc::clone(&shared);
+            std::thread::spawn(move || {
+                for phone in listener.incoming().flatten() {
+                    if serving.stopped.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let shared = Arc::clone(&serving);
+                    std::thread::spawn(move || shared.answer(phone));
                 }
-                let shared = Arc::clone(&serving);
-                std::thread::spawn(move || shared.answer(phone));
-            }
-        });
+            });
+        }
         Ok(Server { shared })
     }
 
@@ -138,6 +164,12 @@ impl Server {
     /// Gives every phone that shows it this picture of the stage, a JPEG.
     pub fn set_picture(&self, jpeg: Vec<u8>) {
         self.shared.state().picture = Some(Arc::new(jpeg));
+    }
+
+    /// Gives the phones these results' pictures, JPEGs by [`Hit::id`], in
+    /// place of the ones before.
+    pub fn set_thumbs(&self, thumbs: HashMap<String, Arc<Vec<u8>>>) {
+        self.shared.state().thumbs = thumbs;
     }
 
     /// Whether a phone is showing the picture, so one is worth making.
@@ -167,7 +199,23 @@ impl Drop for Server {
         // The listener is waiting for a phone: this one lets it see it
         // was stopped.
         let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.shared.at.port()));
+        let _ = TcpStream::connect((Ipv6Addr::LOCALHOST, self.shared.at.port()));
     }
+}
+
+/// A listener on every IPv6 address of this machine, at `port`. IPv6 only,
+/// so it doesn't take the port from the IPv4 listener beside it.
+fn ipv6_listener(port: u16) -> io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_only_v6(true)?;
+    // As std's own listener does on Unix: a restart can take the port
+    // back while the last run's connections close.
+    #[cfg(unix)]
+    socket.set_reuse_address(true)?;
+    socket.bind(&SocketAddr::from((Ipv6Addr::UNSPECIFIED, port)).into())?;
+    socket.listen(128)?;
+    Ok(socket.into())
 }
 
 impl Shared {
@@ -202,7 +250,10 @@ impl Shared {
         let allowed = request.query("t") == Some(self.token.as_str());
         let _ = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/") => http::respond(&mut phone, "200 OK", "text/html; charset=utf-8", PAGE),
-            (_, "/events" | "/do" | "/stage.jpg") if !allowed => {
+            ("GET", path) if let Some((_, font)) = FONTS.iter().find(|(at, _)| *at == path) => {
+                http::respond_kept(&mut phone, "font/ttf", font)
+            }
+            (_, "/events" | "/do" | "/stage.jpg" | "/thumb.jpg") if !allowed => {
                 http::respond(&mut phone, "403 Forbidden", "text/plain", "wrong token")
             }
             ("GET", "/events") => self.events(&mut phone),
@@ -216,6 +267,14 @@ impl Shared {
                     Some(jpeg) => http::respond_bytes(&mut phone, "200 OK", "image/jpeg", &jpeg),
                     // Asking is what gets one made: the next try has it.
                     None => http::respond(&mut phone, "503 Service Unavailable", "text/plain", ""),
+                }
+            }
+            ("GET", "/thumb.jpg") => {
+                let id = request.query_text("id").unwrap_or_default();
+                let thumb = self.state().thumbs.get(&id).cloned();
+                match thumb {
+                    Some(jpeg) => http::respond_bytes(&mut phone, "200 OK", "image/jpeg", &jpeg),
+                    None => http::respond(&mut phone, "404 Not Found", "text/plain", "no picture"),
                 }
             }
             ("POST", "/do") => match serde_json::from_slice::<Command>(&request.body) {
@@ -347,6 +406,60 @@ mod tests {
     }
 
     #[test]
+    fn the_page_s_fonts_are_open_and_kept() {
+        let (server, _commands) = server();
+        for (weight, path) in ["400", "500", "700"]
+            .iter()
+            .map(|w| (w, format!("/inter-{w}.ttf")))
+        {
+            let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+            stream
+                .write_all(format!("GET {path} HTTP/1.1\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut answer = Vec::new();
+            stream.read_to_end(&mut answer).unwrap();
+            let head = String::from_utf8_lossy(&answer[..200.min(answer.len())]).to_string();
+            assert!(head.starts_with("HTTP/1.1 200 OK"), "{weight}: {head}");
+            assert!(head.contains("Content-Type: font/ttf"), "{head}");
+            assert!(head.contains("Cache-Control: max-age"), "{head}");
+            assert!(answer.len() > 100_000, "{weight} is the whole font");
+        }
+        let page = ask(&server, "GET / HTTP/1.1\r\n\r\n");
+        assert!(
+            page.contains("Cache-Control: no-store"),
+            "the page itself is never kept"
+        );
+    }
+
+    #[test]
+    fn a_phone_reaches_it_over_ipv6_too() {
+        if TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_err() {
+            eprintln!("skipped: this machine has no IPv6 loopback");
+            return;
+        }
+        let (server, commands) = server();
+        let mut stream = TcpStream::connect((Ipv6Addr::LOCALHOST, server.port())).unwrap();
+        stream.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+        let mut page = String::new();
+        stream.read_to_string(&mut page).unwrap();
+        assert!(page.starts_with("HTTP/1.1 200 OK"), "{page}");
+        assert!(page.contains("<!doctype html>"));
+
+        let body = r#"{"do":"next"}"#;
+        let mut stream = TcpStream::connect((Ipv6Addr::LOCALHOST, server.port())).unwrap();
+        write!(
+            stream,
+            "POST /do?t=secret HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        stream.read_to_string(&mut String::new()).unwrap();
+        assert_eq!(commands.recv().unwrap(), Command::Next);
+        // The IPv4 listener is still there beside it.
+        assert!(ask(&server, "GET / HTTP/1.1\r\n\r\n").starts_with("HTTP/1.1 200 OK"));
+    }
+
+    #[test]
     fn the_page_is_open_and_the_rest_needs_the_token() {
         let (server, commands) = server();
         let page = ask(&server, "GET / HTTP/1.1\r\n\r\n");
@@ -429,6 +542,44 @@ mod tests {
     }
 
     #[test]
+    fn a_result_s_picture_is_served_by_its_id_with_the_token() {
+        let (server, _commands) = server();
+        let jpeg = vec![0xff, 0xd8, 0x01, 0xff, 0xd9];
+        let id = "folder:/media/Himno 99.mp4#2";
+        server.set_thumbs(HashMap::from([(id.to_string(), Arc::new(jpeg.clone()))]));
+        let get = |query: &str| {
+            let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
+            stream
+                .write_all(format!("GET /thumb.jpg?{query} HTTP/1.1\r\n\r\n").as_bytes())
+                .unwrap();
+            let mut answer = Vec::new();
+            stream.read_to_end(&mut answer).unwrap();
+            answer
+        };
+
+        let answer = get("t=secret&id=folder%3A%2Fmedia%2FHimno%2099.mp4%232");
+        let head = String::from_utf8_lossy(&answer);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(head.contains("Content-Type: image/jpeg"), "{head}");
+        assert!(answer.ends_with(&jpeg), "the picture's bytes");
+
+        let refused = get("id=folder%3A%2Fmedia%2FHimno%2099.mp4%232");
+        assert!(refused.starts_with(b"HTTP/1.1 403"), "the token is needed");
+        let unknown = get("t=secret&id=folder%3A%2Fmedia%2Fother.mp4");
+        assert!(
+            unknown.starts_with(b"HTTP/1.1 404"),
+            "none for an id it hasn't"
+        );
+
+        server.set_thumbs(HashMap::new());
+        let gone = get("t=secret&id=folder%3A%2Fmedia%2FHimno%2099.mp4%232");
+        assert!(
+            gone.starts_with(b"HTTP/1.1 404"),
+            "only the pictures last given"
+        );
+    }
+
+    #[test]
     fn a_connection_opened_early_is_answered_when_it_asks() {
         let (server, _commands) = server();
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, server.port())).unwrap();
@@ -472,6 +623,11 @@ mod tests {
 
         post(&server, "/do?t=secret", r#"{"do":"attachment","n":1}"#);
         assert_eq!(commands.recv().unwrap(), Command::Attachment { n: 1 });
+
+        post(&server, "/do?t=secret", r#"{"do":"volume","level":0.4}"#);
+        assert_eq!(commands.recv().unwrap(), Command::Volume { level: 0.4 });
+        post(&server, "/do?t=secret", r#"{"do":"mute","on":true}"#);
+        assert_eq!(commands.recv().unwrap(), Command::Mute { on: true });
 
         let answer = post(&server, "/do?t=secret", r#"{"do":"explode"}"#);
         assert!(answer.starts_with("HTTP/1.1 400"), "{answer}");

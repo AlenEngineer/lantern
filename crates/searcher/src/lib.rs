@@ -21,7 +21,7 @@ mod searcher;
 
 pub use bang::{Bang, Parsed, Scope};
 pub use index::Index;
-pub use normalize::{fold, tokens};
+pub use normalize::{fold, natural, tokens};
 pub use searcher::{
     Origin, Polled, ReindexReport, SearchError, SearchEvent, SearchStream, Searcher,
 };

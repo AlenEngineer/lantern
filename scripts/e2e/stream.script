@@ -1,6 +1,6 @@
 # A YouTube video taken before its download is done streams at once while
-# the download goes on (needs the network). Pick a result the other scripts
-# don't download, or clear ~/.cache/lantern/youtube first.
+# the download goes on (needs the network). Each run's cache starts empty,
+# so the video is never downloaded already.
 wait 1500
 type !yt sublime gracia himno
 press enter

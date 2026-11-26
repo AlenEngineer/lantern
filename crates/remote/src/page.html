@@ -3,191 +3,402 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#141218">
+<meta name="theme-color" content="#0d0b0f">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Lantern</title>
 <style>
+@font-face { font-family: Inter; font-weight: 400; src: url(/inter-400.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: Inter; font-weight: 500; src: url(/inter-500.ttf) format("truetype"); font-display: swap; }
+@font-face { font-family: Inter; font-weight: 700; src: url(/inter-700.ttf) format("truetype"); font-display: swap; }
+/* The dashboard's look (docs/DESIGN.md): cards on a darker ground, states
+   as tints, solid primary only for play and the timeline. */
 :root {
-  --ground: #141218; --card: #211f26; --raised: #36343b; --text: #e6e0e9; --dim: #cac4d0;
-  --accent: #d0bcff; --on-accent: #381e72; --live: #efb8c8; --danger: #f2b8b5;
-  --gap: 12px;
+  --surface: #151218; --container: #221e24; --highest: #373339; --on: #e8e0e8; --on-var: #ccc4cf;
+  --primary: #dabaf9; --on-primary: #3e2459; --tertiary: #f3b7bf; --error: #ffb4ab;
+  --ground: color-mix(in srgb, var(--surface) 62%, #000);
+  --outline: color-mix(in srgb, var(--on-var) 70%, var(--surface));
+  --outline-var: color-mix(in srgb, var(--on) 25%, var(--surface));
+  --t-live: color-mix(in srgb, var(--tertiary) 22%, var(--surface));
+  --t-next: color-mix(in srgb, var(--primary) 22%, var(--surface));
+  --t-danger: color-mix(in srgb, var(--error) 14%, var(--surface));
+  --t-plain: color-mix(in srgb, var(--on) 8%, var(--surface));
+  --t-hover: color-mix(in srgb, var(--on) 12%, var(--surface));
+  --hair: rgba(255,255,255,.10);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; margin: 0; }
 body {
-  background: var(--ground); color: var(--text);
-  font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  display: flex; flex-direction: column; overflow: hidden;
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--ground); color: var(--on); font: 13px/1.35 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  display: flex; flex-direction: column; gap: 10px; overflow: hidden; position: relative;
+  padding: calc(12px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
   user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
+body > * { flex: none; }
 [hidden] { display: none !important; }
-button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; }
-.one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button { font: inherit; color: inherit; border: 0; background: none; padding: 0; cursor: pointer; text-align: inherit; }
+svg.i { width: 18px; height: 18px; fill: currentColor; flex: none; }
+.one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.meta { font-size: 12px; color: var(--on-var); }
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: 22px; }
+.pill { border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 12px; font-weight: 500; white-space: nowrap; }
+.chip { border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; font-size: 12px; font-weight: 700; white-space: nowrap; flex: none; }
+.live { background: var(--t-live); color: var(--tertiary); }
+.next { background: var(--t-next); color: var(--primary); }
+.danger { background: var(--t-danger); color: var(--error); }
+.plain { background: var(--t-plain); color: var(--on); }
+button.pill:active, .go > button:active, .step:active, .res:active { filter: brightness(1.25); }
 
-header { padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 8px; }
-.top { display: flex; align-items: center; gap: 10px; }
-#plan-name { font-size: 20px; font-weight: 700; color: var(--accent); flex: 1; min-width: 0; }
-#link { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex: none; }
-#link.up { background: var(--accent); }
-#notes { display: flex; gap: 6px; flex-wrap: wrap; }
-#notes span { background: var(--card); color: var(--dim); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
-#notes span:first-child { color: var(--live); }
+/* The strip: a pill across the top, as on the computer. */
+#strip { height: 48px; border-radius: 999px; display: flex; align-items: center; gap: 8px; padding: 0 6px 0 8px; position: relative; z-index: 4; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+#plan-name { font-weight: 700; font-size: 16px; flex: 1; }
+#link { width: 8px; height: 8px; border-radius: 50%; background: var(--error); flex: none; }
+#link.up { display: none; }
+#vol-pill.open { background: var(--t-next); color: var(--primary); }
+#pace { display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 22px; }
+#pace-word { margin-left: auto; }
 
-main { flex: 1; overflow-y: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: var(--gap); -webkit-overflow-scrolling: touch; scrollbar-width: none; }
-main::-webkit-scrollbar { display: none; }
-main > * { flex: none; }
-.card { background: var(--card); border-radius: 22px; padding: 14px 16px; }
+/* Plan mode: nothing to press. */
+#planning { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 0 20px 60px; }
+#planning svg.i { width: 40px; height: 40px; color: var(--primary); margin-bottom: 6px; }
+#planning h1 { margin: 0; font-size: 18px; font-weight: 700; }
+#plan-plan { font-size: 15px; font-weight: 700; color: var(--primary); }
+#countdown { font-size: 52px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -1px; line-height: 1.1; }
 
-#stage { display: flex; flex-direction: column; gap: 8px; border: 2px solid transparent; }
-#stage.on { border-color: var(--live); }
-#stage.black { border-color: var(--danger); }
-.tag { align-self: flex-start; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  border-radius: 999px; padding: 3px 10px; background: var(--raised); color: var(--dim); }
-#stage.on .tag { background: color-mix(in srgb, var(--live) 22%, transparent); color: var(--live); }
-#stage.black .tag { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
-#picture { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 12px; display: block; }
-#live-title { font-size: 19px; font-weight: 700; }
-#live-facts { color: var(--dim); font-size: 14px; min-height: 1em; }
-#live-failed { color: var(--danger); font-size: 14px; }
-#timeline { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+/* The stage card. */
+#stage { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.pic { aspect-ratio: 16/9; border-radius: 12px; background: #000; position: relative; overflow: hidden; flex: none; }
+.pic img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.pic .over { position: absolute; left: 8px; top: 8px; }
+#live-title { font-weight: 700; font-size: 16px; }
+#live-failed { color: var(--error); font-size: 12px; }
+#time { display: flex; align-items: center; gap: 10px; }
+#play { width: 40px; height: 40px; border-radius: 50%; background: var(--primary); color: var(--on-primary); display: flex; align-items: center; justify-content: center; flex: none; }
 #bar { flex: 1; height: 28px; display: flex; align-items: center; touch-action: none; }
-#bar div { width: 100%; height: 6px; border-radius: 3px; background: var(--raised); position: relative; }
-#bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--accent); }
-#bar b { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); }
-#times { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
-#next { color: var(--dim); font-size: 14px; padding: 0 6px; }
-#next b { color: var(--text); font-weight: 600; }
-#attached { display: flex; flex-wrap: wrap; gap: 8px; }
-#attached button, #back { background: var(--raised); color: var(--accent); font-weight: 700; border-radius: 999px; padding: 10px 16px; display: flex; align-items: center; gap: 8px; }
-#attached svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
-#resume { align-self: stretch; background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 12px; }
+.track { width: 100%; height: 4px; border-radius: 2px; background: var(--highest); position: relative; }
+.track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--primary); }
+.track b { position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--primary); }
+#times { font-size: 12px; color: var(--on-var); font-variant-numeric: tabular-nums; flex: none; }
+#slides { display: flex; gap: 4px; }
+#slides span { flex: 1; height: 26px; border-radius: 8px; background: var(--t-plain); font-size: 11px; color: var(--on-var); display: flex; align-items: center; justify-content: center; font-weight: 500; font-variant-numeric: tabular-nums; }
+#slides span.on { background: var(--t-live); color: var(--tertiary); font-weight: 700; }
+#extras { display: flex; flex-wrap: wrap; gap: 6px; }
+#extras .pill { height: 34px; }
+/* Small, beside its words: while the menu is up, and in Live. */
+body.menu-open #stage, body.in-live #stage { flex-direction: row; align-items: center; padding: 8px; gap: 10px; }
+body.menu-open #stage .pic, body.in-live #stage .pic { width: 112px; }
+body.menu-open #stage .pic .over, body.in-live #stage .pic .over { display: none; }
+body.menu-open #time, body.menu-open #slides, body.menu-open #extras, body.menu-open #live-failed,
+body.in-live #time, body.in-live #slides, body.in-live #extras, body.in-live #live-failed { display: none !important; }
+#stage-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#stage-chip { display: none; align-self: flex-start; margin-bottom: 2px; }
+body.menu-open #stage-chip, body.in-live #stage-chip { display: inline-flex; }
+body.menu-open #live-title, body.in-live #live-title { font-size: 13px; }
+body.menu-open #pace { display: none !important; }
 
-#steps { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
-.section { color: var(--accent); font-weight: 700; padding: 12px 10px 4px; }
-.step { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 6px 10px; border-radius: 14px; text-align: left; width: 100%; }
-.step .dot { width: 16px; flex: none; text-align: center; color: var(--dim); font-size: 12px; }
-.step .label { flex: 1; min-width: 0; }
-.step .detail { color: var(--dim); font-size: 13px; flex: none; }
-.step.done { color: var(--dim); opacity: .6; }
-.step.current { background: color-mix(in srgb, var(--live) 18%, transparent); color: var(--live); font-weight: 700; }
-.step.current .dot, .step.current .detail { color: var(--live); }
-.step.picked { background: var(--raised); }
-.step .problem { color: var(--danger); }
-.step .go { background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 8px 16px; flex: none; }
-#empty { color: var(--dim); text-align: center; padding: 28px 12px; }
+/* What comes next. */
+#upnext { padding: 8px 10px; display: flex; align-items: center; gap: 10px; }
+.thumb { width: 64px; height: 36px; border-radius: 8px; background: linear-gradient(135deg, var(--highest), var(--surface)); flex: none; }
+#upnext-mark { color: var(--primary); font-weight: 700; }
+#upnext-title { font-weight: 700; }
 
-footer { padding: 10px 12px calc(12px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; background: var(--ground); }
-footer button { background: var(--card); border-radius: 18px; height: 52px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; }
-footer button:active, .step:active { filter: brightness(1.25); }
-footer svg { width: 22px; height: 22px; fill: currentColor; }
-#prev { grid-column: 1; height: 76px; }
-#next-step { grid-column: 2 / 4; height: 76px; background: var(--accent); color: var(--on-accent); font-size: 20px; font-weight: 700; }
-#black.on { background: var(--danger); color: var(--ground); }
-#play:disabled { opacity: .4; }
+/* Live: tiles, pickers and results, each ending in Send. */
+#live { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; scrollbar-width: none; padding-bottom: 4px; }
+#live::-webkit-scrollbar { display: none; }
+#live > * { flex: none; }
+#steppers { display: none; flex-direction: column; gap: 4px; margin-left: auto; flex: none; }
+body.in-live #steppers { display: flex; }
+#steppers button { width: 36px; height: 36px; }
+.field { height: 44px; border-radius: 999px; background: var(--container); display: flex; align-items: center; gap: 8px; padding: 0 6px 0 14px; color: var(--on-var); }
+.field input { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--on); font: inherit; font-size: 16px; user-select: text; -webkit-user-select: text; }
+.field input::placeholder { color: var(--on-var); opacity: .8; }
+.field input::-webkit-search-cancel-button { display: none; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tile { padding: 14px; display: flex; flex-direction: column; gap: 10px; min-height: 104px; }
+.tile .ic { width: 40px; height: 40px; border-radius: 50%; background: var(--t-next); color: var(--primary); display: flex; align-items: center; justify-content: center; }
+.tile.folder .ic { background: var(--t-plain); color: var(--on-var); }
+.tile .ic svg.i { width: 22px; height: 22px; }
+.tile .n { font-weight: 700; font-size: 15px; }
+.tile .h { margin-top: -6px; }
+.label { font-size: 12px; font-weight: 700; color: var(--on-var); padding: 4px 6px 0; }
+.again { display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 8px; border-radius: 12px; width: 100%; }
+.again.on { background: var(--t-live); color: var(--tertiary); font-weight: 700; }
+.head { display: flex; align-items: center; gap: 10px; }
+.head .round { width: 40px; height: 40px; }
+.head b { font-size: 17px; }
+.head .meta { margin-left: auto; }
+.trail { display: flex; gap: 6px; flex-wrap: wrap; }
+.trail .pill { height: 28px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--t-plain); border-radius: 999px; padding: 3px; }
+.seg button { height: 32px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-weight: 500; color: var(--on-var); font-size: 12px; }
+.seg button.on { background: var(--t-next); color: var(--primary); font-weight: 700; }
+.grid { display: grid; gap: 5px; }
+.grid button { height: 42px; border-radius: 12px; background: var(--t-plain); display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; font-variant-numeric: tabular-nums; }
+.grid button.on { background: var(--t-next); color: var(--primary); font-weight: 700; }
+.grid button.range { background: color-mix(in srgb, var(--primary) 12%, var(--surface)); color: var(--primary); outline: 1px dashed color-mix(in srgb, var(--primary) 45%, transparent); outline-offset: -3px; }
+.words { padding: 10px 12px; border-radius: 12px; background: var(--container); font-size: 13px; line-height: 1.45; max-height: 9.5em; overflow: hidden; }
+.words b { color: var(--primary); }
+.buttons { display: grid; gap: 6px; }
+.buttons button { height: 44px; border-radius: 999px; background: var(--t-plain); font-weight: 500; display: flex; align-items: center; justify-content: center; }
+.buttons button.on { background: var(--t-next); color: var(--primary); font-weight: 700; }
+.big { padding: 18px; text-align: center; font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; border-radius: 16px; background: var(--container); }
+textarea { width: 100%; min-height: 110px; resize: none; border-radius: 18px; border: 2px solid color-mix(in srgb, var(--primary) 60%, transparent); background: var(--container); color: var(--on); font: inherit; font-size: 16px; padding: 12px 14px; outline: 0; user-select: text; -webkit-user-select: text; }
+.results { padding: 4px; display: flex; flex-direction: column; gap: 1px; }
+.results .label { padding: 8px 10px 2px; }
+.results .error { color: var(--error); font-size: 12px; padding: 2px 10px 6px; }
+/* One result, every kind: a 16:9 picture with its size in the lower
+   right and its state in the upper left, then its title and one line. */
+.th { position: relative; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; flex: none; display: flex; align-items: center; justify-content: center; background: var(--container); color: var(--on-var); }
+.th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.th.words { background: #0b0a0d; color: #fff; font-size: 7px; line-height: 1.35; text-align: center; padding: 6px; }
+.th.time { background: #0b0a0d; color: #fff; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.th.sound { background: var(--t-next); color: var(--primary); }
+.th svg.i { width: 24px; height: 24px; }
+.bd { position: absolute; right: 3px; bottom: 3px; max-width: calc(100% - 6px); overflow: hidden; white-space: nowrap; font-size: 9.5px; font-weight: 700; background: rgba(0,0,0,.74); color: #fff; border-radius: 4px; padding: 1px 4px; font-variant-numeric: tabular-nums; }
+.st { position: absolute; left: 3px; top: 3px; font-size: 9.5px; font-weight: 700; border-radius: 999px; padding: 1px 5px; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.st.plain { background: rgba(0,0,0,.74); color: #fff; }
+.st.live, .st.waiting { background: color-mix(in srgb, var(--tertiary) 85%, #000); color: #2a1216; }
+.st.problem { background: color-mix(in srgb, var(--error) 85%, #000); color: #2a1216; }
+.th .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--highest); }
+.th .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--primary); }
+.line.waiting { color: var(--tertiary); }
+.line.problem { color: var(--error); }
+.r { display: flex; gap: 10px; padding: 6px; border-radius: 14px; align-items: center; flex-wrap: wrap; }
+.r .th { width: 92px; }
+.r .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.r .tt { font-weight: 700; }
+.r.picked { background: var(--t-plain); }
+.r.sent { background: var(--t-live); }
+.r.sent .tt { color: var(--tertiary); }
+.r .send, .wide { flex-basis: 100%; grid-column: 1 / -1; }
+.rhead { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+.views { display: flex; background: var(--t-plain); border-radius: 999px; padding: 3px; margin-left: auto; }
+.views button { width: 38px; height: 30px; border-radius: 999px; display: flex; align-items: center; justify-content: center; color: var(--on-var); }
+.views button.on { background: var(--t-next); color: var(--primary); }
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; padding: 8px; }
+.gt { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.gt .th { width: 100%; border-radius: 10px; }
+.gt .tt { font-weight: 700; font-size: 12px; }
+.gt .line { font-size: 11px; margin-top: -2px; }
+.gt.picked .th, .jt.picked { outline: 3px solid var(--tertiary); outline-offset: -3px; }
+.shapes { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.jrow { display: flex; gap: 4px; }
+.jt { aspect-ratio: auto; border-radius: 10px; flex: none; }
+.jt .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 6px 4px; background: linear-gradient(transparent, rgba(0,0,0,.8)); color: #fff; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.jt .bd { bottom: auto; top: 3px; }
+.send { height: 48px; width: 100%; font-weight: 700; font-size: 15px; margin-top: 6px; }
+.send svg.i { width: 20px; height: 20px; }
+.send:disabled { opacity: .55; }
+.hint { color: var(--on-var); text-align: center; padding: 16px 12px; }
+.foot { position: sticky; bottom: 0; padding-top: 6px; background: linear-gradient(transparent, var(--ground) 12px); }
 
-.icon { width: 40px; height: 40px; border-radius: 50%; background: var(--card); display: flex; align-items: center; justify-content: center; flex: none; }
-.icon svg { width: 20px; height: 20px; fill: currentColor; }
-.icon.on { background: var(--accent); color: var(--on-accent); }
+/* The transport, in the thumb's reach. */
+#transport { margin-top: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; position: relative; z-index: 3; touch-action: none; }
+#handle { display: flex; align-items: center; justify-content: center; gap: 6px; height: 26px; color: var(--on-var); font-size: 12px; font-weight: 500; position: relative; }
+#handle::before { content: ""; width: 32px; height: 4px; border-radius: 2px; background: var(--outline-var); position: absolute; top: -2px; left: 50%; margin-left: -16px; }
+#handle svg.i { width: 16px; height: 16px; transition: transform .2s; }
+body.menu-open #handle { color: var(--on); }
+body.menu-open #handle svg.i { transform: rotate(180deg); }
+body.menu-open #transport { border-top-left-radius: 0; border-top-right-radius: 0; border-top-color: transparent; }
+#lift { height: 40px; font-weight: 700; }
+.go { display: grid; grid-template-columns: 1fr 2.2fr; gap: 6px; }
+.go > button { height: 64px; border-radius: 999px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; font-weight: 700; }
+.go svg.i { width: 24px; height: 24px; }
 
-#search { flex: 1; overflow-y: auto; padding: 4px 12px 12px; display: flex; flex-direction: column; gap: 10px; scrollbar-width: none; }
-#search::-webkit-scrollbar { display: none; }
-#search > * { flex: none; }
-#box { display: flex; align-items: center; gap: 8px; background: var(--card); border: 2px solid var(--accent); border-radius: 999px; padding: 0 6px 0 16px; height: 50px; }
-#query { flex: 1; min-width: 0; background: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 17px; user-select: text; -webkit-user-select: text; }
-#query::placeholder { color: var(--dim); opacity: .7; }
-#query::-webkit-search-cancel-button { display: none; }
-#wipe { width: 38px; height: 38px; border-radius: 50%; color: var(--dim); font-size: 20px; }
-#bangs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
-#bangs::-webkit-scrollbar { display: none; }
-#bangs button { background: var(--card); color: var(--dim); border-radius: 999px; padding: 8px 14px; font-size: 14px; white-space: nowrap; flex: none; }
-#bangs button.on { background: var(--accent); color: var(--on-accent); font-weight: 700; }
-#bangs b { font-weight: 700; color: var(--accent); margin-right: 6px; }
-#bangs button.on b { color: inherit; }
-#found { display: flex; flex-direction: column; gap: 10px; }
-#found .group { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
-#found .name { color: var(--accent); font-weight: 700; font-size: 14px; padding: 6px 10px 2px; }
-#found .error { color: var(--danger); font-size: 14px; padding: 4px 10px; }
-.hit { display: flex; flex-direction: column; gap: 2px; padding: 9px 10px; border-radius: 14px; text-align: left; width: 100%; }
-.hit .title { font-weight: 600; }
-.hit .facts { color: var(--dim); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.hit.picked { background: var(--raised); }
-.hit.picked .facts { -webkit-line-clamp: 6; }
-.hit .acts { display: flex; gap: 8px; padding-top: 8px; }
-.hit .acts span { flex: 1; text-align: center; border-radius: 999px; padding: 10px; font-weight: 700; background: var(--card); }
-.hit .acts .show { background: var(--accent); color: var(--on-accent); }
-#hint { color: var(--dim); text-align: center; padding: 20px 12px; }
-#ask { align-self: center; background: var(--accent); color: var(--on-accent); font-weight: 700; border-radius: 999px; padding: 12px 28px; }
-#said { position: fixed; left: 50%; bottom: calc(170px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--raised); color: var(--text); border-radius: 999px; padding: 10px 18px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; }
+/* The menu rises from the transport, as the search drops from the strip
+   on the computer: one surface with it, no seam. */
+#dim { position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 2; opacity: 0; pointer-events: none; transition: opacity .2s; }
+body.menu-open #dim, body.vol-open #dim { opacity: 1; pointer-events: auto; }
+#menu { position: absolute; left: calc(12px + env(safe-area-inset-left)); right: calc(12px + env(safe-area-inset-right)); top: var(--menu-top, 150px); bottom: var(--menu-bottom, 112px);
+  background: var(--surface); border-radius: 22px 22px 0 0; border: 1px solid var(--hair); border-bottom: 0; box-shadow: 0 -12px 28px rgba(0,0,0,.5); z-index: 3;
+  padding: 8px; display: flex; flex-direction: column; transform: translateY(24px); opacity: 0; pointer-events: none; transition: transform .2s, opacity .2s; }
+body.menu-open #menu { transform: none; opacity: 1; pointer-events: auto; }
+#menu-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 4px 2px 6px; flex: none; }
+#menu-acts .pill { height: 40px; }
+#steps { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
+#steps::-webkit-scrollbar { display: none; }
+.sec { display: flex; align-items: center; gap: 8px; padding: 10px 10px 4px; font-weight: 700; color: var(--primary); }
+.sec .chip { margin-left: auto; }
+.step { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; border-radius: 12px; width: 100%; }
+.step .dot { width: 14px; text-align: center; font-size: 11px; color: var(--on-var); flex: none; }
+.step .len { margin-left: auto; font-size: 12px; color: var(--on-var); flex: none; }
+.step .len.problem { color: var(--error); }
+.step.done { color: var(--outline); }
+.step.done .dot, .step.done .len { color: var(--outline); }
+.step.cur { background: var(--t-live); color: var(--tertiary); font-weight: 700; }
+.step.cur .dot, .step.cur .len { color: var(--tertiary); }
+.step.nx { background: var(--t-next); color: var(--primary); font-weight: 700; }
+.step.nx .dot, .step.nx .len { color: var(--primary); }
+.step.picked { background: var(--t-plain); }
+.step .pill { height: 28px; margin-left: auto; }
+#empty { color: var(--on-var); text-align: center; padding: 24px 12px; }
+
+/* Sound: a panel dropped from the strip's pill. */
+#vol { position: absolute; top: calc(12px + env(safe-area-inset-top) + 47px); right: calc(30px + env(safe-area-inset-right)); width: min(250px, calc(100% - 60px));
+  background: var(--surface); border-radius: 0 0 22px 22px; box-shadow: 0 16px 28px rgba(0,0,0,.55); z-index: 5; padding: 14px 14px 14px; display: flex; flex-direction: column; gap: 12px;
+  transform: translateY(-12px); opacity: 0; pointer-events: none; transition: transform .2s, opacity .2s; }
+body.vol-open #vol { transform: none; opacity: 1; pointer-events: auto; }
+#vol .sh { position: absolute; top: 0; width: 18px; height: 18px; }
+#vol .sh.l { left: -18px; background: radial-gradient(circle at 0 100%, transparent 17.5px, var(--surface) 18px); }
+#vol .sh.r { right: -18px; background: radial-gradient(circle at 100% 100%, transparent 17.5px, var(--surface) 18px); }
+#vol-head { display: flex; align-items: baseline; gap: 8px; }
+#vol-head b { font-size: 16px; }
+#vol-out { margin-left: auto; }
+#vol-row { display: flex; align-items: center; gap: 10px; }
+.round { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+#loud { flex: 1; height: 36px; display: flex; align-items: center; touch-action: none; }
+#loud .track { height: 6px; border-radius: 3px; }
+#loud .track b { width: 24px; height: 24px; margin: -12px 0 0 -12px; }
+#vol.muted #loud .track i, #vol.muted #loud .track b { background: var(--outline); }
+#vol-foot { display: flex; gap: 6px; }
+#mute { flex: 1; height: 36px; }
+#loud-at { height: 36px; font-variant-numeric: tabular-nums; }
+
+#said { position: absolute; left: 50%; transform: translateX(-50%); bottom: 160px; z-index: 6; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 86vw; height: 34px; padding: 0 16px; }
 #said.shown { opacity: 1; }
-
-#veil { position: fixed; inset: 0; background: var(--ground); display: none; align-items: center; justify-content: center; text-align: center; padding: 32px; color: var(--dim); }
+#veil { position: fixed; inset: 0; background: var(--ground); display: none; align-items: center; justify-content: center; text-align: center; padding: 32px; color: var(--on-var); z-index: 9; font-size: 15px; }
 #veil.shown { display: flex; }
-#veil b { display: block; color: var(--text); font-size: 20px; margin-bottom: 8px; }
+#veil b { display: block; color: var(--on); font-size: 20px; margin-bottom: 8px; }
 </style>
 </head>
 <body>
-<header>
-  <div class="top">
-    <div id="plan-name" class="one-line">Lantern</div>
-    <div id="link" title="Connection"></div>
-    <button id="see" class="icon" aria-label="Show the stage's picture"><svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5M12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.240 5-5 5m0-8c-1.660 0-3 1.340-3 3s1.340 3 3 3 3-1.340 3-3-1.340-3-3-3"/></svg></button>
-    <button id="find" class="icon" aria-label="Search"><svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"/></svg></button>
-  </div>
-  <div id="notes"></div>
-</header>
-<section id="search" hidden>
-  <div id="box">
-    <input id="query" type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="A verse, a hymn, a link…">
-    <button id="wipe" aria-label="Empty the search">✕</button>
-  </div>
-  <div id="bangs"></div>
-  <div id="found"></div>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M14,3.23V5.29C16.89,6.15 19,8.83 19,12C19,15.17 16.89,17.84 14,18.7V20.77C18,19.86 21,16.28 21,12C21,7.72 18,4.14 14,3.23M16.5,12C16.5,10.23 15.5,8.71 14,7.97V16C15.5,15.29 16.5,13.76 16.5,12M3,9V15H7L12,20V4L7,9H3Z"/></symbol>
+  <symbol id="i-mute" viewBox="0 0 24 24"><path d="M12,4L9.91,6.09L12,8.18M4.27,3L3,4.27L7.73,9H3V15H7L12,20V13.27L16.25,17.53C15.58,18.04 14.83,18.46 14,18.7V20.77C15.38,20.45 16.630,19.82 17.68,18.96L19.73,21L21,19.73L12,10.73M19,12C19,12.94 18.8,13.82 18.46,14.64L19.97,16.15C20.62,14.91 21,13.5 21,12C21,7.72 18,4.14 14,3.23V5.29C16.89,6.15 19,8.83 19,12M16.5,12C16.5,10.23 15.5,8.71 14,7.97V10.18L16.45,12.63C16.5,12.43 16.5,12.21 16.5,12Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M14,19H18V5H14M6,19H10V5H6V19Z"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M19,13H5V11H19V13Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></symbol>
+  <symbol id="i-find" viewBox="0 0 24 24"><path d="M9.5,3A6.5,6.5 0 0,1 16,9.5C16,11.11 15.41,12.59 14.44,13.73L14.71,14H15.5L20.5,19L19,20.5L14,15.5V14.71L13.73,14.44C12.59,15.41 11.11,16 9.5,16A6.5,6.5 0 0,1 3,9.5A6.5,6.5 0 0,1 9.5,3M9.5,5C7,5 5,7 5,9.5C5,12 7,14 9.5,14C12,14 14,12 14,9.5C14,7 12,5 9.5,5Z"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"/></symbol>
+  <symbol id="i-planning" viewBox="0 0 24 24"><path d="M21 11.11V5C21 3.9 20.11 3 19 3H14.82C14.4 1.84 13.3 1 12 1S9.6 1.84 9.18 3H5C3.9 3 3 3.9 3 5V19C3 20.11 3.9 21 5 21H11.11C12.37 22.24 14.09 23 16 23C19.87 23 23 19.87 23 16C23 14.09 22.24 12.37 21 11.11M12 3C12.55 3 13 3.45 13 4S12.55 5 12 5 11 4.55 11 4 11.45 3 12 3M5 19V5H7V7H17V5H19V9.68C18.09 9.25 17.08 9 16 9H7V11H11.1C10.5 11.57 10.04 12.25 9.68 13H7V15H9.08C9.03 15.33 9 15.66 9 16C9 17.08 9.25 18.09 9.68 19H5M16 21C13.24 21 11 18.76 11 16S13.24 11 16 11 21 13.24 21 16 18.76 21 16 21M16.5 16.25L19.36 17.94L18.61 19.16L15 17V12H16.5V16.25Z"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 24 24"><path d="M8,5.14V19.14L19,12.14L8,5.14Z"/></symbol>
+  <symbol id="i-picture" viewBox="0 0 24 24"><path d="M8.5,13.5L11,16.5L14.5,12L19,18H5M21,19V5C21,3.89 20.1,3 19,3H5A2,2 0 0,0 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19Z"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M21,5C19.89,4.65 18.67,4.5 17.5,4.5C15.55,4.5 13.45,4.9 12,6C10.550,4.9 8.45,4.5 6.5,4.5C4.55,4.5 2.45,4.9 1,6V20.65C1,20.9 1.25,21.15 1.5,21.15C1.6,21.15 1.65,21.1 1.75,21.1C3.1,20.45 5.05,20 6.5,20C8.45,20 10.55,20.4 12,21.5C13.35,20.65 15.8,20 17.5,20C19.15,20 20.85,20.3 22.25,21.05C22.35,21.1 22.4,21.1 22.5,21.1C22.75,21.1 23,20.85 23,20.6V6C22.4,5.55 21.75,5.25 21,5M21,18.5C19.9,18.15 18.7,18 17.5,18C15.8,18 13.350,18.65 12,19.5V8C13.35,7.15 15.8,6.5 17.5,6.5C18.7,6.5 19.9,6.65 21,7V18.5Z"/></symbol>
+  <symbol id="i-yt" viewBox="0 0 24 24"><path d="M10,15L15.19,12L10,9V15M21.56,7.17C21.69,7.64 21.78,8.27 21.84,9.07C21.91,9.87 21.94,10.56 21.94,11.16L22,12C22,14.19 21.84,15.8 21.56,16.83C21.31,17.73 20.73,18.31 19.83,18.56C19.36,18.69 18.5,18.78 17.18,18.84C15.88,18.91 14.69,18.94 13.59,18.94L12,19C7.81,19 5.2,18.84 4.17,18.56C3.27,18.31 2.69,17.73 2.44,16.83C2.31,16.36 2.22,15.73 2.16,14.93C2.09,14.13 2.06,13.44 2.06,12.84L2,12C2,9.81 2.16,8.2 2.44,7.17C2.69,6.27 3.27,5.69 4.17,5.44C4.64,5.31 5.5,5.22 6.82,5.16C8.12,5.09 9.31,5.06 10.41,5.06L12,5C16.19,5 18.8,5.16 19.83,5.44C20.73,5.690 21.31,6.27 21.56,7.17Z"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M18.5,4L19.66,8.35L18.7,8.61C18.25,7.74 17.79,6.87 17.26,6.43C16.73,6 16.11,6 15.5,6H13V16.5C13,17 13,17.5 13.33,17.75C13.67,18 14.33,18 15,18V19H9V18C9.67,18 10.33,18 10.67,17.75C11,17.5 11,17 11,16.5V6H8.5C7.89,6 7.27,6 6.74,6.43C6.21,6.87 5.75,7.74 5.3,8.61L4.34,8.35L5.5,4H18.5Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><path d="M12,20A8,8 0 0,0 20,12A8,8 0 0,0 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20M12,2A10,10 0 0,1 22,12A10,10 0 0,1 12,22C6.47,22 2,17.5 2,12A10,10 0 0,1 12,2M12.5,7V12.25L17,14.92L16.25,16.15L11,13V7H12.5Z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z"/></symbol>
+  <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M6.5,20Q4.22,20 2.61,18.43Q1,16.85 1,14.58Q1,12.63 2.17,11.1Q3.35,9.57 5.25,9.15Q5.88,6.85 7.75,5.43Q9.63,4 12,4Q14.930,4 16.960,6.04Q19,8.07 19,11Q20.73,11.2 21.86,12.5Q23,13.78 23,15.5Q23,17.38 21.69,18.69Q20.38,20 18.5,20H6.5M6.5,18H18.5Q19.55,18 20.27,17.27Q21,16.55 21,15.5Q21,14.45 20.27,13.73Q19.55,13 18.5,13H17V11Q17,8.93 15.54,7.46Q14.08,6 12,6Q9.93,6 8.46,7.46Q7,8.930 7,11H6.5Q5.05,11 4.03,12.03Q3,13.05 3,14.5Q3,15.95 4.03,17Q5.05,18 6.5,18Z"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M21,3V15.5A3.5,3.5 0 0,1 17.5,19A3.5,3.5 0 0,1 14,15.5A3.5,3.5 0 0,1 17.5,12C18.04,12 18.55,12.12 19,12.34V6.47L9,8.6V17.5A3.5,3.5 0 0,1 5.5,21A3.5,3.5 0 0,1 2,17.5A3.5,3.5 0 0,1 5.5,14C6.04,14 6.55,14.12 7,14.34V6L21,3Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/></symbol>
+  <symbol id="v-list" viewBox="0 0 24 24"><path d="M7,5H21V7H7V5M7,13V11H21V13H7M4,4.5A1.5,1.5 0 0,1 5.5,6A1.5,1.5 0 0,1 4,7.5A1.5,1.5 0 0,1 2.5,6A1.5,1.5 0 0,1 4,4.5M4,10.5A1.5,1.5 0 0,1 5.5,12A1.5,1.5 0 0,1 4,13.5A1.5,1.5 0 0,1 2.5,12A1.5,1.5 0 0,1 4,10.5M7,19V17H21V19H7M4,16.5A1.5,1.5 0 0,1 5.5,18A1.5,1.5 0 0,1 4,19.5A1.5,1.5 0 0,1 2.5,18A1.5,1.5 0 0,1 4,16.5Z"/></symbol>
+  <symbol id="v-grid" viewBox="0 0 24 24"><path d="M3,11H11V3H3M3,21H11V13H3M13,21H21V13H13M13,3V11H21V3"/></symbol>
+  <symbol id="v-shape" viewBox="0 0 24 24"><path d="M13,3V9H21V3M13,21H21V11H13M3,21H11V15H3M3,13H11V3H3V13Z"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M2,21L23,12L2,3V10L17,12L2,14V21Z"/></symbol>
+</svg>
+
+<div id="strip" class="card">
+  <span id="mode" class="chip plain">Plan</span>
+  <span id="plan-name" class="one">Lantern</span>
+  <span id="link" title="Not connected"></span>
+  <button id="vol-pill" class="pill plain" hidden><svg class="i"><use id="vol-icon" href="#i-vol"/></svg><span id="vol-at"></span></button>
+</div>
+<div id="pace" hidden><span id="pace-text" class="meta one"></span><span id="pace-word" class="chip" hidden></span></div>
+
+<section id="planning" hidden>
+  <svg class="i"><use href="#i-planning"/></svg>
+  <h1>The computer is planning</h1>
+  <div id="plan-plan" class="one"></div>
+  <div id="plan-start" class="meta"></div>
+  <div id="countdown" hidden></div>
+  <div class="meta">This becomes the remote when the service runs.</div>
 </section>
-<main>
-  <section id="stage" class="card">
-    <img id="picture" alt="What the audience sees" hidden>
-    <span class="tag" id="live-tag">Stage</span>
-    <div id="live-title">Nothing on stage</div>
-    <div id="live-facts"></div>
-    <div id="live-failed" hidden></div>
-    <div id="timeline" hidden>
-      <div id="bar"><div><i></i><b></b></div></div>
-      <span id="times"></span>
-    </div>
-    <div id="attached" hidden></div>
-    <button id="back" hidden></button>
-  </section>
-  <button id="resume" hidden>Back to the plan</button>
-  <div id="next" class="one-line" hidden></div>
-  <section id="steps" class="card"></section>
-</main>
-<footer>
-  <button id="prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button>
-  <button id="next-step">Next<svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4L13.2 12z"/></svg></button>
-  <button id="play" aria-label="Play or pause"><svg viewBox="0 0 24 24"><path id="play-icon" d="M8 5v14l11-7z"/></svg></button>
-  <button id="black">Blackout</button>
-  <button id="clear">Clear</button>
-</footer>
-<div id="said"></div>
+
+<section id="stage" class="card">
+  <div class="pic"><img id="picture" alt="What the audience sees" hidden><span id="stage-tag" class="chip over live">● live</span></div>
+  <div id="stage-words">
+    <span id="stage-chip" class="chip live">● live</span>
+    <div id="live-title" class="one">Nothing on stage</div>
+    <div id="live-facts" class="meta one"></div>
+  </div>
+  <div id="live-failed" hidden></div>
+  <div id="time" hidden>
+    <button id="play" aria-label="Play or pause"><svg class="i"><use id="play-icon" href="#i-pause"/></svg></button>
+    <div id="bar"><div class="track"><i></i><b></b></div></div>
+    <span id="times"></span>
+  </div>
+  <div id="slides" hidden></div>
+  <div id="extras" hidden></div>
+  <div id="steppers">
+    <button id="step-up" class="round plain" aria-label="Back a slide"><svg class="i"><use href="#i-up"/></svg></button>
+    <button id="step-down" class="round next" aria-label="On a slide"><svg class="i" style="transform:rotate(180deg)"><use href="#i-up"/></svg></button>
+  </div>
+</section>
+
+<section id="upnext" class="card" hidden>
+  <div class="thumb"></div>
+  <div class="one" style="flex:1">
+    <div id="upnext-mark" class="meta">○ Next</div>
+    <div id="upnext-title" class="one"></div>
+  </div>
+  <span id="upnext-detail" class="meta"></span>
+</section>
+
+<section id="live" hidden></section>
+
+<div id="dim"></div>
+<section id="menu" aria-label="The plan">
+  <div id="menu-acts">
+    <button id="black" class="pill danger">Blackout</button>
+    <button id="clear" class="pill plain">Clear</button>
+  </div>
+  <div id="steps"></div>
+</section>
+
+<section id="transport" class="card">
+  <button id="handle"><svg class="i"><use href="#i-up"/></svg><span id="handle-text">Plan</span></button>
+  <button id="lift" class="pill danger" hidden>Blackout on · Lift</button>
+  <div class="go">
+    <button id="prev" class="plain" aria-label="Previous"><svg class="i"><use href="#i-prev"/></svg></button>
+    <button id="next-step" class="next">Next<svg class="i"><use href="#i-next"/></svg></button>
+  </div>
+</section>
+
+<section id="vol" aria-label="Sound">
+  <span class="sh l"></span><span class="sh r"></span>
+  <div id="vol-head"><b>Sound</b><span id="vol-out" class="meta one"></span></div>
+  <div id="vol-row">
+    <button id="softer" class="round plain" aria-label="Softer"><svg class="i"><use href="#i-minus"/></svg></button>
+    <div id="loud" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100"><div class="track"><i></i><b></b></div></div>
+    <button id="louder" class="round plain" aria-label="Louder"><svg class="i"><use href="#i-plus"/></svg></button>
+  </div>
+  <div id="vol-foot">
+    <button id="mute" class="pill danger"><svg class="i"><use href="#i-mute"/></svg><span id="mute-text">Mute</span></button>
+    <span id="loud-at" class="pill plain"></span>
+  </div>
+</section>
+
+<div id="said" class="pill plain"></div>
 <div id="veil"><div><b id="veil-title"></b><span id="veil-text"></span></div></div>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 const token = new URLSearchParams(location.search).get("t") || "";
 let state = null;     // the last snapshot
-let picked = null;    // the step tapped, waiting for "Show"
-let heard = 0;        // when the snapshot arrived, for counting a video on
+let heard = 0;        // when it arrived, for counting a video or a start on
+let picked = null;    // the step tapped in the menu, waiting for "Show now"
 let dragging = null;  // seconds, while the time bar is held
-let finding = false;  // whether the search is open
-let hit = null;       // the result tapped, waiting for "Show now" or "Add"
+let hit = null;       // the result tapped, waiting for Send
 let typed = null;     // the timer that waits for typing to pause
-let seeing = false;   // whether the stage's picture is shown
-try { seeing = localStorage.getItem("picture") === "1"; } catch (_) {}
+let loud = 0;         // the volume the slider shows, 0 to 1
+let loudHeld = false; // whether the volume slider is held
+let loudLet = 0;      // when it was let go: the computer says so a moment later
+let loudSent = 0;     // when a volume was last sent
 
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+};
 function say(words) {
   $("said").textContent = words;
+  $("said").style.bottom = $("transport").offsetHeight + 24 + "px";
   $("said").classList.add("shown");
   clearTimeout(say.timer);
   say.timer = setTimeout(() => $("said").classList.remove("shown"), 1600);
@@ -209,6 +420,7 @@ function veil(title, text) {
   $("veil-text").textContent = text || "";
 }
 function link(up) { $("link").classList.toggle("up", up); }
+const mode = () => (state && state.mode) || "plan";
 
 /* Where a playing video is now: the page counts on from what it was told. */
 function position() {
@@ -220,272 +432,743 @@ function position() {
 }
 function drawTime() {
   const t = state && state.live && state.live.timed;
-  $("timeline").hidden = !t;
+  $("time").hidden = !t;
   if (!t) return;
   const at = dragging == null ? position() : dragging;
-  const bar = $("bar");
-  bar.style.visibility = t.length ? "visible" : "hidden";
+  const track = $("bar").querySelector(".track");
+  track.style.visibility = t.length ? "visible" : "hidden";
   if (t.length) {
     const part = Math.min(1, at / t.length) * 100 + "%";
-    bar.querySelector("i").style.width = part;
-    bar.querySelector("b").style.left = part;
+    track.querySelector("i").style.width = part;
+    track.querySelector("b").style.left = part;
   }
   $("times").textContent = t.length == null ? "live" : `${clock(at)} / ${clock(t.length)}`;
+  $("play-icon").setAttribute("href", t.playing ? "#i-pause" : "#i-play");
+}
+function drawCountdown() {
+  const starts = state && state.starts;
+  const left = starts && starts.in_seconds != null ? starts.in_seconds - (Date.now() - heard) / 1000 : null;
+  $("plan-start").textContent = !starts ? "No start time set" : left != null && left > 0 ? `Starts at ${starts.at}` : `Was to start at ${starts.at}`;
+  $("countdown").hidden = !(left > 0);
+  if (left > 0) $("countdown").textContent = clock(left);
 }
 
 function draw() {
-  const s = state;
-  for (const [name, value] of Object.entries(s.colors || {}))
-    if (value) document.documentElement.style.setProperty("--" + name.replace("_", "-"), value);
+  const s = state, m = mode();
+  const colors = s.colors || {};
+  const role = { ground: "surface", card: "container", raised: "highest", text: "on", dim: "on-var", accent: "primary", on_accent: "on-primary", live: "tertiary", danger: "error" };
+  for (const [name, value] of Object.entries(colors))
+    if (value && role[name]) document.documentElement.style.setProperty("--" + role[name], value);
+  const planning = m === "plan";
+  document.body.classList.toggle("in-live", m === "live");
+  if (planning) { closeMenu(); closeVol(); }
+
+  $("mode").textContent = m === "run" ? "Run" : m === "live" ? "Live" : "Plan";
+  $("mode").className = "chip " + (m === "run" ? "live" : m === "live" ? "danger" : "plain");
   $("plan-name").textContent = s.plan ? s.plan.name || "Untitled plan" : "Lantern";
+  $("planning").hidden = !planning;
+  $("plan-plan").textContent = s.plan ? s.plan.name || "Untitled plan" : "";
+  drawCountdown();
+  $("stage").hidden = planning;
+  for (const id of ["transport", "menu", "dim"]) $(id).hidden = m !== "run";
+  if (m !== "run") closeMenu();
+  if (m !== "live" && built) { built = null; view = { screen: "home" }; }
+  $("upnext").hidden = planning || m === "live" || !s.next;
+  $("live").hidden = m !== "live";
 
-  const notes = $("notes");
-  notes.replaceChildren(...(s.notes || []).map(note => {
-    const chip = document.createElement("span");
-    chip.textContent = note;
-    return chip;
-  }));
+  const notes = s.notes || [];
+  $("pace").hidden = planning || m === "live" || !notes.length;
+  $("pace-text").textContent = notes.map(note => note.text).join(" · ");
+  const worst = notes.some(note => note.pace === "over") ? "over" : notes.some(note => note.pace === "tight") ? "tight" : null;
+  $("pace-word").hidden = !worst;
+  $("pace-word").textContent = worst || "";
+  $("pace-word").className = "chip " + (worst === "over" ? "danger" : "live");
 
-  const live = s.live, stage = $("stage");
-  stage.classList.toggle("black", s.blackout);
-  stage.classList.toggle("on", !!live && !s.blackout);
-  $("live-tag").textContent = s.blackout ? "Blackout" : live ? "Live" : "Stage";
+  const live = s.live;
+  const tag = s.blackout ? ["blackout", "danger"] : live ? ["● live", "live"] : ["empty", "plain"];
+  for (const id of ["stage-tag", "stage-chip"]) {
+    $(id).textContent = tag[0];
+    $(id).className = `chip ${id === "stage-tag" ? "over " : ""}${tag[1]}`;
+  }
+  $("picture").style.visibility = s.blackout ? "hidden" : "visible";
   $("live-title").textContent = live ? live.title : "Nothing on stage";
-  const facts = live ? [live.facts, live.slides ? `slide ${live.slides.at}${live.slides.of ? " of " + live.slides.of : ""}` : ""].filter(Boolean) : [];
-  $("live-facts").textContent = facts.join(" · ");
+  $("live-facts").textContent = live ? live.facts : "";
+  $("live-facts").hidden = !(live && live.facts);
   $("live-failed").hidden = !(live && live.failed);
   $("live-failed").textContent = live && live.failed ? "Can't show this: " + live.failed : "";
   drawTime();
-  // What the slide on stage plays or links to, and the way back from it.
-  const attached = live && !s.blackout ? live.attached || [] : [];
-  $("attached").hidden = !attached.length;
-  $("attached").replaceChildren(...attached.map((name, n) => {
-    const button = document.createElement("button");
-    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    icon.setAttribute("viewBox", "0 0 24 24");
-    const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    shape.setAttribute("d", name.startsWith("Picture") ? "M5 5h14v14H5zm2 12h10l-3.5-4.5-2.5 3-1.5-2z" : "M8 5v14l11-7z");
-    icon.append(shape);
-    button.append(icon, name);
-    button.onclick = () => { send({ do: "attachment", n }); say("On stage: " + name); };
-    return button;
-  }));
-  const back = live && live.back;
-  $("back").hidden = !back;
-  $("back").textContent = back ? "Back to slide " + back : "";
+  drawSlides(live && !live.timed ? live.slides : null);
+  drawExtras();
 
-  const timed = live && live.timed;
-  $("play").disabled = !timed;
-  $("play-icon").setAttribute("d", timed && timed.playing ? "M6 5h4v14H6zm8 0h4v14h-4z" : "M8 5v14l11-7z");
-  $("black").classList.toggle("on", s.blackout);
-  $("resume").hidden = !s.off_plan;
-  $("next").hidden = !s.next;
+  $("lift").hidden = !s.blackout;
+  $("black").textContent = s.blackout ? "Lift the blackout" : "Blackout";
   if (s.next) {
-    $("next").replaceChildren("Next: ");
-    const title = document.createElement("b");
-    title.textContent = s.next.title;
-    $("next").append(title);
+    $("upnext-title").textContent = s.next.title;
+    $("upnext-detail").textContent = s.next.detail || "";
   }
+  drawSound();
   drawSteps();
-  drawSearch();
+  drawLive();
+  placeMenu();
 }
 
-/* The bang a search starts with, without its "!": "b" in "!b juan 3". */
-function bangOf(text) {
-  const found = /^!(\S+)\s/.exec(text);
-  return found ? found[1] : null;
+/* A deck's slides as a row of numbers, the one on stage in its tint;
+   a long deck shows the few around it. */
+function drawSlides(slides) {
+  $("slides").hidden = !(slides && slides.of && slides.of > 1);
+  if ($("slides").hidden) return;
+  const most = 9, of = slides.of, at = slides.at;
+  const first = Math.max(1, Math.min(at - Math.floor(most / 2), of - most + 1));
+  const numbers = [];
+  for (let n = first; n <= Math.min(of, first + most - 1); n++) numbers.push(n);
+  $("slides").replaceChildren(...numbers.map(n => el("span", n === at ? "on" : "", n)));
 }
-function ask(enter) {
-  clearTimeout(typed);
-  hit = null;
-  send({ do: "search", text: $("query").value.trim() ? $("query").value : "", enter: !!enter }, true);
-}
-function drawSearch() {
-  $("search").hidden = !finding;
-  document.querySelector("main").hidden = finding;
-  $("find").classList.toggle("on", finding);
-  if (!finding || !state) return;
-  const text = $("query").value, mine = bangOf(text);
-  $("bangs").replaceChildren(...(state.bangs || []).map(bang => {
-    const chip = document.createElement("button");
-    chip.className = bang.bang === mine ? "on" : "";
-    const mark = document.createElement("b");
-    mark.textContent = "!" + bang.bang;
-    chip.append(mark, bang.name);
-    chip.onclick = () => {
-      const rest = text.replace(/^!\S*\s*/, "");
-      $("query").value = bang.bang === mine ? rest : `!${bang.bang} ${rest}`;
-      $("query").focus();
-      ask(false);
-      drawSearch();
-    };
-    return chip;
-  }));
 
-  const box = $("found"), found = state.search;
-  const hint = words => {
-    const note = document.createElement("div");
-    note.id = "hint";
-    note.textContent = words;
-    return note;
-  };
-  if (!text.trim()) { box.replaceChildren(hint("Type what to show: a verse (juan 3 16), a hymn, a file's name, a link. A button above searches one kind of thing.")); return; }
-  if (!found) { box.replaceChildren(hint("Searching…")); return; }
+/* What the slide on stage plays or links to, the way back to the deck,
+   and the way back to the plan. */
+function drawExtras() {
+  const s = state, live = s.live;
   const parts = [];
-  for (const group of found.groups) {
-    if (!group.hits.length && !group.error) continue;
-    const card = document.createElement("div");
-    card.className = "card group";
-    const name = document.createElement("div");
-    name.className = "name";
-    name.textContent = group.name;
-    card.append(name);
-    if (group.error) {
-      const error = document.createElement("div");
-      error.className = "error";
-      error.textContent = group.error;
-      card.append(error);
-    }
-    for (const result of group.hits) {
-      const row = document.createElement("button");
-      row.className = "hit" + (result.id === hit ? " picked" : "");
-      const title = document.createElement("span");
-      title.className = "title";
-      title.textContent = result.title;
-      const facts = document.createElement("span");
-      facts.className = "facts";
-      facts.textContent = result.facts;
-      row.append(title, facts);
-      if (result.id === hit) {
-        const acts = document.createElement("span");
-        acts.className = "acts";
-        const show = document.createElement("span");
-        show.className = "show";
-        show.textContent = "Show now";
-        show.onclick = event => { event.stopPropagation(); send({ do: "show", id: result.id }); say("On stage: " + result.title); hit = null; drawSearch(); };
-        const add = document.createElement("span");
-        add.textContent = "Add to plan";
-        add.onclick = event => { event.stopPropagation(); send({ do: "add", id: result.id }); say("Added to the plan"); hit = null; drawSearch(); };
-        acts.append(show, add);
-        row.append(acts);
-      }
-      row.onclick = () => { hit = result.id === hit ? null : result.id; drawSearch(); };
-      card.append(row);
-    }
-    parts.push(card);
+  for (const [n, name] of (live && !s.blackout ? live.attached || [] : []).entries()) {
+    const button = el("button", "pill plain");
+    button.innerHTML = `<svg class="i"><use href="#${name.startsWith("Picture") ? "i-picture" : "i-attach"}"/></svg>`;
+    button.append(name);
+    button.onclick = () => { send({ do: "attachment", n }); say("On stage: " + name); };
+    parts.push(button);
   }
-  if (found.waiting) {
-    const go = document.createElement("button");
-    go.id = "ask";
-    go.textContent = "Search";
-    go.onclick = () => ask(true);
-    parts.push(hint("Press Search to look this up."), go);
-  } else if (!parts.length) {
-    parts.push(hint(found.busy ? "Searching…" : "Nothing found."));
-  } else if (found.busy) {
-    parts.push(hint("Still searching…"));
+  if (live && live.back) {
+    const back = el("button", "pill plain", "Back to slide " + live.back);
+    back.onclick = () => send({ do: "prev" });
+    parts.push(back);
   }
-  box.replaceChildren(...parts);
+  if (s.off_plan) {
+    const resume = el("button", "pill next", "Back to the plan");
+    resume.onclick = () => send({ do: "resume" });
+    parts.push(resume);
+  }
+  $("extras").hidden = !parts.length;
+  $("extras").replaceChildren(...parts);
 }
 
+/* The plan in the menu, with the desktop's markers. */
 function drawSteps() {
   const box = $("steps"), plan = state.plan;
-  if (!plan || !plan.steps.length) {
-    const empty = document.createElement("div");
-    empty.id = "empty";
-    empty.textContent = plan ? "This plan has no steps yet." : "No plan is open. Next and Previous still move through what is on stage.";
-    box.replaceChildren(empty);
+  const steps = plan ? plan.steps.filter(step => step.kind !== "section") : [];
+  const at = steps.findIndex(step => step.place === "current");
+  $("handle-text").textContent = document.body.classList.contains("menu-open") ? "Close"
+    : !steps.length ? "Plan" : at >= 0 ? `Plan · step ${at + 1} of ${steps.length}` : `Plan · ${steps.length} steps`;
+  if (!steps.length) {
+    box.replaceChildren(el("div", "", plan ? "This plan has no steps yet." : "No plan is open. Next and Prev still move through what is on stage."));
+    box.firstChild.id = "empty";
     return;
   }
   if (!plan.steps.some(step => step.id === picked)) picked = null;
+  const next = at >= 0 ? steps[at + 1] : steps.find(step => step.place === "ahead");
   let number = 0, current = null;
   box.replaceChildren(...plan.steps.map(step => {
     if (step.kind === "section") {
-      const head = document.createElement("div");
-      head.className = "section one-line";
-      head.textContent = step.label;
+      const head = el("div", "sec");
+      head.append(el("span", "one", step.label));
+      const word = step.pace === "over" ? "over" : step.pace === "tight" ? "tight" : step.detail;
+      if (word) head.append(el("span", "chip " + (step.pace === "over" ? "danger" : step.pace === "tight" ? "live" : "plain"), word));
       return head;
     }
     number += 1;
-    const row = document.createElement("button");
-    row.className = `step ${step.place}${step.id === picked ? " picked" : ""}`;
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    dot.textContent = step.place === "current" ? "●" : number;
-    const label = document.createElement("span");
-    label.className = "label one-line";
-    label.textContent = step.label;
-    row.append(dot, label);
+    const place = step.place === "current" ? "cur" : step === next ? "nx" : step.place === "done" ? "done" : "";
+    const row = el("button", `step ${place}${step.id === picked ? " picked" : ""}`);
+    row.append(el("span", "dot", place === "cur" ? "●" : place === "nx" ? "○" : number), el("span", "one", step.label));
     if (step.id === picked) {
-      const go = document.createElement("span");
-      go.className = "go";
-      go.textContent = "Show";
+      const go = el("span", "pill live", "Show now");
       row.append(go);
     } else {
-      const detail = document.createElement("span");
-      detail.className = "detail" + (step.problem ? " problem" : "");
-      detail.textContent = step.problem || step.detail;
-      row.append(detail);
+      row.append(el("span", "len" + (step.problem ? " problem" : ""), step.problem || step.detail));
     }
     row.onclick = () => {
-      if (step.id === picked) { picked = null; send({ do: "go", step: step.id }); }
+      if (step.id === picked) { picked = null; send({ do: "go", step: step.id }); say("On stage: " + step.label); }
       else picked = step.id;
       drawSteps();
     };
-    if (step.place === "current") current = row;
+    if (place === "cur") current = row;
     return row;
   }));
   // The step on stage stays in sight as the service moves on.
-  if (current && current.dataset.seen !== "1" && drawSteps.last !== current.textContent) {
+  if (current && drawSteps.last !== current.textContent) {
     drawSteps.last = current.textContent;
-    current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    current.scrollIntoView({ block: "center" });
   }
 }
 
-/* The stage's picture: asked for again about once a second while it is
-   shown, which is also what has Lantern make it. */
-function drawPicture() {
-  $("see").classList.toggle("on", seeing);
-  if (!seeing) $("picture").hidden = true;
+/* The menu sits between the small stage card and the transport. */
+function placeMenu() {
+  const top = $("stage").getBoundingClientRect().bottom + 10;
+  const bottom = document.body.getBoundingClientRect().bottom - $("transport").getBoundingClientRect().top - 1;
+  document.body.style.setProperty("--menu-top", top + "px");
+  document.body.style.setProperty("--menu-bottom", bottom + "px");
 }
+function openMenu() {
+  if (mode() === "plan") return;
+  closeVol();
+  document.body.classList.add("menu-open");
+  drawSteps.last = null;
+  if (state) drawSteps();
+  placeMenu();
+}
+function closeMenu() {
+  document.body.classList.remove("menu-open");
+  picked = null;
+  if (state) drawSteps();
+}
+$("handle").onclick = () => document.body.classList.contains("menu-open") ? closeMenu() : openMenu();
+$("dim").onclick = () => { closeMenu(); closeVol(); };
+window.addEventListener("resize", placeMenu);
+// Swipe the transport up to raise the menu, down to lower it.
+let swipeFrom = null;
+$("transport").addEventListener("pointerdown", event => { swipeFrom = event.clientY; });
+$("transport").addEventListener("pointerup", event => {
+  if (swipeFrom == null) return;
+  const moved = event.clientY - swipeFrom;
+  swipeFrom = null;
+  if (moved < -24) openMenu();
+  else if (moved > 24) closeMenu();
+});
+$("transport").addEventListener("pointercancel", () => { swipeFrom = null; });
+
+/* The computer's volume. The slider shows where it is held, and for a
+   moment after it is let go, until the computer has caught up. */
+function drawSound() {
+  const sound = state && state.sound;
+  $("vol-pill").hidden = !sound || mode() === "plan";
+  if (!sound) { closeVol(); return; }
+  if (!loudHeld && Date.now() - loudLet > 1500) loud = Math.max(0, Math.min(1, sound.volume));
+  const muted = sound.muted && !loudHeld;
+  const part = loud * 100 + "%";
+  $("loud").querySelector("i").style.width = part;
+  $("loud").querySelector("b").style.left = part;
+  $("loud").setAttribute("aria-valuenow", Math.round(loud * 100));
+  $("vol-out").textContent = sound.output || "";
+  $("vol-at").textContent = muted ? "muted" : Math.round(loud * 100) + "%";
+  $("loud-at").textContent = Math.round(loud * 100) + "%";
+  $("vol-pill").className = "pill " + (muted ? "danger" : "plain") + (document.body.classList.contains("vol-open") ? " open" : "");
+  $("vol-icon").setAttribute("href", muted ? "#i-mute" : "#i-vol");
+  $("vol").classList.toggle("muted", muted);
+  $("mute-text").textContent = muted ? "Hear it" : "Mute";
+}
+function closeVol() { document.body.classList.remove("vol-open"); if (state) drawSound(); }
+$("vol-pill").onclick = () => {
+  const open = !document.body.classList.contains("vol-open");
+  if (open) closeMenu();
+  document.body.classList.toggle("vol-open", open);
+  drawSound();
+};
+$("mute").onclick = () => {
+  const muted = !!(state && state.sound && state.sound.muted);
+  send({ do: "mute", on: !muted });
+  say(muted ? "Sound on" : "Muted");
+};
+function stepLoud(by) {
+  loud = Math.max(0, Math.min(1, Math.round((loud + by) * 20) / 20));
+  loudLet = Date.now();
+  sendLoud(true);
+  drawSound();
+}
+$("softer").onclick = () => stepLoud(-0.05);
+$("louder").onclick = () => stepLoud(0.05);
+
+/* The volume: it follows the finger, a few times a second, and lands
+   where it is let go. */
+const loudBar = $("loud");
+function loudAt(event) {
+  const box = loudBar.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (event.clientX - box.left) / box.width));
+}
+function sendLoud(last) {
+  if (!last && Date.now() - loudSent < 120) return;
+  loudSent = Date.now();
+  send({ do: "volume", level: Math.round(loud * 100) / 100 }, !last);
+}
+loudBar.onpointerdown = event => {
+  loudBar.setPointerCapture(event.pointerId);
+  loudHeld = true;
+  loud = loudAt(event);
+  sendLoud(false);
+  drawSound();
+};
+loudBar.onpointermove = event => {
+  if (!loudHeld) return;
+  loud = loudAt(event);
+  sendLoud(false);
+  drawSound();
+};
+loudBar.onpointerup = loudBar.onpointercancel = () => {
+  if (!loudHeld) return;
+  loudHeld = false;
+  loudLet = Date.now();
+  sendLoud(true);
+  drawSound();
+};
+
+/* Live: a tile for each source, then a picker made for fingers. Whatever
+   is picked opens Send: a tap sends it, holding it lines it up instead.
+   Inputs are made once per screen so typing survives each snapshot. */
+let view = { screen: "home" };
+let asked = "";        // the search last sent, bang and all
+let built = null;      // the screen the inputs were made for
+const ICONS = { bible: "i-book", folder: "i-folder", youtube: "i-yt", text: "i-text", time: "i-clock", images: "i-picture" };
+const icon = (name, cls) => { const span = el("span", cls); span.innerHTML = `<svg class="i"><use href="#${name}"/></svg>`; return span; };
+
+function seek(text, enter) {
+  clearTimeout(typed);
+  if (text === asked && !enter) return;
+  asked = text;
+  send({ do: "search", text, enter: !!enter }, true);
+  if (state) drawLive();
+}
+function seekSoon(text) { clearTimeout(typed); typed = setTimeout(() => seek(text), 350); }
+function answer() { const found = state.search; return found && found.text === asked ? found : null; }
+function answers() { const found = answer(); return found ? found.groups.flatMap(group => group.hits) : []; }
+
+function sendIt(result) { send({ do: "show", id: result.id }); say("On stage: " + result.title); hit = null; drawLive(); }
+function lineUp(result) { send({ do: "line_up", id: result.id }); say("Lined up next: " + result.title); }
+function holdable(node, tap, hold) {
+  let timer = null, held = false;
+  node.addEventListener("pointerdown", () => {
+    held = false;
+    timer = setTimeout(() => { held = true; if (navigator.vibrate) navigator.vibrate(20); hold(); }, 550);
+  });
+  for (const end of ["pointerup", "pointercancel", "pointerleave"]) node.addEventListener(end, () => clearTimeout(timer));
+  node.addEventListener("contextmenu", event => event.preventDefault());
+  node.addEventListener("click", event => { event.stopPropagation(); if (held) held = false; else tap(); });
+}
+function sendButton(result, waiting) {
+  const button = el("button", "pill live send");
+  button.innerHTML = '<svg class="i"><use href="#i-send"/></svg>';
+  button.append(result ? "Send to the stage" : waiting || "Pick something to send");
+  button.disabled = !result;
+  if (result) holdable(button, () => sendIt(result), () => lineUp(result));
+  return button;
+}
+/* Results, one way for every kind and every source, in the layout kept
+   for that source: a tap picks one and opens Send under it, a second tap
+   sends it, holding lines it up. */
+const LAYOUTS = [["list", "v-list"], ["grid", "v-grid"], ["shapes", "v-shape"]];
+function layoutOf(key) {
+  try { return localStorage.getItem("layout:" + key) || "list"; } catch (_) { return "list"; }
+}
+function resultsHead(key, count) {
+  const bar = el("div", "rhead");
+  bar.append(el("span", "meta", count === 1 ? "1 result" : `${count} results`));
+  const views = el("div", "views");
+  for (const [name, glyph] of LAYOUTS) {
+    const button = el("button", layoutOf(key) === name ? "on" : "");
+    button.setAttribute("aria-label", name);
+    button.innerHTML = `<svg class="i"><use href="#${glyph}"/></svg>`;
+    button.onclick = () => { try { localStorage.setItem("layout:" + key, name); } catch (_) {} drawLive(); };
+    views.append(button);
+  }
+  bar.append(views);
+  return bar;
+}
+function picture(result, cls) {
+  const kind = result.kind || "other";
+  const box = el("div", "th " + (cls || ""));
+  if (result.picture) {
+    const img = el("img");
+    img.src = `/thumb.jpg?t=${encodeURIComponent(token)}&id=${encodeURIComponent(result.id)}`;
+    img.alt = "";
+    box.append(img);
+  } else if (kind === "passage" || kind === "text") {
+    box.classList.add("words");
+    box.textContent = (result.text || result.title).split(/\n\s*\n/)[0].slice(0, 90);
+  } else if (kind === "time") {
+    box.classList.add("time");
+    box.textContent = result.size || result.title.replace(/^\D+/, "");
+  } else {
+    if (kind === "sound") box.classList.add("sound");
+    box.innerHTML = `<svg class="i"><use href="#${{ sound: "i-music", video: "i-yt", picture: "i-picture", web: "i-cloud" }[kind] || "i-file"}"/></svg>`;
+  }
+  if (result.state) {
+    const badge = el("span", "st " + result.state.tone, result.state.text);
+    box.append(badge);
+  }
+  if (result.size && kind !== "time") box.append(el("span", "bd", result.size));
+  if (result.progress != null) {
+    const bar = el("span", "bar"), part = el("i");
+    part.style.width = Math.round(result.progress * 100) + "%";
+    bar.append(part);
+    box.append(bar);
+  }
+  return box;
+}
+function lineOf(result, cls) {
+  const warning = result.warning;
+  return el("span", `${cls} one line ${warning ? warning.tone : "meta"}`, warning ? warning.text : result.facts);
+}
+const onStage = result => result.state && result.state.tone === "live" && /●/.test(result.state.text) && state.live && state.live.title === result.title;
+function pickable(node, result) {
+  holdable(node, () => { if (hit === result.id) sendIt(result); else { hit = result.id; drawLive(); } }, () => lineUp(result));
+}
+function results(hits, key) {
+  const layout = layoutOf(key);
+  if (layout === "grid") {
+    const grid = el("div", "g2");
+    hits.forEach((result, n) => {
+      const tile = el("div", "gt" + (result.id === hit ? " picked" : ""));
+      tile.append(picture(result), el("span", "tt one", result.title), lineOf(result, ""));
+      pickable(tile, result);
+      grid.append(tile);
+      const pickedHere = [hits[n - (n % 2)], hits[n - (n % 2) + 1]].some(h => h && h.id === hit);
+      if (pickedHere && (n % 2 === 1 || n === hits.length - 1)) {
+        const picked = hits.find(h => h.id === hit);
+        const bar = sendButton(picked);
+        bar.classList.add("wide");
+        grid.append(bar);
+      }
+    });
+    return grid;
+  }
+  if (layout === "shapes") {
+    const box = el("div", "shapes");
+    const width = ($("live").clientWidth || 340) - 18, tall = 104, gap = 4;
+    const ratio = r => r.shape || (r.kind === "sound" ? 1 : 16 / 9);
+    let row = [];
+    const flush = last => {
+      if (!row.length) return;
+      const sum = row.reduce((total, r) => total + ratio(r), 0);
+      const height = last ? Math.min(tall, (width - gap * (row.length - 1)) / sum) : (width - gap * (row.length - 1)) / sum;
+      const line = el("div", "jrow");
+      for (const result of row) {
+        const tile = picture(result, "jt" + (result.id === hit ? " picked" : ""));
+        tile.style.width = ratio(result) * height + "px";
+        tile.style.height = height + "px";
+        if (ratio(result) * height > 90) tile.append(el("span", "cap", result.title));
+        pickable(tile, result);
+        line.append(tile);
+      }
+      box.append(line);
+      const picked = row.find(r => r.id === hit);
+      if (picked) box.append(sendButton(picked));
+      row = [];
+    };
+    for (const result of hits) {
+      row.push(result);
+      const sum = row.reduce((total, r) => total + ratio(r), 0);
+      if (sum * tall + gap * (row.length - 1) >= width) flush(false);
+    }
+    flush(true);
+    return box;
+  }
+  const list = el("div", "list");
+  for (const result of hits) {
+    const row = el("div", "r" + (result.id === hit ? " picked" : "") + (onStage(result) ? " sent" : ""));
+    const words = el("div", "tx");
+    words.append(el("span", "tt one", result.title), lineOf(result, ""));
+    row.append(picture(result), words);
+    pickable(row, result);
+    if (result.id === hit) row.append(sendButton(result));
+    list.append(row);
+  }
+  return list;
+}
+function head(title, right, back) {
+  const bar = el("div", "head");
+  const button = el("button", "round plain");
+  button.setAttribute("aria-label", "Back");
+  button.innerHTML = '<svg class="i"><use href="#i-back"/></svg>';
+  button.onclick = back || (() => go("home"));
+  bar.append(button, el("b", "one", title));
+  if (right) bar.append(el("span", "meta", right));
+  return bar;
+}
+function field(placeholder, value, oninput, onenter) {
+  const box = el("label", "field");
+  box.append(icon("i-find"));
+  const input = el("input");
+  Object.assign(input, { type: "search", placeholder, value: value || "", autocomplete: "off", autocapitalize: "off", spellcheck: false });
+  input.setAttribute("enterkeyhint", "search");
+  input.oninput = () => oninput(input.value);
+  input.onkeydown = event => { if (event.key === "Enter") { onenter && onenter(input.value); input.blur(); } };
+  box.append(input);
+  return box;
+}
+
+function go(screen, extra) {
+  if (view.screen === "folder" && screen !== "folder") send({ do: "browse", folder: null }, true);
+  view = Object.assign({ screen }, extra || {});
+  hit = null;
+  if (screen === "home" && asked) seek("");
+  built = null;
+  drawLive();
+  $("live").scrollTop = 0;
+}
+
+/* Each screen: `top` makes what holds typing, once; `body` the rest, on
+   every snapshot. */
+const SCREENS = {
+  home: {
+    top() {
+      const box = field("Search everything", "", () => {});
+      box.querySelector("input").onfocus = () => {
+        go("find", { text: "", title: "Search everything", bang: "" });
+        $("live").querySelector("input").focus();
+      };
+      return [box];
+    },
+    body() {
+      const tiles = el("div", "tiles");
+      for (const source of state.sources || []) {
+        const tile = el("button", "card tile" + (source.kind === "folder" ? " folder" : ""));
+        tile.append(icon(ICONS[source.kind], "ic"), el("div", "n one", source.name), el("div", "h meta one", source.hint));
+        tile.onclick = () => open(source);
+        tiles.append(tile);
+      }
+      const parts = [tiles];
+      const shown = (state.shown || []).slice().reverse();
+      if (shown.length) {
+        parts.push(el("div", "label", "Shown this session"));
+        for (const item of shown) {
+          const row = el("button", "again" + (item.live ? " on" : ""));
+          row.append(el("span", "meta", item.at), el("span", "one", (item.live ? "● " : "") + item.title));
+          row.onclick = () => { send({ do: "again", n: item.n }); say("On stage: " + item.title); };
+          parts.push(row);
+        }
+      }
+      return parts;
+    },
+  },
+  find: {
+    top: () => [head(view.title), field(view.bang ? "Search " + view.title : "Search everything", view.text,
+      text => { view.text = text; seekSoon(withBang(text)); }, text => seek(withBang(text), true))],
+    body() {
+      const found = answer();
+      if (!view.text || !view.text.trim()) return [el("div", "hint", view.bang ? "Type what to look for, then Search." : "A verse (juan 3 16), a hymn, a file's name, a link.")];
+      if (!found) return [el("div", "hint", "Searching…")];
+      const parts = [];
+      const key = view.bang || "everything";
+      const count = found.groups.reduce((total, group) => total + group.hits.length, 0);
+      if (count) parts.push(resultsHead(key, count));
+      for (const group of found.groups) {
+        if (!group.hits.length && !group.error) continue;
+        const card = el("div", "card results");
+        if (!view.bang) card.append(el("div", "label", group.name));
+        if (group.error) card.append(el("div", "error", group.error));
+        if (group.hits.length) card.append(results(group.hits, key));
+        parts.push(card);
+      }
+      if (found.waiting) {
+        const go = el("button", "pill next send", "Search");
+        go.onclick = () => seek(withBang(view.text), true);
+        parts.push(go);
+      } else if (!parts.length) parts.push(el("div", "hint", found.busy ? "Searching…" : "Nothing found."));
+      else if (found.busy) parts.push(el("div", "hint", "Still searching…"));
+      if (hit) parts.push(el("div", "hint", "Tap it again, or Send. Hold it to line it up instead."));
+      return parts;
+    },
+  },
+  folder: {
+    top() {
+      const bar = head(view.source.name, " ");
+      view.count = bar.lastChild;
+      return [bar, field("Search " + view.source.name, view.filter, text => { view.filter = text; drawLive(); })];
+    },
+    body() {
+      const listed = state.listed && state.listed.folder === view.source.folder ? state.listed.hits : null;
+      const key = text => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+      const words = key(view.filter || "").split(/\s+/).filter(Boolean);
+      const hits = (listed || []).filter(result => words.every(word => key(result.title).includes(word)));
+      const layout = "folder:" + view.source.name;
+      const card = el("div", "card results");
+      card.append(results(hits, layout));
+      view.count.textContent = listed ? `${listed.length} files` : "";
+      if (!listed) return [el("div", "hint", "Listing…")];
+      return hits.length ? [resultsHead(layout, hits.length), card] : [el("div", "hint", listed.length ? "Nothing matches." : "This folder is empty.")];
+    },
+  },
+  text: {
+    top() {
+      const area = el("textarea");
+      area.placeholder = "What to show. A blank line starts a new slide.";
+      area.value = view.text || "";
+      area.oninput = () => { view.text = area.value; seekSoon(textQuery(area.value)); drawLive(); };
+      view.area = area;
+      return [head("Text"), area];
+    },
+    body() {
+      const slides = textSlides(view.text || "");
+      const insert = what => {
+        const area = view.area, at = area.selectionStart;
+        area.value = area.value.slice(0, at) + what + area.value.slice(area.selectionEnd);
+        area.selectionStart = area.selectionEnd = at + what.length;
+        area.focus();
+        area.oninput();
+      };
+      const tools = el("div", "trail");
+      const line = el("button", "pill plain", "New line"), slide = el("button", "pill plain", "New slide");
+      line.onclick = () => insert("\n");
+      slide.onclick = () => insert("\n\n");
+      tools.append(line, slide, el("span", "meta", slides.length === 1 ? "1 slide" : `${slides.length} slides`));
+      tools.lastChild.style.marginLeft = "auto";
+      tools.lastChild.style.alignSelf = "center";
+      const result = slides.length && asked === textQuery(view.text) ? answers()[0] : null;
+      const foot = el("div", "foot");
+      foot.append(sendButton(result, slides.length ? "Making the slides…" : "Type what to show"));
+      return [tools, foot];
+    },
+  },
+  time: {
+    top: () => [head("Time")],
+    body() {
+      const parts = [];
+      const choose = (label, query, pick) => {
+        const button = el("button", view.label === label ? "on" : "", label);
+        button.onclick = () => { view.label = label; view.query = query; view.pick = pick; seek(query); drawLive(); };
+        return button;
+      };
+      const group = (name, buttons, columns) => {
+        const box = el("div", "buttons");
+        box.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+        box.append(...buttons);
+        parts.push(el("div", "label", name), box);
+      };
+      group("On stage", [choose("Clock", "!t clock", "Clock"), choose("Timer from 0", "!t timer", "Timer")], 2);
+      group("Countdown", [1, 3, 5, 10, 15, 20, 30, 45].map(m => choose(`${m} min`, `!t ${m}`, null)), 4);
+      const now = new Date(), quarters = [];
+      for (let n = 1; quarters.length < 3; n++) {
+        const at = new Date(Math.ceil(now.getTime() / 900000) * 900000 + (n - 1) * 900000);
+        if (at - now < 120000) continue;
+        quarters.push(`${at.getHours()}:${String(at.getMinutes()).padStart(2, "0")}`);
+      }
+      group("Until a time", quarters.map(at => choose(at, `!t ${at}`, "until")), 3);
+      if (view.label) {
+        const hits = asked === view.query ? answers() : [];
+        const result = view.pick === "until" ? hits.find(h => /\bto\b/.test(h.title)) : view.pick ? hits.find(h => h.title === view.pick) : hits[0];
+        parts.push(el("div", "big", /min$/.test(view.label) ? clock(parseInt(view.label) * 60) : view.label));
+        const foot = el("div", "foot");
+        foot.append(sendButton(result, "Finding it…"));
+        parts.push(foot);
+      }
+      return parts;
+    },
+  },
+  bible: {
+    top: () => [],
+    body: bibleBody,
+  },
+};
+const withBang = text => (view.bang ? `!${view.bang} ` : "") + text;
+const textSlides = text => text.split(/\n\s*\n/).map(slide => slide.trim()).filter(Boolean);
+const textQuery = text => "!x " + textSlides(text).map(slide => slide.split("\n").map(l => l.trim()).filter(Boolean).join(" | ")).join(" || ");
+
+function open(source) {
+  if (source.kind === "bible") go("bible", { book: null, chapter: null, first: null, last: null, nt: true });
+  else if (source.kind === "folder") { go("folder", { source, filter: "" }); send({ do: "browse", folder: source.folder }, true); }
+  else if (source.kind === "text") go("text", { text: "" });
+  else if (source.kind === "time") go("time", {});
+  else go("find", { title: source.name, bang: source.bang, text: "" });
+}
+
+/* The Bible by touch: book, then chapter, then verse, each grid sized
+   from the translation. A passage is two taps, first verse and last. */
+function bibleBody() {
+  const bible = state.bible;
+  if (!bible) return [head("Bible"), el("div", "hint", "No Bible is set up in Lantern's library.")];
+  const book = view.book == null ? null : bible.books[view.book];
+  const grid = (columns, numbers, cls, tap) => {
+    const box = el("div", "grid");
+    box.style.gridTemplateColumns = `repeat(${columns}, 1fr)`;
+    for (const n of numbers) {
+      const button = el("button", cls(n), n);
+      button.onclick = () => tap(n);
+      box.append(button);
+    }
+    return box;
+  };
+  if (book && view.chapter) {
+    const count = book.verses[view.chapter - 1] || 0;
+    const [a, b] = [view.first, view.last];
+    const parts = [head(`${book.name} ${view.chapter}`, `${count} verses`, () => { view.chapter = null; view.first = view.last = null; seek(""); drawLive(); })];
+    const numbers = Array.from({ length: count }, (_, n) => n + 1);
+    parts.push(grid(7, numbers, n => n === a || n === b ? "on" : a && b && n > a && n < b ? "range" : "", n => {
+      if (a == null || a !== b) view.first = view.last = n;
+      else [view.first, view.last] = [Math.min(a, n), Math.max(a, n)];
+      seek(`!b ${book.name} ${view.chapter}:${view.first}${view.last > view.first ? "-" + view.last : ""}`);
+      drawLive();
+    }));
+    if (a) {
+      const result = answers()[0];
+      const words = el("div", "words");
+      const verses = result && result.text ? result.text.split(/\n\s*\n/) : [];
+      verses.forEach((verse, n) => { words.append(el("b", null, `${a + n} `), verse + " "); });
+      if (verses.length) parts.push(words);
+      const span = b > a ? `${a}–${b}` : `${a}`, slides = b - a + 1;
+      parts.push(el("div", "meta", `Tap one verse, or two for a passage: ${span} · ${slides === 1 ? "1 slide" : slides + " slides"}`));
+      const foot = el("div", "foot");
+      foot.append(sendButton(result, "Finding it…"));
+      parts.push(foot);
+    } else parts.push(el("div", "meta", "Tap one verse, or two for a passage."));
+    return parts;
+  }
+  const parts = [head("Bible", bible.name)];
+  if (book) {
+    const trail = el("div", "trail");
+    const pill = el("button", "pill next", book.name);
+    pill.onclick = () => { view.book = null; drawLive(); };
+    trail.append(pill, el("span", "pill plain", "chapter"));
+    parts.push(trail);
+  }
+  const seg = el("div", "seg");
+  for (const [name, nt] of [["Old Testament", false], ["New Testament", true]]) {
+    const button = el("button", view.nt === nt ? "on" : "", name);
+    button.onclick = () => { view.nt = nt; drawLive(); };
+    seg.append(button);
+  }
+  parts.push(seg);
+  const shown = bible.books.map((b, n) => [b, n]).filter(([b, n]) => (n >= 39) === view.nt && b.verses.length);
+  const books = el("div", "grid");
+  books.style.gridTemplateColumns = "repeat(5, 1fr)";
+  for (const [b, n] of shown) {
+    const button = el("button", n === view.book ? "on" : "", b.short);
+    button.onclick = () => { view.book = n; view.chapter = null; drawLive(); };
+    books.append(button);
+  }
+  parts.push(books);
+  if (book) {
+    parts.push(el("div", "label", `${book.name} · chapter`));
+    parts.push(grid(7, book.verses.map((_, n) => n + 1), () => "", n => { view.chapter = n; view.first = view.last = null; drawLive(); $("live").scrollTop = 0; }));
+  }
+  return parts;
+}
+
+function drawLive() {
+  if (mode() !== "live" || !state) return;
+  const screen = SCREENS[view.screen];
+  const box = $("live");
+  if (built !== view.screen) {
+    box.replaceChildren(...screen.top(), el("div", "live-body"));
+    built = view.screen;
+  }
+  const body = box.querySelector(".live-body");
+  body.style.display = "contents";
+  body.replaceChildren(...screen.body());
+}
+
+/* The stage's picture, asked for again about once a second while the
+   remote shows it, which is also what has Lantern make it. */
 function fetchPicture() {
-  if (!seeing || finding || document.visibilityState !== "visible" || !token) return;
+  if (mode() === "plan" || document.visibilityState !== "visible" || !token) return;
   const next = new Image();
-  next.onload = () => { if (seeing) { $("picture").src = next.src; $("picture").hidden = false; } };
+  next.onload = () => { $("picture").src = next.src; $("picture").hidden = false; };
   next.src = `/stage.jpg?t=${encodeURIComponent(token)}&n=${Date.now()}`;
 }
-$("see").onclick = () => {
-  seeing = !seeing;
-  try { localStorage.setItem("picture", seeing ? "1" : "0"); } catch (_) {}
-  drawPicture();
-  fetchPicture();
-};
 setInterval(fetchPicture, 1000);
-drawPicture();
-
-$("find").onclick = () => {
-  finding = !finding;
-  drawSearch();
-  if (finding) $("query").focus();
-  else $("query").blur();
-};
-$("query").oninput = () => {
-  clearTimeout(typed);
-  typed = setTimeout(() => ask(false), 350);
-  drawSearch();
-};
-$("query").onkeydown = event => {
-  if (event.key === "Enter") { ask(true); $("query").blur(); }
-};
-$("wipe").onclick = () => { $("query").value = ""; ask(false); drawSearch(); $("query").focus(); };
 
 $("prev").onclick = () => send({ do: "prev" });
+$("step-up").onclick = () => send({ do: "prev" });
+$("step-down").onclick = () => send({ do: "next" });
 $("next-step").onclick = () => send({ do: "next" });
 $("play").onclick = () => send({ do: "play_pause" });
-$("black").onclick = () => send({ do: "blackout" });
-$("clear").onclick = () => send({ do: "clear" });
-$("resume").onclick = () => send({ do: "resume" });
-$("back").onclick = () => send({ do: "prev" });
+$("black").onclick = () => { send({ do: "blackout" }); closeMenu(); };
+$("clear").onclick = () => { send({ do: "clear" }); closeMenu(); };
+$("lift").onclick = () => send({ do: "blackout" });
 
 /* The time bar: hold and slide, let go to jump. */
 const bar = $("bar");
@@ -502,7 +1185,7 @@ bar.onpointerup = () => {
   dragging = null;
 };
 bar.onpointercancel = () => { dragging = null; drawTime(); };
-setInterval(drawTime, 500);
+setInterval(() => { drawTime(); drawCountdown(); }, 500);
 
 if (!token) {
   veil("Scan the code again", "This page needs the address from Lantern's settings, under Phone.");
@@ -517,15 +1200,15 @@ if (!token) {
     if (!ever) veil("Can't reach Lantern", "Check that the phone is on the same Wi-Fi as the computer, and that the remote is on in Lantern's settings.");
     else if (!state) veil("Reconnecting…", "");
   };
-  // An address ending in #q=juan 3 16 opens on that search.
+  // An address ending in #q=juan 3 16 opens Live on that search; #menu
+  // or #sound opens that panel.
   const start = new URLSearchParams(location.hash.slice(1));
-  if (start.get("see")) { seeing = true; drawPicture(); fetchPicture(); }
-  if (start.get("q")) {
-    finding = true;
-    $("query").value = start.get("q");
-    hit = start.get("hit");
-    events.addEventListener("open", () => send({ do: "search", text: $("query").value }, true), { once: true });
-  }
+  if (start.get("q")) events.addEventListener("message", () => {
+    go("find", { text: start.get("q"), title: "Search everything", bang: "" });
+    seek(start.get("q"));
+  }, { once: true });
+  if (start.has("menu")) events.addEventListener("message", () => openMenu(), { once: true });
+  if (start.has("sound")) events.addEventListener("message", () => $("vol-pill").click(), { once: true });
   // Keeps the screen on where the browser allows it.
   const awake = () => navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {});
   awake();

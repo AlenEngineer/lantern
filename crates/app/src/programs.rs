@@ -26,6 +26,36 @@ pub fn command(name: &str) -> Command {
     )))
 }
 
+/// Opens `url` in the operator's browser, and doesn't wait for it.
+pub fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        // `start`'s first quoted word is a window title, hence the "".
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", ""]).arg(url);
+        quiet(command)
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("can't open the browser: {err}"))
+}
+
 /// `command`, with no console window of its own on Windows.
 pub fn quiet(command: Command) -> Command {
     #[cfg(windows)]

@@ -102,11 +102,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release
-      - run: cargo build --release -p lantern-app
+      - run: cargo build --release -p lantern-app -p lantern-web
       - uses: actions/upload-artifact@v4
         with:
           name: lantern-linux
-          path: target/release/lantern
+          path: |
+            target/release/lantern
+            target/release/lantern-web
           retention-days: 14
 
   msrv:

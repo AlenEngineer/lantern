@@ -40,11 +40,18 @@ impl Target {
         Ok(Target::File(dir.join(text)))
     }
 
+    /// The resource the app would have for it: a file in one of the
+    /// library's folders as the library has it (its folder, its title,
+    /// its size), any other as its pasted path would be, and one that
+    /// isn't there by its path alone, to be missing.
+    ///
     /// Starts downloading a YouTube link. The app does too, but only once
     /// its event loop catches up, and a following `wait-ready` must see it.
-    fn resource(&self, downloads: &Arc<Downloads>) -> Resource {
+    fn resource(&self, engine: &Engine, library: &Library, downloads: &Arc<Downloads>) -> Resource {
         let resource = match self {
-            Target::File(path) => file(path),
+            Target::File(path) => library_file(engine, library, path)
+                .or_else(|| links().resolve(&path.to_string_lossy()))
+                .unwrap_or_else(|| file(path)),
             Target::Link(url) => links().resolve(url).expect("checked by Target::parse"),
         };
         if let Some(video) = YoutubeVideo::of(&resource) {
@@ -89,6 +96,15 @@ pub enum Command {
     /// `path TEXT`: type TEXT in the open settings' first folder path,
     /// adding a folder row if there's none.
     Path(String),
+    /// `check-key`: open the settings at Library and check the YouTube
+    /// key, as its button does.
+    CheckKey,
+    /// `pick-on-youtube`: open the picker on what the search box holds,
+    /// as its button does.
+    PickOnYoutube,
+    /// `picked ID`: a video picked on YouTube's site, as a click there
+    /// tells it.
+    Picked(String),
     /// `font TEXT`: type TEXT in the open settings' font field, scrolled
     /// into view.
     Font(String),
@@ -122,6 +138,16 @@ pub enum Command {
     /// included: it becomes the selection. Twice in a row is a double
     /// click, which shows it.
     Step(usize),
+    /// `fold N`: fold the section at plan entry N, counted from 1 as for
+    /// `step`, into its header, or open it again.
+    Fold(usize),
+    /// `library NAME`: click the library's row named NAME (`Bible`,
+    /// `Live`, `Fixtures`, a file's title): a source opens the search on
+    /// it, a step is added, a folder opens or closes, a file is looked at.
+    Library(String),
+    /// `library-layout list|grid|shapes`: lay out the library's open
+    /// folder so, as the icons on its heading do.
+    LibraryLayout(crate::shelf::Layout),
     /// `drag N M above|below`: press on plan entry N and hold it over the
     /// upper or lower half of entry M, as the mouse would, counted from 1.
     /// `drop` lets go.
@@ -136,6 +162,8 @@ pub enum Command {
     /// `loop N M` or `loop N M until 10:30`: draw a loop round plan
     /// entries N to M, to come twice or until the time of day.
     Loop(usize, usize, Option<lantern_engine::TimeOfDay>),
+    /// `starts 19:00`: the plan starts at that time of day.
+    Starts(lantern_engine::TimeOfDay),
     /// `plan-look COLOUR`: open the settings on the plan's look (the
     /// header's swatch), give it its own and type COLOUR as its
     /// background. `press ctrl+s` saves it.
@@ -145,6 +173,9 @@ pub enum Command {
     Output(String),
     /// `slide N`: click slide N (from 1) in the strip of what's on stage.
     Slide(usize),
+    /// `film N`: click slide or page N (from 1) in the filmstrip under the
+    /// preview while planning, which shows it there.
+    Film(usize),
     /// `template NAME`: star the saved plan NAME (title or file name), so
     /// it's a template.
     Template(String),
@@ -165,8 +196,164 @@ pub enum Command {
     Rename(String),
     /// `shot NAME`: ask the harness to capture both windows.
     Shot(String),
+    /// A real pointer, moved and pressed through sway: see [`Pointer`].
+    Pointer(Pointer),
     /// `quit`: stop here.
     Quit,
+}
+
+/// What a real pointer does: the mouse `scripts/e2e.sh` plugs into the
+/// sway it runs the app in (`scripts/e2e/mouse.py`), moved and pressed as
+/// a hand would, a little at a time. Anywhere else a script with one of
+/// these fails before any window opens. Places are in the dashboard's own
+/// logical pixels, from its top left corner: a screenshot's pixels
+/// divided by `E2E_DASHBOARD_SCALE`, wherever sway has put its window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Pointer {
+    /// `pointer X Y`: moves there.
+    To(At),
+    /// `pointer-at-row N [top|middle|bottom|foot|chevron]`: moves to a
+    /// part of plan entry N, counted from 1, sections included; `middle`
+    /// when not said. `pointer-at title`, `pointer-at ring-note` and
+    /// `pointer-at library N` move to the other places of [`Aim`]. Each
+    /// is where the dashboard last laid it out (a row folded away keeps
+    /// its last place).
+    Toward(Aim),
+    /// `pointer-press [left|right] [ctrl|shift]`: pressed, and held;
+    /// `left` when not said. A key said with it is held until
+    /// `pointer-release`, as the app sees it, since sway can't press one:
+    /// the app is told, as if it had been.
+    Press(Button, Option<Held>),
+    /// `pointer-release [left|right]`: let go, and of the key held with
+    /// the press.
+    Release(Button),
+    /// `click-at X Y [left|right] [ctrl|shift]`: moves there, presses and
+    /// lets go, as `pointer-press` and `pointer-release` do.
+    Click(At, Button, Option<Held>),
+    /// `drag-at X1 Y1 X2 Y2`: pressed at the first place, carried to the
+    /// second, and let go.
+    Drag(At, At),
+}
+
+/// A place on the dashboard, in its logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct At {
+    pub x: u16,
+    pub y: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Button {
+    Left,
+    Right,
+}
+
+/// A key held for one click.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Held {
+    Ctrl,
+    Shift,
+}
+
+/// Where a pointer command goes on the dashboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Aim {
+    /// A part of plan entry N, counted from 0.
+    Row(usize, Spot),
+    /// The plan's title over its rows. It is no row: a press there lets
+    /// go of what is picked.
+    Title,
+    /// The note's button of the ring that is open.
+    RingNote,
+    /// Row N of the library in sight, folders included, counted from 0.
+    Library(usize),
+}
+
+/// Where on a plan entry's row `pointer-at-row` goes, across its middle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Spot {
+    /// 4 pixels in from its top: a header's head, to pull; a step's upper
+    /// half.
+    Top,
+    Middle,
+    /// Three quarters down: its lower half, where what is dropped goes
+    /// after it, or into a section first.
+    Bottom,
+    /// A section's foot: the strip under its last row, to pull.
+    Foot,
+    /// The arrow on a section's header that folds it, shown while the
+    /// pointer is on the header.
+    Chevron,
+}
+
+impl Pointer {
+    fn parse(word: &str, rest: &str) -> Result<Pointer, String> {
+        let words: Vec<&str> = rest.split_whitespace().collect();
+        let counted = |n: &str| n.parse::<usize>().ok().filter(|n| *n > 0).map(|n| n - 1);
+        let at = |x: &str, y: &str| {
+            Some(At {
+                x: x.parse().ok()?,
+                y: y.parse().ok()?,
+            })
+        };
+        // `[left|right] [ctrl|shift]`, in either order.
+        let pressed = |words: &[&str]| {
+            let (mut button, mut held) = (None, None);
+            for word in words {
+                match *word {
+                    "left" if button.is_none() => button = Some(Button::Left),
+                    "right" if button.is_none() => button = Some(Button::Right),
+                    "ctrl" if held.is_none() => held = Some(Held::Ctrl),
+                    "shift" if held.is_none() => held = Some(Held::Shift),
+                    _ => return None,
+                }
+            }
+            Some((button.unwrap_or(Button::Left), held))
+        };
+        let parsed = match (word, &words[..]) {
+            ("pointer", [x, y]) => at(x, y).map(Pointer::To),
+            ("pointer-at-row", [n, spot @ ..]) if spot.len() <= 1 => {
+                let spot = match spot.first().copied() {
+                    None | Some("middle") => Some(Spot::Middle),
+                    Some("top") => Some(Spot::Top),
+                    Some("bottom") => Some(Spot::Bottom),
+                    Some("foot") => Some(Spot::Foot),
+                    Some("chevron") => Some(Spot::Chevron),
+                    _ => None,
+                };
+                counted(n)
+                    .zip(spot)
+                    .map(|(n, spot)| Pointer::Toward(Aim::Row(n, spot)))
+            }
+            ("pointer-at", ["title"]) => Some(Pointer::Toward(Aim::Title)),
+            ("pointer-at", ["ring-note"]) => Some(Pointer::Toward(Aim::RingNote)),
+            ("pointer-at", ["library", n]) => counted(n).map(|n| Pointer::Toward(Aim::Library(n))),
+            ("pointer-press", more) => {
+                pressed(more).map(|(button, held)| Pointer::Press(button, held))
+            }
+            ("pointer-release", more) => match pressed(more) {
+                Some((button, None)) => Some(Pointer::Release(button)),
+                _ => None,
+            },
+            ("click-at", [x, y, more @ ..]) => at(x, y)
+                .zip(pressed(more))
+                .map(|(at, (button, held))| Pointer::Click(at, button, held)),
+            ("drag-at", [x1, y1, x2, y2]) => at(x1, y1)
+                .zip(at(x2, y2))
+                .map(|(from, to)| Pointer::Drag(from, to)),
+            _ => None,
+        };
+        let usage = match word {
+            "pointer" => "X Y",
+            "pointer-at-row" => "an entry from 1, then top, middle, bottom, foot or chevron",
+            "pointer-at" => "title, ring-note, or library and a row from 1",
+            "pointer-press" => "left or right, ctrl or shift",
+            "click-at" => "X Y, then left or right, ctrl or shift",
+            "drag-at" => "X1 Y1 X2 Y2",
+            _ => "left or right",
+        };
+        parsed.ok_or_else(|| format!("{word} needs {usage}, got {rest:?}"))
+    }
 }
 
 /// A line the parser rejected.
@@ -209,6 +396,12 @@ impl Command {
             "add" => Command::Add(Target::parse(rest, dir)?),
             "slot" if !rest.is_empty() => Command::Slot(rest.to_string()),
             "path" => Command::Path(rest.to_string()),
+            "check-key" => Command::CheckKey,
+            "pick-on-youtube" => Command::PickOnYoutube,
+            "picked" if lantern_web_protocol::is_video_id(rest) => {
+                Command::Picked(rest.to_string())
+            }
+            "picked" => return Err(format!("picked needs a video id, got {rest:?}")),
             "font" => Command::Font(rest.to_string()),
             "slot" => return Err("slot needs what it searches".into()),
             "section" => {
@@ -257,6 +450,20 @@ impl Command {
                 Ok(n) if n > 0 => Command::Step(n - 1),
                 _ => return Err(format!("step needs a number from 1, got {rest:?}")),
             },
+            "fold" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Fold(n - 1),
+                _ => return Err(format!("fold needs a number from 1, got {rest:?}")),
+            },
+            "library" if !rest.is_empty() => Command::Library(rest.to_string()),
+            "library" => return Err("library needs a row's name".into()),
+            "library-layout" => match crate::shelf::Layout::named(rest) {
+                Some(layout) => Command::LibraryLayout(layout),
+                None => {
+                    return Err(format!(
+                        "library-layout needs list, grid or shapes, got {rest:?}"
+                    ));
+                }
+            },
             "select" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Select(n - 1),
                 _ => return Err(format!("select needs a number from 1, got {rest:?}")),
@@ -288,6 +495,10 @@ impl Command {
             "slide" => match rest.parse::<usize>() {
                 Ok(n) if n > 0 => Command::Slide(n - 1),
                 _ => return Err(format!("slide needs a number from 1, got {rest:?}")),
+            },
+            "film" => match rest.parse::<usize>() {
+                Ok(n) if n > 0 => Command::Film(n - 1),
+                _ => return Err(format!("film needs a number from 1, got {rest:?}")),
             },
             "output" if !rest.is_empty() => Command::Output(rest.to_string()),
             "output" => return Err("output needs a screen name or automatic".into()),
@@ -328,6 +539,10 @@ impl Command {
                     }
                 }
             }
+            "starts" => match lantern_engine::TimeOfDay::parse(rest) {
+                Some(time) => Command::Starts(time),
+                None => return Err(format!("starts needs a time of day, got {rest:?}")),
+            },
             "loop" => {
                 let usage = || format!("loop needs N M, or N M until 10:30, got {rest:?}");
                 let words: Vec<&str> = rest.split_whitespace().collect();
@@ -361,6 +576,8 @@ impl Command {
             }
             "shot" => return Err(format!("shot needs a plain name, got {rest:?}")),
             "quit" => Command::Quit,
+            "pointer" | "pointer-at-row" | "pointer-at" | "pointer-press" | "pointer-release"
+            | "click-at" | "drag-at" => Command::Pointer(Pointer::parse(word, rest)?),
             other => return Err(format!("unknown command {other:?}")),
         };
         let takes_argument = matches!(
@@ -375,6 +592,9 @@ impl Command {
                 | Command::Section(..)
                 | Command::Slot(_)
                 | Command::Path(_)
+                | Command::CheckKey
+                | Command::PickOnYoutube
+                | Command::Picked(_)
                 | Command::Font(_)
                 | Command::Seek(_)
                 | Command::Frame(_)
@@ -390,14 +610,20 @@ impl Command {
                 | Command::PlanLook(_)
                 | Command::Output(_)
                 | Command::Slide(_)
+                | Command::Film(_)
                 | Command::Template(_)
                 | Command::FromTemplate(_)
                 | Command::Step(_)
+                | Command::Fold(_)
+                | Command::Library(_)
+                | Command::LibraryLayout(_)
                 | Command::Press(_)
                 | Command::Open(_)
                 | Command::Rename(_)
                 | Command::Mode(_)
                 | Command::Loop(..)
+                | Command::Starts(_)
+                | Command::Pointer(_)
         );
         if !takes_argument && !rest.is_empty() {
             return Err(format!("{word} takes no argument"));
@@ -422,14 +648,23 @@ pub enum Ui {
     PlanLook(String),
     Output(String),
     Slide(usize),
+    Film(usize),
     Template(String),
     FromTemplate(String),
     Step(usize),
+    Fold(usize),
+    Library(String),
+    LibraryLayout(crate::shelf::Layout),
     Path(String),
+    CheckKey,
+    PickOnYoutube,
+    Picked(String),
     Font(String),
     Press(Op),
     Open(String),
     Rename(String),
+    /// The keys held, as if pressed: for a click with Ctrl or Shift.
+    Mods(iced::keyboard::Modifiers),
 }
 
 /// A parsed script and how to ask for screenshots.
@@ -458,21 +693,38 @@ impl Script {
         Ok(Script { commands, shooter })
     }
 
+    /// Whether it moves the pointer, which needs sway: see [`Pointer`].
+    pub fn points(&self) -> bool {
+        self.commands
+            .iter()
+            .any(|command| matches!(command, Command::Pointer(_)))
+    }
+
     /// Runs every command in order, blocking, until the end or `quit`.
-    /// Hands dashboard commands to `ui`. Calls `acted` after each command.
+    /// Hands dashboard commands to `ui`, and asks `place` where on the
+    /// dashboard a plan entry's spot is. Calls `acted` after each command.
+    /// A pointer that can't be moved stops it there.
     pub fn run(
         &self,
         engine: &Engine,
         library: &Library,
         downloads: &Arc<Downloads>,
         mut ui: impl FnMut(Ui),
+        mut place: impl FnMut(Aim) -> Option<iced::Point>,
         mut acted: impl FnMut(),
     ) {
         let mut hits = Vec::new();
+        let mut hand = Hand::default();
         for command in &self.commands {
             log(format!("script: {command:?}"));
             match command {
                 Command::Quit => return,
+                Command::Pointer(pointer) => {
+                    if let Err(err) = hand.point(*pointer, &mut place, &mut ui) {
+                        log(format!("script: the pointer: {err}; stopping"));
+                        return;
+                    }
+                }
                 Command::Search(text) => hits = search(engine, library, text),
                 Command::ShowHit(n) => match hits.get(*n) {
                     Some(hit) => engine.show_now(hit.resource.clone()),
@@ -490,6 +742,7 @@ impl Script {
                 Command::Drop => ui(Ui::Drop),
                 Command::Mode(to) => ui(Ui::Mode(to.clone())),
                 Command::Slide(n) => ui(Ui::Slide(*n)),
+                Command::Film(n) => ui(Ui::Film(*n)),
                 Command::Template(name) => ui(Ui::Template(name.clone())),
                 Command::FromTemplate(name) => ui(Ui::FromTemplate(name.clone())),
                 Command::Output(name) => ui(Ui::Output(name.clone())),
@@ -497,20 +750,32 @@ impl Script {
                 Command::GoOn(n) => ui(Ui::GoOn(*n)),
                 Command::PlanLook(colour) => ui(Ui::PlanLook(colour.clone())),
                 Command::Step(n) => ui(Ui::Step(*n)),
+                Command::Fold(n) => ui(Ui::Fold(*n)),
+                Command::Library(name) => ui(Ui::Library(name.clone())),
+                Command::LibraryLayout(layout) => ui(Ui::LibraryLayout(*layout)),
                 Command::Path(text) => ui(Ui::Path(text.clone())),
+                Command::CheckKey => ui(Ui::CheckKey),
+                Command::PickOnYoutube => ui(Ui::PickOnYoutube),
+                Command::Picked(id) => ui(Ui::Picked(id.clone())),
                 Command::Font(text) => ui(Ui::Font(text.clone())),
                 Command::Press(key) => ui(Ui::Press(
                     keys::op_named(key).expect("checked by Command::parse"),
                 )),
                 Command::Open(name) => ui(Ui::Open(name.clone())),
                 Command::Rename(name) => ui(Ui::Rename(name.clone())),
-                _ => self.perform(command, engine, downloads),
+                _ => self.perform(command, engine, library, downloads),
             }
             acted();
         }
     }
 
-    fn perform(&self, command: &Command, engine: &Engine, downloads: &Arc<Downloads>) {
+    fn perform(
+        &self,
+        command: &Command,
+        engine: &Engine,
+        library: &Library,
+        downloads: &Arc<Downloads>,
+    ) {
         match command {
             Command::Wait(duration) => std::thread::sleep(*duration),
             Command::WaitReady(timeout) => {
@@ -525,10 +790,14 @@ impl Script {
                 }
             }
             Command::Text(body) => engine.show_now(Arc::new(inline("text", "Text", body))),
-            Command::Show(target) => engine.show_now(Arc::new(target.resource(downloads))),
-            Command::Preview(target) => engine.preview(Arc::new(target.resource(downloads))),
+            Command::Show(target) => {
+                engine.show_now(Arc::new(target.resource(engine, library, downloads)));
+            }
+            Command::Preview(target) => {
+                engine.preview(Arc::new(target.resource(engine, library, downloads)));
+            }
             Command::Add(target) => {
-                engine.add_resource(None, &target.resource(downloads));
+                engine.add_resource(None, &target.resource(engine, library, downloads));
             }
             Command::Slot(search) => {
                 let action = lantern_engine::Action::Live {
@@ -546,6 +815,9 @@ impl Script {
                     color: None,
                 };
                 engine.add(None, title.clone(), action);
+            }
+            Command::Starts(time) => {
+                engine.edit_plan(|plan| plan.starts = Some(*time));
             }
             Command::Loop(from, to, until) => {
                 let looped = engine.edit_plan(|plan| {
@@ -608,14 +880,22 @@ impl Script {
             | Command::PlanLook(_)
             | Command::Output(_)
             | Command::Slide(_)
+            | Command::Film(_)
             | Command::Template(_)
             | Command::FromTemplate(_)
             | Command::Step(_)
+            | Command::Fold(_)
+            | Command::Library(_)
+            | Command::LibraryLayout(_)
             | Command::Path(_)
+            | Command::CheckKey
+            | Command::PickOnYoutube
+            | Command::Picked(_)
             | Command::Font(_)
             | Command::Press(_)
             | Command::Open(_)
-            | Command::Rename(_) => {}
+            | Command::Rename(_)
+            | Command::Pointer(_) => {}
         }
     }
 
@@ -635,6 +915,225 @@ impl Script {
             Err(err) => log(format!("script: shot {name}: {}: {err}", shooter.display())),
         }
     }
+}
+
+/// How far one step of a glide goes, in the dashboard's pixels, and how
+/// long it takes: about what a hand moving a mouse does.
+const STRIDE: f64 = 16.0;
+const STEP: Duration = Duration::from_millis(12);
+/// How long a button is held for a click, and a key round it.
+const CLICK: Duration = Duration::from_millis(50);
+const HOLD: Duration = Duration::from_millis(100);
+
+/// The mouse `scripts/e2e.sh` plugs into its sway, told what to do
+/// through its FIFO; where the script left it, in sway's layout, so the
+/// next move glides from there; and the key held while it is pressed.
+#[derive(Default)]
+struct Hand {
+    mouse: Option<std::fs::File>,
+    at: Option<(f64, f64)>,
+    held: Option<Held>,
+}
+
+impl Hand {
+    fn point(
+        &mut self,
+        pointer: Pointer,
+        place: &mut impl FnMut(Aim) -> Option<iced::Point>,
+        ui: &mut impl FnMut(Ui),
+    ) -> Result<(), String> {
+        match pointer {
+            Pointer::To(at) => self.glide(at.x.into(), at.y.into()),
+            Pointer::Toward(aim) => {
+                let at = place(aim).ok_or_else(|| format!("no {aim:?} in sight"))?;
+                self.glide(at.x.into(), at.y.into())
+            }
+            Pointer::Press(button, held) => self.press(button, held, ui),
+            Pointer::Release(button) => self.release(button, ui),
+            Pointer::Click(at, button, held) => {
+                self.glide(at.x.into(), at.y.into())?;
+                self.press(button, held, ui)?;
+                std::thread::sleep(CLICK);
+                self.release(button, ui)
+            }
+            Pointer::Drag(from, to) => {
+                self.glide(from.x.into(), from.y.into())?;
+                self.tell("press left")?;
+                std::thread::sleep(CLICK);
+                self.glide(to.x.into(), to.y.into())?;
+                std::thread::sleep(CLICK);
+                self.tell("release left")
+            }
+        }
+    }
+
+    /// `button` pressed, with `held` down first, as the app sees it.
+    fn press(
+        &mut self,
+        button: Button,
+        held: Option<Held>,
+        ui: &mut impl FnMut(Ui),
+    ) -> Result<(), String> {
+        if let Some(held) = held {
+            ui(Ui::Mods(match held {
+                Held::Ctrl => iced::keyboard::Modifiers::CTRL,
+                Held::Shift => iced::keyboard::Modifiers::SHIFT,
+            }));
+            std::thread::sleep(HOLD);
+            self.held = Some(held);
+        }
+        self.tell(&format!("press {}", button.name()))
+    }
+
+    /// `button` let go, then the key held with its press.
+    fn release(&mut self, button: Button, ui: &mut impl FnMut(Ui)) -> Result<(), String> {
+        self.tell(&format!("release {}", button.name()))?;
+        if self.held.take().is_some() {
+            std::thread::sleep(HOLD);
+            ui(Ui::Mods(iced::keyboard::Modifiers::empty()));
+        }
+        Ok(())
+    }
+
+    /// To `x`, `y` on the dashboard a stride at a time; the first move of
+    /// all, straight there.
+    fn glide(&mut self, x: f64, y: f64) -> Result<(), String> {
+        let layout = Layout::now()?;
+        let to = (layout.left + x, layout.top + y);
+        let from = self.at.unwrap_or(to);
+        let strides = ((to.0 - from.0).hypot(to.1 - from.1) / STRIDE)
+            .ceil()
+            .max(1.0) as u32;
+        for stride in 1..=strides {
+            let part = f64::from(stride) / f64::from(strides);
+            let (x, y) = (
+                from.0 + (to.0 - from.0) * part,
+                from.1 + (to.1 - from.1) * part,
+            );
+            self.tell(&format!(
+                "move {x:.2} {y:.2} {} {}",
+                layout.wide, layout.tall
+            ))?;
+            std::thread::sleep(STEP);
+        }
+        self.at = Some(to);
+        Ok(())
+    }
+
+    /// A line to the mouse, as `scripts/e2e/mouse.py` reads them.
+    fn tell(&mut self, line: &str) -> Result<(), String> {
+        use std::io::Write;
+        if self.mouse.is_none() {
+            let fifo = std::env::var_os("E2E_MOUSE").ok_or("E2E_MOUSE is not set")?;
+            let mouse = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&fifo)
+                .map_err(|err| format!("the mouse at {}: {err}", Path::new(&fifo).display()))?;
+            self.mouse = Some(mouse);
+        }
+        let mouse = self.mouse.as_mut().expect("opened above");
+        writeln!(mouse, "{line}").map_err(|err| format!("the mouse: {err}"))
+    }
+}
+
+impl Button {
+    fn name(self) -> &'static str {
+        match self {
+            Button::Left => "left",
+            Button::Right => "right",
+        }
+    }
+}
+
+/// Sway's layout as it is: how big it is, and where in it the dashboard's
+/// window starts, wherever sway has put it.
+struct Layout {
+    wide: f64,
+    tall: f64,
+    left: f64,
+    top: f64,
+}
+
+impl Layout {
+    fn now() -> Result<Layout, String> {
+        fn find(node: &serde_json::Value) -> Option<(f64, f64)> {
+            let ours = node["app_id"] == crate::DASHBOARD_APP_ID
+                && node["pid"].as_u64() == Some(u64::from(std::process::id()));
+            if ours {
+                return Some((node["rect"]["x"].as_f64()?, node["rect"]["y"].as_f64()?));
+            }
+            ["nodes", "floating_nodes"]
+                .iter()
+                .filter_map(|nodes| node[nodes].as_array())
+                .flatten()
+                .find_map(find)
+        }
+        let tree = swaymsg(&["-t", "get_tree"])?;
+        let (left, top) = find(&tree).ok_or("sway has no dashboard window of this app")?;
+        let size = |side: &str| {
+            tree["rect"][side]
+                .as_f64()
+                .ok_or("sway's layout has no size")
+        };
+        Ok(Layout {
+            wide: size("width")?,
+            tall: size("height")?,
+            left,
+            top,
+        })
+    }
+}
+
+/// Why a script can't move the pointer here, if it can't: it needs the
+/// sway `scripts/e2e.sh` runs it in, and the mouse plugged in there.
+pub fn pointer_ready() -> Result<(), String> {
+    let mouse = std::env::var_os("E2E_MOUSE").filter(|fifo| Path::new(fifo).exists());
+    if std::env::var_os("SWAYSOCK").is_none() || mouse.is_none() {
+        return Err(
+            "pointer commands need the sway scripts/e2e.sh runs the app in, \
+             with its mouse (SWAYSOCK and E2E_MOUSE are set there): \
+             run the script with scripts/e2e.sh, under E2E_COMPOSITOR=sway"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Asks sway for something, and reads its answer.
+fn swaymsg(args: &[&str]) -> Result<serde_json::Value, String> {
+    let out = std::process::Command::new("swaymsg")
+        .arg("-r")
+        .args(args)
+        .output()
+        .map_err(|err| format!("swaymsg: {err}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "swaymsg {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stdout).trim()
+        ));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|err| format!("swaymsg {}: {err}", args.join(" ")))
+}
+
+/// The library's own resource for the file at `path`, once its folders
+/// are indexed. A folder named from a config given by a relative path is
+/// indexed by relative paths: the two are the same file where their
+/// canonical paths are.
+fn library_file(engine: &Engine, library: &Library, path: &Path) -> Option<Resource> {
+    if !library.settle(Duration::from_secs(60)) {
+        log("script: indexing still running after 60s");
+    }
+    let wanted = std::fs::canonicalize(path).ok()?;
+    let all = Query::new("").with_limit(usize::MAX);
+    engine
+        .search_index(&all)
+        .into_iter()
+        .find(|hit| match &hit.resource.location {
+            Location::File(at) => std::fs::canonicalize(at).is_ok_and(|at| at == wanted),
+            _ => false,
+        })
+        .map(|hit| (*hit.resource).clone())
 }
 
 fn search(engine: &Engine, library: &Library, text: &str) -> Vec<Hit> {
@@ -723,7 +1222,7 @@ mod tests {
         let downloads = Downloads::new("/nonexistent".into());
         Script::parse(source, Path::new("/media"), None)
             .unwrap()
-            .run(&engine, &library, &downloads, |_| {}, || {});
+            .run(&engine, &library, &downloads, |_| {}, |_| None, || {});
         engine
     }
 
@@ -783,6 +1282,17 @@ mod tests {
     }
 
     #[test]
+    fn starts_gives_the_plan_its_time_of_day() {
+        let engine = run("hymn\nstarts 19:30");
+        assert_eq!(
+            engine.plan().starts.map(|time| time.to_string()),
+            Some("19:30".to_string())
+        );
+        assert!(Script::parse("starts 25:00", Path::new(""), None).is_err());
+        assert!(Script::parse("starts", Path::new(""), None).is_err());
+    }
+
+    #[test]
     fn comments_and_blank_lines_are_skipped() {
         let script =
             Script::parse("# setup\n\n  wait 5\nshot first\n", Path::new(""), None).unwrap();
@@ -801,12 +1311,13 @@ mod tests {
         let library = Library::start(engine.clone(), Config::default());
         let downloads = Downloads::new("/nonexistent".into());
         let mut sent = Vec::new();
-        let script = "type pa\nselect 2\nclick 3\ndrag 1 3 below\ndrop\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
+        let script = "type pa\nselect 2\nclick 3\ndrag 1 3 below\ndrop\nfold 2\nlibrary Black screen\nlibrary-layout Shapes\nfilm 3\npress PageDown\npress ctrl+s\nrename Sunday 3\nopen Sunday 3";
         Script::parse(script, Path::new(""), None).unwrap().run(
             &engine,
             &library,
             &downloads,
             |ui| sent.push(ui),
+            |_| None,
             || {},
         );
         assert_eq!(
@@ -817,6 +1328,10 @@ mod tests {
                 Ui::Click(2),
                 Ui::Drag(0, 2, Half::Lower),
                 Ui::Drop,
+                Ui::Fold(1),
+                Ui::Library("Black screen".into()),
+                Ui::LibraryLayout(crate::shelf::Layout::Shapes),
+                Ui::Film(2),
                 Ui::Press(Op::Next),
                 Ui::Press(Op::Save),
                 Ui::Rename("Sunday 3".into()),
@@ -842,6 +1357,35 @@ mod tests {
 
         let engine = run("add a.png\nnext");
         assert_eq!(engine.stage().program.unwrap().resource.title, "a.png");
+    }
+
+    #[test]
+    fn a_file_is_added_as_the_app_has_it() {
+        let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/e2e/fixtures");
+        let added = |config: Config| {
+            let engine = run_with(config, &format!("add {fixtures}/image.png\nnext"));
+            let resource = engine.stage().program.unwrap().resource;
+            (resource.title.clone(), resource.subtitle.clone())
+        };
+        let folder = format!("[[folders]]\npath = '{fixtures}'\nlabel = \"Fixtures\"");
+        let folder = Config::parse(&folder, Path::new("/"), None).unwrap();
+        assert_eq!(
+            added(folder),
+            ("image".to_string(), Some("Fixtures".to_string())),
+            "in a library folder, the library's own"
+        );
+        let relative = "[[folders]]\npath = 'fixtures'\nlabel = \"Fixtures\"";
+        let relative = Config::parse(relative, Path::new("../../scripts/e2e"), None).unwrap();
+        assert_eq!(
+            added(relative),
+            ("image".to_string(), Some("Fixtures".to_string())),
+            "a folder named from a relative config is the same folder"
+        );
+        assert_eq!(
+            added(Config::default()),
+            ("image".to_string(), Some(fixtures.to_string())),
+            "elsewhere, as its pasted path would be"
+        );
     }
 
     #[test]
@@ -882,6 +1426,78 @@ mod tests {
     }
 
     #[test]
+    fn pointer_commands_read_places_buttons_and_keys() {
+        let read = |source| {
+            Script::parse(source, Path::new(""), None)
+                .map(|script| script.commands)
+                .map_err(|err| err.to_string())
+        };
+        let at = |x, y| At { x, y };
+        let pointer = |pointer| Ok(vec![Command::Pointer(pointer)]);
+        assert_eq!(read("pointer 640 360"), pointer(Pointer::To(at(640, 360))));
+        let toward = |aim| pointer(Pointer::Toward(aim));
+        assert_eq!(read("pointer-at-row 3"), toward(Aim::Row(2, Spot::Middle)));
+        assert_eq!(
+            read("pointer-at-row 3 foot"),
+            toward(Aim::Row(2, Spot::Foot))
+        );
+        assert_eq!(
+            read("pointer-at-row 4 chevron"),
+            toward(Aim::Row(3, Spot::Chevron))
+        );
+        assert_eq!(read("pointer-at title"), toward(Aim::Title));
+        assert_eq!(read("pointer-at ring-note"), toward(Aim::RingNote));
+        assert_eq!(read("pointer-at library 5"), toward(Aim::Library(4)));
+        assert!(read("pointer-at library 0").is_err(), "counted from 1");
+        assert!(read("pointer-at nowhere").is_err());
+        assert_eq!(
+            read("pointer-press"),
+            pointer(Pointer::Press(Button::Left, None))
+        );
+        assert_eq!(
+            read("pointer-press left ctrl"),
+            pointer(Pointer::Press(Button::Left, Some(Held::Ctrl)))
+        );
+        assert_eq!(
+            read("pointer-release right"),
+            pointer(Pointer::Release(Button::Right))
+        );
+        assert_eq!(
+            read("click-at 10 20 right ctrl"),
+            pointer(Pointer::Click(at(10, 20), Button::Right, Some(Held::Ctrl)))
+        );
+        assert_eq!(
+            read("click-at 10 20 shift"),
+            pointer(Pointer::Click(at(10, 20), Button::Left, Some(Held::Shift)))
+        );
+        assert_eq!(
+            read("drag-at 1 2 3 4"),
+            pointer(Pointer::Drag(at(1, 2), at(3, 4)))
+        );
+        assert_eq!(
+            read("pointer 640"),
+            Err(r#"line 1: pointer needs X Y, got "640""#.to_string())
+        );
+        assert!(read("pointer-at-row 0").is_err());
+        assert!(read("pointer-at-row 2 side").is_err());
+        assert!(read("click-at 10 20 middle").is_err());
+        assert!(read("click-at 10 20 ctrl shift").is_err());
+        assert!(read("pointer-press up").is_err());
+        assert!(read("pointer-release ctrl").is_err());
+        assert!(read("drag-at 1 2 3").is_err());
+        assert!(
+            Script::parse("pointer 1 2", Path::new(""), None)
+                .unwrap()
+                .points()
+        );
+        assert!(
+            !Script::parse("wait 5", Path::new(""), None)
+                .unwrap()
+                .points()
+        );
+    }
+
+    #[test]
     fn errors_name_the_line() {
         let err = |source| {
             Script::parse(source, Path::new("/media"), None)
@@ -897,6 +1513,10 @@ mod tests {
         assert_eq!(err("search"), "line 1: search needs text");
         assert_eq!(err("type"), "line 1: type needs text");
         assert_eq!(err("open"), "line 1: open needs a name");
+        assert_eq!(
+            err("library-layout tiles"),
+            r#"line 1: library-layout needs list, grid or shapes, got "tiles""#
+        );
         assert_eq!(
             err("select 0"),
             r#"line 1: select needs a number from 1, got "0""#

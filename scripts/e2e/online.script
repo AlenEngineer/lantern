@@ -1,6 +1,7 @@
-# The on-request bangs, over the network: !yt waits for Enter, then lists
-# YouTube videos that preview and download like a pasted link. !gi without
-# an API key in the config says how to add one.
+# The on-request bangs, over the network: !yt waits for Enter; with no
+# YouTube Data API key and yt-dlp not chosen, as here, it says how to set
+# one up (youtube-thumbs.script lists results). !gi without an API key in
+# the config says how to add one.
 wait 1500
 type !
 wait 300
@@ -9,11 +10,8 @@ type !yt sublime gracia himno
 wait 800
 shot 2-yt-waits-for-enter
 press enter
-wait 15000
-shot 3-yt-results
-press enter
-wait 3000
-shot 4-yt-preview
+wait 1500
+shot 3-yt-needs-setup
 # A pasted image link: downloaded into the cache, then shown.
 type https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png
 wait 800

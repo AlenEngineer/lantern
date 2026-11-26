@@ -27,12 +27,18 @@ pub const BOLD: Font = Font {
 };
 
 /// Text sizes, by purpose.
+/// The plan's name over it while planning: the page's title.
+pub const TITLE: f32 = 22.0;
 pub const HEADING: f32 = 16.0;
 pub const BODY: f32 = 13.0;
 pub const META: f32 = 12.0;
+/// On a small picture's corner, where 12px would cover it.
+pub const BADGE: f32 = 9.0;
 
 /// Row and panel corners.
 pub const ROW_RADIUS: f32 = 12.0;
+/// A small picture's corners.
+pub const THUMB_RADIUS: f32 = 6.0;
 /// Buttons and chips are pills: iced caps a radius at half the height.
 pub const PILL_RADIUS: f32 = 999.0;
 /// Standard and compact pill heights.
@@ -180,7 +186,7 @@ pub fn thumb(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
         background: Some(Background::Color(p.surface_container_highest)),
         border: Border {
-            radius: 6.0.into(),
+            radius: THUMB_RADIUS.into(),
             ..Border::default()
         },
         ..container::Style::default()
@@ -259,11 +265,74 @@ pub fn float_colour(p: Palette, see_through: f32) -> Color {
     }
 }
 
+/// The brightest ground, for what is being worked on: `surface`, and
+/// with Glass on it lets the least of the desktop through.
+pub fn page_colour(p: Palette, see_through: f32) -> Color {
+    Color {
+        a: (1.0 - 0.75 * see_through).clamp(0.55, 1.0),
+        ..p.surface
+    }
+}
+
+/// The window's ground where the page is on it, and so the ground of
+/// its margins: `surface` darkened, and with Glass on clearer than the
+/// page, though not so clear that what's written on it is lost.
+pub fn margin_colour(p: Palette, see_through: f32) -> Color {
+    Color {
+        a: (1.0 - 0.85 * see_through).clamp(0.3, 1.0),
+        ..darker(p.surface, 0.2)
+    }
+}
+
+/// A pane's own ground: `colour` with `radius` corners and no edge. On a
+/// card a pane has none.
+pub fn ground(
+    colour: Option<Color>,
+    radius: iced::border::Radius,
+) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: colour.map(Background::Color),
+        border: Border {
+            radius,
+            ..Border::default()
+        },
+        ..container::Style::default()
+    }
+}
+
 /// The strip: the top of the card the panes are in, drawn over it with
 /// no ground of its own, so a panel can drop from it without a seam.
 pub fn strip(p: Palette) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
         text_color: Some(p.on_surface),
+        ..container::Style::default()
+    }
+}
+
+/// The strip with no card under it: a pill of a card's colour on the
+/// window's ground. Its shadow goes while a panel `hangs` from it, or it
+/// would fall on the panel as a seam.
+pub fn floating_strip(
+    p: Palette,
+    see_through: f32,
+    radius: f32,
+    hangs: bool,
+) -> impl Fn(&iced::Theme) -> container::Style {
+    move |_| container::Style {
+        background: Some(Background::Color(float_colour(p, see_through))),
+        text_color: Some(p.on_surface),
+        border: Border {
+            radius: radius.into(),
+            ..Border::default()
+        },
+        shadow: match hangs {
+            true => iced::Shadow::default(),
+            false => iced::Shadow {
+                color: Color::BLACK.scale_alpha(0.45),
+                offset: iced::Vector::new(0.0, 6.0),
+                blur_radius: 20.0,
+            },
+        },
         ..container::Style::default()
     }
 }
@@ -325,27 +394,60 @@ pub fn strip_item(
     }
 }
 
-/// The window's ground, under its cards: darker than `surface`, and
+/// The window's ground under its cards: darker than `surface`, and
 /// `see_through` of the way to clear (0 is solid), so the desktop shows
 /// through a transparent window.
-pub fn window(p: Palette, see_through: f32) -> impl Fn(&iced::Theme) -> container::Style {
+pub fn window_colour(p: Palette, see_through: f32) -> Color {
+    Color {
+        a: (1.0 - 1.2 * see_through).clamp(0.06, 1.0),
+        ..darker(p.surface, 0.35)
+    }
+}
+
+/// The window, on `ground`.
+pub fn window(p: Palette, ground: Color) -> impl Fn(&iced::Theme) -> container::Style {
     move |_| container::Style {
-        background: Some(Background::Color(Color {
-            a: (1.0 - 1.2 * see_through).clamp(0.06, 1.0),
-            ..darker(p.surface, 0.35)
-        })),
+        background: Some(Background::Color(ground)),
         text_color: Some(p.on_surface),
         ..container::Style::default()
     }
 }
 
-/// A picture of the stage: black, ringed in `ring` (none for an empty one).
-pub fn monitor(ring: Option<Color>) -> impl Fn(&iced::Theme) -> container::Style {
+/// What the edge of a picture of the stage says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Edge {
+    /// Nothing: an empty monitor in a run or Live.
+    None,
+    /// Only that it is a screen: while planning nothing reaches the
+    /// projector, so a picture is no state, and its edge is its own.
+    Hairline,
+    /// A state, in its role's colour: on stage, or what comes next.
+    Ring(Color),
+}
+
+impl Edge {
+    /// The edge of an empty monitor where a full one has this edge: a
+    /// ring says what is shown, so with nothing shown there is none.
+    pub fn empty(self) -> Edge {
+        match self {
+            Edge::Ring(_) => Edge::None,
+            edge => edge,
+        }
+    }
+}
+
+/// A picture of the stage: black, with its `edge`.
+pub fn monitor(edge: Edge) -> impl Fn(&iced::Theme) -> container::Style {
+    let (color, width) = match edge {
+        Edge::None => (Color::TRANSPARENT, 0.0),
+        Edge::Hairline => (Color::WHITE.scale_alpha(0.08), 1.0),
+        Edge::Ring(colour) => (colour, 2.0),
+    };
     move |_| container::Style {
         background: Some(Background::Color(Color::BLACK)),
         border: Border {
-            color: ring.unwrap_or(Color::TRANSPARENT),
-            width: if ring.is_some() { 2.0 } else { 0.0 },
+            color,
+            width,
             radius: ROW_RADIUS.into(),
         },
         ..container::Style::default()
@@ -373,6 +475,20 @@ pub fn input(p: Palette) -> impl Fn(&iced::Theme, text_input::Status) -> text_in
             placeholder: p.outline,
             value: p.on_surface,
             selection: Palette::tint(p.primary, 0.4),
+        }
+    }
+}
+
+/// The library's find box: the search field's look as a pill.
+pub fn find(p: Palette) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
+    move |theme, status| {
+        let style = input(p)(theme, status);
+        text_input::Style {
+            border: Border {
+                radius: PILL_RADIUS.into(),
+                ..style.border
+            },
+            ..style
         }
     }
 }
@@ -515,6 +631,15 @@ pub enum Icon {
     Copy,
     /// A triangle with a mark in it: this can't be.
     Warning,
+    /// A chevron pointing down: a list drops from it.
+    Down,
+    /// Lines with a dot each: things in a list.
+    ViewList,
+    /// Four even squares: things in a grid.
+    ViewGrid,
+    /// Blocks of different shapes packed together: things at their own
+    /// shapes.
+    ViewShapes,
 }
 
 impl Icon {
@@ -566,6 +691,12 @@ impl Icon {
                 "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"
             ),
             Icon::Warning => mdi!("M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16"),
+            Icon::Down => mdi!("M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"),
+            Icon::ViewList => mdi!(
+                "M7,5H21V7H7V5M7,13V11H21V13H7M4,4.5A1.5,1.5 0 0,1 5.5,6A1.5,1.5 0 0,1 4,7.5A1.5,1.5 0 0,1 2.5,6A1.5,1.5 0 0,1 4,4.5M4,10.5A1.5,1.5 0 0,1 5.5,12A1.5,1.5 0 0,1 4,13.5A1.5,1.5 0 0,1 2.5,12A1.5,1.5 0 0,1 4,10.5M7,19V17H21V19H7M4,16.5A1.5,1.5 0 0,1 5.5,18A1.5,1.5 0 0,1 4,19.5A1.5,1.5 0 0,1 2.5,18A1.5,1.5 0 0,1 4,16.5Z"
+            ),
+            Icon::ViewGrid => mdi!("M3,11H11V3H3M3,21H11V13H3M13,21H21V13H13M13,3V11H21V3"),
+            Icon::ViewShapes => mdi!("M13,3V9H21V3M13,21H21V11H13M3,21H11V15H3M3,13H11V3H3V13Z"),
             Icon::Contrast => mdi!(
                 "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20V4Z"
             ),

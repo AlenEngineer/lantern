@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; background: #241a1d; color: #f2dfe2; overflow: hidden;
+               font: 14px Inter, "Noto Sans", system-ui, sans-serif; }
+  .strip { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 14px;
+           padding: 0 14px 0 18px; border-bottom: 1px solid #3a2a2e; }
+  .title { font-weight: 600; white-space: nowrap; }
+  .said { flex: 1; text-align: right; font-size: 13px; color: #b9a3a8; white-space: nowrap;
+          overflow: hidden; text-overflow: ellipsis; }
+  .said.picked { color: #f5a9bc; }
+  button { border: 0; border-radius: 999px; padding: 7px 16px; background: #f5a9bc; color: #4a1d2a;
+           font: 700 13px inherit; font-family: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid #ffd0db; outline-offset: 2px; }
+</style>
+</head>
+<body>
+<div class="strip">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f5a9bc" stroke-width="2.2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="3" y="5" width="18" height="14" rx="3"></rect><path d="M10 9l5 3-5 3z"></path>
+  </svg>
+  <span class="title">YouTube · click a video to add it to lantern</span>
+  <span class="said" id="said">Nothing picked yet</span>
+  <button type="button" id="done">Done</button>
+</div>
+<script>
+  // lantern's strip over YouTube's page, in a web view of its own: the
+  // page below is YouTube's, untouched.
+  function say(text) {
+    const said = document.getElementById("said");
+    said.textContent = text;
+    said.classList.toggle("picked", text !== "Nothing picked yet");
+  }
+  document.getElementById("done").addEventListener("click", () => {
+    window.ipc.postMessage(JSON.stringify({ event: "done" }));
+  });
+</script>
+</body>
+</html>

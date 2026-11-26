@@ -63,6 +63,32 @@ impl Request {
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value)
     }
+
+    /// [`query`](Request::query) with its `%xx` escapes undone, for a
+    /// value that can hold anything, such as a result's id: a path with
+    /// spaces, a `#`.
+    pub fn query_text(&self, name: &str) -> Option<String> {
+        let value = self.query(name)?.as_bytes();
+        let mut bytes = Vec::with_capacity(value.len());
+        let mut at = 0;
+        while at < value.len() {
+            let escaped = value
+                .get(at + 1..at + 3)
+                .filter(|_| value[at] == b'%')
+                .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
+            match escaped {
+                Some(byte) => {
+                    bytes.push(byte);
+                    at += 3;
+                }
+                None => {
+                    bytes.push(value[at]);
+                    at += 1;
+                }
+            }
+        }
+        String::from_utf8(bytes).ok()
+    }
 }
 
 /// Writes a whole answer and ends the connection.
@@ -77,9 +103,25 @@ pub fn respond_bytes(
     kind: &str,
     body: &[u8],
 ) -> io::Result<()> {
+    write(phone, status, kind, "no-store", body)
+}
+
+/// A body that never changes while the app runs, such as a font: the
+/// phone keeps it.
+pub fn respond_kept(phone: &mut TcpStream, kind: &str, body: &[u8]) -> io::Result<()> {
+    write(phone, "200 OK", kind, "max-age=604800", body)
+}
+
+fn write(
+    phone: &mut TcpStream,
+    status: &str,
+    kind: &str,
+    cache: &str,
+    body: &[u8],
+) -> io::Result<()> {
     phone.write_all(
         format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nConnection: close\r\n\r\n",
             body.len()
         )
         .as_bytes(),

@@ -1,0 +1,27 @@
+# The gaps left against Plan mode's mockup: times of day left of the
+# dots (the plan starts at 19:00), a text step's picture (the hymn), the
+# filmstrip under the preview for a step with several slides, the
+# library's soft warning on a small image (fixtures/image.png is 800x450),
+# and the plan's title line at the top, unscrolled.
+wait 2500
+section 5 Bienvenida
+add fixtures/photo.jpg
+add fixtures/video.mp4
+section 15 Alabanza
+hymn
+add fixtures/image.png
+starts 19:00
+press ctrl+o
+wait 2500
+library Fixtures
+wait 1500
+step 5
+wait 2500
+shot gaps
+click-at 1105 279
+wait 800
+shot film-2
+step 2
+wait 2000
+shot photo
+quit

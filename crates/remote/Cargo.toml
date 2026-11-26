@@ -10,6 +10,10 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+socket2.workspace = true
+
+[dev-dependencies]
+lantern-source-bible = { path = "../../sources/bible" }
 
 [lints]
 workspace = true

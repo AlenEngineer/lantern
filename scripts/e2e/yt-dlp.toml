@@ -1,0 +1,8 @@
+# The config for the scripts that play or search YouTube through yt-dlp
+# (youtube.script, youtube-thumbs.script): chosen, as an operator would.
+colors = "fixtures/colors.json"
+youtube = "yt-dlp-first"
+
+[[folders]]
+path = "fixtures"
+label = "Fixtures"

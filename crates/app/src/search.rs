@@ -24,6 +24,15 @@ pub struct Group {
     pub hits: Vec<Arc<Resource>>,
     /// Why the source failed, if it did.
     pub error: Option<String>,
+    /// Its hits are videos picked on YouTube's own site, not search results.
+    pub picked: bool,
+}
+
+impl Group {
+    /// The id of the source the group's hits came from.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
 }
 
 /// Where the live part of the current query stands.
@@ -296,11 +305,35 @@ impl Search {
                     source: source.to_string(),
                     hits: Vec::new(),
                     error: None,
+                    picked: false,
                 });
                 self.groups.len() - 1
             }
         };
         &mut self.groups[index]
+    }
+
+    /// A video picked on YouTube's own site: it joins the YouTube group,
+    /// last, once. It stays until the query changes, like any result.
+    pub fn add_pick(&mut self, video: Arc<Resource>, engine: &Engine) {
+        let source = video.id.source().to_string();
+        let group = self.group(&source, &source_names(engine));
+        group.picked = true;
+        if !group.hits.iter().any(|hit| hit.id == video.id) {
+            group.hits.push(video);
+        }
+    }
+
+    /// Puts `resource` in place of the result with its id (a picked video
+    /// that now has its title). Whether there was one.
+    pub fn replace(&mut self, resource: Arc<Resource>) -> bool {
+        for group in &mut self.groups {
+            if let Some(hit) = group.hits.iter_mut().find(|hit| hit.id == resource.id) {
+                *hit = resource;
+                return true;
+            }
+        }
+        false
     }
 
     pub fn groups(&self) -> &[Group] {
@@ -539,6 +572,31 @@ mod tests {
             vec!["YouTube video jNQXAC9IVRw".to_string()],
         );
         assert_eq!(names(&search), [link]);
+    }
+
+    #[test]
+    fn videos_picked_on_youtube_join_its_group_once_and_take_their_titles() {
+        let engine = engine();
+        let mut search = Search::default();
+        search.edit("!yt himno".into(), &engine);
+        let source = lantern_engine::SourceId::new("youtube").unwrap();
+        let video = Arc::new(lantern_source_link::youtube_video(&source, "jNQXAC9IVRw"));
+        search.add_pick(video.clone(), &engine);
+        search.add_pick(video.clone(), &engine);
+        let group = &search.groups()[0];
+        assert!(group.picked);
+        assert_eq!(group.hits.len(), 1, "picked twice, listed once");
+        let mut titled = (*video).clone();
+        titled.title = "Me at the zoo".into();
+        assert!(search.replace(Arc::new(titled)));
+        assert_eq!(search.groups()[0].hits[0].title, "Me at the zoo");
+        assert_eq!(
+            search.pick_nth(0).unwrap().id,
+            video.id,
+            "picked like any result"
+        );
+        search.edit("!yt otro".into(), &engine);
+        assert!(search.groups().is_empty(), "a new query starts afresh");
     }
 
     #[test]

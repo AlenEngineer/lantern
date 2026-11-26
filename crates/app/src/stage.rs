@@ -8,10 +8,12 @@
 //! the plan's next step), so a take of a preloaded video only swaps a player
 //! that is already built.
 //!
-//! A YouTube video in the plan loads like a local one, from the download
-//! cache, and waits for its download when it isn't there yet. One shown
-//! outside the plan plays straight from YouTube ([`open_stream`]), and is
-//! downloaded only if that fails. An image at a link is downloaded into the
+//! A YouTube video plays in YouTube's own player, a window of its own
+//! over the stage ([`WebPlayer`]), unless the operator chose yt-dlp
+//! ([`route`]). With yt-dlp, a video in the plan loads like a local one,
+//! from the download cache, and waits for its download when it isn't there
+//! yet; one shown outside the plan plays straight from YouTube
+//! ([`open_stream`]), and is downloaded only if that fails. An image at a link is downloaded into the
 //! cache first, falling back to its [thumbnail](Resource::THUMBNAIL) when the
 //! site refuses.
 
@@ -32,7 +34,9 @@ use lantern_engine::{
     StageState, Timed,
 };
 
+use crate::config::YoutubeMode;
 use crate::fading::{Fades, Levels, loudness};
+use crate::web_player::{Command as WebCommand, Event as WebEvent, WebPlayer};
 use crate::youtube::{Download, Downloads, Stream, YoutubeVideo};
 
 /// What the stage has loaded for one resource.
@@ -46,6 +50,10 @@ pub enum Content {
     Pages(Vec<Handle>),
     /// A player for a sound file: heard, with nothing to show.
     Sound(Sound),
+    /// A YouTube video in YouTube's own player, from `start` seconds. The
+    /// player is the stage's one [`WebPlayer`]: this only says what it
+    /// plays.
+    Official { id: String, start: u32 },
 }
 
 impl Content {
@@ -55,7 +63,7 @@ impl Content {
         match self {
             Content::Image(handle) => Some(Content::Image(handle.clone())),
             Content::Pages(pages) => Some(Content::Pages(pages.clone())),
-            Content::Video { .. } | Content::Sound(_) => None,
+            Content::Video { .. } | Content::Sound(_) | Content::Official { .. } => None,
         }
     }
 
@@ -70,7 +78,7 @@ impl Content {
         match self {
             Content::Image(handle) => of(handle),
             Content::Pages(pages) => pages.iter().map(of).sum(),
-            Content::Video { .. } | Content::Sound(_) => 0,
+            Content::Video { .. } | Content::Sound(_) | Content::Official { .. } => 0,
         }
     }
 }
@@ -81,6 +89,52 @@ const KEEP_BUDGET: usize = 512 * 1024 * 1024;
 
 /// How many of them load at a time.
 const KEEP_AT_ONCE: usize = 2;
+
+/// How a YouTube video plays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// In YouTube's own player.
+    Official,
+    /// Through yt-dlp: from its download, or streamed.
+    YtDlp,
+    /// Through yt-dlp, and in YouTube's player if that fails.
+    YtDlpThenOfficial,
+}
+
+/// How a YouTube video plays with `mode` chosen. `refused`: YouTube's
+/// player already wouldn't play it. yt-dlp is only ever used when the
+/// operator chose it.
+pub fn route(mode: YoutubeMode, refused: bool) -> Via {
+    match mode {
+        YoutubeMode::Official => Via::Official,
+        YoutubeMode::YtDlpFirst => Via::YtDlpThenOfficial,
+        YoutubeMode::OfficialFirst if refused => Via::YtDlp,
+        YoutubeMode::OfficialFirst => Via::Official,
+    }
+}
+
+/// What YouTube's player error `code` means, to say to the operator.
+fn refusal(code: u32) -> String {
+    match code {
+        2 => "YouTube says this isn't a video's address".into(),
+        5 => "YouTube's player couldn't play it (no internet?)".into(),
+        100 => "YouTube says this video is gone or private".into(),
+        101 | 150 | 153 => {
+            "YouTube won't play this video outside its site (or it doesn't exist)".into()
+        }
+        code => format!("YouTube's player stopped (error {code})"),
+    }
+}
+
+/// How much of YouTube's player shows: none in a blackout, else as far
+/// as its fade has come.
+fn picture_level(stage: &StageState, faded: f32) -> f64 {
+    if stage.blackout {
+        0.0
+    } else {
+        f64::from(faded)
+    }
+}
 
 /// How the stage presents a resource. Decided from kind and location alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -197,9 +251,10 @@ impl Loader {
 
     /// Blocks: decodes, builds a player, runs `pdftoppm` (after LibreOffice,
     /// for a deck), or waits for or makes a download.
-    /// `stream`: a YouTube video that isn't downloaded plays straight from
-    /// YouTube, and is downloaded only if that fails.
-    fn load(&self, downloads: &Arc<Downloads>, stream: bool) -> Result<Content, String> {
+    /// `via`: how a YouTube video plays. `stream`: one through yt-dlp that
+    /// isn't downloaded plays straight from YouTube, and is downloaded only
+    /// if that fails.
+    fn load(&self, downloads: &Arc<Downloads>, stream: bool, via: Via) -> Result<Content, String> {
         match self {
             Loader::Image(path) => decode_image(existing(path)?).map(Content::Image),
             Loader::RemoteImage(urls) => {
@@ -208,24 +263,22 @@ impl Loader {
             Loader::Video(path) => open_file(path),
             Loader::Audio(path) => Sound::open(existing(path)?).map(Content::Sound),
             Loader::Youtube(video) => {
-                if let Some(path) = downloads.cached(video) {
-                    return open_file(&path);
-                }
-                if stream {
-                    match streamed(video) {
-                        Ok(content) => return Ok(content),
-                        Err(err) => crate::log(format!(
-                            "stage: can't stream {} ({err}), downloading it",
-                            video.id
-                        )),
+                let official = || Content::Official {
+                    id: video.id.clone(),
+                    start: video.start,
+                };
+                match via {
+                    Via::Official => Ok(official()),
+                    Via::YtDlp => through_yt_dlp(video, downloads, stream),
+                    Via::YtDlpThenOfficial => {
+                        through_yt_dlp(video, downloads, stream).or_else(|err| {
+                            crate::log(format!(
+                                "stage: yt-dlp can't play {} ({err}): YouTube's player instead",
+                                video.id
+                            ));
+                            Ok(official())
+                        })
                     }
-                }
-                match downloads.ready(video) {
-                    Ok(path) => open_file(&path),
-                    // A live video has nothing to download: it plays as
-                    // it comes, in a plan too.
-                    Err(_) if downloads.state(&video.id) == Some(Download::Live) => streamed(video),
-                    Err(reason) => Err(reason),
                 }
             }
             Loader::Pdf(path, page) => render_pdf(existing(path)?, &cache_dir().join("pdf"))
@@ -248,6 +301,34 @@ impl Loader {
                     .map(Content::Pages)
             }
         }
+    }
+}
+
+/// A player for `video` through yt-dlp: its download, or straight from
+/// YouTube when `stream`.
+fn through_yt_dlp(
+    video: &YoutubeVideo,
+    downloads: &Arc<Downloads>,
+    stream: bool,
+) -> Result<Content, String> {
+    if let Some(path) = downloads.cached(video) {
+        return open_file(&path);
+    }
+    if stream {
+        match streamed(video) {
+            Ok(content) => return Ok(content),
+            Err(err) => crate::log(format!(
+                "stage: can't stream {} ({err}), downloading it",
+                video.id
+            )),
+        }
+    }
+    match downloads.ready(video) {
+        Ok(path) => open_file(&path),
+        // A live video has nothing to download: it plays as it comes, in a
+        // plan too.
+        Err(_) if downloads.state(&video.id) == Some(Download::Live) => streamed(video),
+        Err(reason) => Err(reason),
     }
 }
 
@@ -673,15 +754,16 @@ fn spawn(
     resource: ResourceId,
     loader: Loader,
     downloads: Arc<Downloads>,
-    stream: bool,
+    (stream, via): (bool, Via),
     dwell: Option<Arc<Mutex<Wanted>>>,
 ) -> iced::Task<Arc<Loaded>> {
     iced::Task::future(async move {
         let (done, result) = iced::futures::channel::oneshot::channel();
         let id = resource.clone();
         std::thread::spawn(move || {
+            // YouTube's own player asks YouTube for nothing until it plays.
             let passed_over = match (&loader, &dwell) {
-                (Loader::Youtube(video), Some(wanted)) => {
+                (Loader::Youtube(video), Some(wanted)) if via != Via::Official => {
                     downloads.cached(video).is_none() && !worth_loading(wanted, &id, DWELL)
                 }
                 _ => false,
@@ -689,7 +771,7 @@ fn spawn(
             let _ = done.send(if passed_over {
                 Err(PASSED_OVER.to_string())
             } else {
-                loader.load(&downloads, stream)
+                loader.load(&downloads, stream, via)
             });
         });
         let result = result
@@ -856,6 +938,21 @@ pub struct Stage {
     /// `stream_others` says so.
     planned: HashSet<String>,
     stream_others: bool,
+    /// How YouTube videos play, as the operator chose.
+    youtube: YoutubeMode,
+    /// The videos YouTube's player wouldn't play this session: with
+    /// "YouTube first, then yt-dlp", these go through yt-dlp.
+    refused: HashSet<String>,
+    /// YouTube's own player, once one has played; where it goes (a point
+    /// on the stage's screen, when known); and where it last said it was.
+    web: Option<WebPlayer>,
+    web_at: Option<(i32, i32)>,
+    /// Where the stage window said it is, for a desktop that can't be
+    /// asked which screen it's on; and whether it's open at all: YouTube's
+    /// player shows only where the stage is.
+    web_seen: Option<(i32, i32)>,
+    stage_open: bool,
+    web_position: Option<Duration>,
     /// The real length of every video loaded so far, for timing the plan.
     lengths: HashMap<ResourceId, Duration>,
     downloads: Arc<Downloads>,
@@ -887,6 +984,13 @@ impl Stage {
             unkept: HashSet::new(),
             planned: HashSet::new(),
             stream_others: false,
+            youtube: YoutubeMode::default(),
+            refused: HashSet::new(),
+            web: None,
+            web_at: None,
+            web_seen: None,
+            stage_open: false,
+            web_position: None,
             to_keep: VecDeque::new(),
             keep_loading: HashSet::new(),
             lengths: HashMap::new(),
@@ -981,7 +1085,7 @@ impl Stage {
             key,
             Loader::Audio(path),
             self.downloads.clone(),
-            false,
+            (false, Via::Official),
             None,
         )
     }
@@ -1161,6 +1265,7 @@ impl Stage {
             true => 0.0,
             false => self.played.sound,
         });
+        self.sync_web(stage);
         self.play_bed(stage, now);
     }
 
@@ -1175,6 +1280,16 @@ impl Stage {
                 content: Content::Sound(sound),
                 ..
             } => sound.set_volume(loudness(level)),
+            Program::Showing {
+                content: Content::Official { .. },
+                ..
+            } => {
+                if let Some(web) = &mut self.web {
+                    web.send(WebCommand::Volume {
+                        level: loudness(level),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -1199,13 +1314,22 @@ impl Stage {
         self.stream_others = stream_others;
     }
 
-    /// Whether what `loader` loads is streamed if it can be: a YouTube
-    /// video the plan doesn't show.
-    fn streams(&self, loader: &Loader) -> bool {
+    /// How what `loader` loads plays, if it's a YouTube video: through
+    /// which player ([`route`]), and, through yt-dlp, whether it's streamed
+    /// if it can be (one the plan doesn't show).
+    fn how(&self, loader: &Loader) -> (bool, Via) {
         match loader {
-            Loader::Youtube(video) => self.stream_others && !self.planned.contains(&video.id),
-            _ => false,
+            Loader::Youtube(video) => (
+                self.stream_others && !self.planned.contains(&video.id),
+                route(self.youtube, self.refused.contains(&video.id)),
+            ),
+            _ => (false, Via::Official),
         }
+    }
+
+    /// Says how YouTube videos play, as the operator chose.
+    pub fn set_youtube(&mut self, mode: YoutubeMode) {
+        self.youtube = mode;
     }
 
     /// The content for the program scene, or for the picture under a
@@ -1248,6 +1372,9 @@ impl Stage {
         if let Some((scene, sound)) = self.sound() {
             return Some((scene, sound.position()?));
         }
+        if let Some(scene) = self.official() {
+            return Some((scene, self.web_position?));
+        }
         let (scene, video) = self.video()?;
         Some((scene, position(video)?))
     }
@@ -1282,6 +1409,177 @@ impl Stage {
         }
     }
 
+    /// The program's scene, while YouTube's own player plays it.
+    pub fn official(&self) -> Option<SceneId> {
+        match &self.program {
+            Program::Showing {
+                scene,
+                content: Content::Official { .. },
+            } => Some(*scene),
+            _ => None,
+        }
+    }
+
+    /// YouTube's player, started the first time and again if it quit.
+    fn web_player(&mut self) -> Result<&mut WebPlayer, String> {
+        if !self.web.as_mut().is_some_and(WebPlayer::alive) {
+            self.web = Some(WebPlayer::start()?);
+        }
+        Ok(self.web.as_mut().expect("just started"))
+    }
+
+    /// Takes YouTube's player off the stage, if it's on.
+    fn hide_web(&mut self) {
+        if let Some(web) = &mut self.web {
+            web.send(WebCommand::Pause);
+            web.send(WebCommand::Hide);
+        }
+    }
+
+    /// Where YouTube's player goes: a point on the stage's screen, as the
+    /// desktop says (Hyprland).
+    pub fn set_web_at(&mut self, at: Option<(i32, i32)>) {
+        self.web_at = at;
+    }
+
+    /// Where the stage window was put, as the window itself says.
+    pub fn set_stage_seen(&mut self, at: Option<(i32, i32)>) {
+        self.web_seen = at;
+    }
+
+    /// The stage window opened or closed: YouTube's player comes and goes
+    /// with it.
+    pub fn set_stage_open(&mut self, open: bool) {
+        if open == self.stage_open {
+            return;
+        }
+        self.stage_open = open;
+        if self.official().is_none() {
+            return;
+        }
+        match self.web_show() {
+            Some(show) => {
+                if let Some(web) = &mut self.web {
+                    web.send(show);
+                }
+            }
+            None => self.hide_web(),
+        }
+    }
+
+    /// What shows YouTube's player on the stage's screen; `None` while the
+    /// stage is closed, so it never covers the operator's screen.
+    fn web_show(&self) -> Option<WebCommand> {
+        self.stage_open.then(|| WebCommand::Show {
+            output: None,
+            at: self.web_at.or(self.web_seen),
+        })
+    }
+
+    /// Shows YouTube's player as much as the fade says, or not at all in a
+    /// blackout.
+    pub fn sync_web(&mut self, stage: &StageState) {
+        if self.official().is_none() {
+            return;
+        }
+        let level = picture_level(stage, self.played.picture);
+        if let Some(web) = &mut self.web {
+            web.send(WebCommand::Opacity { level });
+        }
+    }
+
+    /// Takes in what YouTube's player said: where it is, its length, that
+    /// it ended or why it couldn't play. Returns the scenes that ended, for
+    /// the plan to go on from, and a load to start when a video YouTube
+    /// refused goes through yt-dlp instead.
+    pub fn web_events(
+        &mut self,
+        stage: &StageState,
+        engine: &Engine,
+    ) -> (Vec<SceneId>, Option<iced::Task<Arc<Loaded>>>) {
+        let mut ended = Vec::new();
+        let mut task = None;
+        let Some(web) = &mut self.web else {
+            return (ended, task);
+        };
+        let gone = !web.alive();
+        let events = web.events();
+        let Some(scene) = self.official() else {
+            return (ended, task);
+        };
+        let program = stage.program.as_ref().filter(|p| p.id == scene);
+        for event in events {
+            match event {
+                WebEvent::Position { seconds } => {
+                    self.web_position = Some(Duration::from_secs_f64(seconds.max(0.0)));
+                }
+                WebEvent::Timeline { seconds } if seconds > 0.0 => {
+                    let length = Duration::from_secs_f64(seconds);
+                    if let Some(program) = program {
+                        self.lengths.insert(program.resource.id.clone(), length);
+                    }
+                    engine.report(
+                        scene,
+                        MediaReport::Timeline {
+                            duration: Some(length),
+                        },
+                    );
+                }
+                WebEvent::Ended => ended.push(scene),
+                WebEvent::Error { code } => {
+                    let id = match &self.program {
+                        Program::Showing {
+                            content: Content::Official { id, .. },
+                            ..
+                        } => id.clone(),
+                        _ => continue,
+                    };
+                    self.hide_web();
+                    self.refused.insert(id.clone());
+                    let reason = refusal(code);
+                    crate::log(format!("stage: {scene}: YouTube's player: {reason}"));
+                    match (route(self.youtube, true), program) {
+                        (Via::YtDlp, Some(program)) => {
+                            crate::log(format!("stage: {id} goes through yt-dlp instead"));
+                            let loader = Loader::Youtube(
+                                YoutubeVideo::of(&program.resource).expect("a YouTube video"),
+                            );
+                            let resource = program.resource.id.clone();
+                            self.program = Program::Loading {
+                                scene,
+                                resource: resource.clone(),
+                            };
+                            self.loading.insert(resource.clone());
+                            let how = self.how(&loader);
+                            task = Some(spawn(resource, loader, self.downloads.clone(), how, None));
+                        }
+                        _ => {
+                            engine.report(scene, MediaReport::Failed { reason });
+                            self.program = Program::Bare;
+                        }
+                    }
+                    return (ended, task);
+                }
+                WebEvent::NoOutput => {
+                    let reason = "YouTube's player can't find the stage's screen".to_string();
+                    crate::log(format!("stage: {scene} failed: {reason}"));
+                    engine.report(scene, MediaReport::Failed { reason });
+                    self.program = Program::Bare;
+                    return (ended, task);
+                }
+                _ => {}
+            }
+        }
+        if gone {
+            let reason = "YouTube's player (lantern-web) quit".to_string();
+            crate::log(format!("stage: {scene} failed: {reason}"));
+            engine.report(scene, MediaReport::Failed { reason });
+            self.program = Program::Bare;
+            self.web = None;
+        }
+        (ended, task)
+    }
+
     /// A new scene is on program (or nothing). Uses a preloaded load when
     /// there is one, otherwise starts loading. Then drops preloads that are
     /// no longer upcoming. Only here: `take` empties the preview just before
@@ -1300,6 +1598,9 @@ impl Stage {
     }
 
     fn show(&mut self, stage: &StageState, engine: &Engine) -> iced::Task<Arc<Loaded>> {
+        // YouTube's player shows only what is on program: what comes next
+        // brings it back if it is a video of its own.
+        self.hide_web();
         // A sound went on over what was on program: that picture stays,
         // and what was loaded for it with it.
         let was = std::mem::replace(&mut self.program, Program::Bare);
@@ -1351,8 +1652,8 @@ impl Stage {
             resource: resource.clone(),
         };
         if self.loading.insert(resource.clone()) {
-            let stream = self.streams(&loader);
-            spawn(resource, loader, self.downloads.clone(), stream, None)
+            let how = self.how(&loader);
+            spawn(resource, loader, self.downloads.clone(), how, None)
         } else {
             iced::Task::none()
         }
@@ -1387,8 +1688,8 @@ impl Stage {
             };
             let id = loaded.resource.clone();
             self.loading.insert(id.clone());
-            let stream = self.streams(&loader);
-            return spawn(id, loader, self.downloads.clone(), stream, None);
+            let how = self.how(&loader);
+            return spawn(id, loader, self.downloads.clone(), how, None);
         }
         let length = match &result {
             Ok(Content::Video { player, .. }) => player.duration(),
@@ -1485,6 +1786,32 @@ impl Stage {
                 sound.set_volume(volume);
                 sound.unmute();
             }
+            Content::Official { id, start } => {
+                let picture = picture_level(stage, self.fades.levels(stage, now).picture);
+                let show = self.web_show();
+                let web = match self.web_player() {
+                    Ok(web) => web,
+                    Err(reason) => {
+                        crate::log(format!("stage: {scene} failed: {reason}"));
+                        engine.report(scene, MediaReport::Failed { reason });
+                        self.program = Program::Bare;
+                        return;
+                    }
+                };
+                web.send(WebCommand::Load {
+                    id: id.clone(),
+                    start: f64::from(*start),
+                    play: false,
+                });
+                web.send(WebCommand::Volume { level: volume });
+                web.send(WebCommand::Opacity { level: picture });
+                if let Some(show) = show {
+                    web.send(show);
+                }
+                self.web_position = None;
+                // Its length comes when YouTube's player says it.
+                engine.report(scene, MediaReport::Timeline { duration: None });
+            }
         }
         crate::log(format!("stage: {scene} ready"));
         self.program = Program::Showing { scene, content };
@@ -1545,6 +1872,11 @@ impl Stage {
         match short {
             Some(why) => self.broke(scene, &why, engine),
             None => {
+                // YouTube's end screen, its other videos, isn't for the
+                // audience.
+                if self.official() == Some(scene) {
+                    self.hide_web();
+                }
                 engine.report(scene, MediaReport::Ended);
             }
         }
@@ -1556,6 +1888,25 @@ impl Stage {
             let paused = timed.playback != Playback::Playing;
             sound.set_paused(paused);
             if paused && let Some(position) = sound.position() {
+                engine.report(scene, MediaReport::Position(position));
+            }
+            return;
+        }
+        if let Some(scene) = self.official() {
+            let paused = timed.playback != Playback::Playing;
+            // Played again after its end, which took it off the stage.
+            let show = (!paused).then(|| self.web_show()).flatten();
+            if let Some(web) = &mut self.web {
+                if let Some(show) = show {
+                    web.send(show);
+                }
+                web.send(if paused {
+                    WebCommand::Pause
+                } else {
+                    WebCommand::Play
+                });
+            }
+            if paused && let Some(position) = self.web_position {
                 engine.report(scene, MediaReport::Position(position));
             }
             return;
@@ -1579,6 +1930,16 @@ impl Stage {
             if let Err(err) = sound.seek(position) {
                 crate::log(format!("stage: seek failed: {err}"));
             }
+            engine.report(scene, MediaReport::Position(position));
+            return;
+        }
+        if let Some(scene) = self.official() {
+            if let Some(web) = &mut self.web {
+                web.send(WebCommand::Seek {
+                    seconds: position.as_secs_f64(),
+                });
+            }
+            self.web_position = Some(position);
             engine.report(scene, MediaReport::Position(position));
             return;
         }
@@ -1662,7 +2023,13 @@ impl Stage {
                 continue;
             }
             self.keep_loading.insert(id.clone());
-            tasks.push(spawn(id, loader, self.downloads.clone(), false, None));
+            tasks.push(spawn(
+                id,
+                loader,
+                self.downloads.clone(),
+                (false, Via::Official),
+                None,
+            ));
         }
         iced::Task::batch(tasks)
     }
@@ -1689,12 +2056,12 @@ impl Stage {
             {
                 continue;
             }
-            let stream = self.streams(&loader);
+            let how = self.how(&loader);
             if matches!(loader, Loader::Youtube(_)) {
                 self.dwelling.insert(id.clone(), loader.clone());
             }
             let dwell = Some(self.wanted.clone());
-            tasks.push(spawn(id, loader, self.downloads.clone(), stream, dwell));
+            tasks.push(spawn(id, loader, self.downloads.clone(), how, dwell));
         }
         self.sync_wanted();
         iced::Task::batch(tasks)
@@ -2173,6 +2540,39 @@ mod tests {
     }
 
     #[test]
+    fn yt_dlp_plays_a_video_only_when_the_operator_chose_it() {
+        use YoutubeMode::*;
+        assert_eq!(route(Official, false), Via::Official);
+        assert_eq!(route(Official, true), Via::Official, "never yt-dlp unasked");
+        assert_eq!(route(YtDlpFirst, false), Via::YtDlpThenOfficial);
+        assert_eq!(route(YtDlpFirst, true), Via::YtDlpThenOfficial);
+        assert_eq!(route(OfficialFirst, false), Via::Official);
+        assert_eq!(route(OfficialFirst, true), Via::YtDlp, "YouTube refused it");
+
+        let source = SourceId::new("link").unwrap();
+        let video = lantern_source_link::youtube_video(&source, "aaaaaaaaaaa")
+            .with_meta("start_seconds", "42");
+        let loader = Loader::for_resource(&video).unwrap().unwrap();
+        let mut stage = Stage::new(Downloads::new(PathBuf::from("/nowhere")));
+        assert_eq!(
+            stage.how(&loader).1,
+            Via::Official,
+            "YouTube's player is the usual"
+        );
+        stage.set_youtube(OfficialFirst);
+        stage.refused.insert("aaaaaaaaaaa".into());
+        assert_eq!(stage.how(&loader).1, Via::YtDlp);
+        // YouTube's player loads at once, from where the link said.
+        let downloads = Downloads::new(PathBuf::from("/nowhere"));
+        match loader.load(&downloads, false, Via::Official) {
+            Ok(Content::Official { id, start }) => {
+                assert_eq!((id.as_str(), start), ("aaaaaaaaaaa", 42))
+            }
+            _ => panic!("not YouTube's player"),
+        }
+    }
+
+    #[test]
     fn only_a_youtube_video_outside_the_plan_is_streamed() {
         let source = SourceId::new("link").unwrap();
         let loader = |id: &str| {
@@ -2180,14 +2580,15 @@ mod tests {
             Loader::for_resource(&video).unwrap().unwrap()
         };
         let mut stage = Stage::new(Downloads::new(PathBuf::from("/nowhere")));
+        let streams = |stage: &Stage, loader: &Loader| stage.how(loader).0;
         // Until it's said otherwise, everything is downloaded.
-        assert!(!stage.streams(&loader("aaaaaaaaaaa")));
+        assert!(!streams(&stage, &loader("aaaaaaaaaaa")));
         stage.plan_videos(HashSet::from(["aaaaaaaaaaa".to_string()]), true);
-        assert!(!stage.streams(&loader("aaaaaaaaaaa")), "the plan's own");
-        assert!(stage.streams(&loader("bbbbbbbbbbb")), "shown on the fly");
-        assert!(!stage.streams(&Loader::Video("/v.mp4".into())), "a file");
+        assert!(!streams(&stage, &loader("aaaaaaaaaaa")), "the plan's own");
+        assert!(streams(&stage, &loader("bbbbbbbbbbb")), "shown on the fly");
+        assert!(!streams(&stage, &Loader::Video("/v.mp4".into())), "a file");
         stage.plan_videos(HashSet::new(), false);
-        assert!(!stage.streams(&loader("bbbbbbbbbbb")), "switched off");
+        assert!(!streams(&stage, &loader("bbbbbbbbbbb")), "switched off");
         assert_eq!(
             broke_reason(true, "Internal data stream error."),
             "the stream from YouTube stopped, is the network up? (Internal data stream error)"
@@ -2335,7 +2736,7 @@ mod tests {
     fn a_missing_file_fails_with_its_path() {
         let downloads = Downloads::new("/nonexistent".into());
         let err = Loader::Image("/nonexistent/x.png".into())
-            .load(&downloads, false)
+            .load(&downloads, false, Via::Official)
             .err()
             .unwrap();
         assert_eq!(err, "file not found: /nonexistent/x.png");

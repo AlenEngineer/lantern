@@ -482,14 +482,14 @@ pub const ACTIONS: &[Action] = &[
         "delete",
         Op::RemoveStep,
         When::Unused,
-        "Take away what is selected: steps, a bracket (Shift: with its steps), a loop or drawn order",
+        "Take away what is selected: steps, a section (Shift: with its steps), a loop or drawn order",
     ),
     action(
         "rename",
         "f2",
         Op::Rename,
         When::Always,
-        "Rename the selected step",
+        "Rename the selected step; with nothing selected, the plan, in its settings",
     ),
     action(
         "duplicate",

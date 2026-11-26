@@ -1,14 +1,16 @@
 //! Run's rail: the road the service takes, not the plan's shape. What
 //! was played, what is on, then what comes, in the order it will come:
 //! a loop's next round is rows of its own, a drawn order stands as it
-//! was drawn. A folded section is one thing on it, whichever of its
-//! steps is on.
+//! was drawn. A section has a header each time the road comes to it, as
+//! on the plan's rows, and its line in its colour beside its rows. A
+//! folded section is one thing on it, its header, whichever of its steps
+//! is on.
 //!
 //! As the service goes on, the road moves: the ring of what went on
 //! opens and what was on fades to played, rows grow and shrink to their
 //! new heights rather than jump ([`crate::settle`]), the tube fills
 //! smoothly between the moments it is measured, and a loop going round
-//! sends a light back up its bracket.
+//! sends a light back up its section's line.
 
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -16,13 +18,13 @@ use std::time::{Duration, Instant};
 use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{Space, button, column, container, mouse_area, row, stack, text};
 use iced::{Alignment, Color, Element, Fill, Length, Point, Rectangle, Renderer, Theme, mouse};
-use lantern_engine::timing::{Phase, Timing};
+use lantern_engine::timing::Timing;
 use lantern_engine::{Action, Coming, FlowOf, Plan, Step, StepId};
 
 use crate::look::{self, BODY, BOLD, META, Tone};
 use crate::motion::{Glide, blend, ease};
 use crate::palette::Palette;
-use crate::plan_pane::{RAIL, RAIL_DOT, RAIL_TOP};
+use crate::plan_pane::{HEAD_LINE, INDENT, RAIL, RAIL_DOT, RAIL_TOP};
 use crate::settle::{Heights, settle};
 use crate::track::{self, Key, Places};
 use crate::{App, Message};
@@ -64,22 +66,27 @@ pub(crate) struct Thing {
     pub(crate) after: Option<Duration>,
     /// Whether it goes on by itself to the thing after it.
     pub(crate) joined: bool,
+    /// The innermost section round it, whose line its dot is on: for a
+    /// folded section, the one round that.
+    pub(crate) within: Option<StepId>,
 }
 
-/// Which thing a row stands for, wherever it is on the road and
-/// whichever of a folded section's steps is on.
-pub(crate) type Who = (What, u16);
+/// What a row of the road stands for, wherever it is on the road: a
+/// thing in the round it comes in, or a section's header there. A folded
+/// section's one row is its header, whichever of its steps is on, so a
+/// section that folds keeps its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Who {
+    Thing(What, u16),
+    Head(StepId, u16),
+}
 
 impl Thing {
     pub(crate) fn who(&self) -> Who {
-        let what = match self.what {
-            What::Folded { section, .. } => What::Folded {
-                section,
-                holds: None,
-            },
-            what => what,
-        };
-        (what, self.round)
+        match self.what {
+            What::Folded { section, .. } => Who::Head(section, self.round),
+            what => Who::Thing(what, self.round),
+        }
     }
 }
 
@@ -113,22 +120,81 @@ fn leaving(was: &[Who], now: &[Who]) -> Vec<(usize, Who)> {
     gone
 }
 
-/// A section's bracket beside a run of things next to each other that
-/// are in it. A section the road comes back to has one for each time.
+/// A section's header over a run of things next to each other that are
+/// in it: the road heads a section each time it comes back to it. A
+/// folded section's own row is its header, so it has none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Brace {
+pub(crate) struct Head {
     pub(crate) section: StepId,
     pub(crate) first: usize,
     pub(crate) last: usize,
-    /// How far out it is: 0 beside the rows, one more for each section
-    /// it holds a bracket of.
-    pub(crate) lane: u8,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Road {
     pub(crate) things: Vec<Thing>,
-    pub(crate) braces: Vec<Brace>,
+    pub(crate) heads: Vec<Head>,
+}
+
+/// A row of the road: the `h`th of its heads, or its `n`th thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Head(usize),
+    Thing(usize),
+}
+
+impl Road {
+    /// Its rows, top to bottom: before each thing, the headers of the
+    /// sections whose runs start there, the outermost first.
+    fn shown(&self) -> Vec<Shown> {
+        let mut heads = self.heads.iter().enumerate().peekable();
+        let mut rows = Vec::new();
+        for n in 0..self.things.len() {
+            while let Some((h, _)) = heads.next_if(|(_, head)| head.first == n) {
+                rows.push(Shown::Head(h));
+            }
+            rows.push(Shown::Thing(n));
+        }
+        rows
+    }
+
+    fn who(&self, row: Shown) -> Who {
+        match row {
+            Shown::Head(h) => {
+                let head = self.heads[h];
+                Who::Head(head.section, self.things[head.first].round)
+            }
+            Shown::Thing(n) => self.things[n].who(),
+        }
+    }
+
+    /// Each section's line beside the road, in pieces, top to bottom: the
+    /// section, the row a piece starts at (its header, or the first of
+    /// its things after a section inside it) and the thing whose dot it
+    /// ends at, the last before the next header.
+    fn stretches(&self) -> Vec<(StepId, Shown, usize)> {
+        let ended = |piece: Option<(StepId, Shown, Option<usize>)>| {
+            piece.and_then(|(section, from, last)| Some((section, from, last?)))
+        };
+        let mut pieces = Vec::new();
+        let mut piece = None;
+        for row in self.shown() {
+            if let (Shown::Thing(n), Some((section, _, last))) = (row, piece.as_mut())
+                && self.things[n].within == Some(*section)
+            {
+                *last = Some(n);
+                continue;
+            }
+            pieces.extend(ended(piece.take()));
+            piece = match row {
+                Shown::Head(h) => Some((self.heads[h].section, row, None)),
+                Shown::Thing(n) => self.things[n].within.map(|section| (section, row, Some(n))),
+            };
+        }
+        pieces.extend(ended(piece));
+        pieces.retain(|(_, from, last)| *from != Shown::Thing(*last));
+        pieces
+    }
 }
 
 /// The road from `played` (in the order it came), the step `on`, and
@@ -197,6 +263,7 @@ pub(crate) fn lay(
                 round,
                 after,
                 joined,
+                within: None,
             });
             rows.push(at);
             continue;
@@ -213,6 +280,7 @@ pub(crate) fn lay(
                 round,
                 after,
                 joined,
+                within: None,
             });
             rows.push(at);
             continue;
@@ -246,51 +314,42 @@ pub(crate) fn lay(
             round,
             after,
             joined,
+            within: None,
         });
         rows.push(heading);
     }
-    // The innermost section a thing is shown in: a folded one's own, a
-    // step's deepest one; and how deep it is.
-    let depth_of = |id: StepId| plan.get(id).and_then(|step| step.depth()).unwrap_or(0);
-    let shown_in: Vec<Vec<StepId>> = things
-        .iter()
-        .zip(&rows)
-        .map(|(thing, &at)| {
-            let mut sections = plan.within(at);
-            if let What::Folded { section, .. } = thing.what {
-                sections.push(section);
-            }
-            sections
-        })
-        .collect();
-    let mut braces = Vec::new();
-    let mut n = 0;
-    while n < things.len() {
-        for section in &shown_in[n] {
-            // Only where a run of it starts here.
-            if n > 0 && shown_in[n - 1].contains(section) {
+    // The sections each thing is shown in, the outermost first: a folded
+    // one's own last.
+    let mut shown_in: Vec<Vec<StepId>> = Vec::new();
+    for (thing, &at) in things.iter_mut().zip(&rows) {
+        let mut sections = plan.within(at);
+        thing.within = sections.last().copied();
+        if let What::Folded { section, .. } = thing.what {
+            sections.push(section);
+        }
+        shown_in.push(sections);
+    }
+    let mut heads = Vec::new();
+    for (n, sections) in shown_in.iter().enumerate() {
+        for section in sections {
+            // Only where a run of it starts here, and not over a folded
+            // section's own row, its header.
+            let its_own = matches!(things[n].what, What::Folded { section: folded, .. } if folded == *section);
+            if its_own || (n > 0 && shown_in[n - 1].contains(section)) {
                 continue;
             }
             let mut last = n;
             while last + 1 < things.len() && shown_in[last + 1].contains(section) {
                 last += 1;
             }
-            let lane = shown_in[n..=last]
-                .iter()
-                .filter_map(|sections| sections.last())
-                .map(|inner| depth_of(*inner).saturating_sub(depth_of(*section)))
-                .max()
-                .unwrap_or(0);
-            braces.push(Brace {
+            heads.push(Head {
                 section: *section,
                 first: n,
                 last,
-                lane,
             });
         }
-        n += 1;
     }
-    Road { things, braces }
+    Road { things, heads }
 }
 
 /// How the road is drawn beside its rows.
@@ -326,24 +385,36 @@ enum Link {
     Waits(Color),
 }
 
-/// A section's bracket as drawn: its colour, its name and what it says
-/// under it, and how far a light has run back up it as the service went
-/// round it.
-#[derive(Debug, Clone, PartialEq)]
-struct Bracket {
-    brace: Brace,
+/// A section's line beside its rows, at half strength: from `from`, its
+/// header or the dot of its first thing after a section inside it, down
+/// to the dot of its `to`th thing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stretch {
+    from: Key,
+    to: usize,
     color: Color,
-    name: String,
-    sub: Option<String>,
-    pulse: Option<f32>,
+}
+
+/// A light run `t` of the way back up a section's line as the service
+/// went round it: from the dot of its `last` thing to its `head`th
+/// header, where the round begins.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Pulse {
+    head: usize,
+    last: usize,
+    color: Color,
+    t: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct Drawn {
     marks: Vec<Mark>,
-    /// From each row to the one after it.
+    /// From each thing to the one after it.
     links: Vec<Option<Link>>,
-    brackets: Vec<Bracket>,
+    /// The thing each header is over.
+    heads: Vec<usize>,
+    stretches: Vec<Stretch>,
+    pulse: Option<Pulse>,
     places: Places,
     /// What is on, whose tube fills.
     on: Option<Who>,
@@ -449,8 +520,9 @@ impl App {
     }
 
     /// Run's rail while the service is watched: the road it takes, each
-    /// thing a row, with its dot, the tube to what is next, and the
-    /// sections' brackets.
+    /// thing a row, with its dot and the tube to what is next; over each
+    /// run of a section's things its header, and its line in its colour
+    /// beside them.
     pub(crate) fn road_rail<'a>(
         &'a self,
         plan: &Plan,
@@ -488,20 +560,13 @@ impl App {
             &|id| self.shut(timing, id),
             &|of| engine.round_of(of),
         );
-        let lanes = road
-            .braces
-            .iter()
-            .map(|brace| brace.lane + 1)
-            .max()
-            .unwrap_or(0);
-        let wide = track::side_room(lanes, false, true, false);
         let colors = plan.section_colors();
         let hue = |id: StepId| crate::plan_pane::section_hue(p, &colors, id);
         let places = self.places.clone();
-        let section_of = |id: StepId| timing.sections.iter().find(|s| s.id == id);
         let motion = &self.motion;
         let rows = &self.road_rows;
-        let whos: Vec<Who> = road.things.iter().map(Thing::who).collect();
+        let shown = road.shown();
+        let whos: Vec<Who> = shown.iter().map(|row| road.who(*row)).collect();
         // Just gone on: what comes in grows, and what went closes up.
         let stepping = motion.stepped().is_some();
         let gone = match stepping {
@@ -525,140 +590,104 @@ impl App {
                     ))
                 })
         };
-        // As the service goes round a section, a light runs back up the
-        // bracket of the round under way; round anything else, the dot of
+        // As the service goes round a section, a light runs back up its
+        // line from the round under way; round anything else, the dot of
         // what is on glows.
         let round = motion.going_round();
         let on_at = road
             .things
             .iter()
             .position(|thing| thing.place == Place::On);
-        let rounded = |brace: &Brace| {
+        let rounded = |head: &Head| {
             let (of, t) = round?;
-            let goes_round = of == FlowOf::Step(brace.section)
+            let goes_round = of == FlowOf::Step(head.section)
                 || plan
-                    .section_span(brace.section)
+                    .section_span(head.section)
                     .is_some_and(|span| of == FlowOf::Span(span.id));
-            let under_way = on_at.is_some_and(|on| (brace.first..=brace.last).contains(&on));
+            let under_way = on_at.is_some_and(|on| (head.first..=head.last).contains(&on));
             (goes_round && under_way).then_some(t)
         };
         let glow = round
-            .filter(|_| !road.braces.iter().any(|brace| rounded(brace).is_some()))
+            .filter(|_| !road.heads.iter().any(|head| rounded(head).is_some()))
             .map(|(_, t)| t);
         let opened = motion.stepped().map_or(1.0, ease);
+        // What is still to come is in the colour of the section it is in,
+        // a folded section in its own.
+        let planned = |thing: &Thing| match thing.what {
+            What::Folded { section, .. } => hue(section),
+            _ => thing.within.map_or(p.primary, hue),
+        };
         let mut list = column![];
         let mut marks = Vec::new();
-        for (n, thing) in road.things.iter().enumerate() {
-            list = closing(list, n);
-            let place = match thing.place {
-                Place::Played => crate::plan_pane::Place::Done,
-                Place::On => crate::plan_pane::Place::Current,
-                Place::Next => crate::plan_pane::Place::Next,
-                Place::Coming => crate::plan_pane::Place::Later,
-            };
-            let content: Element<'a, Message> = match thing.what {
-                What::Step(id) => {
-                    let Some(step) = plan.get(id) else { continue };
-                    let issue = issues.iter().find(|issue| issue.step == id);
-                    let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(id));
-                    let mut body = column![self.step_row(step, place, issue, &noted, false)];
-                    if thing.place == Place::On {
-                        for (_, n, words) in
-                            crate::notes::on_step(plan, id, true, &|id| engine.reached(id))
-                        {
-                            body = body.push(
-                                container(crate::notes::said(p, n, words))
-                                    .padding(iced::Padding::default().top(4.0)),
-                            );
-                        }
-                    }
-                    match thing.round {
-                        0 => body.into(),
-                        round => row![
-                            container(body).width(Fill),
-                            text(again(round)).size(META).font(BOLD).color(p.tertiary)
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center)
-                        .into(),
-                    }
+        for (k, row) in shown.iter().enumerate() {
+            list = closing(list, k);
+            let content: Element<'a, Message> = match *row {
+                Shown::Head(h) => {
+                    let head = road.heads[h];
+                    // Gone round, its name says the new round brightly.
+                    let color = match rounded(&head) {
+                        Some(t) => blend(Color::WHITE, hue(head.section), t),
+                        None => hue(head.section),
+                    };
+                    let round = road.things[head.first].round;
+                    self.road_head(plan, timing, head.section, round, color, Key::RoadHead(h))
                 }
-                What::Folded { section, holds } => {
-                    self.road_folded(plan, section, holds, thing.place)
-                }
-                What::Again { of, from } => {
-                    let words = plan
-                        .flow_of(of)
-                        .map_or(String::new(), |flow| again_words(flow.repeat, from));
-                    container(text(words).size(BODY).color(p.on_surface_variant))
-                        .padding([12, 10])
+                Shown::Thing(n) => {
+                    let thing = road.things[n];
+                    marks.push(match (thing.what, thing.place) {
+                        (What::Again { .. }, _) => Mark::Stack {
+                            color: p.on_surface_variant,
+                            solid: false,
+                        },
+                        (What::Folded { section, .. }, Place::Played) => Mark::Stack {
+                            color: Palette::tint(hue(section), 0.45),
+                            solid: true,
+                        },
+                        (What::Folded { .. }, Place::On) => Mark::Stack {
+                            color: p.tertiary,
+                            solid: true,
+                        },
+                        (What::Folded { .. }, Place::Next) => Mark::Stack {
+                            color: p.tertiary,
+                            solid: false,
+                        },
+                        (What::Folded { section, .. }, Place::Coming) => Mark::Stack {
+                            color: hue(section),
+                            solid: false,
+                        },
+                        // What was on fades to played, its ring closing.
+                        (What::Step(id), Place::Played) => match motion.going_off(id).map(ease) {
+                            Some(t) => Mark::On {
+                                color: blend(p.tertiary, p.outline, t),
+                                open: 1.0 - t,
+                                glow: None,
+                            },
+                            None => Mark::Solid(p.outline),
+                        },
+                        (_, Place::On) => Mark::On {
+                            color: p.tertiary,
+                            open: opened,
+                            glow,
+                        },
+                        (_, Place::Next) => Mark::Hollow(p.tertiary),
+                        (_, Place::Coming) if thing.joined => Mark::Solid(planned(&thing)),
+                        (_, Place::Coming) => Mark::Hollow(planned(&thing)),
+                    });
+                    let dot =
+                        track::seen(Key::Road(n), &places, Space::new().width(RAIL).height(Fill));
+                    let thing = self.road_thing(plan, timing, issues, thing, &hue);
+                    row![dot, container(thing).width(Fill)]
+                        .height(Length::Shrink)
                         .into()
                 }
             };
-            marks.push(match (thing.what, thing.place) {
-                (What::Again { .. }, _) => Mark::Stack {
-                    color: p.on_surface_variant,
-                    solid: false,
-                },
-                (What::Folded { section, .. }, Place::Played) => Mark::Stack {
-                    color: Palette::tint(hue(section), 0.45),
-                    solid: true,
-                },
-                (What::Folded { .. }, Place::On) => Mark::Stack {
-                    color: p.tertiary,
-                    solid: true,
-                },
-                (What::Folded { .. }, Place::Next) => Mark::Stack {
-                    color: p.tertiary,
-                    solid: false,
-                },
-                (What::Folded { section, .. }, Place::Coming) => Mark::Stack {
-                    color: hue(section),
-                    solid: false,
-                },
-                // What was on fades to played, its ring closing.
-                (What::Step(id), Place::Played) => match motion.going_off(id).map(ease) {
-                    Some(t) => Mark::On {
-                        color: blend(p.tertiary, p.outline, t),
-                        open: 1.0 - t,
-                        glow: None,
-                    },
-                    None => Mark::Solid(p.outline),
-                },
-                (_, Place::On) => Mark::On {
-                    color: p.tertiary,
-                    open: opened,
-                    glow,
-                },
-                (_, Place::Next) => Mark::Hollow(p.tertiary),
-                (_, Place::Coming) if thing.joined => Mark::Solid(p.primary),
-                (_, Place::Coming) => Mark::Hollow(p.on_surface_variant),
-            });
-            let dot = track::seen(Key::Road(n), &places, Space::new().width(RAIL).height(Fill));
-            // Beside it, its innermost section's bracket: twice folds that
-            // section, or opens it.
-            let inner = road
-                .braces
-                .iter()
-                .filter(|brace| (brace.first..=brace.last).contains(&n))
-                .min_by_key(|brace| brace.lane)
-                .map(|brace| brace.section);
-            let mut room = mouse_area(Space::new().width(wide).height(Fill));
-            if let Some(section) = inner {
-                room = room
-                    .on_double_click(Message::Fold(section))
-                    .interaction(mouse::Interaction::Pointer);
-            }
-            let side = track::seen(Key::RoadSide(n), &places, room);
             // The room between rows is part of each, so one closing up
             // takes its room with it.
-            let whole =
-                container(row![dot, container(content).width(Fill), side].height(Length::Shrink))
-                    .padding(iced::Padding::default().bottom(4.0));
+            let whole = container(content).padding(iced::Padding::default().bottom(4.0));
             // Two rows for one thing would pull its height two ways.
-            list = match whos.iter().position(|who| *who == whos[n]) == Some(n) {
+            list = match whos.iter().position(|who| *who == whos[k]) == Some(k) {
                 true => list.push(settle(
-                    whos[n],
+                    whos[k],
                     &rows.heights,
                     stepping,
                     motion.still,
@@ -667,7 +696,7 @@ impl App {
                 false => list.push(whole),
             };
         }
-        let list = closing(list, road.things.len());
+        let list = closing(list, shown.len());
         // From each thing to the next.
         let links = (0..road.things.len())
             .map(|n| {
@@ -691,59 +720,35 @@ impl App {
                             waits: !thing.joined,
                         }
                     }
-                    _ if thing.joined => Link::Plain(p.primary),
+                    _ if thing.joined => Link::Plain(planned(&thing)),
                     _ => Link::Waits(p.on_surface_variant),
                 })
             })
             .collect();
-        let brackets = road
-            .braces
-            .iter()
-            .filter_map(|brace| {
-                let step = plan.get(brace.section)?;
-                let things = &road.things[brace.first..=brace.last];
-                // Its own colour, faded once all of it has played.
-                let color = match things.iter().all(|t| t.place == Place::Played) {
-                    true => Palette::tint(hue(brace.section), 0.45),
-                    false => hue(brace.section),
-                };
-                let goal = match step.action {
-                    Action::Section { budget, .. } => budget.filter(|b| !b.is_zero()),
-                    _ => None,
-                };
-                let round = things.first().map_or(0, |t| t.round);
-                let sub = match (round, section_of(step.id).map(|s| s.phase)) {
-                    (round, _) if round > 0 => Some(format!("round {}", round + 1)),
-                    (_, Some(Phase::Done { took })) => Some(match goal {
-                        Some(goal) => format!(
-                            "✓ {} of {}",
-                            crate::length::clock(took.unwrap_or_default()),
-                            crate::length::clock(goal)
-                        ),
-                        None => format!("✓ {}", crate::length::clock(took.unwrap_or_default())),
-                    }),
-                    (_, Some(Phase::Running { elapsed, .. })) => Some(match goal {
-                        Some(goal) => format!(
-                            "{} of {}",
-                            crate::length::clock(elapsed),
-                            crate::length::clock(goal)
-                        ),
-                        None => crate::length::clock(elapsed),
-                    }),
-                    _ => Some(match goal {
-                        Some(goal) => format!("◎ {}", crate::length::clock(goal)),
-                        None => format!("Σ {}", crate::length::clock(self.planned(plan, step.id))),
-                    }),
-                };
-                Some(Bracket {
-                    brace: *brace,
-                    color,
-                    name: step.label.clone(),
-                    sub,
-                    pulse: rounded(brace),
-                })
+        // Each section's line, in its colour, quiet once it is over.
+        let stretches = road
+            .stretches()
+            .into_iter()
+            .map(|(section, from, to)| Stretch {
+                from: match from {
+                    Shown::Head(h) => Key::RoadHead(h),
+                    Shown::Thing(n) => Key::Road(n),
+                },
+                to,
+                color: match self.over(timing, section) {
+                    true => Palette::tint(hue(section), 0.45),
+                    false => hue(section),
+                },
             })
             .collect();
+        let pulse = road.heads.iter().enumerate().find_map(|(h, head)| {
+            Some(Pulse {
+                head: h,
+                last: head.last,
+                color: hue(head.section),
+                t: rounded(head)?,
+            })
+        });
         // A sound that keeps going, from where its step is on the road
         // (the last time, up to what is on) to where it stops.
         let row_of = |id: StepId, from: usize| {
@@ -770,9 +775,11 @@ impl App {
             sounds,
             marks,
             links,
-            brackets,
+            heads: road.heads.iter().map(|head| head.first).collect(),
+            stretches,
+            pulse,
             places: places.clone(),
-            on: on_at.map(|on| whos[on]),
+            on: on_at.map(|on| road.things[on].who()),
             still: motion.still,
         };
         stack![list, iced::widget::canvas(drawn).width(Fill).height(Fill)]
@@ -780,79 +787,158 @@ impl App {
             .into()
     }
 
-    /// A folded section's one row on the road: the step of it that is
-    /// on, how far in, and how far in that is; else how many steps and
-    /// how long. Pressed, it opens.
+    /// What a thing on the road shows beside its dot: a step's row, a
+    /// folded section's header ([`App::road_folded`]), or the rounds of a
+    /// loop past the next.
+    fn road_thing<'a>(
+        &'a self,
+        plan: &Plan,
+        timing: &Timing,
+        issues: &[crate::ready::Issue],
+        thing: Thing,
+        hue: &dyn Fn(StepId) -> Color,
+    ) -> Element<'a, Message> {
+        let p = self.palette;
+        let place = match thing.place {
+            Place::Played => crate::plan_pane::Place::Done,
+            Place::On => crate::plan_pane::Place::Current,
+            Place::Next => crate::plan_pane::Place::Next,
+            Place::Coming => crate::plan_pane::Place::Later,
+        };
+        match thing.what {
+            What::Step(id) => {
+                let Some(step) = plan.get(id) else {
+                    return Space::new().into();
+                };
+                let issue = issues.iter().find(|issue| issue.step == id);
+                let noted = crate::notes::numbers_on(plan, lantern_engine::NoteOn::Step(id));
+                let mut body = column![self.step_row(step, place, issue, None, &noted, false)];
+                if thing.place == Place::On {
+                    for (_, n, words) in
+                        crate::notes::on_step(plan, id, true, &|id| self.engine.0.reached(id))
+                    {
+                        body = body.push(
+                            container(crate::notes::said(p, n, words))
+                                .padding(iced::Padding::default().top(4.0)),
+                        );
+                    }
+                }
+                match thing.round {
+                    0 => body.into(),
+                    round => row![
+                        container(body).width(Fill),
+                        text(again(round)).size(META).font(BOLD).color(p.tertiary)
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
+                }
+            }
+            What::Folded { section, .. } => self.road_folded(plan, timing, thing, hue(section)),
+            What::Again { of, from } => {
+                let words = plan
+                    .flow_of(of)
+                    .map_or(String::new(), |flow| again_words(flow.repeat, from));
+                container(text(words).size(BODY).color(p.on_surface_variant))
+                    .padding([12, 10])
+                    .into()
+            }
+        }
+    }
+
+    /// A section's header where the road comes to it, saying where it is
+    /// by `key`: its line as on the plan's rows, in `color`, as far in as
+    /// the section is deep. Heading the service's `round`th time round
+    /// it, it says which. Twice, it folds.
+    fn road_head<'a>(
+        &'a self,
+        plan: &Plan,
+        timing: &Timing,
+        section: StepId,
+        round: u16,
+        color: Color,
+        key: Key,
+    ) -> Element<'a, Message> {
+        let Some(index) = plan.position(section) else {
+            return Space::new().into();
+        };
+        let depth = plan.steps()[index].depth().unwrap_or(0);
+        let line = container(self.head_line(plan, timing, index, color, false, round))
+            .width(Fill)
+            .padding(
+                iced::Padding::default()
+                    .left(10.0 + INDENT * f32::from(depth))
+                    .right(10.0),
+            )
+            .center_y(HEAD_LINE);
+        let head = row![
+            Space::new().width(RAIL),
+            column![Space::new().height(LEVEL - HEAD_LINE / 2.0), line],
+        ];
+        mouse_area(track::seen(key, &self.places, head))
+            .on_double_click(Message::Fold(section))
+            .interaction(mouse::Interaction::Pointer)
+            .into()
+    }
+
+    /// A folded section's one row on the road, its header: its line as
+    /// on the plan's rows, in `color`, level with the stacked dot; while
+    /// what is on is in it, which of its steps that is, how far in, and
+    /// how far in that is. Pressed, it opens.
     fn road_folded<'a>(
         &'a self,
         plan: &Plan,
-        section: StepId,
-        holds: Option<StepId>,
-        place: Place,
+        timing: &Timing,
+        thing: Thing,
+        color: Color,
     ) -> Element<'a, Message> {
         let p = self.palette;
+        let What::Folded { section, holds } = thing.what else {
+            return Space::new().into();
+        };
         let Some(at) = plan.position(section) else {
             return Space::new().into();
         };
-        let steps: Vec<&Step> = plan.steps()[at + 1..plan.group_end(at)]
-            .iter()
-            .filter(|step| !step.is_section())
-            .collect();
-        let ink = match place {
-            Place::Played => p.outline,
-            Place::On => p.tertiary,
-            _ => p.on_surface,
-        };
-        let body: Element<'a, Message> = match holds.and_then(|id| plan.get(id)) {
-            Some(on) => {
-                let k = steps
-                    .iter()
-                    .position(|step| step.id == on.id)
-                    .map_or(1, |k| k + 1);
-                let (up, _) = self.on_for(on);
-                let length = self.estimate(on).length;
-                column![
-                    crate::widgets::single_line(on.label.clone())
-                        .size(BODY)
-                        .font(BOLD)
-                        .color(ink),
-                    text(format!(
-                        "{k} of {} · {} / {}",
-                        steps.len(),
-                        crate::length::clock(up),
-                        crate::length::clock(length)
-                    ))
-                    .size(META)
-                    .color(ink),
-                ]
-                .into()
-            }
-            None => row![
-                text(match steps.len() {
-                    1 => "1 step".to_string(),
-                    n => format!("{n} steps"),
-                })
-                .size(BODY)
-                .color(ink),
-                Space::new().width(Fill),
-                text(match place {
-                    Place::Played => String::new(),
-                    _ => crate::length::clock(self.planned(plan, section)),
-                })
+        let line = self.head_line(plan, timing, at, color, true, thing.round);
+        let mut body = column![container(line).width(Fill).center_y(HEAD_LINE)];
+        if let Some(on) = holds.and_then(|id| plan.get(id)) {
+            let steps: Vec<&Step> = plan.steps()[at + 1..plan.group_end(at)]
+                .iter()
+                .filter(|step| !step.is_section())
+                .collect();
+            let k = steps
+                .iter()
+                .position(|step| step.id == on.id)
+                .map_or(1, |k| k + 1);
+            let (up, _) = self.on_for(on);
+            body = body.push(
+                crate::widgets::single_line(format!(
+                    "{} · {k} of {} · {} / {}",
+                    on.label,
+                    steps.len(),
+                    crate::length::clock(up),
+                    crate::length::clock(self.estimate(on).length)
+                ))
                 .size(META)
-                .color(p.on_surface_variant),
-            ]
-            .align_y(Alignment::Center)
-            .into(),
-        };
-        let tone = match place {
+                .font(BOLD)
+                .color(p.tertiary),
+            );
+        }
+        let room = LEVEL - HEAD_LINE / 2.0;
+        let depth = plan.steps()[at].depth().unwrap_or(0);
+        let tone = match thing.place {
             Place::On => Tone::Live,
             _ => Tone::Plain,
         };
         mouse_area(
             button(body)
                 .width(Fill)
-                .padding([10, 10])
+                .padding(iced::Padding {
+                    top: room,
+                    bottom: room,
+                    left: 10.0 + INDENT * f32::from(depth),
+                    right: 10.0,
+                })
                 .on_press(Message::Fold(section))
                 .style(look::row_filled(p, look::row_fill(p, tone))),
         )
@@ -917,6 +1003,9 @@ fn again(round: u16) -> String {
     format!("{n}{tail}")
 }
 
+/// How far down a row of the road its dot is, level with its name; a
+/// header's words are level with it too, and its line starts there.
+const LEVEL: f32 = RAIL_TOP + RAIL_DOT / 2.0;
 /// A dot's radius, a ring's room round the one that is on, and a
 /// tube's width.
 const DOT: f32 = 5.0;
@@ -1012,16 +1101,35 @@ impl canvas::Program<Message> for Drawn {
                 ..*place
             })
         };
-        let middle = |n: usize| {
-            at(Key::Road(n))
-                .map(|rail| Point::new(rail.center_x(), rail.y + RAIL_TOP + RAIL_DOT / 2.0))
+        // Where a row's dot is, or a header's line starts.
+        let level = |key: Key| at(key).map(|row| Point::new(row.x + RAIL / 2.0, row.y + LEVEL));
+        let middle = |n: usize| level(Key::Road(n));
+        // The top of the header over a thing, the outermost.
+        let head_top = |n: usize| {
+            let h = self.heads.iter().position(|first| *first == n)?;
+            at(Key::RoadHead(h)).map(|head| head.y)
         };
         let reach = |mark: Mark| match mark {
             Mark::On { open, .. } => DOT + RING * open,
             _ => DOT,
         };
         let mut frame = Frame::new(renderer, bounds.size());
-        // The links first, under the dots.
+        // Each section's line at half strength, under the links.
+        for stretch in &self.stretches {
+            let (Some(top), Some(foot)) = (level(stretch.from), middle(stretch.to)) else {
+                continue;
+            };
+            if foot.y > top.y {
+                frame.stroke(
+                    &Path::line(top, Point::new(top.x, foot.y)),
+                    Stroke::default().with_width(2.0).with_color(Color {
+                        a: stretch.color.a * 0.5,
+                        ..stretch.color
+                    }),
+                );
+            }
+        }
+        // The links, under the dots.
         for (n, link) in self.links.iter().enumerate() {
             let (Some(link), Some(from), Some(to)) = (link, middle(n), middle(n + 1)) else {
                 continue;
@@ -1031,12 +1139,22 @@ impl canvas::Program<Message> for Drawn {
             if foot <= top {
                 continue;
             }
+            // Where it waits: between the rows, over a header between them
+            // so it is not taken for the header's.
+            let waits = match head_top(n + 1) {
+                Some(head) if head > top => (top + head) / 2.0,
+                _ => (top + foot) / 2.0,
+            };
             match *link {
                 Link::Plain(color) => frame.stroke(
                     &Path::line(Point::new(from.x, top), Point::new(from.x, foot)),
                     Stroke::default().with_width(2.0).with_color(color),
                 ),
-                Link::Tube { full, color, waits } => {
+                Link::Tube {
+                    full,
+                    color,
+                    waits: stops,
+                } => {
                     let full = tube.shown(self.on, full, now);
                     let shape = Path::rounded_rectangle(
                         Point::new(from.x - TUBE / 2.0, top),
@@ -1060,17 +1178,11 @@ impl canvas::Program<Message> for Drawn {
                             Color { a: 0.85, ..color },
                         );
                     }
-                    if waits && full > 0.999 {
-                        pause(
-                            &mut frame,
-                            Point::new(from.x + 12.0, (top + foot) / 2.0),
-                            color,
-                        );
+                    if stops && full > 0.999 {
+                        pause(&mut frame, Point::new(from.x + 12.0, waits), color);
                     }
                 }
-                Link::Waits(color) => {
-                    pause(&mut frame, Point::new(from.x, (top + foot) / 2.0), color)
-                }
+                Link::Waits(color) => pause(&mut frame, Point::new(from.x, waits), color),
             }
         }
         for (n, mark) in self.marks.iter().enumerate() {
@@ -1130,81 +1242,27 @@ impl canvas::Program<Message> for Drawn {
                 );
             }
         }
-        for Bracket {
-            brace,
+        // Gone round: a light runs back up its section's line, to where
+        // the round begins.
+        if let Some(Pulse {
+            head,
+            last,
             color,
-            name,
-            sub,
-            pulse,
-        } in &self.brackets
+            t,
+        }) = self.pulse
+            && let (Some(top), Some(foot)) = (level(Key::RoadHead(head)), middle(last))
         {
-            let (Some(first), Some(last)) = (
-                at(Key::RoadSide(brace.first)),
-                at(Key::RoadSide(brace.last)),
-            ) else {
-                continue;
-            };
-            let x = first.x
-                + track::brace_at(
-                    &track::lane_widths(brace.lane, None, false),
-                    brace.lane,
-                    true,
-                )
-                + 3.0;
-            let (top, foot) = (first.y + 2.0, last.y + last.height - 4.0);
-            if foot - top < 12.0 {
-                continue;
-            }
-            let middle = (top + foot) / 2.0;
-            let shape = track::square(x, top, foot, 0.0);
-            frame.stroke(&shape, Stroke::default().with_width(1.6).with_color(*color));
-            // Gone round: a light runs back up it, to where the round
-            // begins, and its words say the new round brightly.
-            let color = match *pulse {
-                Some(t) => {
-                    let at = Point::new(x + track::TICK, foot - (foot - top) * t);
-                    let fade = 1.0 - t * t;
-                    let light = blend(*color, Color::WHITE, 0.7);
-                    for (size, alpha) in [(9.0, 0.18), (5.5, 0.35), (3.5, 1.0)] {
-                        frame.fill(
-                            &Path::circle(at, size),
-                            Color {
-                                a: light.a * alpha * fade,
-                                ..light
-                            },
-                        );
-                    }
-                    blend(Color::WHITE, *color, t)
-                }
-                None => *color,
-            };
-            // Only the innermost write beside their brace, as on the
-            // plan's rail: there is room for one.
-            if brace.lane > 0 {
-                continue;
-            }
-            let left = x + track::BRACE;
-            let lines = usize::from(sub.is_some()) + 1;
-            let mut y = middle - (lines as f32 - 1.0) * 7.5;
-            frame.fill_text(canvas::Text {
-                content: name.clone(),
-                position: Point::new(left, y),
-                color,
-                size: 11.5.into(),
-                font: BOLD,
-                align_y: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
-            if let Some(sub) = sub {
-                y += 15.0;
-                frame.fill_text(canvas::Text {
-                    content: sub.clone(),
-                    position: Point::new(left, y),
-                    color: Color { a: 0.85, ..color },
-                    size: 10.5.into(),
-                    align_y: iced::alignment::Vertical::Center,
-                    ..canvas::Text::default()
-                });
+            let spot = Point::new(top.x, foot.y - (foot.y - top.y) * t);
+            let fade = 1.0 - t * t;
+            let light = blend(color, Color::WHITE, 0.7);
+            for (size, alpha) in [(9.0, 0.18), (5.5, 0.35), (3.5, 1.0)] {
+                frame.fill(
+                    &Path::circle(spot, size),
+                    Color {
+                        a: light.a * alpha * fade,
+                        ..light
+                    },
+                );
             }
         }
         vec![frame.into_geometry()]
@@ -1256,12 +1314,29 @@ mod tests {
             .join(" ")
     }
 
-    fn braces(plan: &Plan, road: &Road) -> String {
-        road.braces
+    fn heads(plan: &Plan, road: &Road) -> String {
+        road.heads
             .iter()
-            .map(|brace| {
-                let name = &plan.get(brace.section).unwrap().label;
-                format!("{name}{}-{}@{}", brace.first, brace.last, brace.lane)
+            .map(|head| {
+                let name = &plan.get(head.section).unwrap().label;
+                format!("{name}{}-{}", head.first, head.last)
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Each piece of a section's line: from its header (h) or a thing,
+    /// to the thing whose dot it ends at.
+    fn stretches(plan: &Plan, road: &Road) -> String {
+        road.stretches()
+            .into_iter()
+            .map(|(section, from, last)| {
+                let name = &plan.get(section).unwrap().label;
+                let from = match from {
+                    Shown::Head(_) => "h".to_string(),
+                    Shown::Thing(n) => n.to_string(),
+                };
+                format!("{name}:{from}-{last}")
             })
             .collect::<Vec<_>>()
             .join(" ")
@@ -1309,11 +1384,34 @@ mod tests {
         session.next();
         let road = road_of(&session, &[a], &|_| false);
         assert_eq!(names(session.plan(), &road), "-A *B >A'1 B'1 C D");
-        // Alabanza twice: the round played and on, then the next; Culto
-        // round all of it, a lane further out.
+        // One header over Alabanza's round played and on and the next,
+        // inside Culto's.
         assert_eq!(
-            braces(session.plan(), &road),
-            "Culto0-4@1 Alabanza0-3@0 Oración4-4@0 Final5-5@0"
+            heads(session.plan(), &road),
+            "Culto0-4 Alabanza0-3 Oración4-4 Final5-5"
+        );
+    }
+
+    #[test]
+    fn the_road_heads_a_section_each_time_it_comes_back() {
+        // A loop from B, in Alabanza, to C, in Oración.
+        let (mut plan, [_, alabanza, ..], [_, b, c, _]) = plan();
+        plan.loop_over(b, c).unwrap();
+        let mut session = Session::new(plan);
+        session.next();
+        let road = road_of(&session, &[], &|_| false);
+        assert_eq!(names(session.plan(), &road), "*A >B C B'1 C'1 D");
+        assert_eq!(
+            heads(session.plan(), &road),
+            "Culto0-4 Alabanza0-1 Oración2-2 Alabanza3-3 Oración4-4 Final5-5"
+        );
+        // The second time is a header of its own, for its round.
+        assert_eq!(road.who(Shown::Head(3)), Who::Head(alabanza, 1));
+        // Each header breaks the line of the section round it: Culto's
+        // has no rows of its own to run beside.
+        assert_eq!(
+            stretches(session.plan(), &road),
+            "Alabanza:h-1 Oración:h-2 Alabanza:h-3 Oración:h-4 Final:h-5"
         );
     }
 
@@ -1355,9 +1453,12 @@ mod tests {
         session.next();
         let road = road_of(&session, &[a], &|id| id == alabanza);
         assert_eq!(names(session.plan(), &road), "*[Alabanza:B] >C D");
+        // Its one row is its header, and its dot is on Culto's line.
+        assert_eq!(heads(session.plan(), &road), "Culto0-1 Oración1-1 Final2-2");
+        assert_eq!(road.who(Shown::Thing(0)), Who::Head(alabanza, 0));
         assert_eq!(
-            braces(session.plan(), &road),
-            "Culto0-1@1 Alabanza0-0@0 Oración1-1@0 Final2-2@0"
+            stretches(session.plan(), &road),
+            "Culto:h-0 Oración:h-1 Final:h-2"
         );
     }
 
@@ -1397,17 +1498,26 @@ mod tests {
         let mut session = Session::new(plan);
         session.next();
         session.next();
-        let whos = |road: &Road| road.things.iter().map(Thing::who).collect::<Vec<_>>();
+        let whos = |road: &Road| {
+            road.shown()
+                .into_iter()
+                .map(|row| road.who(row))
+                .collect::<Vec<_>>()
+        };
         let was = whos(&road_of(&session, &[a], &|_| false));
         session.next();
         let now = whos(&road_of(&session, &[], &|_| false));
-        // From "-A *B >A'1 B'1 C D" to "*A >B'1 C D": the round played
-        // and the next one's first row close up under the top one.
+        // From "-A *B >A'1 B'1 C D" to "*A >B'1 C D", under Culto's and
+        // Alabanza's headers: the round played and the next one's first
+        // row close up under the top one.
         let road = road_of(&session, &[], &|_| false);
         assert_eq!(names(session.plan(), &road), "*A >B'1 C D");
         assert_eq!(
             leaving(&was, &now),
-            vec![(1, (What::Step(b), 0)), (1, (What::Step(a), 1))]
+            vec![
+                (3, Who::Thing(What::Step(b), 0)),
+                (3, Who::Thing(What::Step(a), 1))
+            ]
         );
         assert_eq!(leaving(&now, &now), vec![]);
         // What is after all that stays closes up at the end.
@@ -1419,7 +1529,7 @@ mod tests {
     fn the_tube_fills_evenly_between_measures_and_from_empty_for_a_new_step() {
         let (_, _, [a, b, ..]) = plan();
         let start = Instant::now();
-        let (on_a, on_b) = ((What::Step(a), 0), (What::Step(b), 0));
+        let (on_a, on_b) = (Who::Thing(What::Step(a), 0), Who::Thing(What::Step(b), 0));
         let mut tube = Tube::default();
         // As it first shows, it is as full as it is.
         tube.towards(Some((on_a, 0.4)), start, false);

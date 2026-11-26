@@ -180,6 +180,8 @@ pub struct YoutubeVideo {
     /// The 11-character video id.
     pub id: String,
     url: String,
+    /// Where the link said to start, in seconds (`t=` or `start=`).
+    pub start: u32,
 }
 
 impl YoutubeVideo {
@@ -192,9 +194,15 @@ impl YoutubeVideo {
             return None;
         }
         let id = resource.meta.get("youtube_id")?.clone();
+        let start = resource
+            .meta
+            .get("start_seconds")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         Some(YoutubeVideo {
             id,
             url: url.clone(),
+            start,
         })
     }
 }
@@ -633,6 +641,7 @@ mod tests {
         let video = YoutubeVideo {
             id: "jNQXAC9IVRw".into(),
             url: "unused".into(),
+            start: 0,
         };
         Downloads::new(dir.path().to_path_buf()).fetch(&video);
         assert!(forget_unused(dir.path(), KEEP, SystemTime::now()).is_empty());
@@ -647,6 +656,7 @@ mod tests {
         let video = YoutubeVideo {
             id: "jNQXAC9IVRw".into(),
             url: "unused".into(),
+            start: 0,
         };
         assert_eq!(
             downloads.ready(&video),

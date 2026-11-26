@@ -4,12 +4,12 @@
 //! carried rows leave the list and a gap opens where they'd land, so
 //! positions here count the plan *without* them (the "rest").
 //!
-//! Up and down say where. A section lands beside the section above where
-//! it lands; pointed at a bracket's lane it goes into that section (the
-//! plan's own bracket: the plan's level), and ← and → move it a level
-//! out or in. Moving sideways changes nothing, and a section carried
-//! never takes in the sections after it. A step has no such choice: it
-//! is in whatever section it lands under.
+//! Up and down say where, and the row under the pointer how far in. Over
+//! a section's header, a section lands before that section at its level,
+//! or goes into it first; among steps it is in the section that holds
+//! them. ← and → move it a level out or in. Moving sideways changes
+//! nothing, and a section carried never takes in the sections after it.
+//! A step has no such choice: it is in whatever section it lands under.
 
 use iced::Point;
 use lantern_engine::{DEEPEST, Plan, Step, StepId};
@@ -53,8 +53,8 @@ pub struct Drag {
     /// The least and the most a section's level can be where it would
     /// land.
     pub levels: (u8, u8),
-    /// The level of the bracket the pointer is over, going into it: one
-    /// further in than that section, or the plan's own.
+    /// The level the row under the pointer asks a section to be at: a
+    /// header's own, or one further in, going into it.
     pub into: Option<u8>,
     /// Levels in (more) or out (less) by the arrow keys.
     pub nudge: i8,
@@ -120,22 +120,6 @@ pub fn level_at(rest: &[&Step], at: usize) -> u8 {
         .rev()
         .find_map(|step| heading(step))
         .map_or(0, |depth| depth + 1)
-}
-
-/// The section something landing at `at` among `rest`, drawn at `level`,
-/// would be a part of: where it is in the rest, and where what it holds
-/// ends. `None` at the plan's own level.
-pub fn host(rest: &[&Step], at: usize, level: u8) -> Option<(usize, usize)> {
-    let above = level.checked_sub(1)?;
-    let start = rest[..at.min(rest.len())]
-        .iter()
-        .rposition(|step| heading(step).is_some_and(|depth| depth <= above))
-        .filter(|start| heading(rest[*start]) == Some(above))?;
-    let end = rest[start + 1..]
-        .iter()
-        .position(|step| heading(step).is_some_and(|depth| depth <= above))
-        .map_or(rest.len(), |n| start + 1 + n);
-    Some((start, end))
 }
 
 /// How far the pointer moves before a press becomes a drag.
@@ -211,14 +195,14 @@ impl Drag {
     }
 
     /// Works out the level it would land at, from where it would land,
-    /// the bracket the pointer is over, and the arrow keys.
+    /// the row the pointer is over, and the arrow keys.
     ///
     /// A section can be at the plan's own level or a part of the section
     /// before it, no further in than that one's parts are, and no further
     /// than leaves room for the sections it carries. It is never further
     /// out than the section after it: that one would become its part.
-    /// Between those it is beside the section above, unless a bracket
-    /// pointed at or the keys say otherwise.
+    /// Between those it is beside the section above, unless the header it
+    /// is over or the keys say otherwise.
     pub fn aim_level(&mut self, plan: &Plan) {
         let Some(at) = self.landing else {
             return;
@@ -254,8 +238,8 @@ impl Drag {
         self.levels = (least, most);
     }
 
-    /// The pointer came over a bracket's lane, going into that section
-    /// at `level`, or left them all. The keys start over from there.
+    /// The row under the pointer asks for `level`, or for none. The keys
+    /// start over from there.
     pub fn point_into(&mut self, level: Option<u8>) {
         if self.into != level {
             self.into = level;
@@ -286,37 +270,23 @@ impl Drag {
     }
 
     /// Where the carried rows land with the pointer over `half` of row
-    /// `over`, as an index in the rest; `None` over a carried row.
+    /// `over`, as an index in the rest, and the level that row asks a
+    /// section to be at; `None` over a carried row.
     ///
-    /// A step goes above or below the row. A section goes between sections
-    /// only, so it never splits one: above the section it's over when on
-    /// the upper half of its header, otherwise after its last step.
-    pub fn landing(&self, plan: &Plan, over: StepId, half: Half) -> Option<usize> {
-        let rest: Vec<_> = plan
-            .steps()
-            .iter()
-            .filter(|step| !self.carried.contains(&step.id))
-            .collect();
+    /// Anything goes above or below the row. Over a section's header,
+    /// above is the end of what comes before it and below is first in the
+    /// section: a section carried there lands before that section, at
+    /// its level, or goes into it, first. Over a step, a section lands
+    /// among the steps in the section that holds them, or under the last
+    /// of them beside that section, and asks for no level.
+    pub fn landing(&self, plan: &Plan, over: StepId, half: Half) -> Option<(usize, Option<u8>)> {
+        let rest = self.rest(plan);
         let at = rest.iter().position(|step| step.id == over)?;
-        if !self.section {
-            return Some(at + usize::from(half == Half::Lower));
-        }
-        // Over an empty section, either half: into it, as it shows.
-        let empty = heading(rest[at]).is_some()
-            && rest.get(at + 1).is_none_or(|next| heading(next).is_some());
-        if heading(rest[at]).is_some() && half == Half::Upper && !empty {
-            return Some(at);
-        }
-        // Over a step it lands among the steps, before or after it: it is
-        // put in the section that holds them, holding only its own.
-        if heading(rest[at]).is_none() {
-            return Some(at + usize::from(half == Half::Lower));
-        }
-        let end = rest[at + 1..]
-            .iter()
-            .position(|step| heading(step).is_some())
-            .map_or(rest.len(), |n| at + 1 + n);
-        Some(end)
+        let below = half == Half::Lower;
+        let level = heading(rest[at])
+            .filter(|_| self.section)
+            .map(|depth| depth + u8::from(below));
+        Some((at + usize::from(below), level))
     }
 }
 
@@ -385,67 +355,63 @@ mod tests {
     }
 
     #[test]
-    fn a_step_lands_above_or_below_the_row() {
+    fn a_step_lands_above_or_below_the_row_a_header_too() {
         let (mut plan, [welcome, worship, song, _, word, reading]) = sunday();
         let drag = Drag::new(&plan, welcome);
-        // Rest: Worship, Song, Hymn, Word, Reading.
-        assert_eq!(drag.landing(&plan, song, Half::Upper), Some(1));
-        assert_eq!(drag.landing(&plan, song, Half::Lower), Some(2));
-        assert_eq!(
-            drag.landing(&plan, word, Half::Upper),
-            Some(3),
-            "end of Worship"
-        );
-        assert_eq!(
-            drag.landing(&plan, word, Half::Lower),
-            Some(4),
-            "first in Word"
-        );
-        assert_eq!(
-            drag.landing(&plan, welcome, Half::Lower),
-            None,
-            "over itself"
-        );
-        let at = drag.landing(&plan, reading, Half::Lower).unwrap();
+        let land = |over, half| drag.landing(&plan, over, half);
+        // Rest: Worship, Song, Hymn, Word, Reading. A step asks no level.
+        assert_eq!(land(song, Half::Upper), Some((1, None)));
+        assert_eq!(land(song, Half::Lower), Some((2, None)));
+        assert_eq!(land(word, Half::Upper), Some((3, None)), "end of Worship");
+        assert_eq!(land(word, Half::Lower), Some((4, None)), "first in Word");
+        assert_eq!(land(welcome, Half::Lower), None, "over itself");
+        let (at, _) = land(word, Half::Lower).unwrap();
         plan.move_steps(&drag.carried, at);
         assert_eq!(
             labels(&plan),
-            ["Worship", "Song", "Hymn", "Word", "Reading", "Welcome"]
+            ["Worship", "Song", "Hymn", "Word", "Welcome", "Reading"]
         );
-        let _ = worship;
+        assert_eq!(plan.within(plan.position(welcome).unwrap()), [word]);
+        let _ = (worship, reading);
     }
 
     #[test]
-    fn a_section_lands_between_sections_or_among_steps_with_its_steps() {
-        let (mut plan, [welcome, worship, song, _, word, reading]) = sunday();
+    fn a_section_lands_before_the_header_it_is_over_or_in_it_first() {
+        let (mut plan, [welcome, worship, song, hymn, word, reading]) = sunday();
         let drag = Drag::new(&plan, worship);
         assert_eq!(drag.carried.len(), 3);
         assert_eq!(drag.label(&plan), "Worship · 2 steps");
         assert_eq!(Drag::new(&plan, song).label(&plan), "Song");
-        // Rest: Welcome, Word, Reading.
-        assert_eq!(drag.landing(&plan, word, Half::Upper), Some(1));
-        assert_eq!(drag.landing(&plan, word, Half::Lower), Some(3));
-        assert_eq!(
-            drag.landing(&plan, reading, Half::Upper),
-            Some(2),
-            "among Word's steps, before Reading"
-        );
-        assert_eq!(
-            drag.landing(&plan, welcome, Half::Upper),
-            Some(0),
-            "among the loose steps, before Welcome"
-        );
-        assert_eq!(
-            drag.landing(&plan, song, Half::Upper),
-            None,
-            "over its own step"
-        );
-        let at = drag.landing(&plan, reading, Half::Lower).unwrap();
-        plan.move_steps(&drag.carried, at);
+        let land = |over, half| drag.landing(&plan, over, half);
+        // Rest: Welcome, Word, Reading. Over Word's header: before it at
+        // its level, or first in it, a level in.
+        assert_eq!(land(word, Half::Upper), Some((1, Some(0))));
+        assert_eq!(land(word, Half::Lower), Some((2, Some(1))));
+        // Over a step: among the steps, asking for no level.
+        assert_eq!(land(reading, Half::Upper), Some((2, None)));
+        assert_eq!(land(welcome, Half::Upper), Some((0, None)));
+        assert_eq!(land(song, Half::Upper), None, "over its own step");
+        // Let go under Word's header: in Word, first, holding only its own.
+        let mut drag = drag.clone();
+        drag.landing = Some(2);
+        drag.point_into(Some(1));
+        drag.aim_level(&plan);
+        assert_eq!(drag.level, 1);
+        let among = drag.among(&plan);
+        assert!(place_section(
+            &mut plan,
+            &drag.carried,
+            2,
+            drag.level,
+            among
+        ));
         assert_eq!(
             labels(&plan),
-            ["Welcome", "Word", "Reading", "Worship", "Song", "Hymn"]
+            ["Welcome", "Word", "Worship", "Song", "Hymn", "Reading"]
         );
+        let held = |id: StepId| plan.within(plan.position(id).unwrap());
+        assert_eq!(held(hymn), [word, worship]);
+        assert_eq!(held(reading), [word]);
     }
 
     /// Singing [Hymn]; Special [Duet]; School [Reading].
@@ -462,9 +428,17 @@ mod tests {
         (plan, ids)
     }
 
+    /// Points `drag` at `half` of the row `over`, as the pointer does.
+    fn aim(drag: &mut Drag, plan: &Plan, over: StepId, half: Half) {
+        let (at, level) = drag.landing(plan, over, half).unwrap();
+        drag.landing = Some(at);
+        drag.point_into(level);
+        drag.aim_level(plan);
+    }
+
     #[test]
-    fn a_section_goes_into_the_bracket_pointed_at_or_by_the_keys() {
-        let (mut plan, [singing, _, special, _, school, _]) = sabbath();
+    fn a_section_goes_into_the_header_it_is_over_or_as_the_keys_say() {
+        let (mut plan, [singing, hymn, special, _, school, _]) = sabbath();
         let mut drag = Drag::new(&plan, special);
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
@@ -477,46 +451,50 @@ mod tests {
         drag.to(Point::new(400.0, 110.0));
         drag.aim_level(&plan);
         assert_eq!(drag.level, 0);
-        // Over Singing's bracket: into it.
-        drag.point_into(Some(1));
+        // Under Hymn, the last of Singing: beside Singing; → takes it in.
+        // Rest: Singing, Hymn, School, Reading.
+        aim(&mut drag, &plan, hymn, Half::Lower);
+        assert_eq!((drag.landing, drag.level), (Some(2), 0));
+        drag.nudge(true);
         drag.aim_level(&plan);
         assert_eq!(drag.level, 1);
         assert!(drag.nests(), "let go where it is, it still moves in");
-        let rest = drag.rest(&plan);
-        let at = drag.landing.unwrap();
-        assert_eq!(host(&rest, at, drag.level), Some((0, 2)), "Singing");
-        // → can't go further: Singing has no part to be in.
+        // → can't go further: Singing has no part to be in. ← brings it
+        // out again.
         drag.nudge(true);
         drag.aim_level(&plan);
         assert_eq!(drag.level, 1);
-        // ← brings it out again.
         drag.nudge(false);
         drag.aim_level(&plan);
         assert_eq!(drag.level, 0);
-        // Off the bracket, the keys start over: beside Singing; → in.
-        drag.point_into(None);
+        // Under School's header: in School, first.
+        aim(&mut drag, &plan, school, Half::Lower);
+        assert_eq!((drag.landing, drag.level), (Some(3), 1));
+        // Over its upper half: before it, at its level, and the keys
+        // start over from there; → in, at Singing's end.
+        aim(&mut drag, &plan, school, Half::Upper);
+        assert_eq!((drag.landing, drag.level), (Some(2), 0));
         drag.nudge(true);
         drag.aim_level(&plan);
         assert_eq!(drag.level, 1);
-        plan.move_group(&drag.carried, at, drag.level);
+        plan.move_group(&drag.carried, 2, drag.level);
         assert_eq!(plan.within(plan.position(special).unwrap()), [singing]);
-        // Picked up again over the plan's own bracket: its own section.
+        // Picked up again, over School's header: back out at its level.
         let mut drag = Drag::new(&plan, special);
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
-        drag.point_into(Some(0));
-        drag.aim_level(&plan);
+        aim(&mut drag, &plan, school, Half::Upper);
         assert_eq!(drag.level, 0);
         // First in the plan there is nothing to be a part of.
-        drag.landing = Some(0);
-        drag.point_into(Some(1));
-        drag.aim_level(&plan);
-        assert_eq!((drag.level, drag.levels), (0, (0, 0)));
-        let _ = school;
+        aim(&mut drag, &plan, singing, Half::Upper);
+        assert_eq!(
+            (drag.landing, drag.level, drag.levels),
+            (Some(0), 0, (0, 0))
+        );
     }
 
     #[test]
-    fn a_section_over_an_empty_one_goes_into_it() {
+    fn a_section_over_an_empty_ones_header_goes_before_or_into_it() {
         let mut plan = Plan::new("Sunday");
         let empty = plan.section("Notices", None);
         let word = plan.section("Word", None);
@@ -524,15 +502,13 @@ mod tests {
         let mut drag = Drag::new(&plan, word);
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
-        // Rest: Notices. Either half of its place is inside it.
-        for half in [Half::Upper, Half::Lower] {
-            assert_eq!(drag.landing(&plan, empty, half), Some(1));
-        }
-        drag.landing = Some(1);
-        drag.point_into(Some(1));
-        drag.aim_level(&plan);
-        assert_eq!(drag.level, 1);
-        assert_eq!(host(&drag.rest(&plan), 1, 1), Some((0, 1)), "Notices");
+        // Rest: Notices. Its place says the lower half of its header.
+        aim(&mut drag, &plan, empty, Half::Upper);
+        assert_eq!((drag.landing, drag.level), (Some(0), 0));
+        aim(&mut drag, &plan, empty, Half::Lower);
+        assert_eq!((drag.landing, drag.level), (Some(1), 1));
+        plan.move_group(&drag.carried, 1, drag.level);
+        assert_eq!(plan.within(plan.position(word).unwrap()), [empty]);
     }
 
     #[test]
@@ -556,18 +532,25 @@ mod tests {
 
     #[test]
     fn a_step_is_as_far_in_as_what_it_lands_under() {
-        let (mut plan, [_, hymn, special, duet, ..]) = sabbath();
+        let (mut plan, [singing, hymn, special, duet, ..]) = sabbath();
         plan.move_group(&plan.carried(special), 2, 1);
         let mut drag = Drag::new(&plan, hymn);
         drag.to(Point::new(100.0, 100.0));
         drag.to(Point::new(100.0, 110.0));
         // Rest: Singing, Special, Duet, School, Reading. Under Duet.
-        drag.landing = drag.landing(&plan, duet, Half::Lower);
-        drag.aim_level(&plan);
-        assert_eq!(drag.level, 2);
-        let rest = drag.rest(&plan);
-        assert_eq!(host(&rest, 3, 2), Some((1, 3)), "Special, to its end");
-        assert_eq!(host(&rest, 0, 0), None, "the plan's own level");
+        aim(&mut drag, &plan, duet, Half::Lower);
+        assert_eq!((drag.landing, drag.level), (Some(3), 2));
+        plan.move_steps(&drag.carried, 3);
+        assert_eq!(
+            plan.within(plan.position(hymn).unwrap()),
+            [singing, special]
+        );
+        // Over Singing's header: the plan's own level.
+        let mut drag = Drag::new(&plan, hymn);
+        drag.to(Point::new(100.0, 100.0));
+        drag.to(Point::new(100.0, 110.0));
+        aim(&mut drag, &plan, singing, Half::Upper);
+        assert_eq!((drag.landing, drag.level), (Some(0), 0));
     }
 
     #[test]
@@ -578,10 +561,9 @@ mod tests {
         let mut drag = Drag::new(&plan, worship);
         // Rest: Welcome, Word, Reading, More. Over Reading's lower half:
         // between Reading and More, in Word.
-        drag.landing = drag.landing(&plan, reading, Half::Lower);
+        aim(&mut drag, &plan, reading, Half::Lower);
         assert_eq!(drag.landing, Some(3));
         assert!(drag.among(&plan));
-        drag.aim_level(&plan);
         assert_eq!(drag.level, 1, "in Word");
         let at = drag.landing.unwrap();
         assert!(place_section(

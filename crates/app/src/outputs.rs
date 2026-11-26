@@ -16,6 +16,8 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+use crate::pixels::Pixels;
+
 /// A screen the compositor knows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
@@ -121,6 +123,32 @@ pub fn choose(
     }
 }
 
+/// The screen pictures are judged against: the one the stage goes on
+/// (see [`choose`]), else the largest connected.
+pub fn stage_screen(connected: &[Output], place: Option<&Place>) -> Pixels {
+    let stage = place
+        .and_then(Place::output)
+        .and_then(|name| connected.iter().find(|output| output.name == name));
+    let largest = || {
+        connected
+            .iter()
+            .max_by_key(|output| u64::from(output.width) * u64::from(output.height))
+    };
+    match stage.or_else(largest) {
+        Some(output) => Pixels {
+            width: output.width,
+            height: output.height,
+        },
+        // Only Hyprland can be asked for its screens so far. Elsewhere,
+        // the e2e's headless sway included, a projector's usual size
+        // stands in for the one not known.
+        None => Pixels {
+            width: 1920,
+            height: 1080,
+        },
+    }
+}
+
 /// Where the stage was last put by hand, for each set of screens: a file
 /// of `setup<TAB>screen` lines beside the saved plans.
 #[derive(Debug, Clone)]
@@ -190,6 +218,11 @@ struct Monitor {
     description: String,
     width: u32,
     height: u32,
+    /// Where it is in the desktop's layout, in logical pixels.
+    #[serde(default)]
+    x: i32,
+    #[serde(default)]
+    y: i32,
     #[serde(rename = "activeWorkspace")]
     active_workspace: Workspace,
 }
@@ -251,6 +284,19 @@ pub fn stage_on() -> Result<Option<String>, String> {
         .into_iter()
         .find(|m| m.id == stage.monitor)
         .map(|m| m.name))
+}
+
+/// A point inside the screen this process's stage window is on, in the
+/// desktop's logical pixels: where YouTube's player window goes.
+pub fn stage_point() -> Result<Option<(i32, i32)>, String> {
+    let monitors = monitors()?;
+    let Some(stage) = stage_client()? else {
+        return Ok(None);
+    };
+    Ok(monitors
+        .into_iter()
+        .find(|m| m.id == stage.monitor)
+        .map(|m| (m.x + 1, m.y + 1)))
 }
 
 /// The output this process's dashboard window is on.
@@ -335,6 +381,46 @@ pub fn put_stage_on(output: &str) -> Result<(), String> {
         return Err(format!("hyprctl dispatch: {}", said.trim()));
     }
     Ok(())
+}
+
+/// Puts the window of process `pid` (the picker) on the screen the
+/// dashboard is on, where the operator is. `Ok(false)` while it hasn't
+/// appeared yet; `Ok(true)` once it is there.
+pub fn put_beside_dashboard(pid: u32) -> Result<bool, String> {
+    if !supported() {
+        return Err(UNSUPPORTED.into());
+    }
+    let monitors = monitors()?;
+    let clients: Vec<Client> = hyprctl("clients")?;
+    let ours = std::process::id();
+    let Some(dashboard) = clients
+        .iter()
+        .find(|c| c.class == crate::DASHBOARD_APP_ID && c.pid == ours)
+    else {
+        return Ok(false);
+    };
+    let Some(window) = clients.iter().find(|c| c.pid == pid) else {
+        return Ok(false);
+    };
+    if window.monitor == dashboard.monitor {
+        return Ok(true);
+    }
+    let Some(target) = monitors.iter().find(|m| m.id == dashboard.monitor) else {
+        return Ok(false);
+    };
+    let dispatch = format!(
+        "hl.dsp.window.move({{ workspace = {}, window = \"address:{}\" }})",
+        target.active_workspace.id, window.address
+    );
+    let done = Command::new("hyprctl")
+        .args(["dispatch", &dispatch])
+        .output()
+        .map_err(|err| format!("hyprctl: {err}"))?;
+    let said = String::from_utf8_lossy(&done.stdout);
+    if !done.status.success() || !said.trim().eq_ignore_ascii_case("ok") {
+        return Err(format!("hyprctl dispatch: {}", said.trim()));
+    }
+    Ok(true)
 }
 
 /// What the app last saw, to move the stage only when something happened:
@@ -483,6 +569,44 @@ mod tests {
         assert_eq!(
             choose(&alone, Some("BOE 0x07C9"), None, None),
             Place::Preferred("eDP-1".into())
+        );
+    }
+
+    #[test]
+    fn pictures_are_judged_against_the_stage_screen_else_the_largest() {
+        let sized = |name: &str, width, height| Output {
+            width,
+            height,
+            ..screen(name, "")
+        };
+        let laptop = Pixels {
+            width: 2880,
+            height: 1800,
+        };
+        let projector = Pixels {
+            width: 1280,
+            height: 800,
+        };
+        let both = [
+            sized("eDP-1", laptop.width, laptop.height),
+            sized("HDMI-A-1", projector.width, projector.height),
+        ];
+        let on = |name: &str| Place::Spare(name.into());
+        assert_eq!(
+            stage_screen(&both, Some(&on("HDMI-A-1"))),
+            projector,
+            "the stage's, smaller as it is"
+        );
+        assert_eq!(stage_screen(&both, Some(&Place::Nowhere)), laptop);
+        assert_eq!(stage_screen(&both, Some(&on("DP-9"))), laptop, "gone");
+        assert_eq!(stage_screen(&both, None), laptop, "not looked at yet");
+        assert_eq!(
+            stage_screen(&[], None),
+            Pixels {
+                width: 1920,
+                height: 1080
+            },
+            "no screens known"
         );
     }
 

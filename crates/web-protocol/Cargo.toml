@@ -1,0 +1,12 @@
+[package]
+name = "lantern-web-protocol"
+description = "What lantern and lantern-web, its YouTube player window, say to each other: commands one way, events the other, one JSON line each."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
