@@ -85,6 +85,7 @@ run=(env)
 case $E2E_COMPOSITOR in
 sway)
     export E2E_STAGE_OUTPUT=HEADLESS-1 E2E_DASHBOARD_OUTPUT=HEADLESS-2
+    # shellcheck disable=SC2329  # called by the trap below
     cleanup() {
         [[ -n $app ]] && kill "$app" 2>/dev/null || true
         [[ -n $mouse ]] && kill "$mouse" 2>/dev/null || true
@@ -103,7 +104,14 @@ mouse_warping none
 xwayland disable
 CONF
     runtime=${XDG_RUNTIME_DIR:-/run/user/$UID}
-    before=$(cd "$runtime" && ls -1 | grep -E '^wayland-[0-9]+$' || true)
+    # The Wayland sockets in $runtime, one name a line.
+    wayland_sockets() {
+        local f
+        for f in "$runtime"/wayland-*; do
+            if [[ ${f##*/} =~ ^wayland-[0-9]+$ ]]; then echo "${f##*/}"; fi
+        done
+    }
+    before=$(wayland_sockets)
     env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE -u SWAYSOCK \
         WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=2 WLR_LIBINPUT_NO_DEVICES=1 \
         sway -c "$out/sway.conf" >"$out/sway.log" 2>&1 &
@@ -111,7 +119,7 @@ CONF
     export SWAYSOCK=$runtime/sway-ipc.$UID.$sway.sock
     display=
     for _ in $(seq 100); do
-        display=$(cd "$runtime" && ls -1 | grep -E '^wayland-[0-9]+$' | grep -vxF "$before" | head -n 1 || true)
+        display=$(wayland_sockets | grep -vxF "$before" | head -n 1 || true)
         [[ -S $SWAYSOCK && -n $display ]] && break
         sleep 0.1
     done
