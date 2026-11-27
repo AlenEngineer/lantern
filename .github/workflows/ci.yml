@@ -133,3 +133,19 @@ jobs:
         with:
           fetch-depth: 0
       - run: scripts/release-check.sh
+
+  # The one check the main-branch ruleset requires: it passes when every
+  # job above passed or was skipped (the PR-only jobs, on a push to main).
+  check:
+    name: check
+    if: always()
+    needs: [linux, windows, windows-download, engine, binary, msrv, release-check]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
